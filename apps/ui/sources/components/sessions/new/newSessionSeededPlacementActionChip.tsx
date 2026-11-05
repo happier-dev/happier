@@ -7,7 +7,8 @@ import type {
     AgentInputExtraActionChip,
     AgentInputExtraActionChipRenderContext,
 } from '@/components/sessions/agentInput/agentInputContracts';
-import type { SelectionListStep } from '@/components/ui/selectionList';
+import { createNewSessionPlacementSelectionStep } from './newSessionPlacementSelectionStep';
+import type { SessionPlacementCandidateRow } from './serverStartDraftCandidateSelection';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -27,25 +28,12 @@ const CHIP_KEY = 'new-session-seeded-placement';
  * server/machine/path route fields and clears this one-shot input.
  */
 export function createNewSessionSeededPlacementActionChip(params: Readonly<{
-    candidates: readonly PluginUiSessionPlacementCandidateV1[];
+    rows: readonly SessionPlacementCandidateRow[];
     onSelect: (candidate: PluginUiSessionPlacementCandidateV1) => void;
 }>): AgentInputExtraActionChip | null {
-    if (params.candidates.length === 0) return null;
+    if (params.rows.length === 0) return null;
 
-    const rootStep: SelectionListStep = {
-        id: 'new-session-seeded-placement-root',
-        title: t('newSession.selectWorkingDirectoryTitle'),
-        sections: [{
-            kind: 'static',
-            id: 'new-session-seeded-placement-candidates',
-            options: params.candidates.map((candidate, index) => ({
-                id: `new-session-seeded-placement:${index}`,
-                label: candidate.label ?? candidate.rootPath,
-                subtitle: `${candidate.machineId} · ${candidate.serverId}`,
-                onSelect: () => params.onSelect(candidate),
-            })),
-        }],
-    };
+    const rootStep = createNewSessionPlacementSelectionStep(params);
 
     const label = t('newSession.selectWorkingDirectoryTitle');
     return {

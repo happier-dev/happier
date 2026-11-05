@@ -22,7 +22,9 @@ describe('createNewSessionSeededPlacementActionChip', () => {
             worktrees: [],
         }];
 
-        const chip = createNewSessionSeededPlacementActionChip({ candidates, onSelect });
+        const chip = createNewSessionSeededPlacementActionChip({ rows: candidates.map((candidate, index) => ({
+            candidate, index, title: candidate.label ?? 'web', subtitle: 'Studio · ~/web', availability: 'available' as const,
+        })), onSelect });
         expect(chip?.collapsedOptionsPopover).toMatchObject({ presentation: 'list' });
         const popover = chip?.collapsedOptionsPopover;
         if (!popover || popover.presentation !== 'list') throw new Error('expected placement list');
@@ -30,6 +32,7 @@ describe('createNewSessionSeededPlacementActionChip', () => {
         if (!section || section.kind !== 'static') throw new Error('expected placement options');
 
         expect(section.options).toHaveLength(2);
+        expect(section.options[1]).toMatchObject({ label: 'web', subtitle: 'Studio · ~/web' });
         expect(onSelect).not.toHaveBeenCalled();
         section.options[1]?.onSelect?.();
         expect(onSelect).toHaveBeenCalledWith(candidates[1]);

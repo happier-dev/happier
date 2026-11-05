@@ -4,7 +4,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 import {
     findSessionServerStartCandidateForDirectory,
-    presentSessionServerStartCandidate,
+    presentSessionPlacementCandidates,
     resolveSessionServerStartCandidateSelection,
 } from './serverStartDraftCandidateSelection';
 
@@ -19,7 +19,9 @@ describe('Session server-start candidate selection', () => {
         expect(resolveSessionServerStartCandidateSelection({ mountedTarget: candidate, ...context })).toMatchObject({
             machine: null, machineReady: false,
         });
-        expect(presentSessionServerStartCandidate({ candidate, ...context })).toEqual({ title: '/repo', subtitle: undefined });
+        expect(presentSessionPlacementCandidates({ candidates: [candidate], ...context })[0]).toMatchObject({
+            title: 'repo', subtitle: 'Unlisted machine · /repo', availability: 'unavailable',
+        });
     });
 
     it('keeps the selected server, machine, path, and readiness on one candidate', () => {
@@ -70,6 +72,7 @@ describe('Session server-start candidate selection', () => {
     it('presents a placement candidate by its home-relative folder and machine name, never raw ids', () => {
         const machine = createMachineFixture({
             id: 'machine-id-1',
+            activeAt: Date.now(),
             metadata: {
                 host: 'studio.local',
                 platform: 'darwin',
@@ -89,16 +92,50 @@ describe('Session server-start candidate selection', () => {
         };
         const context = { activeServerId: 'server-1', activeMachines: [machine], machineListByServerId: {} };
 
-        expect(presentSessionServerStartCandidate({ candidate, ...context })).toEqual({
-            title: '~/code/app',
-            subtitle: 'Studio',
+        const accountScope = { serverId: 'server-1', accountId: 'account-1' };
+        const present = (input: typeof candidate & { label?: string }) => presentSessionPlacementCandidates({ candidates: [input], accountScope, ...context })[0]!;
+        expect(present(candidate)).toMatchObject({ title: 'app', subtitle: 'Studio · ~/code/app', availability: 'available' });
+        expect(present({ ...candidate, label: 'App' }).title).toBe('App');
+        // A machine this device cannot see is said so, never named by its id.
+        const unseen = present({ ...candidate, machineId: 'unknown-machine' });
+        expect(unseen.subtitle).toBe('Unlisted machine · /Users/ada/code/app');
+        expect(unseen.subtitle).not.toContain('unknown-machine');
+    });
+
+    it('lists the people-readable rows of live projects first, offline and historic ones below with their reason', () => {
+        const live = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(),
+            metadata: { host: 'box', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/home/a/.happier', homeDir: '/home/a', displayName: 'Build box' } });
+        const twin = createMachineFixture({ id: 'machine-twin', active: true, activeAt: Date.now(),
+            metadata: { host: 'box', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/home/a/.happier', homeDir: '/home/a', displayName: 'Build box' } });
+        const asleep = createMachineFixture({ id: 'machine-asleep', active: false, activeAt: 0,
+            metadata: { host: 'lap', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/Users/a/.happier', homeDir: '/Users/a', displayName: 'Laptop' } });
+        const at = (machineId: string, rootPath: string) => ({ projectKey: { id: rootPath }, serverId: 'srv_raw_home_id', machineId, rootPath, reachable: true, worktrees: [] });
+        const removed = createMachineFixture({ id: 'machine-removed', active: true, activeAt: Date.now(), revokedAt: 1,
+            metadata: { host: 'old', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/home/o/.happier', homeDir: '/home/o', displayName: 'Old box' } });
+        const candidates = [at('machine-gone-1234', '/old/retired'), at(asleep.id, '/Users/a/notes'), at(live.id, '/home/a/app'), at(twin.id, '/home/a/site'), at(removed.id, '/home/o/past')];
+        const rows = presentSessionPlacementCandidates({ candidates, accountScope: { serverId: 'srv_raw_home_id', accountId: 'account-1' }, activeServerId: 'srv_raw_home_id',
+            activeMachines: [live, twin, asleep, removed], machineListByServerId: { srv_raw_home_id: [live, twin, asleep, removed] },
+            machineListStatusByServerId: { srv_raw_home_id: 'idle' } });
+        expect(rows.map(row => row.title)).toEqual(['app', 'site', 'notes', 'retired', 'past']);
+        // Each row still answers for the candidate it stands for, whatever the order.
+        expect(rows.map(row => row.index)).toEqual([2, 3, 1, 0, 4]);
+        expect(rows[2]).toMatchObject({ availability: 'unavailable', subtitle: 'Offline · Laptop · ~/notes' });
+        expect(rows[3]).toMatchObject({ availability: 'unavailable', subtitle: 'Unlisted machine · /old/retired' });
+        expect(rows[4]).toMatchObject({ availability: 'unavailable', subtitle: 'Removed machine · Old box · ~/past' });
+        // Two machines with one name are told apart the way Sessions and Search do it.
+        expect(rows[0]!.subtitle).not.toBe(rows[1]!.subtitle?.replace('~/site', '~/app'));
+        for (const row of rows) {
+            expect(row.subtitle).not.toContain('srv_raw_home_id');
+            expect(row.subtitle).not.toContain(row.candidate.machineId);
+        }
+    });
+
+    it('claims nothing about a Machine whose Home has not answered yet', () => {
+        const candidate = { projectKey: { id: 'project-1' }, serverId: 'server-b', machineId: 'machine-1', rootPath: '/work/app', reachable: true, worktrees: [] };
+        expect(presentSessionPlacementCandidates({ candidates: [candidate], activeServerId: 'server-a', activeMachines: [],
+            machineListByServerId: {}, machineListStatusByServerId: { 'server-b': 'loading' } })[0]).toMatchObject({
+            title: 'app', subtitle: '/work/app', availability: 'unknown',
         });
-        expect(presentSessionServerStartCandidate({ candidate: { ...candidate, label: 'App' }, ...context }).title).toBe('App');
-        // A machine this device cannot see is not named by its id.
-        expect(presentSessionServerStartCandidate({
-            candidate: { ...candidate, machineId: 'unknown-machine' },
-            ...context,
-        })).toEqual({ title: '/Users/ada/code/app', subtitle: undefined });
     });
 
     it('marks as selected only the candidate on the chosen machine whose folder is the edited directory', () => {

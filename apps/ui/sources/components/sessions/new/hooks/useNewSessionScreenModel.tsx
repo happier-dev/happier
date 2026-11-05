@@ -233,6 +233,7 @@ import { resolveSessionSpawnNewOperationFailureMessage } from '@/sync/ops/action
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import { createNewSessionSeededPlacementActionChip } from '@/components/sessions/new/newSessionSeededPlacementActionChip';
+import { useSessionPlacementCandidateRows } from '@/components/sessions/new/useSessionPlacementCandidateRows';
 import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import { useNewSessionAccessDraft } from '@/components/sessions/access/useNewSessionAccessDraft';
 import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/new/attachments/newSessionDraftAttachmentFlowId';
@@ -2792,12 +2793,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
             placementCandidates: [],
         });
     }, [buildCurrentPersistedDraft, persistDraftIfEnabled, router]);
+    const seededPlacementRows = useSessionPlacementCandidateRows(seededPlacementCandidates);
     const seededPlacementActionChip = React.useMemo(() => (
         createNewSessionSeededPlacementActionChip({
-            candidates: seededPlacementCandidates,
+            rows: seededPlacementRows,
             onSelect: selectSeededPlacement,
         })
-    ), [seededPlacementCandidates, selectSeededPlacement]);
+    ), [seededPlacementRows, selectSeededPlacement]);
     const effectiveCurrentAuthoringDraft = currentAuthoringDraft;
     const temporaryComputerLaunchBlock = React.useMemo(() => {
         // Same "is the Agent side even present" owner the picker uses; only the
