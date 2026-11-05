@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { RefreshControl, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 
 import { Redirect, Stack, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { managedMachineEnrolledDetailId } from '@/components/settings/machines/managed/managedCreationPresentation';
@@ -40,8 +40,7 @@ const styles = StyleSheet.create(() => ({
     // The tab strip is the one divider between the identity and the tab's body: the same breath above and below it,
     // so a body that opens with a sentence (Guard) or a sheet (Overview) never touches the strip.
     tabsGroup: {
-        paddingTop: PAGE_LIST_METRICS.pageHeaderColumnGapPx,
-        paddingBottom: PAGE_LIST_METRICS.sheetInsetPx,
+        paddingVertical: HAPPIER_PAGE_METRICS.pageTabsGapPx,
     },
     tabBar: {
         flexDirection: 'row',
