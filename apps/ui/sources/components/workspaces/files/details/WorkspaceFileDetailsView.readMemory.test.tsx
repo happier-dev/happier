@@ -130,7 +130,8 @@ it('opens the original turn evidence and restore menu from the real file tab ins
         await vi.waitFor(() => expect(screen.findByType(FileChangesSection).props.review.status).toBe('ready'));
         expect(screen.findByType(FileChangesSection).props.review.changesScope).toEqual({ kind: 'turn', turnId: 'turn-original' });
         expect(screen.findByType(FileChangesSection).props.review.unifiedDiff).toBe(turnDiff);
-        expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE)).toHaveLength(2);
+        // Returning to the same turn reuses its settled evidence; Retry owns recapture.
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE)).toHaveLength(1);
     } finally { await screen.unmount(); }
 });
 

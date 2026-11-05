@@ -1,13 +1,23 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ScmLogListResponseSchema } from '@happier-dev/protocol/scm';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
+
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const serverId = 'srv_stale_snapshot';
+afterEach(async () => { clearMachineRequestReachabilityForTest(); await home.reset(); });
 
 // Unrelated external Markdown package; fail if this Git path ever invokes it.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -20,7 +30,7 @@ type RpcRequest = Parameters<typeof import('@/sync/runtime/orchestration/serverS
 const rpc = vi.hoisted(() => vi.fn<(request: RpcRequest) => Promise<unknown>>());
 let rootPath = '';
 let sequence = 0;
-const scope = () => ({ serverId: 's1', machineId: 'm1', rootPath });
+const scope = () => ({ serverId, machineId: 'm1', rootPath });
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -100,7 +110,7 @@ async function render() {
     const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
     return renderScreen(
         <WorkspaceRightPanelGitView
-            serverId="s1"
+            serverId={serverId}
             machineId="m1"
             rootPath={rootPath}
             onOpenFile={() => {}}
@@ -117,7 +127,10 @@ async function render() {
  * place — made every later refresh failure invisible. The user reads stale content as current.
  */
 describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await home.reset();
+        await home.addHome({ name: 'Stale snapshot Home', serverUrl: 'https://stale-snapshot.test',
+            serverIdentityId: serverId, accountId: 'account-a' });
         projectManager.clear();
         storage.setState(storage.getInitialState(), true);
         rootPath = `/stale-snapshot-${++sequence}`;
@@ -138,7 +151,7 @@ describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
         rpc.mockClear();
         answerCurrentSnapshot();
         await screen.pressByTestIdAsync('workspace-rightpanel-git-stale-action');
-        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ serverId: 's1', machineId: 'm1',
+        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId: 'm1',
             method: RPC_METHODS.SCM_STATUS_SNAPSHOT, payload: expect.objectContaining({ cwd: rootPath }) }));
         await vi.waitFor(() => expect(screen.findHostByTestId('workspace-rightpanel-git-stale')).toBeNull());
         expect(storage.getState().getWorkspaceScmSnapshotError(scope())).toBeNull();
@@ -151,6 +164,32 @@ describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
 
         await vi.waitFor(() => expect(screen.findHostByTestId('workspace-rightpanel-git-stale')).not.toBeNull());
         expect(screen.findHostByTestId('scm-not-repository')).not.toBeNull();
+    });
+
+    it('leaves the cause to the page when the announced checkout machine is not answering', async () => {
+        storage.getState().updateWorkspaceScmSnapshot(scope(), createSnapshot(true));
+        // Presence keeps the newest heartbeat; move only the wall clock past any supported grace.
+        const lastHeartbeat = Date.now();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(lastHeartbeat + 24 * 60 * 60 * 1000);
+            const machine = createMachineFixture({ id: 'm1', active: false,
+                activeAt: lastHeartbeat, seq: 2, updatedAt: Date.now() });
+            storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+            await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [machine]);
+            const { CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+            const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+            const screen = await renderScreen(
+                <CheckoutReachabilityScope scope={{ serverId, machineId: 'm1' }}>
+                    <WorkspaceRightPanelGitView serverId={serverId} machineId="m1" rootPath={rootPath} onOpenFile={() => {}} />
+                </CheckoutReachabilityScope>,
+            );
+
+            await vi.waitFor(() => expect(storage.getState().getWorkspaceScmSnapshotError(scope())).not.toBeNull());
+            // The page's reachability line already says it and offers Retry: one cause, one message.
+            expect(screen.findHostByTestId('workspace-rightpanel-git-stale')).toBeNull();
+            expect(screen.findHostByTestId('project-rightpanel-git-surface:commit')).not.toBeNull();
+        } finally { vi.useRealTimers(); }
     });
 
     it('stays quiet when the snapshot is current', async () => {

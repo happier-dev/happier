@@ -9,6 +9,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES, ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
+import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
+import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 import { createMachineFixture, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
@@ -177,19 +179,25 @@ beforeEach(async () => {
     await prepareSessionDraftPersistenceStorage();
     // Seed accepted rows only after the connected Home's real initial census has settled.
     await vi.waitFor(() => expect(storage.getState().projectAccountRows?.status).toBe('ready'));
-    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
     applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'wr_1', serverId: runtime.serverId,
         machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 }] });
 });
-async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checkouts' | 'project_scripts' | 'project_code' | 'project_readme' = 'project_changes') {
+/** A Home board widget its owner sized tall; the Overview column draws widgets without a size. */
+const TALL_PRESENTATION = { size: 'tall' as const, footprint: getWidgetSizeFootprintV1('home', 'tall')!, geometry: { width: 480, height: 640 } };
+
+async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checkouts' | 'project_scripts' | 'project_code' | 'project_readme' = 'project_changes',
+    options: Readonly<{ tall?: boolean }> = {}) {
     const { ProjectBuiltinWidgetBody } = await import('./ProjectBuiltinWidgetBody');
     const routeParams = { workspaceRefId: 'wr_1', serverId: runtime.serverId, ...boundary.routeParams };
     const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-local-changes"
         ref={{ kind: 'project', params: routeParams }} pathname={boundary.pathname} focused visible
         navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
-        <ProjectBuiltinWidgetBody id={id}
-            checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath, projectKey: 'project', createdAtMs: 1 }}
-            workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath }} testID="local-changes" />
+        <WidgetPresentationProvider value={options.tall ? TALL_PRESENTATION : undefined}>
+            <ProjectBuiltinWidgetBody id={id}
+                checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath, projectKey: 'project', createdAtMs: 1 }}
+                workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath }} testID="local-changes" />
+        </WidgetPresentationProvider>
     </DestinationInstanceHost></runtime.Wrapper>);
     await vi.waitFor(async () => {
         await flushHookEffects();
@@ -489,7 +497,7 @@ describe('Project Local Changes', () => {
         expect(storage.getState().sessions).toEqual({});
     });
     it('does not navigate from a retired widget callback', async () => {
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         const openRetiredRow = screen.findAllByType(ScmChangeRow)[0].props.onPress;
         await act(async () => screen.unmount());
         await act(async () => openRetiredRow());
@@ -498,14 +506,14 @@ describe('Project Local Changes', () => {
     });
     it('retains actual files with freshness and no write affordances when the known machine is offline', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true } });
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         const lastHeartbeat = Date.now();
         // An inactive heartbeat stays reachable during the presence owner's grace. Move only the
         // wall clock beyond any supported grace; keep real timers and the real presence selector.
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000);
-            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', active: false,
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false,
                 activeAt: lastHeartbeat, seq: 2, updatedAt: Date.now() })], true, { sourceServerId: runtime.serverId }));
             await flushHookEffects({ cycles: 12 });
             expect(screen.findHostByTestId('local-changes-offline')).not.toBeNull();
@@ -596,7 +604,7 @@ describe('Project Local Changes', () => {
     });
     it('requires explicit native confirmation before discarding the actual checkout path', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'git_staging' });
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         await act(async () => screen.findByTestId('scm-change-row-container:src_a.ts')?.props.onFocus?.());
         await act(async () => screen.findAllByType(ScmChangeOverflowMenu)[0].props.onDiscard());
         await flushHookEffects({ cycles: 12 });
@@ -611,7 +619,7 @@ describe('Project Local Changes', () => {
     });
     it('uses canonical include and exclude on the exact checkout for indexed staging', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'git_staging' });
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         await act(async () => screen.findAllByType(ScmChangeRow)[0].props.onToggleSelection());
         await flushHookEffects({ cycles: 12 });
         expect(boundary.writes[0]).toMatchObject({ method: `m1:${RPC_METHODS.SCM_CHANGE_INCLUDE}`, params: { cwd: '/repo', paths: ['src/a.ts'] } });
@@ -669,7 +677,7 @@ describe('Project Local Changes', () => {
     it('shares real checkout selection with Changes and commits only through an explicit SCM action', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'atomic' });
         const scope = { serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo' };
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         await screen.pressByTestIdAsync('local-changes-files');
         expect(boundary.navigate.mock.calls.at(-1)?.[0]).toContain('/projects/wr_1/changes');
         expect(boundary.writes).toEqual([]);
@@ -720,7 +728,7 @@ describe('Project Local Changes', () => {
         boundary.routeParams = { workspaceRefId: 'wr_1', serverId: runtime.serverId, layoutId: 'named-dashboard',
             initialFile: 'old.ts', initialCommit: 'old-commit', details: 'file', path: 'old.ts',
             comparison: 'branch', head: 'old-head', base: 'old-base', comparisonId: 'old-comparison', anchor: 'range', startLine: '7' };
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         publishActiveReviewFile(activeReviewFileKeyForWorkspace({ serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo' }),
             { presented: true, activePath: 'src/a.ts' });
         await act(async () => screen.findAllByType(ScmChangeRow)[1].props.onPress());
@@ -790,7 +798,7 @@ describe('Project Local Changes', () => {
         currentSnapshot = ScmWorkingSnapshotSchema.parse({ ...snapshot(['src/feature.ts']), repo: {
             ...snapshot([]).repo, rootPath, worktrees: [{ id: 'feature-checkout', path: '/repo/feature', branch: 'feature', isCurrent: rootPath !== '/repo' }],
         } });
-        const screen = await mount(rootPath);
+        const screen = await mount(rootPath, 'project_changes', { tall: true });
         const row = screen.findByType(ScmChangeRow);
         await act(async () => row.props.onPress());
         const query = Object.fromEntries(new URL(boundary.navigate.mock.calls.at(-1)?.[0], 'https://app.test').searchParams);
@@ -802,7 +810,7 @@ describe('Project Local Changes', () => {
         expect(storage.getState().sessions).toEqual({});
     });
     it('promotes an actual changed path to Changes without creating or requiring a Session', async () => {
-        const screen = await mount();
+        const screen = await mount('/repo', 'project_changes', { tall: true });
         const rows = screen.findAllByType(ScmChangeRow);
         expect(rows.map(row => row.props.file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
         await act(async () => rows[1].props.onPress());
