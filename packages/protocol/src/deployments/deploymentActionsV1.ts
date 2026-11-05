@@ -1,8 +1,6 @@
 import { DeploymentStateV1Schema } from './deploymentStateV1.js';
 import { DeploymentHealthCurrentSuccessV1Schema } from './deploymentReadsV1.js';
-import { DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
 import { MachineServiceControlResultV1Schema } from '../actions/specs/machine/services.js';
-import { DeploymentBackupRestoreInputV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentHealthCurrentInputV1Schema } from './deploymentReadsV1.js';
 import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
 import { z } from 'zod/mini';
@@ -12,6 +10,8 @@ export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deploymen
 import { WorkflowRunIdV1Schema, WorkflowInvocationRecordIdSchema } from '../workflows/workflowIdsV1.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
+import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
+export * from './deploymentBackupRestoreV1.js';
 export { DeploymentReceiptAcceptedResultV1Schema, type DeploymentReceiptAcceptedResultV1 } from './deploymentReceiptResultV1.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { BackupDestinationContributionV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
     DeploymentEnvironmentUpdateInputV1Schema, StrictJsonValueSchema, environmentSecretBindingIdentityV1,
@@ -81,6 +82,26 @@ export const DeploymentPreMigrationBackupV1Schema = z.strictObject({
     })) }),
 });
 export type DeploymentPreMigrationBackupV1 = z.infer<typeof DeploymentPreMigrationBackupV1Schema>;
+
+/** Nonsecret evidence a restore prepare retains in its Action operation: the exact backup it checked, the
+ * destination it will replace and, when that destination held data, the verified safety backup. The native
+ * host writes it; the confirm and the person's sheet read the same shape. */
+const restoreDestination = lazyZodSchema(() => z.strictObject({ ...DeploymentPreMigrationBackupV1Schema.shape.target.shape,
+    environmentId: DeploymentBackupManifestV1Schema.shape.environmentId,
+    revision: DeploymentBackupManifestV1Schema.shape.configRevision,
+    stagingDatabase: z.string(), recoveryDatabase: z.string(),
+    databaseExists: z.boolean(), hasMeaningfulData: z.boolean(), writerServices: z.array(z.string()),
+}));
+export const DeploymentRestorePreparationV1Schema = lazyZodSchema(() => z.strictObject({
+    prepared: z.strictObject({ kind: z.literal('prepared'), operationId: z.string(),
+        source: DeploymentPreMigrationBackupV1Schema.shape.source, sourceFormat: DeploymentPreMigrationBackupV1Schema.shape.sourceFormat,
+        destination: restoreDestination, repository: DeploymentPreMigrationBackupV1Schema.shape.repository,
+        safetyBackup: z.optional(z.strictObject({ kind: z.literal('verified'),
+            manifests: z.array(DeploymentPreMigrationBackupV1Schema.shape.source) })),
+    }),
+    configuration: DeploymentBackupConfigurationV1Schema,
+}));
+export type DeploymentRestorePreparationV1 = z.infer<typeof DeploymentRestorePreparationV1Schema>;
 
 /** The catalog has admitted the descriptor; its schema alone decides the nonsecret user fields. */
 export function validateDeploymentBackupDestinationConfigurationV1(input: Readonly<{
