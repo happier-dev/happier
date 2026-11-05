@@ -29,7 +29,7 @@ import { MachinePageHeader } from './MachinePageHeader';
 import { MACHINE_PAGE_COLUMN, MachinePageListHostContext, MachinePageStateContext, type MachinePageState } from './machinePageContext';
 import { useMachinePageScroll } from './machinePageScroll';
 import { readRememberedMachinePageTab, rememberMachinePageTab } from './machinePageTabMemory';
-import { isMachinePageTabRoot, machinePageTabQuery, machinePageTabRouteParams } from './machinePageTabQuery';
+import { isMachinePageTabPushed, isMachinePageTabRoot, machinePageTabQuery, machinePageTabRouteParams } from './machinePageTabQuery';
 import { MACHINE_PAGE_TABS, resolveMachinePageTab } from './machinePageTabs';
 import { MachineResourcesAskBlock } from '@/components/machines/resources/ask/MachineResourcesAskBlock';
 import { MachinePageTabBodies } from './MachinePageTabBodies';
@@ -155,7 +155,10 @@ export function MachinePageScreen() {
 
     // A wide page draws the tab's accessory at the end of the tab bar (lab `rv` O); a phone keeps it in the body.
     const BarAccessory = barAccessoriesInBar ? tab.entry.BarAccessory : undefined;
-    const chrome = (
+    // On a phone a page a tab pushes (a service, a category, one process) is its own screen (lab `services/detailp`):
+    // its way back, name and facts own the top, with no Machine header or tabs above them.
+    const pushedOnPhone = phone && isMachinePageTabPushed(tab.params);
+    const chrome = pushedOnPhone ? <>{rename.editor}</> : (
         <>
             <ManagedMachinePageHeader target={target} managedEnrolled={managedEnrolled} renaming={rename.saving} onRename={rename.start} />
             {MACHINE_PAGE_TABS.length > 1 ? (

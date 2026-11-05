@@ -1,11 +1,13 @@
 import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/storageV1';
 
 /** Pure route types: core callers do not depend on the visual tab table and its component graph. */
-export type MachinePageTabId = 'overview' | 'processes' | 'storage' | 'guard';
+export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard';
 
 /** A tab and the params it owns (one arm per tab; each tab's plan adds its params with its row). */
 export type MachinePageTabParams =
     | Readonly<{ id: 'overview' }>
+    /** Plan 30 S30-6e: the services list, or one service's page with its logs (`page=service&service=<serviceId>`). */
+    | Readonly<{ id: 'services'; page?: 'service' | 'roles'; service?: string }>
     /**
      * Plan 30 §10: sorted by a column; on a phone an owner (`page=owner&owner=<row>`), one external app
      * (`page=app&app=<name>`, All processes) or one process pushes.
@@ -61,7 +63,7 @@ export function machinePageTabQuery(params: MachinePageTabParams): Readonly<Reco
 /** Every key across the tabs' param arms. The record must name each one exactly, so a tab's new param is cleared too. */
 type MachinePageTabParamKey = MachinePageTabParams extends infer Arm ? Arm extends unknown ? Exclude<keyof Arm, 'id'> : never : never;
 const MACHINE_PAGE_TAB_PARAM_KEYS = Object.keys({
-    sort: true, page: true, owner: true, process: true, app: true, scope: true, filter: true,
+    service: true, sort: true, page: true, owner: true, process: true, app: true, scope: true, filter: true,
     view: true, categoryId: true, nodeId: true, files: true, prepare: true, volumeId: true,
 } satisfies Record<MachinePageTabParamKey, true>);
 
@@ -81,6 +83,15 @@ export function machinePageTabRouteParams(next: MachinePageTabParams): Record<st
  * Whether the params name the tab itself. A page the tab pushes (a category, one process, full Activity) or its
  * Whole disk view is a destination of its own: blocks that close a tab (Ask an agent) belong to the root only.
  */
+/**
+ * Whether the params name a page the tab pushes (a service, a category, one process, full Activity, a plugin page's
+ * own location): it owns the top of the page, so a phone draws no Machine header above it. A tab's alternate view
+ * (Storage's Whole disk) is not pushed.
+ */
+export function isMachinePageTabPushed(params: MachinePageTabParams): boolean {
+    return 'page' in params && params.page !== undefined;
+}
+
 export function isMachinePageTabRoot(params: MachinePageTabParams): boolean {
     if ('page' in params && params.page !== undefined) return false;
     return !(params.id === 'storage' && params.view === 'disk');

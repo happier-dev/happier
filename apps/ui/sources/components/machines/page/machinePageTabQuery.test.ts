@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isMachinePageTabRoot, machinePageTabRouteParams } from './machinePageTabQuery';
+import { isMachinePageTabPushed, isMachinePageTabRoot, machinePageTabRouteParams } from './machinePageTabQuery';
 
 describe('machinePageTabRouteParams', () => {
     it('clears every tab-owned param and writes only the next view', () => {
@@ -28,5 +28,14 @@ describe('isMachinePageTabRoot', () => {
         expect(isMachinePageTabRoot({ id: 'storage', view: 'disk' })).toBe(false);
         expect(isMachinePageTabRoot({ id: 'processes', page: 'owner', owner: 'x' })).toBe(false);
         expect(isMachinePageTabRoot({ id: 'guard', page: 'activity' })).toBe(false);
+    });
+});
+
+describe('isMachinePageTabPushed', () => {
+    it('names the pages a tab pushes, never a tab root or its alternate view', () => {
+        expect(isMachinePageTabPushed({ id: 'services', page: 'service', service: 'web' })).toBe(true);
+        expect(isMachinePageTabPushed({ id: 'services', page: 'roles' })).toBe(true);
+        expect(isMachinePageTabPushed({ id: 'services' })).toBe(false);
+        expect(isMachinePageTabPushed({ id: 'storage', view: 'disk' })).toBe(false);
     });
 });

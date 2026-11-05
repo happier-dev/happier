@@ -82,7 +82,7 @@ export type HappierListSectionProps = Readonly<{
   /** Decorated glyphs; the immutable string remains the semantic group name. */
   titleContent?: ReactNode;
   /** A quiet, tabular count beside the title. */
-  count?: number;
+  count?: number | string;
   /** What the group's rows share, quiet at the header's end. */
   description?: string;
   /**
@@ -90,6 +90,12 @@ export type HappierListSectionProps = Readonly<{
    * section (a page-scrolling list's groups) takes the page's section title.
    */
   titleRole?: 'label' | 'micro' | 'group' | 'section';
+  /**
+   * `middle` keeps a one-line heading's end and gives up its middle (`splitForWebMiddleEllipsis`): a
+   * "<Source> · <Environment>" sub-heading shrinks its shared Source first and keeps the part that tells
+   * it apart from its siblings. Omitted, the heading ends in a tail ellipsis.
+   */
+  titleEllipsizeMode?: 'middle';
   /** One control at the header's end ("See all"), beside — never inside — the heading's name. */
   action?: ReactNode;
   /**
@@ -301,6 +307,8 @@ const sectionStyle: ViewStyle = {
 const sectionHeadingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 };
 // The band's name and count keep their width; what the rows share is what gives way on a narrow band.
 const sectionHeadingTitleStyle: HappierPortableStyle = { flexShrink: 0 };
+// Beside an action the title gives way (ending in an ellipsis) so the action stays on its line.
+const sectionHeadingTitleBesideActionStyle: HappierPortableStyle = { flexShrink: 1 };
 // What the group's rows share follows its count (lab `rp` L: "Left behind 3 · their sessions ended…"); its one action ends the band.
 const sectionHeadingDescriptionStyle: HappierPortableStyle = { flexShrink: 1 };
 const sectionHeadingActionStyle: HappierPortableStyle = { marginLeft: 'auto' };
@@ -376,6 +384,7 @@ export function HappierListSection({
   count,
   description,
   titleRole = 'label',
+  titleEllipsizeMode,
   action,
   virtualizedCollectionRole,
   accessibilityRowIndex,
@@ -408,11 +417,27 @@ export function HappierListSection({
   // A dense band's end holds its one trailing fact: its action when it has one ("Left behind 3 · …" then "Clean
   // up"), otherwise what its rows share ("Needs you 5 … You act next", lab `.grp`).
   const trailingDescription = (titleRole === 'micro' || titleRole === 'group') && !hasAction;
-  const heading = count === undefined && description === undefined && !hasAction
+  // A middle ellipsis on the web is two runs (the web draws only a tail one); native uses the platform's mode.
+  const titleMiddleRequested = titleEllipsizeMode === 'middle' && titleContent === undefined;
+  const titleMiddle = titleMiddleRequested && Platform.OS === 'web' ? splitForWebMiddleEllipsis(title) : null;
+  const headingTitle = (
+    <HappierText accessible={false} numberOfLines={titleMiddle === null ? 1 : undefined}
+      {...(titleMiddleRequested && titleMiddle === null ? { ellipsizeMode: 'middle' as const } : {})}
+      {...(titleMiddle === null ? {} : { baseStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.row })}
+      style={[titleStyle, hasAction || titleMiddle !== null ? sectionHeadingTitleBesideActionStyle : sectionHeadingTitleStyle]}>
+      {titleMiddle === null ? titleContent ?? title : (
+        <>
+          <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.head} numberOfLines={1}>{titleMiddle.head}</HappierText>
+          <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail} numberOfLines={1}>{titleMiddle.tail}</HappierText>
+        </>
+      )}
+    </HappierText>
+  );
+  const heading = count === undefined && description === undefined && !hasAction && titleEllipsizeMode === undefined
     ? <HappierText accessible={false} style={titleStyle}>{titleContent ?? title}</HappierText>
     : (
       <View style={sectionHeadingStyle}>
-        <HappierText accessible={false} numberOfLines={1} style={[titleStyle, sectionHeadingTitleStyle]}>{titleContent ?? title}</HappierText>
+        {headingTitle}
         {count === undefined ? null : (
           <HappierText accessible={false} tabularNumbers style={quietStyle}>{String(count)}</HappierText>
         )}

@@ -9,6 +9,8 @@ import type { TranslationKeyNoParams } from '@/text';
 
 import { MachineVitalsBarAccessory } from '@/components/machines/vitals/MachineVitalsRangeBar';
 
+import { MachineServicesTab } from '@/components/machines/services/MachineServicesTab';
+
 import { MachineOverview } from './MachineOverview';
 import type { MachinePageTabId, MachinePageTabParams, MachinePageTabBodyProps, MachinePageTabBarAccessoryProps } from './machinePageTabQuery';
 
@@ -33,6 +35,14 @@ const OVERVIEW_PARAMS: MachinePageTabParams = Object.freeze({ id: 'overview' });
 const STORAGE_PARAMS: MachinePageTabParams = Object.freeze({ id: 'storage' });
 
 const GUARD_PARAMS: MachinePageTabParams = Object.freeze({ id: 'guard' });
+const SERVICES_PARAMS: MachinePageTabParams = Object.freeze({ id: 'services' });
+
+/** Services' own params: one service's page or the deployment roles page when the route names it, else the list. */
+function parseServicesParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
+    const service = raw.service?.trim();
+    if (raw.page === 'roles') return { id: 'services', page: 'roles' };
+    return raw.page === 'service' && service ? { id: 'services', page: 'service', service } : SERVICES_PARAMS;
+}
 
 function parseGuardParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
     return raw.page === 'activity' ? { id: 'guard', page: 'activity' } : GUARD_PARAMS;
@@ -56,6 +66,7 @@ export function parseStorageParams(raw: Readonly<Record<string, string | undefin
 
 export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
     { id: 'overview', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, BarAccessory: MachineVitalsBarAccessory, parseParams: () => OVERVIEW_PARAMS },
+    { id: 'services', titleKey: 'machineServices.tab', Body: MachineServicesTab, suspendWhenHidden: true, parseParams: parseServicesParams },
     { id: 'processes', titleKey: 'machineProcesses.tab', Body: MachineProcessesTab, suspendWhenHidden: true, parseParams: parseMachineProcessesParams },
     { id: 'storage', titleKey: 'machineStorage.tab', Body: MachineStorageTab, suspendWhenHidden: true, BarAccessory: StorageTabBarAccessory, parseParams: parseStorageParams },
     { id: 'guard', titleKey: 'machineGuard.tab', Body: GuardTab, suspendWhenHidden: true, BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },

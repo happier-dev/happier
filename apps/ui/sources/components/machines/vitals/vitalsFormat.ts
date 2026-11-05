@@ -72,6 +72,19 @@ export function resolveVitalsAxis(
 }
 
 /** "Up 6 d 4 h", "Up 41 d", "Up 3 h 20 min", "Up 12 min": a machine's time since boot (header facts). */
+/**
+ * How long since `startedAt`, without the "Up" the header says ("2 d 6 h", "12 d"): a figure under a column
+ * already titled Up (Machine → Services). Same rounding as {@link describeMachineUptime}.
+ */
+export function describeMachineUptimeSpan(startedAt: number, nowMs: number): string {
+  const { days, hours, minutes } = resolveMachineUptimeParts(startedAt, nowMs);
+  const daysText = t('machineVitals.alerts.durations.days', { days });
+  if (days >= 7 || (days > 0 && hours === 0)) return daysText;
+  if (days > 0) return `${daysText} ${t('machineVitals.alerts.durations.hours', { hours })}`;
+  if (hours > 0) return minutes === 0 ? t('machineVitals.alerts.durations.hours', { hours }) : t('machineVitals.alerts.durations.hoursMinutes', { hours, minutes });
+  return t('machineVitals.alerts.durations.minutes', { minutes });
+}
+
 export function describeMachineUptime(bootedAt: number, nowMs: number): string {
   const { days, hours, minutes } = resolveMachineUptimeParts(bootedAt, nowMs);
   if (days >= 7 || (days > 0 && hours === 0)) return t('machineVitals.header.upDays', { days });

@@ -2484,6 +2484,45 @@ describe('list row lines (title meta, description, status takes the facts line)'
 });
 
 describe('render scope', () => {
+  it('draws listColumn fields as aligned end columns on a wide page-section list, named once, and leaves them to the byline on a phone', () => {
+    const bylineLayouts: Array<boolean | undefined> = [];
+    const columnsAnatomy: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      byline: (entry, layout) => {
+        bylineLayouts.push(layout?.fieldColumns);
+        return layout?.fieldColumns === true ? entry.repo : `${entry.repo} · ${entry.age}`;
+      },
+      titleMeta: (entry) => <Text testID={`meta:${entry.id}`}>{entry.age}</Text>,
+      titleMetaAlign: 'row',
+      fields: [{ key: 'age', title: 'Age', render: (entry) => entry.age, minWidth: 64, priority: 1, align: 'end', listColumn: true }],
+    };
+    const view = mount({
+      presentation: 'list', scroll: 'page', anatomy: columnsAnatomy,
+      // Both groups are parts of one page section: one heading, one sheet, two sub-headings.
+      grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: 'All work' } })) },
+    });
+    try {
+      view.measure(1200);
+      expect(view.query('row:a:column:age')?.textContent).toBe('18m');
+      expect(view.query('row:c:column:age')?.textContent).toBe('1d');
+      // The bar names the columns once, at the top of the section's one sheet.
+      expect(view.queryAll('collection:sheet-header')).toHaveLength(1);
+      expect(view.query('collection:sheet-header')?.textContent).toContain('Age');
+      // The row-aligned meta gives its place to the columns; the byline is told the columns say it.
+      expect(view.query('meta:a')).toBeNull();
+      expect(bylineLayouts.at(-1)).toBe(true);
+      expect(view.query('row:a')?.textContent).not.toContain('payments-api · 18m');
+
+      bylineLayouts.length = 0;
+      view.measure(390);
+      expect(view.query('row:a:column:age')).toBeNull();
+      expect(view.query('collection:sheet-header')).toBeNull();
+      expect(view.query('meta:a')).not.toBeNull();
+      expect(bylineLayouts.at(-1)).toBe(false);
+      expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
+    } finally { view.unmount(); }
+  });
+
   it.each([
     { presentation: 'table', scroll: undefined },
     { presentation: 'list', scroll: undefined },

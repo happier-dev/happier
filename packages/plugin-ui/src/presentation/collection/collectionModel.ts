@@ -102,7 +102,21 @@ export type HappierCollectionGroup = Readonly<{
   description?: string;
   /** Work groups may announce attention with the same semantic tone as their rows. */
   tone?: HappierWorkStatusTone;
+  /**
+   * The page section this group is one part of, when groups nest one level ("Deployed by Happier · 3 environments"
+   * › "shop · Production"). In a page list, consecutive groups naming one section share its heading and one sheet,
+   * each group under its own sub-heading; other presentations draw the groups as usual.
+   */
+  section?: HappierCollectionGroupSection;
 }>;
+
+export type HappierCollectionGroupSection = Readonly<{
+  key: string;
+  title: string;
+  /** A quiet fact beside the title ("3 environments"). */
+  detail?: string;
+}>;
+
 
 /**
  * What the loaded rows cover. The model never computes "N of M": a partial window names its own

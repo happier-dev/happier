@@ -906,6 +906,18 @@ surface, whose host bridge carries Collection UI queries only.
 
 ## A Collection with one detail body
 
+A list that
+scrolls with its page (`presentation="list"`, `scroll="page"`) can line figures up
+in columns: mark a field `listColumn: true` and wide rows draw it as its own end
+column at the field's `minWidth`, with the column titles once at the top of the
+first sheet (a service's Ports, Memory and Up). A phone draws no columns; your
+`byline` receives `{ fieldColumns }` so it can say those facts on the row's second
+line instead. While the columns show, a row-aligned `titleMeta`
+(`titleMetaAlign: 'row'`) gives its place to them, so declare that fact as a
+field too. Groups that share one page section (`section` on each group) sit on one
+sheet under sub-headings that keep their end: "customer-portal · Production"
+shortens the shared start first.
+
 In the **0.3 development / Developer Preview** source contract, `Collection`
 uses one model and item anatomy for list, table, board and grid presentations.
 Its `detail="auto"` adapts the same detail body to the available pane or pushed

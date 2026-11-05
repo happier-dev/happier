@@ -100,3 +100,31 @@ it('does not publish a late role response after Account replacement', async () =
         expect(homes.requests.filter(request => request.path.startsWith('/v1/deployments/environments'))).toHaveLength(0);
     } finally { await hook.unmount(); }
 });
+
+it('reads the census once per page open with the Machine header and the Services tab both mounted', async () => {
+    const serverId = await homes.addHome({ name: 'Shared roles', serverUrl: 'https://shared-roles.test',
+        serverIdentityId: 'srv_shared_roles', accountId: 'alice', currentAccount: true });
+    let referenceReads = 0;
+    homes.answer(serverId, '/v1/deployments/machine-references', { select: () => {
+        referenceReads++;
+        return { body: { homeId: 'srv_shared_roles', machineId: 'machine', coverage: 'complete', references: [], nextCursor: null } };
+    } });
+    // The Machine page header's role facts and the Services tab's roles section, mounted together on one page.
+    const both = () => [
+        useMachineDeploymentRoles({ serverId, machineId: 'machine', active: true }),
+        useMachineDeploymentRoles({ serverId, machineId: 'machine', active: true }),
+    ] as const;
+    let page = await renderHook(both);
+    try {
+        await waitForHomeGovernance(async () => { await flushHookEffects();
+            expect(page.getCurrent().map(roles => roles.status)).toEqual(['ready', 'ready']); });
+        expect(referenceReads, 'one census read for both consumers').toBe(1);
+        await page.unmount();
+        // Opening the page again reads once more, still once for both consumers.
+        page = await renderHook(both);
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(referenceReads).toBe(2); });
+        await flushHookEffects();
+        expect(referenceReads).toBe(2);
+        expect(page.getCurrent().map(roles => roles.status)).toEqual(['ready', 'ready']);
+    } finally { await page.unmount(); }
+});

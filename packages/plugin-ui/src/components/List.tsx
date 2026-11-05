@@ -34,6 +34,7 @@ import {
   HappierPageSectionHeader,
   HappierPageSectionText,
   HappierPageSheet,
+  HappierPageSheetGroup,
   useHappierPageSection,
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
@@ -312,14 +313,21 @@ export type ListSectionData<Item> = Readonly<{
    * while `data` is empty. Only a collapsed section survives having no rows.
    */
   collapsed?: boolean;
+  /**
+   * The page section this group is one part of: on a page sheet, consecutive groups naming one section share its
+   * heading and one sheet, each under its own sub-heading (`HappierPageSheetGroup`).
+   */
+  section?: Readonly<{ key: string; title: string; detail?: string }>;
   data: readonly Item[];
 }>;
 
 type VirtualizedListSectionMetadata = Readonly<{
   key: string;
   title: string;
-  count?: number;
+  /** A count, or a shared section's quiet fact ("3 environments"). */
+  count?: number | string;
   description?: string;
+  section?: ListSectionData<unknown>['section'];
   authorKey: string;
 }>;
 
@@ -1766,7 +1774,7 @@ function VirtualizedList<Item>(
   ]);
 
   const renderSectionHeader = useCallback(
-    ({ section }: Readonly<{ section: VirtualizedListSectionData<Item> }>) => {
+    ({ section, groupAction = true }: Readonly<{ section: VirtualizedListSectionData<Item>; groupAction?: boolean }>) => {
       // An untitled section among titled ones (the rows a table's own header names) draws no band.
       if (section.title === '') return null;
       const header = (
@@ -1782,7 +1790,7 @@ function VirtualizedList<Item>(
           {...(collectionControl?.sectionHeaderTitleRole === undefined
             ? {}
             : { titleRole: collectionControl.sectionHeaderTitleRole })}
-          {...(sectionHeaderAction === undefined
+          {...(sectionHeaderAction === undefined || !groupAction
             ? {}
             : { action: sectionHeaderAction(section.authorKey) })}
           virtualizedCollectionRole={collectionRole}
@@ -1938,14 +1946,49 @@ function VirtualizedList<Item>(
         style={[props.style, densityStyle, props.contentContainerStyle]}
       >
         {virtualizedSections !== undefined && visibleSections !== undefined
-          ? virtualizedSections.map((section) => {
-              const sectionRows = section.data.map((item, index) => (
+          ? pageSheetParts(virtualizedSections, pageSheet !== undefined).map((part, partIndex) => {
+              // The sheet bar (a Collection's column titles) heads the first sheet only; later sheets keep its columns.
+              const sheetHeader = partIndex === 0 ? pageSheet?.header ?? null : null;
+              const rowsOf = (section: VirtualizedListSectionData<Item>) => section.data.map((item, index) => (
                 <Fragment
                   key={encodeHappierSectionRowCellKey(keyForItem(item, index))}
                 >
                   {renderSectionRow({ item, index, section })}
                 </Fragment>
               ));
+              if (part.kind === 'section' && pageSheet !== undefined) {
+                // Groups that are parts of one page section: its one heading, then one sheet holding each group
+                // under its own sub-heading, a light pause between them (`HappierPageSheetGroup`). Each group's
+                // action stands on its own sub-heading; the section heading names them all and has none of its own.
+                const head = part.sections[0]!;
+                return (
+                  <Fragment key={`section:${part.section.key}`}>
+                    {renderSectionHeader({ section: { key: `section:${part.section.key}`, authorKey: head.authorKey,
+                      title: part.section.title, data: [],
+                      ...(part.section.detail === undefined ? {} : { count: part.section.detail }) }, groupAction: false })}
+                    <HappierPageSheet colors={pageSheet.colors} rowDividers={false}>
+                      {part.sections.map((section, index) => (
+                        <HappierPageSheetGroup key={section.key} header={(
+                          <>
+                            {/* The sheet bar stands above the first group's sub-heading, inside its group (no pause above it). */}
+                            {index === 0 ? sheetHeader : null}
+                            {/* A sub-heading names one part of its section, so it keeps its end (the part) and shrinks
+                                its shared start first ("customer-portal · Production"). */}
+                            <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
+                              style={index === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
+                              {...(section.description === undefined ? {} : { description: section.description })}
+                              {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />
+                          </>
+                        )}>
+                          <View>{rowsOf(section)}</View>
+                        </HappierPageSheetGroup>
+                      ))}
+                    </HappierPageSheet>
+                  </Fragment>
+                );
+              }
+              const section = part.sections[0]!;
+              const sectionRows = rowsOf(section);
               return (
                 <Fragment key={section.key}>
                   {renderSectionHeader({ section })}
@@ -1958,7 +2001,10 @@ function VirtualizedList<Item>(
                       colors={pageSheet.colors}
                       rowDividers={false}
                     >
-                      <View>{sectionRows}</View>
+                      <View>
+                        {sheetHeader}
+                        {sectionRows}
+                      </View>
                     </HappierPageSheet>
                   )}
                 </Fragment>
@@ -2021,6 +2067,36 @@ function VirtualizedList<Item>(
 
 // The header gap down to its sheet, as a page section's title sits above its own (the search or toolbar above it).
 const flatPageSheetStyle = { marginTop: HAPPIER_PAGE_METRICS.sectionHeaderGapPx } as const;
+
+// A sub-heading inside a shared section's sheet: on the rows' inset, the group heading gap down to its rows; the
+// first one takes a row's air from the sheet's top edge.
+const sheetGroupHeadingStyle = {
+  paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+  paddingBottom: HAPPIER_PAGE_METRICS.groupHeadingGapPx,
+} as const;
+const sheetGroupFirstHeadingStyle = { ...sheetGroupHeadingStyle, paddingTop: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx } as const;
+
+type PageSheetPart<Section> =
+  | Readonly<{ kind: 'one'; sections: readonly [Section] }>
+  | Readonly<{ kind: 'section'; section: NonNullable<ListSectionData<unknown>['section']>; sections: readonly Section[] }>;
+
+/** Consecutive groups naming one page section form one part (when the list draws page sheets); others stand alone. */
+function pageSheetParts<Section extends Readonly<{ section?: ListSectionData<unknown>['section'] }>>(
+  sections: readonly Section[], sheets: boolean,
+): readonly PageSheetPart<Section>[] {
+  const parts: PageSheetPart<Section>[] = [];
+  for (const section of sections) {
+    const last = parts[parts.length - 1];
+    if (sheets && section.section !== undefined && last?.kind === 'section' && last.section.key === section.section.key) {
+      parts[parts.length - 1] = { ...last, sections: [...last.sections, section] };
+    } else if (sheets && section.section !== undefined) {
+      parts.push({ kind: 'section', section: section.section, sections: [section] });
+    } else {
+      parts.push({ kind: 'one', sections: [section] });
+    }
+  }
+  return parts;
+}
 
 function ListRoot<Item>(props: ListProps<Item>): ReactElement {
   const { accessibilityLabel, accessibilityLabelKey, ...rest } = props;

@@ -21,7 +21,7 @@ import {
   useOptionalHappierUiPlatform,
   useOptionalHappierUiTypography,
 } from '../environment/context.js';
-import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '../presentation/layout/pageMetrics.js';
 import { resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
 import { useHappierPageSection } from '../presentation/layout/PageSection.js';
@@ -126,6 +126,14 @@ export type CollectionField<Item> = Readonly<{
    * there (a machine that reports nothing says why once, across where its figures would stand). The list ignores it.
    */
   spanRest?: (item: Item) => boolean;
+  /**
+   * A page-section list (`presentation="list"` scrolling with its page) also draws this field as its own end
+   * column: at `minWidth`, centred on both lines of the row, so its values line up down every sheet, and the first
+   * sheet's bar names the columns (lab `services/list` Ports · Memory · Up). A narrow row (a phone) draws no
+   * columns: `byline` is told so (`fieldColumns: false`) and carries what they said. While the columns are drawn
+   * a row-aligned `titleMeta` (`titleMetaAlign: 'row'`) gives its place to them; declare the same fact as a field.
+   */
+  listColumn?: boolean;
 }>;
 
 /** The one item anatomy every presentation draws from. Renderers are pure. */
@@ -191,9 +199,10 @@ export type CollectionAnatomy<Item> = Readonly<{
   where?: (item: Item) => ReactNode;
   /**
    * The list row's second line, where there is room for who as well as where ("payments-api #2481 · Mara
-   * Oduya"). Defaults to `where`.
+   * Oduya"). Defaults to `where`. `layout.fieldColumns` says whether the row also draws its `listColumn`
+   * fields as columns; when it doesn't (a phone), the byline is where those facts go.
    */
-  byline?: (item: Item) => ReactNode;
+  byline?: (item: Item, layout?: Readonly<{ fieldColumns: boolean }>) => ReactNode;
   /** The one loud fact. */
   reason?: (item: Item) => ReactNode;
   /**
@@ -212,6 +221,12 @@ export type CollectionAnatomy<Item> = Readonly<{
    * under the title, end-aligned. The table draws it as an end-aligned column titled `columnTitles.titleMeta`.
    */
   titleMeta?: (item: Item) => ReactNode;
+  /**
+   * Where a two-line list row draws its `titleMeta`: `title` (the default) at the title line's end; `row` as the
+   * row's own end column, centred on both lines, the way the table draws its column (a service's port beside its
+   * name and what it is). Catalog and single-line rows keep it on their one title line.
+   */
+  titleMetaAlign?: 'title' | 'row';
   fields?: readonly CollectionField<Item>[];
   /** The table-only peek body. */
   peek?: (item: Item) => ReactNode;
@@ -571,6 +586,8 @@ type CollectionStage<Item> = Readonly<{
    * take two lines and rows size to them. Beside a detail rows keep the exact height the travel plans with.
    */
   wrapTitles: boolean;
+  /** The `listColumn` fields a page-section list row draws as its end columns (none on a narrow stage). */
+  listColumns: readonly CollectionField<Item>[];
   /** The resting list is ruled (`restingRows` `ruled`/`ruled-page`): the row inset at both ends, else null. */
   ruledInsetPx: number | null;
   pageSections: boolean;
@@ -608,6 +625,8 @@ function ruledRowInset(theme: HappierUiTheme, restingRows: HappierCollectionRest
 const listActionStyle: HappierPortableStyle = { marginRight: LIST_ACTION_INSET };
 /** The title meta: end-aligned, whole (it never shrinks; the title gives way). */
 const metaCellStyle: HappierPortableStyle = { flexShrink: 0, alignItems: 'flex-end', marginLeft: HAPPIER_ROW_TITLE_META_GAP_PX };
+/** A two-line row's meta as its own end column, centred on both lines (`titleMetaAlign: 'row'`). */
+const rowMetaColumnStyle: HappierPortableStyle = { flexShrink: 0, alignSelf: 'center' };
 const NO_ROW_ACTIONS: CollectionRowActions = Object.freeze({});
 /** The table's and the side list's rows are ruled; the resting list (a phone, a narrow page) parts its rows by air. */
 const RULED_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true });
@@ -880,6 +899,7 @@ const pageRowContentStyle: HappierPortableStyle = {
   gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
   minHeight: HAPPIER_PAGE_METRICS.rowMinHeightPx,
 };
+const pageRowTrailingStyle: HappierPortableStyle = { paddingRight: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx - 1 };
 const pageRowGlyphStyle: HappierPortableStyle = { width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, alignItems: 'center' };
 /** A title that may wrap keeps its age on its first line, like the lab's phone list. */
 const wrappedTitleLineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'flex-start', gap: 8, minWidth: 0 };
@@ -1096,6 +1116,8 @@ function ListCells<Item>(props: Readonly<{
   pageSection: boolean;
   /** No accessory cell follows the row's content, so the content runs to the row's trailing edge. */
   ownsTrailingInset: boolean;
+  /** The `listColumn` fields drawn as the row's end columns (`CollectionStage.listColumns`). */
+  listColumns: readonly CollectionField<Item>[];
 }>): ReactElement {
   const { item, anatomy, AnimatedView } = props;
   const typography = useOptionalHappierUiTypography();
@@ -1107,13 +1129,15 @@ function ListCells<Item>(props: Readonly<{
     ? { paddingLeft: ruledPaddingPx, paddingRight: ruledPaddingPx }
     : { paddingLeft: ruledPaddingPx };
   const age = anatomy.age?.(item) ?? null;
-  const where = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item);
+  const fieldColumns = props.listColumns.length > 0;
+  const where = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item, { fieldColumns });
   const reason = anatomy.reason?.(item);
   // The second line ends with the loud reason, or else the caller's one list fact.
   const lineEnd = reason === undefined || reason === null || reason === false || reason === '' ? anatomy.listFact?.(item) : reason;
   const description = anatomy.description?.(item) ?? null;
   const described = anatomy.description !== undefined;
-  const titleMeta = anatomy.titleMeta?.(item);
+  // A row-aligned meta gives its place to the field columns while they are drawn (see `listColumn`).
+  const titleMeta = fieldColumns && anatomy.titleMetaAlign === 'row' ? null : anatomy.titleMeta?.(item);
   const meta = titleMeta === undefined || titleMeta === null || titleMeta === false ? null : titleMeta;
   const badge = anatomy.glyphBadge?.(item) ?? null;
   // An item with no mark (a skill) draws no glyph column in the list; its text starts at the row's inset.
@@ -1121,7 +1145,8 @@ function ListCells<Item>(props: Readonly<{
   const glyph = leadingControl === null ? (anatomy.glyph(item) ?? null) : null;
   const [metaPlacement, setMetaPlacement] = useState<'inline' | 'beneath'>('inline');
   const measured = useRef({ row: 0, meta: 0 });
-  const titleMinWidth = TABLE.titleMinWidth * useHappierUiAccessibility().textScale * LIST_TITLE_MIN_SHARE;
+  const { textScale } = useHappierUiAccessibility();
+  const titleMinWidth = TABLE.titleMinWidth * textScale * LIST_TITLE_MIN_SHARE;
   const placeMeta = useCallback((next: Partial<{ row: number; meta: number }>) => {
     measured.current = { ...measured.current, ...next };
     setMetaPlacement(resolveHappierRowTitleMetaPlacement({
@@ -1136,6 +1161,7 @@ function ListCells<Item>(props: Readonly<{
   // never travels there (no table), so its rows size to their text.
   const page = props.pageSection;
   const secondLine = page ? { ...resolveHappierPageTextStyle('rowDescription', typography), flexShrink: 1 } : undefined;
+  const metaOnRow = anatomy.titleMetaAlign === 'row' && meta !== null;
   const metaCell = meta === null ? null : (
     <View style={metaCellStyle} onLayout={(event) => { placeMeta({ meta: event.nativeEvent.layout.width }); }}>
       <SlotContent value={meta} textStyle={secondLine} />
@@ -1158,6 +1184,8 @@ function ListCells<Item>(props: Readonly<{
   return (
     <View pointerEvents={layer?.content} style={[listRowContentStyle,
       page ? pageRowContentStyle : props.wrapTitle ? { minHeight: props.height } : { height: props.height },
+      // A page row with nothing after it ends on the page row's inset, where a sub-heading's action ends.
+      page && props.ownsTrailingInset ? pageRowTrailingStyle : null,
       props.wrapTitle && !page ? (props.ruledInsetPx !== null
         ? ruledStyle
         : (props.ownsTrailingInset ? restingListTrailingStyle : restingListContentStyle)) : null]}>
@@ -1186,7 +1214,7 @@ function ListCells<Item>(props: Readonly<{
             style={[titleTextStyle, flexCellStyle, page ? resolveHappierPageTextStyle('rowTitle', typography) : resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.listRowTitle, typography)]}>
             {anatomy.title(item)}
           </HappierText>
-          {metaPlacement === 'inline' ? metaCell : null}
+          {metaPlacement === 'inline' && !metaOnRow ? metaCell : null}
           {age === null ? null : (
             <HappierText variant="meta" tone="muted" numberOfLines={1} tabularNumbers>{age}</HappierText>
           )}
@@ -1196,7 +1224,7 @@ function ListCells<Item>(props: Readonly<{
             <HappierText variant="body" tone="muted" numberOfLines={props.wrapTitle ? 2 : 1} style={[flexCellStyle, secondLine ?? null]}>
               {description ?? ''}
             </HappierText>
-            {metaPlacement === 'beneath' ? metaCell : null}
+            {metaPlacement === 'beneath' && !metaOnRow ? metaCell : null}
           </View>
         ) : null}
         <AnimatedView value={props.secondLine.value} tracks={props.secondLine.tracks} style={lineStyle} {...(layer === null ? {} : { pointerEvents: layer.content })}>
@@ -1208,11 +1236,18 @@ function ListCells<Item>(props: Readonly<{
               {layer === null ? <SlotContent value={lineEnd} textStyle={secondLine} /> : (
                 <View pointerEvents={layer.leaf} style={controlsStyle}><SlotContent value={lineEnd} textStyle={secondLine} /></View>
               )}
-              {metaPlacement !== 'beneath' ? null : layer === null ? metaCell : <View pointerEvents={layer.leaf}>{metaCell}</View>}
+              {metaPlacement !== 'beneath' || metaOnRow ? null : layer === null ? metaCell : <View pointerEvents={layer.leaf}>{metaCell}</View>}
             </>
           )}
         </AnimatedView>
       </View>
+      {metaOnRow ? <View pointerEvents={layer?.leaf} style={rowMetaColumnStyle}>{metaCell}</View> : null}
+      {props.listColumns.map((field) => (
+        <View key={field.key} pointerEvents={layer?.leaf} style={listColumnCellStyle(field, textScale)}
+          {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:column:${field.key}` })}>
+          <SlotContent value={field.render(item)} tabular textStyle={secondLine} />
+        </View>
+      ))}
     </View>
   );
 }
@@ -1341,7 +1376,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
         wrapTitle={stage.wrapTitles}
         ruledInsetPx={stage.ruledInsetPx}
         pageSection={stage.pageSections}
-        ownsTrailingInset={stage.wrapTitles && !stage.pageSections && accessory === null}
+        ownsTrailingInset={(stage.pageSections || stage.wrapTitles) && accessory === null}
+        listColumns={stage.listColumns}
       />
       {travel === null ? null : (
         // The table's other columns, fading where they stood while the rows travel.
@@ -1718,6 +1754,14 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const wrapTitles = composition === 'list' && transition === null && !besideDetail;
   const restingRows = useContext(HappierCollectionRestingRowsContext);
   const ruledInsetPx = wrapTitles && restingRows !== 'air' ? ruledRowInset(theme, restingRows) : null;
+  // A page-section list's `listColumn` fields stand as end columns where the row has room (never on a phone, where the
+  // byline carries them); a page table keeps its own bar.
+  const columnsShown = pageSections && rowGeometry === 'list'
+    && !isHappierPageRowNarrow(size?.width ?? null);
+  const listColumns = useMemo((): readonly CollectionField<Item>[] => {
+    const declared = columnsShown ? (anatomy.fields ?? NO_FIELDS).filter((field) => field.listColumn === true) : NO_FIELDS;
+    return declared.length === 0 ? NO_FIELDS : declared;
+  }, [anatomy.fields, columnsShown]);
   // Peeks exist in the resting table; while the table fades out (reduced motion) they stay and fade with it.
   const expandable = rowGeometry === 'table'
     && (transition === null || transition.kind === 'fade')
@@ -1775,6 +1819,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         ...(pageSections ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
+        // Groups that are parts of one page section share its heading and sheet (page sections only).
+        ...(group?.section === undefined || !pageSections ? {} : { section: group.section }),
         ...(group !== null && collapsedGroups?.has(group.key) === true ? { collapsed: true } : {}),
         data,
       };
@@ -1790,7 +1836,22 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // are on the left, the order they are in on the right (lab `rp` Hp "Started by Happier · Memory ↓").
   const sort = props.sort;
   const sortedField = sort === undefined ? undefined : anatomy.fields?.find((field) => field.key === sort.key);
-  const pageSheetHeader = useMemo(() => !pageSections || grouped || sort === undefined || sortedField === undefined ? null : (
+  const listColumnsHeader = useMemo(() => listColumns.length === 0 ? null : (
+    // The list's columns named once, on the first sheet: what the rows are, then each column over its figures.
+    <View
+      testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
+      style={[pageSheetHeaderStyle, listColumnsHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider }]}
+    >
+      <View style={pageRowGlyphStyle} />
+      <HappierText variant="meta" tone="muted" numberOfLines={1} style={flexTextStyle}>{anatomy.columnTitles.title}</HappierText>
+      {listColumns.map((field) => (
+        <View key={field.key} style={listColumnCellStyle(field, accessibility.textScale)}>
+          <HappierText variant="meta" tone="muted" numberOfLines={1}>{field.title}</HappierText>
+        </View>
+      ))}
+    </View>
+  ), [accessibility.textScale, anatomy.columnTitles.title, listColumns, palette?.rowDivider, props.testID, theme.colors.divider]);
+  const pageSheetHeader = useMemo(() => listColumnsHeader ?? (!pageSections || grouped || sort === undefined || sortedField === undefined ? null : (
     <View
       testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
       style={[pageSheetHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider }]}
@@ -1805,7 +1866,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:${sortedField.key}` })}
       />
     </View>
-  ), [anatomy.columnTitles.title, grouped, pageSections, palette?.rowDivider, props.testID, sort, sortedField, theme.colors.divider]);
+  )), [anatomy.columnTitles.title, grouped, listColumnsHeader, pageSections, palette?.rowDivider, props.testID, sort, sortedField, theme.colors.divider]);
   cellsRef.current = useMemo(() => {
     const cells: HappierCollectionTransitionCell[] = [];
     for (const section of sections) {
@@ -1866,6 +1927,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     toggleExpanded: model.actions.toggleExpanded,
     tree: treeStage,
     wrapTitles,
+    listColumns,
     ruledInsetPx,
     pageSections,
     useRowActions: props.useRowActions,
@@ -1873,7 +1935,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, columns, composition, dividedKeys, expandable, expanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, ruledInsetPx, pageSections, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
+  }), [anatomy, columns, composition, dividedKeys, expandable, expanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, listColumns, ruledInsetPx, pageSections, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
@@ -2582,6 +2644,13 @@ const pageSheetHeaderStyle: HappierPortableStyle = {
   height: TABLE.headerHeight, paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx, borderBottomWidth: 1,
 };
 const flexTextStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
+/** The bar over a list's columns keeps the rows' gaps: mark, title, then each column (`pageRowContentStyle`). */
+const listColumnsHeaderStyle: HappierPortableStyle = { gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx };
+
+/** A list row's `listColumn` cell and its bar title: one fixed width, so the column lines up down every sheet. */
+function listColumnCellStyle<Item>(field: CollectionField<Item>, textScale: number): HappierPortableStyle {
+  return { width: field.minWidth * textScale, flexShrink: 0, alignSelf: 'center', alignItems: field.align === 'end' ? 'flex-end' : 'flex-start' };
+}
 const sheetSortCellStyle: HappierPortableStyle = { flexShrink: 0, alignItems: 'flex-end' };
 
 /**
