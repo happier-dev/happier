@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
 export { DeploymentDomainHealthCheckV1Schema, type DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
