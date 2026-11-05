@@ -6,6 +6,8 @@ export type MachineSetupStepImpactReference = Readonly<{ kind: 'selected'; affec
 
 /** One classifier feeds both review disclosure and native authority resolution. */
 export function readMachineSetupStepImpactReference(step: MachineRecipeStepV1): MachineSetupStepImpactReference | undefined {
+  if (step.kind === 'script') return step.affects === 'dockerEngine' ? { kind: 'localDocker' }
+    : step.affects ? { kind: 'selected', affects: step.affects } : undefined;
   if (step.kind === 'command') return step.affects ? { kind: 'selected', affects: step.affects } : undefined;
   if (step.kind === 'serviceUnit' && (step.unit === 'docker.service' || step.unit === 'containerd.service'))
     return { kind: 'localDocker' };

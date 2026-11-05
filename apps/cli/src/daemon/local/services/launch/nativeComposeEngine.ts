@@ -244,6 +244,9 @@ export async function readNativeDockerEffectEngines(input: EngineReadInput): Pro
     } catch (error) {
         if (input.signal?.aborted || error && typeof error === 'object' && 'code' in error
             && error.code === 'plugin_exec_termination_incomplete') throw error;
+        // A fresh host can install Docker. Missing CLI is a positive native
+        // prerequisite result; permission/connectivity failures remain unknown.
+        if (error instanceof NativeComposePrerequisiteError && error.details.prerequisite.cause === 'not_installed') return [];
         const cause = error instanceof NativeComposePrerequisiteError ? error.details.prerequisite.cause : 'unavailable';
         const problem = cause === 'permission_denied'
             ? 'The Happier daemon user does not have permission to access Docker. Configure Docker access for that user and refresh its login session.'
