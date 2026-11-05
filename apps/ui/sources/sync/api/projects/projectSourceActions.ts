@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { admitProjectSourceAttachmentV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
@@ -63,7 +64,7 @@ export function createProjectSourceActionDeps(account: SourceAccountPort) {
                 context?.signal?.throwIfAborted();
                 account.assertCurrent();
             }
-            return output;
+            return projectConfirmedActionHttpRefusal(output, response.status);
         } catch (error) {
             const failure = scopeFailure(error);
             if (failure) return failure;

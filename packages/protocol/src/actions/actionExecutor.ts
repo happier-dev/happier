@@ -35,7 +35,7 @@ import type { CoreOptions, PreparedCoreAdmission, PrivatePrepareResult, ActionHo
 import { DeploymentTemplateInstantiationReviewV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
-import { projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
+import { projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './executor/approvalResults.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary } from './executor/approvalPreparation.js';
@@ -1367,7 +1367,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return finishExecution(latestRequest, recordedExecutionResult);
       }
       if (latestRequest.v === 2 && latestRequest.status === 'executing') {
-        if (args.replayOutcomeUnknown) return await persistExecutionFailure(latestRequest, args.replayOutcomeUnknown, true);
+        // A lost replay reply does not transfer settlement from the executor
+        // that already claimed the effect. Its Artifact feed owns the outcome.
+        if (args.replayOutcomeUnknown) return finishExecution(latestRequest, args.replayOutcomeUnknown);
         return executionOutcomeUnknown();
       }
     }
@@ -1903,40 +1905,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Deferred approval execution is authoritative; after-hook observation is diagnostic only.
       }
     }
-    const executedAtMs = Date.now();
-    // Private Artifact custody carries ordinary typed results back to a caller
-    // waiting on another host. Blocking flow alone does not make that result
-    // live-only. Only declared live-only results use the safe projection here;
-    // public reads and decisions independently apply the observation projection.
-    const persistedExec = actionId !== null
-      && getActionSpec(actionId).approvalResultCustody === 'live_only'
-      ? projectActionExecutionObservation(actionId, exec)
-      : exec;
-    // Settled approval input custody, the input-side sibling of `persistedExec`
-    // above. Deferred replay is the only reader of the raw arguments and it has
-    // already run, so the terminal record keeps this Action's own observation
-    // projection instead of retaining write-only secrets forever.
-    const settledRequest = settleApprovalRequestReplayInputs(request);
-    const executionReceipt = {
-      updatedAtMs: Math.max(executedAtMs, request.updatedAtMs),
-      execution: persistedExec.ok
-        ? { executedAtMs, effectAttempted, ok: true, result: persistedExec.result }
-        : request.v === 2
-          ? projectApprovalExecutionFailureV2({
-              request,
-              failure: persistedExec,
-              executedAtMs,
-              effectAttempted,
-            })
-          : { executedAtMs, ok: false, errorCode: persistedExec.errorCode, error: persistedExec.error },
-    };
-    const nextExecuted: ApprovalRequest = settledRequest.v === 2
-      ? { ...settledRequest, ...executionReceipt,
-          status: exec.ok ? 'executed' : effectAttempted && isActionOutcomeUnknownErrorCodeV1(exec.errorCode) ? 'outcome_unknown' : 'failed' }
-      : { ...settledRequest, ...executionReceipt, status: exec.ok ? 'executed' : 'failed' };
-    if (nextExecuted.v === 2 && effectAttempted && persistedExec.operationCredentialUses?.length) {
-      nextExecuted.execution = { ...nextExecuted.execution!, operationCredentialUses: [...persistedExec.operationCredentialUses] };
-    }
+    const { request: nextExecuted, exec: settledExec } = projectSettledApprovalExecution({ request, actionId, exec,
+      dispatchEffectAttempted: effectAttempted, executedAtMs: Date.now() });
 
     // The side effect ran after the durable execution claim. If its terminal
     // projection cannot be committed, the Artifact intentionally remains
@@ -1949,7 +1919,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // history. The durable execution claim remains non-replayable; unrelated
     // scope loss and ordinary terminal write failures remain outcome-unknown.
     const retirementReceipt = actionId === null ? null
-      : projectKnownAccountAuthorityRetirementReceipt(getActionSpec(actionId), exec);
+      : projectKnownAccountAuthorityRetirementReceipt(getActionSpec(actionId), settledExec);
     const terminalPersistenceFailure = async () => {
       if (retirementReceipt) return { ok: true as const, request: nextExecuted, exec: retirementReceipt };
       // A missing acknowledgement does not prove the terminal write failed.
@@ -1959,7 +1929,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const persisted = await readMatchingApprovalRequestReceipt({
         artifactId: args.artifactId, serverId: args.artifactServerId, request: nextExecuted,
       });
-      if (persisted) return finishExecution(persisted, exec);
+      if (persisted) return finishExecution(persisted, settledExec);
       return executionOutcomeUnknown();
     };
     let updated: unknown;
@@ -1970,7 +1940,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     const updateFailure = readActionFailureEnvelope(updated);
     if (updateFailure) return terminalPersistenceFailure();
-    return finishExecution(nextExecuted, exec);
+    return finishExecution(nextExecuted, settledExec);
   }
 
   /**

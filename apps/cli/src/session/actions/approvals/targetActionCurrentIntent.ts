@@ -2,12 +2,13 @@ import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNO
 import { TargetActionApprovalRequestV1Schema, StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { PluginLocalizedStringV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
-import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { createLiveApprovalDecision } from './liveDecision';
 import { targetActionApprovalSubjectsEqual } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
+import { buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 
 function resolveLocalizedConfirmationText(value: PluginLocalizedStringV2): string {
   return typeof value === 'string' ? value : value.fallback;
@@ -104,7 +105,9 @@ export function targetActionApprovalMatchesCurrentIntent(
 }
 
 export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
-  create: (request: TargetActionApprovalRequestV1) => Promise<Readonly<{ artifactId: string }>>;
+  create: (request: TargetActionApprovalRequestV1,
+    onReady?: (created: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>) => void,
+  ) => Promise<Readonly<{ artifactId: string; request?: TargetActionApprovalRequestV1 }>>;
   read: (artifactId: string) => Promise<TargetActionApprovalRequestV1 | null>;
   update?: ReturnType<typeof createCliApprovalsArtifactStore>['targetActionApprovalsUpdate'];
   subscribeChanges?: (
@@ -114,48 +117,46 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
   ) => Readonly<{ dispose(): void | Promise<void> }>;
   now?: () => number;
 }>): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
-  const coordinator = getSharedBlockingApprovalCoordinator();
   const subscribeChanges = deps.subscribeChanges;
   return async (currentIntent) => {
     const { fingerprint, signal } = currentIntent;
     const now = (deps.now ?? Date.now)();
-    const request = createTargetActionApprovalRequestCandidate(currentIntent, {
+    const proposedRequest = createTargetActionApprovalRequestCandidate(currentIntent, {
       createdAtMs: now,
       updatedAtMs: now,
     });
-    if (request === null) {
+    if (proposedRequest === null) {
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
     const update = deps.update;
     // A durable request has its existing replay writer. Live-only operands
     // instead require the incumbent's receipt port before creating consent.
-    if (request.approvalInputCustody === 'live_only' && !update) {
+    if (proposedRequest.approvalInputCustody === 'live_only' && !update) {
       currentIntent.reportUnavailable?.('approval_factory_unavailable');
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
+    const liveDecision = createLiveApprovalDecision({ read: deps.read, signal, subscribeChanges });
     let created: Awaited<ReturnType<typeof deps.create>>;
-    try { created = await deps.create(request); }
+    try { created = await deps.create(proposedRequest, ready => {
+      if (ready.request.approvalInputCustody === 'live_only') void liveDecision.waitForDecision(ready);
+    }); }
     catch (error) {
+      await liveDecision.cancelCreation();
       currentIntent.reportUnavailable?.('approval_artifact_create_failed');
       throw error;
     }
     const artifactId = created.artifactId.trim();
+    const request = created.request ?? proposedRequest;
     if (!artifactId) {
+      await liveDecision.cancelCreation();
       currentIntent.reportUnavailable?.('approval_artifact_id_unavailable');
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
     if (request.approvalInputCustody !== 'live_only') {
+      await liveDecision.cancelCreation();
       return { status: 'deferred', artifactId };
     }
-    const result = await coordinator.waitForDecision({
-      artifactId,
-      request,
-      signal,
-      readRequest: () => deps.read(artifactId),
-      ...(subscribeChanges ? {
-        subscribeChanges: (onChange, onError) => subscribeChanges(artifactId, onChange, onError),
-      } : {}),
-    });
+    const result = await liveDecision.waitForDecision({ artifactId, request });
     const decidedRequest = StoredTargetActionApprovalRequestV1Schema.safeParse(result.request);
     if (!decidedRequest.success
       || decidedRequest.data.subjectFingerprint !== fingerprint
@@ -163,6 +164,12 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
     }
     if (result.decision === 'approve') {
+      // A recorded approval decision is history once its effect has settled.
+      // Rejoining that receipt must not claim or execute the same intent again.
+      if (decidedRequest.data.status !== 'approved') {
+        const terminal = buildTargetActionApprovalDecisionResult(decidedRequest.data);
+        return terminal.ok ? { status: 'deferred', artifactId } : { status: 'unavailable', code: terminal.errorCode };
+      }
       if (!update) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
       const executionClaim = TargetActionApprovalRequestV1Schema.parse({ ...decidedRequest.data,
         status: 'executing', updatedAtMs: Math.max((deps.now ?? Date.now)(), decidedRequest.data.updatedAtMs),

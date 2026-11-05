@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -71,7 +72,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
         const changed = await params.admitAccount(serverId, context);
         if (changed) return changed;
       }
-      return output;
+      return projectConfirmedActionHttpRefusal(output, response.status);
     } catch (error) {
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
       return failure(outcome === 'cancelled' ? 'cancelled'

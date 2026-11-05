@@ -1,3 +1,4 @@
+import { createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -62,4 +63,21 @@ describe('Source admission through the default Account Action host', () => {
         });
         expect(homes.requestsFor(path)).toEqual([]);
     });
+});
+
+
+it.each([false, true])('settles a Source tombstone through the UI Inbox with producer effect evidence (%s)', async producerAttempted => {
+    const serverId = await homes.addHome({ name: 'Source replay', serverUrl: 'https://source-replay.test',
+        accountId: 'source-owner', currentAccount: true, accountEncryptionMode: 'plain' });
+    await homes.requireUiApproval(serverId, 'projects.sources.delete');
+    homes.answer(serverId, 'DELETE /v1/projects/sources/deleted-source', { status: 404,
+        body: { ok: false, error: 'source_unavailable', ...(producerAttempted ? { effectAttempted: true } : {}) } });
+    const artifactId = await createUiApprovalRequest({ serverId, actionId: 'projects.sources.delete',
+        actionInput: { serverId, sourceId: 'deleted-source', expectedRevision: 1 }, actionRequestId: 'review-source-delete' });
+    const expected = { ok: true, result: { status: 'failed', execution: {
+        ok: false, errorCode: 'source_unavailable', effectAttempted: producerAttempted,
+    } } };
+    expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject(expected);
+    expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject(expected);
+    expect(homes.requestsFor('/v1/projects/sources/deleted-source').filter(request => request.method === 'DELETE')).toHaveLength(1);
 });

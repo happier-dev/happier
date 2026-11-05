@@ -70,7 +70,7 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
     const prepared = await prepareRequesterContext(request);
     if (!prepared) return null;
     try {
-      const authorization = prepared.authorization;
+      let authorization = prepared.authorization;
       const binding = authorization.binding;
       const installation = readInstallationIdentityIfExistsSync();
       const origin = await input.resolveCurrentMachineExecutionOriginContext?.(request.signal);
@@ -88,6 +88,18 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
         return currentOrigin?.machineId === binding.machineId && currentOrigin.serverIdentityId === binding.serverIdentityId
           && !request.signal?.aborted && !input.daemonWorkSignal.aborted;
       };
+      // Durable approval content retains the signed root, not its private HTTP
+      // port. The replay owner verified that root before this preparation.
+      if (!authorization.requesterHttpProjection) {
+        const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+          serverId: input.serverId, serverIdentityId: origin.serverIdentityId,
+          serverHttpBaseUrl: input.serverBaseUrl, target: binding.target,
+          installationId: installation.installationId, privateKey: installation.privateKey,
+          isCurrent, rootAdmitted: true, ...(request.signal ? { signal: request.signal } : {}),
+        });
+        if (!projected) { await prepared.dispose?.(); return null; }
+        authorization = projected;
+      }
       const actionsSettings = readRequesterAccountActionContext(authorization)
         ?.savedSecretOperationContext.readSnapshot()?.settings.actionsSettingsV1;
       return { ...prepared, ...(actionsSettings ? { actionsSettings } : {}),

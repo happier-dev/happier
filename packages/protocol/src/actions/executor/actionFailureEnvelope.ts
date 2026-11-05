@@ -3,6 +3,21 @@ import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/ses
 import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
 
+/** A received client refusal proves this write did not admit new work; a lost reply does not. */
+export function isConfirmedActionWriteRefusal(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as Readonly<{ response?: Readonly<{ status?: unknown }>; status?: unknown }>;
+  const status = record.response?.status ?? record.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/** Preserve producer evidence; only a confirmed HTTP refusal supplies a missing no-effect fact. */
+export function projectConfirmedActionHttpRefusal<T>(result: T, status: number): T {
+  return result && typeof result === 'object' && 'ok' in result && result.ok === false
+    && !('effectAttempted' in result) && isConfirmedActionWriteRefusal({ status })
+    ? { ...result, effectAttempted: false } : result;
+}
+
 /**
  * Admit the RpcHandlerManager's serialized exception before an Action adapter
  * parses its success payload. Explicit domain results (ok/success/status, etc.)

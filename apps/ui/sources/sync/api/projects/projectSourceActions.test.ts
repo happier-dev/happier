@@ -41,7 +41,7 @@ describe('authenticated Source Action transport', () => {
         });
         const result = await deps.projectSourcesUpdate({ serverId: scope.serverId, sourceId: 'source-a', expectedRevision: 1,
             patch: { attachment: { kind: 'detach', purpose: 'dashboard', ref: dashboard.ref } } });
-        expect(result).toEqual({ ok: false, error: 'source_conflict' });
+        expect(result).toEqual({ ok: false, error: 'source_conflict', effectAttempted: false });
         expect(input).toEqual({ serverId: scope.serverId, sourceId: 'source-a', expectedRevision: 1,
             patch: { attachment: { kind: 'detach', purpose: 'dashboard', ref: dashboard.ref } } });
     });
@@ -158,7 +158,7 @@ describe('authenticated Source Action transport', () => {
         });
         const input = { serverId: scope.serverId, sourceId: 'source-a', expectedRevision: 1,
             patch: { attachment: { kind: 'attach' as const, attachment: { ...dashboard, ref: { ...dashboard.ref, serverId: fixture.home.id } } } } };
-        expect(await deps.projectSourcesUpdate(input)).toEqual({ ok: false, error: 'source_conflict' });
+        expect(await deps.projectSourcesUpdate(input)).toEqual({ ok: false, error: 'source_conflict', effectAttempted: false });
         expect(localRead).toBe(false);
         expect(written).toEqual(input);
         expect(fixture.requests.some(({ path }) => path === '/v1/artifacts/layout')).toBe(true);
@@ -187,7 +187,7 @@ describe('authenticated Source Action transport', () => {
             written = undefined;
             expect(await deps.projectSourcesUpdate({ ...input,
                 patch: { attachment: { kind: 'attach', attachment: dashboard } } }, context))
-                .toEqual({ ok: false, error: 'source_conflict' });
+                .toEqual({ ok: false, error: 'source_conflict', effectAttempted: false });
             expect(written).toBeDefined();
         }
         expect(localRead).toBe(true);

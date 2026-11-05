@@ -22,7 +22,13 @@ export function isTargetApproval(request: ApprovalRequest | TargetActionApproval
 export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionApprovalRequestV1): ApprovalExecutor {
   if (isTargetApproval(request)) {
     if (request.approvalInputCustody === 'live_only') {
-      const daemonMachineId = request.replayPlacement?.machineId.trim() ?? request.executionOriginV1?.machineId?.trim();
+      const origin = request.executionOriginV1;
+      // A contextual Machine is not custody of an Account Action's live inputs.
+      // An admitted daemon invocation keeps its placement or signed origin.
+      const standaloneCli = origin?.surface === 'cli' && origin.caller.kind === 'host'
+        && !origin.externalActionExecutionAuthorization;
+      const daemonMachineId = request.replayPlacement?.machineId.trim()
+        ?? (standaloneCli ? undefined : origin?.machineId?.trim());
       return { kind: 'live_invocation', ...(daemonMachineId ? { daemonMachineId } : {}) };
     }
     const machineId = request.replayPlacement?.machineId.trim();

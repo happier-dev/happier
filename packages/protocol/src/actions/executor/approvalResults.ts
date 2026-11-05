@@ -129,8 +129,19 @@ export function projectSettledApprovalExecution(args: Readonly<{
   exec: ActionExecuteResult;
   dispatchEffectAttempted: boolean;
   executedAtMs: number;
-}>): ApprovalRequest {
-  const { request, actionId, exec, executedAtMs } = args;
+}>): Readonly<{ request: ApprovalRequest; exec: ActionExecuteResult }> {
+  const { request, actionId, executedAtMs } = args;
+  // An adapter may successfully return a declared domain refusal. Use the
+  // same catalog-validated owner as retained reads before choosing a terminal
+  // status; an opaque failure-looking payload is still ordinary Action data.
+  const returnedFailure = args.exec.ok && actionId !== null
+    ? readApprovalExecutionFailure({ ...request, execution: {
+        executedAtMs, ok: true, result: args.exec.result,
+      } }) : null;
+  const exec: ActionExecuteResult = returnedFailure
+    ? { ...returnedFailure, ...(args.exec.operationCredentialUses?.length
+        ? { operationCredentialUses: args.exec.operationCredentialUses } : {}) }
+    : args.exec;
   // Only an explicit typed failed result can refine the dispatch fact. A
   // missing value or a thrown failure's normalization retains uncertainty.
   const effectAttempted = !exec.ok && typeof exec.effectAttempted === 'boolean'
@@ -156,10 +167,10 @@ export function projectSettledApprovalExecution(args: Readonly<{
   };
   const nextExecuted: ApprovalRequest = settledRequest.v === 2
     ? { ...settledRequest, ...executionReceipt,
-        status: exec.ok ? 'executed' : 'failed' }
+        status: exec.ok ? 'executed' : effectAttempted && isActionOutcomeUnknownErrorCodeV1(exec.errorCode) ? 'outcome_unknown' : 'failed' }
     : { ...settledRequest, ...executionReceipt, status: exec.ok ? 'executed' : 'failed' };
   if (nextExecuted.v === 2 && effectAttempted && persistedExec.operationCredentialUses?.length) {
     nextExecuted.execution = { ...nextExecuted.execution!, operationCredentialUses: [...persistedExec.operationCredentialUses] };
   }
-  return nextExecuted;
+  return { request: nextExecuted, exec };
 }

@@ -1,5 +1,4 @@
 import type { ApprovalExecutionOriginV1, ApprovalRequest } from '../../approvals/approvalRequestV1.js';
-import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
@@ -36,7 +35,9 @@ export async function prepareApprovalReplayAuthorization(input: Readonly<{
   // root was admitted with this execution, before the executing claim.
   if (input.retainedLogs) return undefined;
   const authorization = input.context.externalActionExecutionAuthorization;
-  return authorization && resolveApprovalExecutor(input.request).kind !== 'app' && input.prepare
+  // Placement chooses the executor, not whether its decoded signed root needs
+  // the incumbent ingress owner's private HTTP/requester custody restored.
+  return authorization && input.prepare
     ? await input.prepare({ authorization, ...(input.context.signal ? { signal: input.context.signal } : {}) })
     : undefined;
 }

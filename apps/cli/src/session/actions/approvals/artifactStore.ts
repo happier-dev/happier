@@ -144,7 +144,8 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
   approvalsCreate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsCreate']>;
   approvalsGet: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsGet']>;
   approvalsUpdate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsUpdate']>;
-  targetActionApprovalsCreate(args: Readonly<{ request: TargetActionApprovalRequestV1 }>): Promise<Readonly<{ artifactId: string }>>;
+  targetActionApprovalsCreate(args: Readonly<{ request: TargetActionApprovalRequestV1;
+    onReady?: (created: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>) => void }>): Promise<Readonly<{ artifactId: string }>>;
   targetActionApprovalsGet(args: Readonly<{ artifactId: string }>): Promise<TargetActionApprovalRequestV1 | null>;
   targetActionApprovalsUpdate(args: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
   executionRunHostActionApprovalsCreate(args: Readonly<{ request: ExecutionRunHostActionApprovalRequestV1 }>): Promise<Readonly<{ artifactId: string }>>;
@@ -308,8 +309,9 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
         header: buildExecutionRunHostActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) });
       return updated.ok ? { ok: true } : updated;
     },
-    targetActionApprovalsCreate: async ({ request }) => {
+    targetActionApprovalsCreate: async ({ request, onReady }) => {
       const artifactId = randomUUID();
+      onReady?.({ artifactId, request });
       const res = await accountArtifactStore.create({ artifactId,
         header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) });
       await prepareRequesterRecipient(res.artifactId, request.requesterConfirmation);

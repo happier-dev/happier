@@ -72,7 +72,7 @@ export const ProjectSourcesDeleteInputV1Schema = lazyZodSchema(() => z.strictObj
 export const ProjectSourcesMoveToTeamInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, sourceId: id, expectedRevision: revision, teamId: id, requestKey: id,
 }));
-export const ProjectSourcesFailureV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(false), error: z.enum(['source_unavailable', 'source_access_denied', 'source_invalid', 'source_conflict', 'artifact_unavailable', 'artifact_wrong_kind', 'source_backend_unavailable']), current: z.optional(ProjectSourceV1Schema) }));
+export const ProjectSourcesFailureV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(false), error: z.enum(['source_unavailable', 'source_access_denied', 'source_invalid', 'source_conflict', 'artifact_unavailable', 'artifact_wrong_kind', 'source_backend_unavailable']), effectAttempted: z.optional(z.boolean()), current: z.optional(ProjectSourceV1Schema) }));
 export type ProjectSourcesFailureV1 = z.infer<typeof ProjectSourcesFailureV1Schema>;
 export const ProjectSourcesReadOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), source: ProjectSourceV1Schema, canManage: z.boolean() }), ProjectSourcesFailureV1Schema]));
 export const ProjectSourcesCreateOutputV1Schema = ProjectSourcesReadOutputV1Schema;

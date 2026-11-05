@@ -392,7 +392,8 @@ function readTypedDomainFailure(value: unknown): ActionExecuteFailure | null {
   if (!code) return null;
   const message = [error?.message, result.error, reason?.message]
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-  return { ok: false, errorCode: code, error: message ?? code };
+  return { ok: false, errorCode: code, error: message ?? code,
+    ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) };
 }
 
 /** Read terminal history without trusting legacy or unvalidated opaque fields. */
