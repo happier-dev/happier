@@ -15,6 +15,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUT
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -134,7 +135,7 @@ type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
 
 /** The editor header's Test action with its result line, read as one control. */
 function findDraftTestRow(screen: RenderedScreen) {
-    const button = screen.findByTestId('settings-provider-authoring-test');
+    const button = findComposite(screen, 'settings-provider-authoring-test', 'loading');
     if (!button) return undefined;
     const result = findComposite(screen, 'settings-provider-authoring-probe-result', 'text');
     return {
@@ -1318,53 +1319,51 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(navigationPreventRemove.enabled).toBe(false);
     });
 
-    it.each(['custom', 'detected'] as const)('discards the mounted %s authoring draft when the shared machine selector changes target', async (kind) => {
+    it('keeps the draft when its Machine field changes and still guards departure', () => withPopoverWebGlobals(async () => {
         await administrationTarget.controller.setMachines([{ machineId: 'machine-a' }, { machineId: 'machine-b' }]);
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
-        const screen = await renderScreen(<ProviderConnectionAuthoringScreen {...(kind === 'detected' ? {
-            contributionKey: 'acme.plugin/ollama',
-            candidateId: 'discovery-candidate:v1:default',
-            displayName: 'Detected Ollama',
-        } : {})} />);
-        const nameField = () => screen.findAllByType(FieldTextInput)
-            .find((field) => field.props.accessibilityLabel === 'settingsProviders.authoring.name');
+        const { MachineAdministrationContextBar } = await import('@/components/settings/machines/MachineAdministrationContextBar');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        const field = (label: string) => screen.findAllByType(FieldTextInput)
+            .find((entry) => entry.props.accessibilityLabel === label);
+        const name = 'Keep this gateway';
+        const baseUrl = 'https://gateway.example/v1';
+        const models = '/models';
         await React.act(async () => {
-            nameField()?.props.onChangeText('Discard this draft');
+            field('settingsProviders.authoring.name')!.props.onChangeText(name);
+            field('settingsProviders.authoring.baseUrl')!.props.onChangeText(baseUrl);
+            field('settingsProviders.authoring.modelsPath')!.props.onChangeText(models);
         });
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+        modalAlert.mockClear();
+        await screen.pressByTestIdAsync('settings.providers.administration.target.chip');
+        await React.act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
+        await screen.pressByTestIdAsync('settings.providers.administration.target.picker-option:machine-b');
+        expect(modalAlert).not.toHaveBeenCalled();
+        expect(screen.findByType(MachineAdministrationContextBar).props.selection.selectedTarget?.machineId).toBe('machine-b');
+        expect(field('settingsProviders.authoring.name')?.props.value).toBe(name);
+        expect(field('settingsProviders.authoring.baseUrl')?.props.value).toBe(baseUrl);
+        expect(field('settingsProviders.authoring.modelsPath')?.props.value).toBe(models);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+
+        // A real departure is still a navigation transaction, unlike editing the Machine field.
         let navigationResult: true | Promise<boolean> = true;
         await React.act(async () => {
-            navigationResult = runGuardedNavigation(async () => { await administrationTarget.controller.select('machine-b'); });
+            navigationResult = runGuardedNavigation(() => { routerPush('/settings/providers/pc_other'); });
             await flushHookEffects({ cycles: 1, turns: 2 });
         });
+        expect(routerPush).not.toHaveBeenCalled();
         const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
+        expect(buttons.some(button => button.style === 'destructive')).toBe(true);
         await React.act(async () => {
-            buttons.find((button) => button.style === 'destructive')?.onPress?.();
+            buttons.find(button => button.style === 'cancel')!.onPress?.();
             await navigationResult;
         });
-        expect(nameField()?.props.value ?? '').toBe('');
-        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(false);
-        if (kind === 'detected') {
-            await React.act(async () => {
-                nameField()?.props.onChangeText('Discard this one too');
-            });
-            await React.act(async () => {
-                navigationResult = runGuardedNavigation(() => { routerPush('/settings/providers/pc_other'); });
-                await flushHookEffects({ cycles: 1, turns: 2 });
-            });
-            const nextButtons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
-            await React.act(async () => {
-                nextButtons.find((button) => button.style === 'destructive')?.onPress?.();
-                await navigationResult;
-            });
-            expect(describeProviderConnections.mock.calls.at(-1)?.[0]).toMatchObject({
-                machineId: 'machine-b',
-                authoringPreview: { selectedCandidateId: null, displayName: null },
-            });
-            expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(false);
-        }
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(field('settingsProviders.authoring.name')?.props.value).toBe(name);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
         expect(run).not.toHaveBeenCalled();
-    });
+    }));
 
     it('keeps the required connection name visible, focusable, and continuous in advanced mode', async () => {
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
@@ -1647,20 +1646,22 @@ describe('ProviderConnectionAuthoringScreen', () => {
             .toBeNull();
     });
 
-    it('invalidates successful Test connection truth after the selected Saved Secret value rotates', async () => {
+    it.each(['is revalidated', 'rotates', 'is deleted', 'access is removed'] as const)('keeps Test connection truth current when the selected Saved Secret %s', async change => {
         await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({
             features: { providers: { enabled: true }, teams: { enabled: true } },
         }));
         const ref = 'happier:shared-secret:v1:gateway-key';
-        const publishSecret = (revision: number, value: string) => account.home.answer(account.serverId,
+        const publishSecret = (revision: number, value: string, materialStatus: 'ready' | 'access_removed' = 'ready') => account.home.answer(account.serverId,
             '/v1/account/saved-secrets/resources/materials', { body: { resources: [{
                 resourceId: 'gateway-key', encryptionMode: 'plain', recipientEnvelope: null,
                 storedContent: { t: 'plain', v: { v: 1, name: 'Gateway key', kind: 'token', value } },
                 entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Gateway key', kind: 'token',
-                    revision, materialStatus: 'ready',
+                    revision, materialStatus,
                     capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
             }] } });
         publishSecret(1, 'gateway-private-a');
+        let settleProbe!: (value: unknown) => void;
+        if (change === 'is revalidated') probeProviderDraft.mockReturnValueOnce(new Promise(resolve => { settleProbe = resolve; }));
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
         const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
         const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
@@ -1682,11 +1683,24 @@ describe('ProviderConnectionAuthoringScreen', () => {
         });
         await waitForHomeGovernance(() => expect(findDraftTestRow(screen)?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('settings-provider-authoring-test');
+        if (change === 'is revalidated') {
+            await waitForHomeGovernance(() => expect(probeProviderDraft).toHaveBeenCalledOnce());
+            expect(findDraftTestRow(screen)?.props.loading).toBe(true);
+            const { invalidateSavedSecretCatalog } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+            await React.act(async () => { invalidateSavedSecretCatalog(scope); });
+            expect(findDraftTestRow(screen)?.props.loading).toBe(true);
+            await React.act(async () => {
+                settleProbe({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:revalidated' });
+            });
+        }
         await waitForHomeGovernance(() => expect(findDraftTestRow(screen)?.props.subtitle)
             .toBe('settingsProviders.detail.testSucceeded'));
+        if (change === 'is revalidated') return;
 
         await React.act(async () => {
-            publishSecret(2, 'gateway-private-b');
+            if (change === 'rotates') publishSecret(2, 'gateway-private-b');
+            else if (change === 'access is removed') publishSecret(1, 'gateway-private-a', 'access_removed');
+            else account.home.answer(account.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [] } });
             await refreshSavedSecretCatalog(scope);
         });
 

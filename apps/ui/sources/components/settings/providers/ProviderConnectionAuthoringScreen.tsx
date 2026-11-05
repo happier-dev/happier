@@ -238,13 +238,17 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const selectedSecretObservation = React.useMemo(() => {
         if (!draftRequiresApiKey || effectiveSecretId === null) return null;
         const selected = savedSecretCatalog.resolveReference(effectiveSecretId);
+        const identity = {
+            recordFingerprint: selected.fingerprint,
+            materialStatus: selected.entry?.materialStatus ?? null,
+        };
         if (selected.status !== 'ready' || !selected.secret) {
-            return { status: 'missing' as const };
+            return { ...identity, status: 'missing' as const };
         }
         return {
+            ...identity,
             status: 'present' as const,
             name: selected.secret.name,
-            recordFingerprint: selected.fingerprint,
         };
     }, [draftRequiresApiKey, effectiveSecretId, savedSecretCatalog.resolveReference]);
     // Unsaved work is the draft itself. The target machine is a persisted
@@ -261,11 +265,12 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         machineId,
         draft: draftProbeObservationFacts(draft),
         savedSecretId: draftRequiresApiKey ? effectiveSecretId : null,
-        // Display names are not probe input.
-        selectedSecretObservation: selectedSecretObservation?.status === 'present' ? {
-            status: selectedSecretObservation.status,
+        // Local material can be withdrawn during revalidation without changing
+        // the Secret admitted by the daemon. Only its catalog identity is input.
+        selectedSecretObservation: selectedSecretObservation ? {
             recordFingerprint: selectedSecretObservation.recordFingerprint,
-        } : selectedSecretObservation,
+            materialStatus: selectedSecretObservation.materialStatus,
+        } : null,
     });
     const initialAuthoringStateKeyRef = React.useRef(authoringStateKey);
     isDirtyRef.current = authoringStateKey !== initialAuthoringStateKeyRef.current;
@@ -682,7 +687,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const contextBar = (
         <MachineAdministrationContextBar
             label={t('settingsProvidersCollection.machineScopeLabel')}
-            selection={providerTarget.selection}
+            // Choosing where to test this draft edits a field; it does not leave the editor.
+            selection={{ ...providerTarget.selection, changeIntent: 'draft' }}
             testIDPrefix="settings.providers.administration.target"
         />
     );
