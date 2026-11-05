@@ -429,7 +429,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         return (
             <>
                 {props.renderHeaderActionsPrefix ? props.renderHeaderActionsPrefix({ iconButtonStyle, iconColor: theme.colors.text.secondary }) : null}
-                {newSession.approvalNotice}
                 {/* A phone's Project bar carries the browser and Terminal (its File page has no strip). */}
                 {deviceType !== 'phone' ? (
                     <BrowserSurfaceOpenButton
@@ -479,8 +478,11 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         deviceType,
         effectiveRootPath,
         newSession.open,
-        newSession.approvalNotice,
     ]);
+
+    // A pending approval must stay in sight: it rides with the pane's controls, into a single tab's header too.
+    const { approvalNotice } = newSession;
+    const renderLiveActions = React.useCallback(() => approvalNotice, [approvalNotice]);
 
     // The pane's own control: the docked column or drawer closes here (Editor first keeps its editor column).
     const editorArrangement = useOptionalAppPaneScopeLayout()?.arrangement === 'editor';
@@ -539,6 +541,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             renderTabContent={renderTabContent}
             renderOverlay={renderOverlay}
             renderStripActions={renderStripActions}
+            renderLiveActions={renderLiveActions}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}
         />

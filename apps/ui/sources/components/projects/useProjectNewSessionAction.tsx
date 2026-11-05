@@ -99,9 +99,11 @@ export function useProjectNewSessionAction(input: Readonly<{
         } catch { unavailable(); }
     }, [approval.requestApproval, target.serverId, target.machineId, target.rootPath, targetKey, origin]);
     const approvalId = approval.approvalId;
-    const approvalNotice = approval.approvalPending && approvalId
+    // One element per pending approval: the panes that lend it to a header republish only when it changes.
+    const approvalPending = approval.approvalPending;
+    const approvalNotice = React.useMemo(() => approvalPending && approvalId
         ? <ActionApprovalPendingNotice message={t('approvals.status.open')} testID="project-new-session-approval"
             onOpenApproval={() => router.push(buildApprovalHref(approvalId, target.serverId))} />
-        : null;
+        : null, [approvalId, approvalPending, router, target.serverId]);
     return { open, approvalNotice };
 }

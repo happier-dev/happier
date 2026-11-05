@@ -149,6 +149,14 @@ export type DetailsTabGroupPanelProps = Readonly<{
      * (focus, close), and the launchers come back with the strip.
      */
     renderStripActions?: (() => React.ReactNode) | null;
+    /**
+     * What must stay reachable whatever the strip does: live controls (Track following an agent's write,
+     * a pending approval) and the pane's own toggles (the right pane). Unlike a launcher they never leave
+     * with the strip: they sit just before the pane's controls wherever those are drawn, on the strip or in
+     * the one tab's header the controls are lent to. They are not a close, so a phone tab's `⋯` keeps its
+     * Close row. Return null while there is nothing to show, so a pane with nothing else to lend lends nothing.
+     */
+    renderLiveActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
     /**
@@ -212,13 +220,14 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     const restoreChipOnStrip = usePaneMainRestoreChipVisible() && props.group.isFocused;
     const lendsControls = props.collapseSingleTabStrip === true && !phoneStripCarriesLeading && !forceEmptyState && !restoreChipOnStrip && props.group.tabs.length === 1;
     const headerActionsScopeKey = `details-group:${React.useId()}`;
-    const { renderHeaderLeadingActions, renderHeaderActions } = props;
+    const { renderHeaderLeadingActions, renderHeaderActions, renderLiveActions } = props;
     // Nothing to lend lends nothing: an empty fragment would read as pane controls and keep a header's row (FV2bp).
     const renderLentControls = React.useCallback(() => {
         const leading = renderHeaderLeadingActions ? renderHeaderLeadingActions() : null;
+        const live = renderLiveActions ? renderLiveActions() : null;
         const trailing = renderHeaderActions ? renderHeaderActions() : null;
-        return leading == null && trailing == null ? null : <>{leading}{trailing}</>;
-    }, [renderHeaderActions, renderHeaderLeadingActions]);
+        return leading == null && live == null && trailing == null ? null : <>{leading}{live}{trailing}</>;
+    }, [renderHeaderActions, renderHeaderLeadingActions, renderLiveActions]);
     useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null);
     const controlsTakenByTab = useStackHeaderActionsClaimed(headerActionsScopeKey);
     const showStrip = !(lendsControls && controlsTakenByTab);
@@ -267,6 +276,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 )}
                 {props.group.isFocused && mainColumnEdge === 'end' ? <PaneMainRestoreChip /> : null}
                 {props.renderStripActions ? props.renderStripActions() : null}
+                {renderLiveActions ? renderLiveActions() : null}
                 {props.renderHeaderActions ? props.renderHeaderActions() : null}
             </View> : null}
             {forceEmptyState || props.group.tabs.length === 0 ? (

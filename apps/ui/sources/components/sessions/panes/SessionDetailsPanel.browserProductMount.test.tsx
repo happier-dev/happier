@@ -109,6 +109,22 @@ describe('SessionDetailsPanel browser product mount', () => {
         expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt']);
     });
 
+    it('keeps the right-pane toggle reachable when one file’s header takes the pane controls', async () => {
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        await flushHookEffects();
+        // One tab with its own header: the strip yields (its launchers go with it), the pane's toggle does not.
+        await vi.waitFor(() => {
+            expect(screen.findAllHostsByTestId('file-details-header.root')).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('session-details-open-browser')).toHaveLength(0);
+        }, { timeout: 10000 });
+        expect(screen.findAllHostsByTestId('session-details-right-pane-toggle')).toHaveLength(1);
+    });
+
     it('commit Back closes only the commit destination and preserves the other tab', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { SessionCommitDetailsView } = await import('@/components/sessions/files/views/SessionCommitDetailsView');

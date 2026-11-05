@@ -495,6 +495,29 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
 
     // Launchers and workspace chrome ride on the strip; a single tab's own header (a peek) keeps
     // only the pane's controls (lab `session-D`: ⤢ and ×).
+    const renderLiveActions = React.useCallback(() => {
+        const trackCapsule = track.target ? <TrackCapsule track={track} /> : null;
+        const rightPaneToggle = showHeaderActions && showRightPaneToggle ? (
+            <IconButton
+                variant="plain"
+                size={DETAILS_TAB_STRIP_METRICS.actionSizePx}
+                onPress={toggleRightPane}
+                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle') ?? 'session-details-right-pane-toggle'}
+                accessibilityLabel={
+                    rightPaneOpen
+                        ? t('session.detailsPanel.closeRightSidebarA11y')
+                        : t('session.detailsPanel.openRightSidebarA11y')
+                }
+                icon={rightPaneOpen
+                    ? <SidebarCollapseIcon edge="right" size={18} color={theme.colors.text.secondary} />
+                    : <SidebarExpandIcon edge="right" size={18} color={theme.colors.text.secondary} />}
+            />
+        ) : null;
+        return trackCapsule === null && rightPaneToggle === null ? null : <>{trackCapsule}{rightPaneToggle}</>;
+    }, [rightPaneOpen, sessionScreenTestIdsEnabled, showHeaderActions, showRightPaneToggle, theme.colors.text.secondary, toggleRightPane, track]);
+
+    // Launchers ride on the strip; a single tab's own header (a peek) keeps only the pane's controls
+    // and what must stay reachable (lab `session-D`: ⤢ and ×).
     const renderStripActions = React.useCallback(() => {
         const boardOpenButton = (
             <IconButton
@@ -516,38 +539,16 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
 
         return (
             <>
-                <TrackCapsule track={track} />
                 {showDedicatedBoardAction ? boardOpenButton : null}
                 {browserOpenButton}
-                {showHeaderActions && showRightPaneToggle ? (
-                    <IconButton
-                        variant="plain"
-                        size={DETAILS_TAB_STRIP_METRICS.actionSizePx}
-                        onPress={toggleRightPane}
-                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle')}
-                        accessibilityLabel={
-                            rightPaneOpen
-                                ? t('session.detailsPanel.closeRightSidebarA11y')
-                                : t('session.detailsPanel.openRightSidebarA11y')
-                        }
-                        icon={rightPaneOpen
-                            ? <SidebarCollapseIcon edge="right" size={18} color={theme.colors.text.secondary} />
-                            : <SidebarExpandIcon edge="right" size={18} color={theme.colors.text.secondary} />}
-                    />
-                ) : null}
             </>
         );
     }, [
         openBoardTab,
         showDedicatedBoardAction,
         openBrowserLaunchpadTab,
-        rightPaneOpen,
         sessionScreenTestIdsEnabled,
-        showHeaderActions,
-        showRightPaneToggle,
         theme.colors.text.secondary,
-        toggleRightPane,
-        track,
     ]);
 
     const renderHeaderActions = React.useCallback(() => {
@@ -585,6 +586,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             renderOverlay={renderOverlay}
             renderHeaderLeadingActions={renderHeaderLeadingActions}
             renderStripActions={renderStripActions}
+            renderLiveActions={renderLiveActions}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}
         />

@@ -62,6 +62,43 @@ const testIds = { tab: (key: string) => `strip-tab-${key}` };
 const renderPaneActions = () => <View testID="pane-close" />;
 
 describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
+  it('keeps a live control (Track) reachable: it moves into the one tab’s header with the pane controls, and stays on the strip with several tabs', async () => {
+    const renderLiveActions = () => <View testID="track" />;
+    const renderStripActions = () => <View testID="open-browser" />;
+    const collapsed = await renderScreen(
+      <DetailsTabGroupPanel
+        pane={pane}
+        group={group([tab('peek', 'retry.ts')])}
+        collapseSingleTabStrip
+        testIds={testIds}
+        renderLiveActions={renderLiveActions}
+        renderStripActions={renderStripActions}
+        renderHeaderActions={renderPaneActions}
+        renderTabContent={() => <DetailsTabHeader testID="peek-header" title="retry.ts" />}
+      />,
+    );
+    expect(collapsed.findAllHostsByTestId('strip-tab-peek')).toHaveLength(0);
+    const header = collapsed.findHostByTestId('peek-header.root');
+    expect(header!.findAll((node) => node.props?.testID === 'track' && typeof node.type === 'string')).toHaveLength(1);
+    expect(collapsed.findAllHostsByTestId('track')).toHaveLength(1);
+    expect(collapsed.findAllHostsByTestId('open-browser')).toHaveLength(0);
+
+    const withStrip = await renderScreen(
+      <DetailsTabGroupPanel
+        pane={pane}
+        group={group([tab('a', 'a.txt'), tab('b', 'b.txt')])}
+        collapseSingleTabStrip
+        testIds={testIds}
+        renderLiveActions={renderLiveActions}
+        renderStripActions={renderStripActions}
+        renderHeaderActions={renderPaneActions}
+        renderTabContent={(entry) => <DetailsTabHeader testID={`header-${entry.key}`} title={entry.title} />}
+      />,
+    );
+    expect(withStrip.findAllHostsByTestId('track')).toHaveLength(1);
+    expect(withStrip.findAllHostsByTestId('open-browser')).toHaveLength(1);
+  });
+
   it("drops its tab strip and lends the pane controls to the tab's own header", async () => {
     const screen = await renderScreen(
       <DetailsTabGroupPanel

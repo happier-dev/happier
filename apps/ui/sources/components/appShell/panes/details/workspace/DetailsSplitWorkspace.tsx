@@ -117,6 +117,8 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     renderHeaderLeadingActions?: (() => React.ReactNode) | null;
     /** Launchers for another tab; they ride on the strip only (see `DetailsTabGroupPanel`). */
     renderStripActions?: (() => React.ReactNode) | null;
+    /** What must stay reachable (Track, a pending approval, the pane's toggles); it travels with the pane's controls (see `DetailsTabGroupPanel`). */
+    renderLiveActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
     /**
@@ -260,6 +262,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     renderTabContent={props.renderTabContent}
                     renderHeaderLeadingActions={isFocused ? props.renderHeaderLeadingActions : null}
                     renderStripActions={isFocused ? props.renderStripActions : null}
+                    renderLiveActions={isFocused ? props.renderLiveActions : null}
                     renderHeaderActions={isFocused ? props.renderHeaderActions : null}
                     renderEmptyState={props.renderEmptyState}
                     collapseSingleTabStrip={details.groups.length === 1}
@@ -280,6 +283,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderHeaderActions,
         props.renderHeaderLeadingActions,
         props.renderStripActions,
+        props.renderLiveActions,
         props.renderTabContent,
         props.resolveTabIconName,
         props.resolveTabPresentation,
@@ -303,6 +307,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
             renderTabContent={props.renderTabContent}
             renderHeaderLeadingActions={props.renderHeaderLeadingActions}
             renderStripActions={props.renderStripActions}
+            renderLiveActions={props.renderLiveActions}
             renderHeaderActions={props.renderHeaderActions}
             renderEmptyState={props.renderEmptyState}
         />
@@ -319,6 +324,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderHeaderActions,
         props.renderHeaderLeadingActions,
         props.renderStripActions,
+        props.renderLiveActions,
         props.renderTabContent,
         props.resolveTabIconName,
         props.resolveTabPresentation,

@@ -332,6 +332,51 @@ describe('Project Local Changes', () => {
         expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[cacheKey]).toEqual(commentsBefore);
         await screen.unmount();
     });
+    it('keeps a pending Project authoring approval visible when one tab’s header takes the Details controls', async () => {
+        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
+        accountSettings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'session.authoring.open': { approvalRequiredSurfaces: ['ui'] } },
+        }) };
+        storage.getState().applySettingsForScope(scope, accountSettings, ++accountSettingsVersion);
+        const checkout = { id: 'wr_1', serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
+        const workspaceScope = { serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo/worktree-a' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout, { ...checkout, id: 'worktree-a', rootPath: workspaceScope.rootPath }] });
+        boundary.pathname = '/projects/wr_1/overview';
+        boundary.routeParams = {};
+        const cacheKey = tryBuildWorkspaceCacheKey(workspaceScope);
+        if (!cacheKey) throw new Error('Exact workspace scope missing');
+        storage.getState().upsertWorkspaceReviewCommentDraft(cacheKey, {
+            id: 'comment-a', filePath: 'src/a.ts', source: 'diff', body: 'Please verify this change.', createdAt: 1,
+            anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: 1, newLine: 1 },
+            snapshot: { selectedLines: ['+a'], beforeContext: ['-a'], afterContext: [] },
+        });
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+        const { WorkspaceDetailsPanel } = await import('@/components/projects/panes/WorkspaceDetailsPanel');
+        const observed: { pane: AppPaneScopeApi | null } = { pane: null };
+        function Probe() { observed.pane = useAppPaneScope('project:wr_1'); return null; }
+        const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-authoring"
+            ref={{ kind: 'project', params: { workspaceRefId: checkout.id, serverId: runtime.serverId } }}
+            pathname={boundary.pathname} focused visible
+            navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
+            <Probe /><WorkspaceDetailsPanel workspaceRef={checkout} activeRootPath={workspaceScope.rootPath} scopeId="project:wr_1" />
+        </DestinationInstanceHost></runtime.Wrapper>);
+        // Two files keep the strip (and its launcher); the selected one stays selected throughout.
+        await act(async () => { observed.pane?.openDetailsTab(createWorkspaceFileDetailsTab('src/b.ts'), { intent: 'pinned' }); });
+        await act(async () => { observed.pane?.openDetailsTab(createWorkspaceFileDetailsTab('src/a.ts'), { intent: 'pinned' }); });
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workspace-details-open-review-comments-session');
+        await vi.waitFor(() => expect(screen.findHostByTestId('project-new-session-approval')).not.toBeNull());
+        // Closing the other file leaves one with its own header: the strip and its launchers yield; the pending approval must not.
+        await act(async () => { observed.pane?.closeDetailsTab('file:src/b.ts'); });
+        await flushHookEffects();
+        await vi.waitFor(() => {
+            expect(screen.findAllHostsByTestId('file-details-header.root')).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('workspace-details-open-review-comments-session')).toHaveLength(0);
+        }, { timeout: 10000 });
+        expect(screen.findHostByTestId('project-new-session-approval')).not.toBeNull();
+        await screen.unmount();
+    });
     it.each([false, true])('ordinary Project header retains its qualified selected plugin companion and instance across draft opening (closed %s)', async closed => {
         const scope = { serverId: runtime.serverId, accountId: 'account-a' };
         const before = listNewSessionDraftProjections(scope);
