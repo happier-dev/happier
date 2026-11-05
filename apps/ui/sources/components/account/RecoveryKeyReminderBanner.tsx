@@ -20,12 +20,13 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
     const secret = reminder.secret;
 
     return (
-        <ItemGroup>
+        <ItemGroup surface="none">
             <Item
                 testID="recovery-key-reminder"
                 pressableRef={triggerRef}
-                title={t('settingsAccount.secretKey')}
-                subtitle={t('settingsAccount.backupDescription')}
+                // One line: it leads a list of work, and the backup it opens does the explaining.
+                title={t('settingsOverview.saveRecoveryKeyTitle')}
+                density="tight"
                 icon={<Icon name="key" color={theme.colors.text.secondary} />}
                 onPress={() => {
                     Modal.show({

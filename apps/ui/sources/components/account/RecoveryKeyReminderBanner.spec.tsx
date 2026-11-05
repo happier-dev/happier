@@ -80,6 +80,8 @@ describe('RecoveryKeyReminderBanner', () => {
 
         const row = screen.findHostByTestId('recovery-key-reminder');
         const dismiss = screen.findHostByTestId('recovery-key-reminder-dismiss');
+        // One line above the list: the backup it opens does the explaining.
+        expect(screen.findByTestId('recovery-key-reminder')?.props.subtitle).toBeUndefined();
         let ancestor = dismiss?.parent ?? null;
         while (ancestor && ancestor !== row) ancestor = ancestor.parent;
         expect(ancestor).toBeNull();

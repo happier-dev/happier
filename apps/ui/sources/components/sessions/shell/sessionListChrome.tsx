@@ -376,8 +376,8 @@ export const SessionListLayoutSegment = React.memo(function SessionListLayoutSeg
 export const SessionsListHeader = React.memo(function SessionsListHeader() {
     const styles = sessionListStyles;
     // Wide layouts show the home hub beside this list, and its "Get set up" section owns the
-    // recovery-key step; a second card here would repeat it. Phones have no hub, so it stays here.
-    // The phone reaches the Bots roster through the launcher's one Bots entry above My work.
+    // recovery-key step; a second card here would repeat it. A phone's Home is a pushed page, so a
+    // person who stays on Sessions would never see it: it stays here, one line above the list.
     const wideLayout = useIsTablet();
     if (wideLayout) return null;
 
