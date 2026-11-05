@@ -11,6 +11,9 @@ import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/se
 import * as client from './client';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 const onExecuted = () => {};
 
@@ -69,7 +72,8 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
     const methods = React.useMemo(() => {
         function bind<Input extends Readonly<{ serverId: string | null }>, Output>(
             method: (input: Input, approval?: client.ProviderActionApprovalOptions) => Promise<Output>,
-        ): (input: Input, options?: Pick<UiActionOperation, 'confirmed'> & Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal }>) => Promise<Output> {
+        ): (input: Input, options?: Pick<UiActionOperation, 'confirmed'> & Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal;
+            onApprovalPending?: (registration: ActionApprovalRegistration) => void }>) => Promise<Output> {
             return async (input, options) => {
                 const targetServerId = input.serverId ?? (requestedServerIds.length === 1 ? requestedServerIds[0] : null);
                 const lifetime = targetServerId ? lifetimes.get(resolveServerProfileScopeIdForIdentifier(targetServerId)) : undefined;
@@ -80,7 +84,14 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
                     throw createProviderErrorV1('provider_authorization_changed');
                 }
                 // Request cancellation does not opt into retained approval delivery.
-                const cancellation = mergeAbortSignals([lifetime.controller.signal, options?.signal]);
+                // Joined observations belong to remaining demand. The exact credential
+                // binding still retires the request synchronously.
+                const retained = options?.retainInvocationSignal ? new AbortController() : null;
+                const retirement = retained ? subscribeHomeCredentialChange(event => {
+                    if (areServerProfileIdentifiersEquivalent(event.serverId, binding.scope.serverId)) retained.abort();
+                }) : null;
+                const cancellation = mergeAbortSignals([retained?.signal ?? lifetime.controller.signal, options?.signal,
+                    options?.retainInvocationSignal]);
                 const signal = cancellation.signal ?? lifetime.controller.signal;
                 let pendingArtifactId: string | null = null;
                 try {
@@ -90,15 +101,17 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
                         signal,
                         ...(options?.retainInvocationSignal ? { retainInvocationSignal: options.retainInvocationSignal } : {}),
                         onApprovalPending: registration => {
-                            if (!binding.isCurrent() || signal.aborted) return;
+                            if ((retained ? retained.signal.aborted : !binding.isCurrent()) || signal.aborted) return;
                             const artifactId = typeof registration === 'string' ? registration : registration.artifactId;
                             pendingArtifactId = artifactId;
+                            options?.onApprovalPending?.(registration);
                             lifetime.approvalHrefs.set(artifactId, providerApprovalHref(artifactId, lifetime.transportServerId));
                             approval.requestApproval(registration);
                         },
                     });
                 } finally {
                     cancellation.dispose();
+                    retirement?.();
                     if (pendingArtifactId) lifetime.approvalHrefs.delete(pendingArtifactId);
                 }
             };
@@ -107,6 +120,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
             describeProviderConnections: bind(client.describeProviderConnections),
             mutateProviderConnection: bind(client.mutateProviderConnection),
             probeProviderConnection: bind(client.probeProviderConnection),
+            refreshProviderConnectionUsage: bind(client.refreshProviderConnectionUsage),
             probeProviderDraft: bind(client.probeProviderDraft),
             describeProviderModels: bind(client.describeProviderModels),
             describeProviderConnectionModels: bind(client.describeProviderConnectionModels),

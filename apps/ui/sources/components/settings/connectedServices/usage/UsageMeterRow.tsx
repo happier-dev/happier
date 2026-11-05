@@ -70,6 +70,12 @@ export type UsageMeterRowProps = Readonly<{
     resetPrefix?: 'next';
     /** A window without a countdown names its period instead ("monthly"). */
     resetText?: string;
+    /**
+     * An amount the provider reported ("$4.20", "$7.00 of $10.00 left"), shown in place of "% left". `null`
+     * means it reported none, which reads as unavailable. An amount without `remainingPct` has no cap, so the
+     * row draws no bar at all rather than an empty one that would read as exhausted.
+     */
+    amount?: string | null;
     /** The provider estimated the value: it reads "~58% left". */
     estimated?: boolean;
     /**
@@ -104,9 +110,12 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     const left = remaining !== null
         ? ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent: `${remaining}%` })
         : null;
-    const value = left === null
+    const amountMode = props.amount !== undefined;
+    const valueKnown = amountMode ? props.amount !== null : left !== null;
+    const reported = amountMode ? props.amount ?? null : left;
+    const value = reported === null
         ? t('common.unavailable')
-        : props.estimated ? t('connectedServicesCollection.meterEstimated', { value: left }) : left;
+        : props.estimated ? t('connectedServicesCollection.meterEstimated', { value: reported }) : reported;
     const countdown = formatResetCountdown(props.now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
     const relative = formatResetCountdownPhrase(props.now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER, (time) =>
         props.resetPrefix === 'next'
@@ -124,18 +133,18 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     }) : null;
     const baseAccessibilityLabel = props.loading
         ? props.label
-        : remaining !== null && countdown
+        : !amountMode && remaining !== null && countdown
         ? `${props.label}, ${ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent: `${remaining}%`, reset: countdown })}`
         : `${props.label}, ${value}${resetAt ? `, ${resetAt}` : ''}`;
     const accessibilityLabel = paceLabel ? `${baseAccessibilityLabel}; ${paceLabel}` : baseAccessibilityLabel;
     const valueStyle = [
         styles.value,
-        remaining === null ? styles.valueUnknown : null,
+        !valueKnown ? styles.valueUnknown : null,
         props.tone === 'warning' ? styles.valueWarning : null,
         props.tone === 'danger' ? styles.valueDanger : null,
     ];
     const pace = props.pace && remaining !== null ? props.pace : null;
-    const bar = pace ? (
+    const bar = amountMode && remaining === null ? null : pace ? (
         <CapacityBar theme={presentationTheme} label={accessibilityLabel} value={remaining} capacity={100}
             evenPace={pace.evenPaceRemainingFraction * 100} projected={pace.projectedRemainingFraction * 100}
             projection="remaining" showCaption={false} height={USAGE_METER_METRICS.barHeightPx}
@@ -185,11 +194,16 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
                     if (Number.isFinite(next) && next > 0) reportName(rowId, Math.ceil(next));
                 } : undefined}>{props.label}</Text>
             </View>
-            {bar}
+            {bar ?? <View style={styles.bar} />}
             {props.loading ? (
                 <View style={[styles.valueSlot, { marginRight: resetWidth + USAGE_METER_METRICS.gapPx }]}>
                     <View style={styles.valuePlaceholder} />
                 </View>
+            ) : amountMode ? (
+                <>
+                    <Text style={[valueStyle, styles.amount]}>{value}</Text>
+                    {resetAt ? <Text style={[styles.reset, { width: resetWidth }]} numberOfLines={1}>{resetAt}</Text> : null}
+                </>
             ) : remaining === null ? (
                 // Unknown usage spans both columns so the unavailable label and any reset remain readable.
                 <Text style={[styles.value, styles.valueUnknown, { width: USAGE_METER_METRICS.valueWidthPx + USAGE_METER_METRICS.gapPx + resetWidth, textAlign: 'left' }]}>
@@ -277,6 +291,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta', 'medium'),
         color: theme.colors.text.primary,
         fontVariant: ['tabular-nums'],
+    },
+    /** An amount keeps the value column's minimum and grows for "$7.00 of $10.00 left". */
+    amount: {
+        minWidth: USAGE_METER_METRICS.valueWidthPx,
     },
     valueSlot: {
         width: USAGE_METER_METRICS.valueWidthPx,

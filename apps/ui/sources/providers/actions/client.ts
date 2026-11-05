@@ -1,7 +1,7 @@
 import { safeParse, type z } from 'zod/mini';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 as outputs, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1,
     PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
@@ -13,6 +13,8 @@ import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { ProviderActionPendingApprovalError } from './ProviderActionPendingApprovalError';
+export { ProviderActionPendingApprovalError } from './ProviderActionPendingApprovalError';
 export { providerErrorFromRpcFailure } from '@/providers/rpc/client';
 
 type IncumbentClient = typeof import('@/providers/rpc/client');
@@ -26,14 +28,6 @@ export type ProviderActionApprovalOptions = Pick<UiActionOperation, 'confirmed'>
 }>;
 type ProviderActionMethod<Name extends keyof IncumbentClient> = IncumbentClient[Name] extends (input: infer Input) => Promise<infer Output>
     ? (input: Input, approval?: ProviderActionApprovalOptions) => Promise<Output> : never;
-
-/** A queued approval is neither a transport failure nor a completed Provider mutation. */
-export class ProviderActionPendingApprovalError extends Error {
-    readonly code = 'approval_request_created';
-    constructor(readonly approval: z.output<typeof ActionApprovalRequestCreatedResultSchema>) {
-        super('approval_request_created');
-    }
-}
 
 async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input: unknown,
     schema: TSchema, scope: InvocationScope, approvalOptions?: ProviderActionApprovalOptions,
@@ -77,7 +71,9 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
         throw getActionSpec(actionId).sideEffectClass === 'read'
             ? createProviderErrorV1('provider_rpc_response_invalid') : parsed.error;
     } catch (caught) {
+        // A declined approval is the person's decision, not a Provider failure: its code survives for the caller.
         if (getActionSpec(actionId).sideEffectClass !== 'read'
+            || isActionApprovalDeclinedErrorCode((caught as { code?: unknown } | null)?.code)
             || caught instanceof ProviderActionPendingApprovalError
             || ProviderErrorV1Schema.safeParse(caught).success) throw caught;
         throw providerErrorFromRpcFailure(caught);
@@ -105,6 +101,14 @@ export const mutateProviderConnection = (input: Readonly<{ serverId: string | nu
 export const probeProviderConnection: ProviderActionMethod<'probeProviderConnection'> = async (input, approval) => {
     const { serverId, ...request } = input;
     return invoke('providers.probe', request, outputs['providers.probe'], { serverId }, approval);
+};
+export const refreshProviderConnectionUsage = async (
+    input: ProviderActionInput<'providers.usage.refresh'> & InvocationScope,
+    approval?: ProviderActionApprovalOptions,
+) => {
+    const { serverId, signal, accountId, onDispatched, ...request } = input;
+    return invoke('providers.usage.refresh', request, outputs['providers.usage.refresh'],
+        { serverId, signal, accountId, onDispatched }, approval);
 };
 export const probeProviderDraft: ProviderActionMethod<'probeProviderDraft'> = async (input, approval) => {
     const { serverId, ...request } = input;

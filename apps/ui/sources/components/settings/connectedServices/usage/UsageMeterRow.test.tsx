@@ -126,4 +126,20 @@ describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
         const plain = await renderScreen(<UsageMeterRow testID="plain" label="Weekly" remainingPct={36} resetsAt={null} tone="neutral" now={NOW} />);
         expect(plain.findHostByTestId('plain:bar-even-pace')).toBeFalsy();
     });
+    it('shows a reported amount in place of a percentage, and draws no bar for an amount without a cap', async () => {
+        const spent = await renderScreen(<UsageMeterRow testID="spent" label="Today" remainingPct={null} amount="$1.25" resetsAt={null} tone="neutral" now={NOW} />);
+        expect(texts(spent)).toContain('$1.25');
+        expect(texts(spent)).not.toContain('Unavailable');
+        expect(spent.findHostByTestId('spent:bar')).toBeFalsy();
+        expect(spent.findHostByTestId('spent')?.props.accessibilityLabel).toBe('Today, $1.25');
+        // An unknown amount reads unknown, never as an empty (exhausted-looking) bar.
+        const unknown = await renderScreen(<UsageMeterRow testID="unknown" label="Allowance" remainingPct={null} amount={null} resetsAt={null} tone="neutral" now={NOW} />);
+        expect(texts(unknown)).toContain('Unavailable');
+        expect(unknown.findHostByTestId('unknown:bar')).toBeFalsy();
+        // A capped amount keeps the bar the provider's own cap gives it.
+        const capped = await renderScreen(<UsageMeterRow testID="capped" label="Allowance" remainingPct={70} amount="$7.00 of $10.00 left" resetsAt={null} tone="neutral" now={NOW} />);
+        expect(texts(capped)).toContain('$7.00 of $10.00 left');
+        expect(texts(capped)).not.toContain('70% left');
+        expect(capped.findHostByTestId('capped:bar')).toBeTruthy();
+    });
 });

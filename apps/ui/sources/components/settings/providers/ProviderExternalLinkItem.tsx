@@ -13,11 +13,13 @@ type ProviderExternalLinkKind = 'providerWebsite' | 'getApiKey';
 export function ProviderExternalLinkItem(props: Readonly<{
     kind: ProviderExternalLinkKind;
     url: string;
+    /** Names a destination the kind's label does not ("Where to get this key" for a billing key). */
+    label?: string;
 }>): React.ReactElement {
-    const label = t(`settingsProviders.links.${props.kind}`);
+    const label = props.label ?? t(`settingsProviders.links.${props.kind}`);
     return (
         <Item
-            title={<ProviderExternalLink kind={props.kind} url={props.url} />}
+            title={<ProviderExternalLink kind={props.kind} url={props.url} label={props.label} />}
             accessibilityLabel={label}
             mode="info"
             style={{ paddingVertical: 0 }}
@@ -29,10 +31,11 @@ export function ProviderExternalLinkItem(props: Readonly<{
 export function ProviderExternalLink(props: Readonly<{
     kind: ProviderExternalLinkKind;
     url: string;
+    label?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
-    const label = t(`settingsProviders.links.${props.kind}`);
+    const label = props.label ?? t(`settingsProviders.links.${props.kind}`);
     const open = React.useCallback(async () => {
         let opened = false;
         try {
