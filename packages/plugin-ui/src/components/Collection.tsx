@@ -535,7 +535,7 @@ const TABLE = Object.freeze({
 });
 
 const SLOT_COLUMNS = Object.freeze({
-  where: { minWidth: 150, priority: 4, maxWidth: 280 },
+  where: { minWidth: 150, priority: 4, maxWidth: 224 },
   reason: { minWidth: 172, priority: 5 },
   signal: { minWidth: 124, priority: 2 },
   agent: { minWidth: 150, priority: 3 },
