@@ -543,6 +543,21 @@ export function resolvePluginExecutionOriginReasonDetail(reason: PluginMachineOr
 }
 
 /**
+ * The sentence for an Action whose plugin Collection write the server refused because the plugin on
+ * the Machine that ran it writes with a Collection contract the Account no longer admits
+ * (`collection_writer_contract_unavailable`). Writes stay exact-writer; the way forward is updating
+ * the plugin there, from its own page. `null` for any other refusal.
+ */
+export function describePluginCollectionWriterRefusal(params: Readonly<{
+    diagnostics: readonly string[];
+    plugin: string;
+    machine: string;
+}>): Readonly<{ sentence: string; manage: true }> | null {
+    if (!params.diagnostics.includes('collection_writer_contract_unavailable')) return null;
+    return { sentence: t('settingsPlugins.surfaces.pluginNeedsUpdate', { plugin: params.plugin, machine: params.machine }), manage: true };
+}
+
+/**
  * One honest sentence for a plugin that Administration found on a Machine but could not use, and
  * whether the way forward is the plugin's own page. `machine` is the one Machine that refused, or
  * `undefined` when several did. Returns `null` when nothing is installed (the caller leads to installing)

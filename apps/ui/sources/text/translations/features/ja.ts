@@ -8992,6 +8992,7 @@ const pluginSettingsPresentationTranslations = { ja: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} に接続できないため、いま ${plugin} を実行できません。再接続するか、「実行先」で別のマシンを選んでください。`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} は ${machine} にインストールされていますが、そこでは実行できる状態ではありません。`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} はインストールされていますが、どのマシンでも実行できる状態ではありません。`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} の ${plugin} は、変更を保存する前にアップデートが必要です。`,
             runOnNoneAvailable: 'まだ実行できるマシンがありません',
             runsEverywhere: 'Happier を実行するすべてのマシン',
             nothingAddedTitle: 'まだプラグインを追加していません',

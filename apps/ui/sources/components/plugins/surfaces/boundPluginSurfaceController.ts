@@ -66,7 +66,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { PluginMachineExecutionOriginStateV1, PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
-import { describePluginExecutionOriginRefusal, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { describePluginCollectionWriterRefusal, describePluginExecutionOriginRefusal, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -1374,6 +1374,15 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         input.facts.isDaemonConnectionPending?.() === true && isMachineUnavailable(diagnostics, request);
     let machineNoticeLent = false;
     const describeMachineNotice = (diagnostics: readonly string[], request?: PluginUiHostApiRequestEnvelopeV1): WidgetFrameBodyNotice | undefined => {
+        // This mount's own Action ran on its Run-on Machine, so that is where its plugin is behind.
+        const writerPlugin = input.facts.pluginDisplayName?.trim();
+        const action = request?.method === 'executeAction' ? PluginUiExecuteActionRequestV1Schema.safeParse(request.payload) : undefined;
+        if (writerPlugin && action?.success
+            && (typeof action.data.action === 'string' || action.data.action.pluginId === input.facts.pluginId)) {
+            const writer = describePluginCollectionWriterRefusal({ diagnostics, plugin: writerPlugin,
+                machine: input.facts.machineDisplayName?.trim() || t('machine.thisMachineInSentence') });
+            if (writer) return { sentence: writer.sentence, managePluginId: input.facts.pluginId };
+        }
         const daemonUnavailable = isMachineUnavailable(diagnostics, request);
         if (!daemonUnavailable || input.facts.isDaemonConnectionPending?.() === true) return undefined;
         if (input.facts.daemonConnectionFailure) {

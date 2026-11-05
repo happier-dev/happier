@@ -108,6 +108,7 @@ export const english = {
         pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} can’t run on ${machine} right now because it can’t be reached. Reconnect it, or choose another machine with Run on.`,
         pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} is installed on ${machine} but isn’t ready to run there.`,
         pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} is installed but isn’t ready to run on any of your machines.`,
+        pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} on ${machine} needs an update before it can save changes.`,
         runOnNoneAvailable: 'No machine can run it yet',
         runsEverywhere: 'On every machine running Happier',
         nothingAddedTitle: 'No plugins added yet',

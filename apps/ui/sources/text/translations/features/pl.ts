@@ -9015,6 +9015,7 @@ const pluginSettingsPresentationTranslations = { pl: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} nie może teraz działać na ${machine}, bo maszyna jest nieosiągalna. Połącz ją ponownie lub wybierz inną w „Uruchom na”.`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} jest zainstalowany na ${machine}, ale nie jest tam gotowy do działania.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} jest zainstalowany, ale nie jest gotowy do działania na żadnej z Twoich maszyn.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} na ${machine} wymaga aktualizacji, zanim będzie mógł zapisywać zmiany.`,
             runOnNoneAvailable: 'Żadna maszyna nie może go jeszcze uruchomić',
             runsEverywhere: 'Na każdej maszynie z Happier',
             nothingAddedTitle: 'Nie dodano jeszcze żadnych pluginów',

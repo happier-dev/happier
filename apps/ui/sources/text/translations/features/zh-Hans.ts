@@ -8987,6 +8987,7 @@ const pluginSettingsPresentationTranslations = { 'zh-Hans': {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} 目前无法连接，因此 ${plugin} 暂时无法在其上运行。请重新连接，或通过“运行于”选择另一台机器。`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} 已安装在 ${machine} 上，但在那里尚未准备好运行。`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} 已安装，但在你的所有机器上都尚未准备好运行。`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} 上的 ${plugin} 需要更新后才能保存更改。`,
             runOnNoneAvailable: '暂无可运行它的机器',
             runsEverywhere: '在每台运行 Happier 的机器上',
             nothingAddedTitle: '尚未添加插件',

@@ -8999,6 +8999,7 @@ const pluginSettingsPresentationTranslations = { ca: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} no es pot executar a ${machine} ara mateix perquè no es pot arribar a la màquina. Torna-la a connectar o tria una altra màquina amb Executa a.`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} està instal·lat a ${machine}, però no hi està a punt per executar-se.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} està instal·lat, però no està a punt per executar-se en cap de les teves màquines.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} a ${machine} s’ha d’actualitzar abans de poder desar canvis.`,
             runOnNoneAvailable: 'Encara cap màquina no el pot executar',
             runsEverywhere: 'A cada màquina que executa Happier',
             nothingAddedTitle: 'Encara no has afegit cap plugin',

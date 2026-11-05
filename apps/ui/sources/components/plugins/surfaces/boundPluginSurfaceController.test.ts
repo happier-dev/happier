@@ -629,6 +629,27 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         await hook.unmount();
     });
 
+    it('names the plugin and Machine behind a refused Collection write, and leads to the plugin to update it', async () => {
+        const lend = vi.fn();
+        const executeContributedAction = vi.fn(async () => ({ supported: true as const,
+            result: { ok: false as const, code: 'collection_writer_contract_unavailable' } }));
+        const hook = await renderHook(() => useBoundPluginSurfaceController({
+            facts: { ...FACTS, machineDisplayName: 'Studio Mac', pluginDisplayName: 'PRs & Issues' },
+            binding: { executeContributedAction },
+        }), { wrapper: ({ children }) => React.createElement(WidgetFrameBodyNoticeContext.Provider, { value: lend }, children) });
+        const sentence = t('settingsPlugins.surfaces.pluginNeedsUpdate', { plugin: 'PRs & Issues', machine: 'Studio Mac' });
+        try {
+            const invocation = request('executeAction', { action: 'refresh-index', input: {} });
+            await expect(settlePluginSurfaceHostApiRequest(invocation, () => hook.getCurrent().hostApi.handleRequest(invocation)))
+                .resolves.toMatchObject({ kind: 'error', payload: { code: 'unavailable',
+                    diagnostics: expect.arrayContaining(['collection_writer_contract_unavailable']), message: sentence } });
+            expect(executeContributedAction).toHaveBeenCalledTimes(1);
+            expect(lend).toHaveBeenCalledTimes(1);
+            expect((lend.mock.calls[0]![0] as WidgetFrameBodyNoticeSource)()).toEqual({ sentence, managePluginId: FACTS.pluginId });
+        } finally { await hook.unmount(); }
+        expect(lend).toHaveBeenLastCalledWith(null);
+    });
+
     describe('a Machine that has the plugin but cannot run it', () => {
         const refused = (executionOriginRefusal: NonNullable<BoundPluginSurfaceFacts['executionOriginRefusal']>) => {
             const lend = vi.fn();

@@ -8995,6 +8995,7 @@ const pluginSettingsPresentationTranslations = { fr: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} ne peut pas s’exécuter sur ${machine} pour le moment, car elle est injoignable. Reconnecte-la, ou choisis une autre machine avec Exécuter sur.`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} est installé sur ${machine}, mais n’y est pas prêt à s’exécuter.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} est installé, mais n’est prêt à s’exécuter sur aucune de tes machines.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} sur ${machine} doit être mis à jour avant de pouvoir enregistrer des modifications.`,
             runOnNoneAvailable: 'Aucune machine ne peut encore l’exécuter',
             runsEverywhere: 'Sur chaque machine qui exécute Happier',
             nothingAddedTitle: 'Aucun plugin ajouté pour l’instant',

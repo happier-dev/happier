@@ -8987,6 +8987,7 @@ const pluginSettingsPresentationTranslations = { 'zh-Hant': {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} 目前無法連線，因此 ${plugin} 暫時無法在其上執行。請重新連線，或透過「執行於」選擇另一台機器。`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} 已安裝在 ${machine} 上，但在那裡尚未準備好執行。`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} 已安裝，但在你的所有機器上都尚未準備好執行。`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${machine} 上的 ${plugin} 需要更新後才能儲存變更。`,
             runOnNoneAvailable: '暫無可執行它的機器',
             runsEverywhere: '在每台執行 Happier 的機器上',
             nothingAddedTitle: '尚未新增外掛',

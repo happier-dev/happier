@@ -8999,6 +8999,7 @@ const pluginSettingsPresentationTranslations = { it: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} non può essere eseguito su ${machine} in questo momento perché non è raggiungibile. Riconnettila o scegli un’altra macchina con Esegui su.`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} è installato su ${machine}, ma lì non è pronto per l’esecuzione.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} è installato, ma non è pronto per l’esecuzione su nessuna delle tue macchine.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} su ${machine} va aggiornato prima di poter salvare le modifiche.`,
             runOnNoneAvailable: 'Nessuna macchina può ancora eseguirlo',
             runsEverywhere: 'Su ogni macchina che esegue Happier',
             nothingAddedTitle: 'Nessun plugin aggiunto per ora',

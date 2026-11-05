@@ -9000,6 +9000,7 @@ const pluginSettingsPresentationTranslations = { de: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} kann gerade nicht auf ${machine} laufen, weil der Rechner nicht erreichbar ist. Verbinde ihn erneut oder wähle unter „Ausführen auf“ einen anderen.`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} ist auf ${machine} installiert, dort aber nicht startbereit.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} ist installiert, aber auf keinem deiner Rechner startbereit.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} auf ${machine} braucht ein Update, bevor es Änderungen speichern kann.`,
             runOnNoneAvailable: 'Noch kann kein Rechner es ausführen',
             runsEverywhere: 'Auf jedem Rechner mit Happier',
             nothingAddedTitle: 'Noch keine Plugins hinzugefügt',

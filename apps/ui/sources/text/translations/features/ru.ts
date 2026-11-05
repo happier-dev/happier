@@ -9026,6 +9026,7 @@ const pluginSettingsPresentationTranslations = { ru: {
             pluginMachineUnreachable: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} сейчас не может работать на ${machine}: машина недоступна. Подключите её снова или выберите другую в поле «Запускать на».`,
             pluginNotReady: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} установлен на ${machine}, но там не готов к запуску.`,
             pluginNotReadyAnywhere: ({ plugin }: { plugin: string }) => `${plugin} установлен, но не готов к запуску ни на одной из ваших машин.`,
+            pluginNeedsUpdate: ({ plugin, machine }: { plugin: string; machine: string }) => `${plugin} на ${machine} нужно обновить, прежде чем он сможет сохранять изменения.`,
             runOnNoneAvailable: 'Пока ни одна машина не может его запустить',
             runsEverywhere: 'На каждой машине с Happier',
             nothingAddedTitle: 'Плагины ещё не добавлены',
