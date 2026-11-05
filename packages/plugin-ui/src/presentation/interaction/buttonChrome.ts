@@ -6,7 +6,7 @@ import { happierFocusRingStyle } from './focusVisible.js';
 import { happierSurfaceGradientWebStyle, resolveHappierSurfaceFinish, type HappierSurfaceGradient } from '../layout/material.js';
 import { happierMaterialBackgroundColor } from '../layout/material.js';
 import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '../layout/Surface.js';
-import { useOptionalHappierUiPlatform } from '../../environment/context.js';
+import { useOptionalHappierUiPalette, useOptionalHappierUiPlatform } from '../../environment/context.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import { mixHappierColorOverPaper } from '../data/dataModel.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
@@ -17,13 +17,19 @@ export function useHappierButtonMaterial(theme: HappierUiTheme) {
   const resolveColor = useHappierMaterialColorResolver();
   const host = useOptionalPluginUiPresentationHost();
   const dark = useOptionalHappierUiPlatform()?.colorScheme === 'dark';
+  const palette = useOptionalHappierUiPalette(theme);
   const role = containingRole ?? 'content';
   const nested = containingRole !== undefined;
+  // A secondary action is bordered (DESIGN.md: one primary, everything else bordered or quiet): the field box's
+  // inside and outline, as the host's own secondary button and the page field trigger draw it. Without a host
+  // palette it keeps the control fill.
+  const secondaryColor = palette?.fieldBackground ?? theme.colors.control;
   return {
     dark,
     resolveColor,
-    secondaryFill: nested ? resolveColor(theme.colors.control) : host?.resolveMaterialColor?.({ color: theme.colors.control, role: containingRole, nested })
-      ?? happierMaterialBackgroundColor(theme.colors.control, role, Platform.OS === 'web', nested),
+    secondaryFill: nested ? resolveColor(secondaryColor) : host?.resolveMaterialColor?.({ color: secondaryColor, role: containingRole, nested })
+      ?? happierMaterialBackgroundColor(secondaryColor, role, Platform.OS === 'web', nested),
+    ...(palette?.controlBorder === undefined ? {} : { secondaryBorder: palette.controlBorder }),
   };
 }
 
@@ -78,6 +84,8 @@ export function resolveHappierButtonChrome(input: Readonly<{
   gloss?: HappierRaisedEdge | null;
   dark?: boolean;
   secondaryFill?: string;
+  /** The secondary action's outline (`useHappierButtonMaterial`); absent, it draws on its fill alone. */
+  secondaryBorder?: string;
   resolveColor?: (color: string, translucentColor?: string, paintRole?: 'surface' | 'solidControl') => string;
 }>): Readonly<{
   style: HappierPortableStyle;
@@ -96,6 +104,7 @@ export function resolveHappierButtonChrome(input: Readonly<{
     : receded?.background ?? (input.disabled
       ? theme.colors.controlDisabled
       : (variant === 'primary' ? theme.colors.accent : input.secondaryFill ?? theme.colors.control));
+  const outline = variant === 'secondary' && input.secondaryBorder !== undefined ? input.secondaryBorder : null;
   const gradient = variant === 'plain' ? null : resolveHappierSurfaceFinish({
     role: variant === 'primary' ? 'primaryButton' : 'secondaryButton', gradients: theme.surfaceFinish ?? {},
     state: { disabled: input.disabled, focused: input.focused, pressed: input.pressed },
@@ -110,13 +119,14 @@ export function resolveHappierButtonChrome(input: Readonly<{
       alignItems: 'center',
       justifyContent: 'center',
       gap: small ? theme.spacing.xsmall : theme.spacing.small,
-      paddingHorizontal: small ? theme.spacing.medium : theme.spacing.large,
+      // The outline replaces one pixel of the transparent edge, so a bordered secondary keeps the same box.
+      paddingHorizontal: (small ? theme.spacing.medium : theme.spacing.large) + (outline === null ? 0 : BUTTON_EDGE_WIDTH - 1),
       paddingVertical: small ? 0 : BUTTON_PADDING_VERTICAL,
       borderRadius: theme.radii.control,
       backgroundColor: input.resolveColor?.(background, undefined, variant === 'primary' || input.disabled ? 'solidControl' : 'surface') ?? background,
       ...(Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, input.dark !== true) : null),
-      borderWidth: BUTTON_EDGE_WIDTH,
-      borderColor: 'transparent',
+      borderWidth: outline === null ? BUTTON_EDGE_WIDTH : 1,
+      borderColor: outline ?? 'transparent',
       ...happierFocusRingStyle({ visible: input.focused, color: theme.colors.focus }),
       ...(variant === 'primary'
         ? happierRaisedEdgeStyle(settleHappierRaisedEdge(input.gloss, {
