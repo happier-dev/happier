@@ -71,11 +71,13 @@ export async function resolveNativePackageManager(cwd: string, projectRoot?: str
 /** Shared passive inventory; never follows directory symlinks or traverses dependency/build output. */
 export async function collectNativePackageDirectories(root: string | readonly string[]): Promise<string[]> {
     const out: string[] = [];
-    const visited = new Set<string>();
-    const visit = async (directory: string): Promise<void> => {
-        const identity = resolve(directory);
-        if (visited.has(identity)) return;
-        visited.add(identity);
+    const roots = (typeof root === 'string' ? [root] : root).map(directory => ({ directory, identity: resolve(directory) }));
+    // Descendant dirents never follow symlinks, so only explicit overlapping
+    // roots can repeat. Retain input identities, not every directory in the tree.
+    const visitedRoots = new Map(roots.map(({ identity }) => [identity, false]));
+    const visit = async (directory: string, identity: string): Promise<void> => {
+        if (visitedRoots.get(identity) === true) return;
+        if (visitedRoots.has(identity)) visitedRoots.set(identity, true);
         const entries = await readdir(directory, { withFileTypes: true }).catch(() => null);
         const packageEntry = entries?.find(entry => entry.name === 'package.json');
         // The listing already proves ordinary file presence/absence. Only a
@@ -83,9 +85,12 @@ export async function collectNativePackageDirectories(root: string | readonly st
         if (packageEntry?.isFile() || ((!entries || packageEntry?.isSymbolicLink())
             && await isFile(join(directory, 'package.json')))) out.push(directory);
         for (const entry of entries ?? []) {
-            if (entry.isDirectory() && isNativePackageDiscoveryDirectory(entry.name)) await visit(join(directory, entry.name));
+            if (entry.isDirectory() && isNativePackageDiscoveryDirectory(entry.name)) {
+                const child = join(directory, entry.name);
+                await visit(child, directory === identity ? child : join(identity, entry.name));
+            }
         }
     };
-    for (const directory of typeof root === 'string' ? [root] : root) await visit(directory);
+    for (const { directory, identity } of roots) await visit(directory, identity);
     return out;
 }

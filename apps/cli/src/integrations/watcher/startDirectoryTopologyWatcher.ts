@@ -1,12 +1,10 @@
 import {
-    realpathSync,
-    statSync,
     watch,
     type FSWatcher,
     type WatchListener,
     type WatchOptionsWithStringEncoding,
 } from 'node:fs';
-import { opendir } from 'node:fs/promises';
+import { opendir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 type DirectoryTopologyWatch = (
@@ -32,9 +30,9 @@ export type DirectoryTopologyWatchTarget = Readonly<{
     onSymbolicLink?: (path: string) => void | Promise<void>;
 }>;
 
-function isCanonicalDirectory(path: string): boolean {
+async function isCanonicalDirectory(path: string): Promise<boolean> {
     try {
-        return realpathSync(path) === path && statSync(path).isDirectory();
+        return (await realpath(path)) === path && (await stat(path)).isDirectory();
     } catch {
         return false;
     }
@@ -59,6 +57,9 @@ function watchDirectoryTree(
         return child === '' || (!isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`));
     };
     const closeSubtree = (directory: string) => {
+        // Children are enrolled beneath watched parents. File events have no
+        // subtree to close and must not scan every unrelated directory watch.
+        if (!watchers.has(directory)) return;
         for (const [path, watcher] of watchers) {
             if (!contains(directory, path)) continue;
             watchers.delete(path);
@@ -67,7 +68,9 @@ function watchDirectoryTree(
     };
     const walk = async (directory: string): Promise<void> => {
         if (!active || watchers.has(directory) || (directory !== root && shouldWatchDirectory?.(directory) === false)
-            || !isCanonicalDirectory(directory)) return;
+            || !(await isCanonicalDirectory(directory))) return;
+        // Disposal can run while native filesystem metadata is being resolved.
+        if (!active) return;
         const watcher = watchImpl(directory, { persistent: true, recursive: false }, (eventType, filename) => {
             if (!active || watchers.get(directory) !== watcher) return;
             const changedPath = filename === null ? directory : resolve(directory, String(filename));
@@ -229,7 +232,8 @@ export function startDirectoryTopologyWatchers(
         target.attachment = target.attachment.then(async () => {
             if (!active) return;
             closeTargetWatcher(target);
-            const attachable = isCanonicalDirectory(target.directory);
+            const attachable = await isCanonicalDirectory(target.directory);
+            if (!active) return;
             if (!attachable) {
                 if (emitAfterAttachment) {
                     emitStructuralChange(target);
