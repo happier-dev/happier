@@ -10534,8 +10534,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Erhalte die Updates, die dir wichtig sind.",
             "ownerSubtitle": "Dir gehört diese Sitzung, daher erreichen dich ihre Updates immer.",
             "externalAttachedOnly": "Die Hintergrundsynchronisierung ist aus, daher kommen Updates möglicherweise nur an, während diese Sitzung verbunden ist.",
-            "sheetTitle": ({ name }) => `Folgen: ${name}`,
-            "sheetSubtitle": "Wie viel du davon mitbekommst",
+            "panelTitle": "Updates aus dieser Sitzung erhalten",
+            "panelSubtitle": "Updates erreichen dich als Mitteilung oder warten in deinem Posteingang.",
             "suppressed": "Updates sind aus. Sie gehört dir weiterhin.",
             "turnOff": "Updates ausschalten",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "folgt ihr auch" : "folgen ihr auch"}`,
@@ -10552,21 +10552,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Wie viel du mitbekommst",
             "presetDescription": {
-                "everything": "Unterbricht dich bei allem, was passiert. Nachrichten landen still im Posteingang.",
-                "important": "Unterbricht dich nur, wenn es dich braucht, fehlschlägt oder hängt. Alles andere wartet still im Posteingang.",
+                "everything": "Unterbricht dich bei allem, was passiert.",
+                "important": "Unterbricht dich nur, wenn es dich braucht, fehlschlägt oder hängt.",
                 "quiet": "Nichts unterbricht dich. Neuigkeiten warten still im Posteingang.",
-                "custom": "Wähle, was dich unterbricht, was still ankommt und was wegfällt."
+                "custom": "Wähle für jedes Ereignis, wie es dich erreicht."
             },
             "customTitle": "Jedes Ereignis",
-            "group": {
-                "interrupt": "Unterbricht dich",
-                "quiet": "Kommt still an",
-                "off": "Nicht enthalten"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Posteingang"
-            },
             "delivery": {
                 "off": "Aus",
                 "quiet": "Posteingang",
@@ -10575,13 +10566,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "Wie viel sie mitbekommt",
                 "presetDescription": {
-                    "everything": "Weckt sie bei allem, was passiert. Nachrichten warten auf ihren nächsten Zug.",
-                    "important": "Weckt sie nur, wenn etwas sie braucht, fehlschlägt oder hängt. Alles andere wartet auf ihren nächsten Zug.",
+                    "everything": "Weckt sie bei allem, was passiert.",
+                    "important": "Weckt sie nur, wenn etwas sie braucht, fehlschlägt oder hängt.",
                     "quiet": "Nichts weckt sie. Neuigkeiten warten auf ihren nächsten Zug.",
-                    "custom": "Wähle, was sie weckt, was auf ihren nächsten Zug wartet und was wegfällt."
+                    "custom": "Wähle für jedes Ereignis, wie es sie erreicht."
                 },
-                "group": { "interrupt": "Weckt sie", "quiet": "Wartet auf ihren nächsten Zug" },
-                "channel": { "interrupt": "Wecken", "quiet": "Nächster Zug" },
                 "delivery": { "interrupt": "Wecken", "quiet": "Nächster Zug" }
             },
             "events": {

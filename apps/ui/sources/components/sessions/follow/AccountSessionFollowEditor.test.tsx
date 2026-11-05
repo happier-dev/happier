@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import type { GetSessionFollowResponse, SetSessionFollowRequest } from '@happier-dev/protocol';
+import type { GetSessionFollowResponse, SetSessionFollowRequest } from '@happier-dev/protocol/sessions/follow/api';
 import { normalizeAccountFollowNotificationChoiceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -266,6 +266,7 @@ describe('Account Follow editor', () => {
     });
 
     it('leaves explicit Unfollow available for an archived Session and disables preference edits offline', async () => {
+        const onRemove = vi.fn();
         const screen = await renderSettingsView(<AccountSessionFollowEditor
             state={{
                 projection: {
@@ -276,9 +277,11 @@ describe('Account Follow editor', () => {
                 },
                 draft: null, loading: false, saving: false, online: true, error: null, voiceInitialSnapshotPending: false,
             }}
-            voiceReadiness="eligible" archived onSet={() => {}} onRemove={() => {}} onRetry={() => {}} onOpenNotificationSettings={() => {}} onEditPolicy={() => {}}
+            voiceReadiness="eligible" archived onSet={() => {}} onRemove={onRemove} onRetry={() => {}} onOpenNotificationSettings={() => {}} onEditPolicy={() => {}}
         />);
-        expect(screen.findByTestId('session-follow-unfollow')?.props.disabled).toBe(false);
+        // Unfollow is the body's last row now, not a footer button: it stays pressable while archived.
+        await act(async () => { screen.findByTestId('session-follow-unfollow')?.props.onPress(); });
+        expect(onRemove).toHaveBeenCalledTimes(1);
         expect(screen.findByTestId('session-follow-voice')?.props.disabled).toBe(true);
         expect(presetSegment(screen, 'important')?.props.disabled).toBe(true);
         await screen.unmount();
@@ -466,7 +469,7 @@ describe('Account Follow editor', () => {
         expect(onEditPolicy).toHaveBeenCalledWith({ kind: 'preset', preset: 'everything' });
         await screen.unmount();
     });
-    it('hands its host the P2-A parts: "Follow <session>", what Done does, and who else follows it', async () => {
+    it('hands its host the parts: what following does and where it arrives, Turn off beside Done, and who else follows it', async () => {
         const onClose = vi.fn();
         const onOpenPeople = vi.fn();
         let parts: AccountSessionFollowEditorParts | null = null;
@@ -480,12 +483,18 @@ describe('Account Follow editor', () => {
             }}
             voiceReadiness="eligible" archived={false} onSet={() => {}} onRemove={() => {}} onRetry={() => {}}
             onOpenNotificationSettings={() => {}} onEditPolicy={() => {}}
-            sessionTitle="Idempotent retries" onClose={onClose}
+            onClose={onClose}
             alsoFollowing={{ people: 3, sessions: 2 }} onOpenPeople={onOpenPeople} quietHours="22:00–07:00"
             frame={(next) => { parts = next; return <>{next.body}{next.footer}</>; }}
         />);
-        expect(parts!.title).toBe(t('session.follow.editor.sheetTitle', { name: 'Idempotent retries' }));
-        expect(parts!.subtitle).toBe(t('session.follow.editor.sheetSubtitle'));
+        // The header says what following does, and its one sentence says where the updates arrive.
+        expect(parts!.title).toBe(t('session.follow.editor.panelTitle'));
+        expect(parts!.subtitle).toBe(t('session.follow.editor.panelSubtitle'));
+        // Leaving and closing share the one footer row: Turn off at the start, Done at the end.
+        const footer = await renderSettingsView(<>{parts!.footer}</>);
+        expect(footer.findByTestId('session-follow-unfollow')).not.toBeNull();
+        expect(footer.findByTestId('session-follow-done')).not.toBeNull();
+        await footer.unmount();
         expect(screen.getTextContent()).toContain(t('session.follow.editor.quietHours', { range: '22:00–07:00' }));
         await act(async () => { screen.findByTestId('session-follow-people')?.props.onPress(); });
         expect(onOpenPeople).toHaveBeenCalledTimes(1);

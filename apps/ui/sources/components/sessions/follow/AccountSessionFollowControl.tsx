@@ -11,7 +11,6 @@ import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { useSessionListRenderableWithServerScope } from '@/sync/store/hooks';
 import { readExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import { AccountSessionFollowEditor, type AccountSessionFollowEditorParts } from './AccountSessionFollowEditor';
 import { FollowSessionMark } from './FollowSessionMark';
@@ -86,7 +85,6 @@ export function AccountSessionFollowControl(props: Readonly<{
         onRemove={() => { void controller.remove(); }}
         onRetry={() => { void controller.retry(); }}
         onOpenNotificationSettings={() => { props.onOpenNotificationSettings?.(); }}
-        sessionTitle={session ? getSessionName(session, serverId) : undefined}
         sessionMark={<FollowSessionMark session={session} serverId={serverId} />}
         onClose={props.onClose}
         alsoFollowing={alsoFollowing}

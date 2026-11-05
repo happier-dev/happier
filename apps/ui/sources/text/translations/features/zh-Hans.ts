@@ -10531,8 +10531,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "接收对你重要的更新。",
             "ownerSubtitle": "这个会话属于你，因此它的更新始终会送达。",
             "externalAttachedOnly": "后台同步已关闭，因此只有在此会话处于连接状态时才可能收到更新。",
-            "sheetTitle": ({ name }) => `关注${name}`,
-            "sheetSubtitle": "你会收到多少消息",
+            "panelTitle": "接收此会话的更新",
+            "panelSubtitle": "更新会以通知送达，或在收件箱中等你。",
             "suppressed": "更新已关闭。你仍是它的所有者。",
             "turnOff": "关闭更新",
             "alsoFollow": ({ facts, count }) => `${facts}也在关注`,
@@ -10549,21 +10549,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "接收多少",
             "presetDescription": {
-                "everything": "有任何动静都会提醒你。消息会安静地进入收件箱。",
-                "important": "只在需要你、失败或停滞时提醒你。其他内容在收件箱中安静等待。",
+                "everything": "有任何动静都会提醒你。",
+                "important": "只在需要你、失败或停滞时提醒你。",
                 "quiet": "不会提醒你。更新在收件箱中安静等待。",
-                "custom": "选择哪些会提醒你、哪些安静送达、哪些不包含。"
+                "custom": "为每个事件选择送达方式。"
             },
             "customTitle": "每个事件",
-            "group": {
-                "interrupt": "提醒你",
-                "quiet": "安静送达",
-                "off": "不包含"
-            },
-            "channel": {
-                "interrupt": "推送",
-                "quiet": "收件箱"
-            },
             "delivery": {
                 "off": "关",
                 "quiet": "收件箱",
@@ -10572,13 +10563,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "它能听到多少",
                 "presetDescription": {
-                    "everything": "每次有动静都会唤醒它。消息会等到它的下一轮。",
-                    "important": "只有在需要它、失败或停滞时才唤醒它。其余内容等到它的下一轮。",
+                    "everything": "每次有动静都会唤醒它。",
+                    "important": "只有在需要它、失败或停滞时才唤醒它。",
                     "quiet": "不会唤醒它。更新会等到它的下一轮。",
-                    "custom": "选择哪些会唤醒它、哪些等到它的下一轮，以及哪些不包含。"
+                    "custom": "为每个事件选择送达方式。"
                 },
-                "group": { "interrupt": "唤醒它", "quiet": "等到它的下一轮" },
-                "channel": { "interrupt": "唤醒", "quiet": "下一轮" },
                 "delivery": { "interrupt": "唤醒", "quiet": "下一轮" }
             },
             "events": {

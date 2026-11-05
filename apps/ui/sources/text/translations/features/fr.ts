@@ -10548,8 +10548,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Reçois les nouvelles qui comptent pour toi.",
             "ownerSubtitle": "Cette session t’appartient, ses mises à jour te parviennent toujours.",
             "externalAttachedOnly": "La synchronisation en arrière-plan est désactivée : les mises à jour peuvent n’arriver que pendant que cette session est attachée.",
-            "sheetTitle": ({ name }) => `Suivre ${name}`,
-            "sheetSubtitle": "Ce que tu en entends",
+            "panelTitle": "Recevoir les nouvelles de cette session",
+            "panelSubtitle": "Elles t’arrivent en notification ou t’attendent dans ta boîte.",
             "suppressed": "Les mises à jour sont désactivées. Elle reste la tienne.",
             "turnOff": "Désactiver les mises à jour",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "la suit aussi" : "la suivent aussi"}`,
@@ -10566,21 +10566,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Ce que vous suivez",
             "presetDescription": {
-                "everything": "Vous interrompt dès qu’il se passe quelque chose. Les messages arrivent en silence dans la boîte.",
-                "important": "Vous interrompt seulement quand il a besoin de vous, échoue ou se bloque. Le reste attend en silence dans la boîte.",
-                "quiet": "Rien ne vous interrompt. Les nouvelles attendent en silence dans la boîte.",
-                "custom": "Choisissez ce qui vous interrompt, ce qui arrive en silence et ce qui est exclu."
+                "everything": "T’interrompt dès qu’il se passe quelque chose.",
+                "important": "T’interrompt seulement quand elle a besoin de toi, échoue ou se bloque.",
+                "quiet": "Rien ne t’interrompt. Les nouvelles t’attendent en silence dans ta boîte.",
+                "custom": "Choisis comment chaque événement t’arrive."
             },
             "customTitle": "Chaque événement",
-            "group": {
-                "interrupt": "Vous interrompt",
-                "quiet": "Arrive en silence",
-                "off": "Non inclus"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Boîte"
-            },
             "delivery": {
                 "off": "Non",
                 "quiet": "Boîte",
@@ -10589,13 +10580,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "Ce qu’elle entend",
                 "presetDescription": {
-                    "everything": "La réveille à chaque événement. Les messages attendent son prochain tour.",
-                    "important": "La réveille seulement quand quelque chose a besoin d’elle, échoue ou cale. Le reste attend son prochain tour.",
+                    "everything": "La réveille à chaque événement.",
+                    "important": "La réveille seulement quand quelque chose a besoin d’elle, échoue ou cale.",
                     "quiet": "Rien ne la réveille. Les nouveautés attendent son prochain tour.",
-                    "custom": "Choisissez ce qui la réveille, ce qui attend son prochain tour et ce qui est écarté."
+                    "custom": "Choisis comment chaque événement lui arrive."
                 },
-                "group": { "interrupt": "La réveille", "quiet": "Attend son prochain tour" },
-                "channel": { "interrupt": "Réveil", "quiet": "Prochain tour" },
                 "delivery": { "interrupt": "Réveil", "quiet": "Prochain tour" }
             },
             "events": {

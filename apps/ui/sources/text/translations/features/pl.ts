@@ -10561,8 +10561,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Otrzymuj aktualizacje, które są dla Ciebie ważne.",
             "ownerSubtitle": "Ta sesja należy do Ciebie, więc jej aktualizacje zawsze do Ciebie docierają.",
             "externalAttachedOnly": "Synchronizacja w tle jest wyłączona, więc aktualizacje mogą docierać tylko wtedy, gdy ta sesja jest podłączona.",
-            "sheetTitle": ({ name }) => `Obserwuj: ${name}`,
-            "sheetSubtitle": "Ile o niej słyszysz",
+            "panelTitle": "Otrzymuj aktualizacje z tej sesji",
+            "panelSubtitle": "Docierają do ciebie jako powiadomienia albo czekają w skrzynce.",
             "suppressed": "Aktualizacje są wyłączone. Nadal jest Twoja.",
             "turnOff": "Wyłącz aktualizacje",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "też ją obserwuje" : "też ją obserwują"}`,
@@ -10579,21 +10579,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Ile chcesz wiedzieć",
             "presetDescription": {
-                "everything": "Przerywa ci za każdym razem, gdy coś się dzieje. Wiadomości trafiają po cichu do skrzynki.",
-                "important": "Przerywa ci tylko, gdy cię potrzebuje, kończy się błędem lub utknie. Reszta czeka po cichu w skrzynce.",
+                "everything": "Przerywa ci za każdym razem, gdy coś się dzieje.",
+                "important": "Przerywa ci tylko, gdy cię potrzebuje, kończy się błędem lub utknie.",
                 "quiet": "Nic ci nie przerywa. Nowości czekają po cichu w skrzynce.",
-                "custom": "Wybierz, co ci przerywa, co przychodzi po cichu, a co jest pominięte."
+                "custom": "Wybierz, jak dociera do ciebie każde zdarzenie."
             },
             "customTitle": "Każde zdarzenie",
-            "group": {
-                "interrupt": "Przerywa ci",
-                "quiet": "Przychodzi po cichu",
-                "off": "Pominięte"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Skrzynka"
-            },
             "delivery": {
                 "off": "Wył.",
                 "quiet": "Skrzynka",
@@ -10602,13 +10593,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "Ile do niej dociera",
                 "presetDescription": {
-                    "everything": "Budzi ją przy każdym zdarzeniu. Wiadomości czekają na jej następną turę.",
-                    "important": "Budzi ją tylko wtedy, gdy czegoś potrzebuje, zawiedzie lub utknie. Reszta czeka na jej następną turę.",
+                    "everything": "Budzi ją przy każdym zdarzeniu.",
+                    "important": "Budzi ją tylko wtedy, gdy czegoś potrzebuje, zawiedzie lub utknie.",
                     "quiet": "Nic jej nie budzi. Aktualizacje czekają na jej następną turę.",
-                    "custom": "Wybierz, co ją budzi, co czeka na jej następną turę, a co jest pomijane."
+                    "custom": "Wybierz, jak dociera do niej każde zdarzenie."
                 },
-                "group": { "interrupt": "Budzi ją", "quiet": "Czeka na jej następną turę" },
-                "channel": { "interrupt": "Obudź", "quiet": "Następna tura" },
                 "delivery": { "interrupt": "Obudź", "quiet": "Następna tura" }
             },
             "events": {

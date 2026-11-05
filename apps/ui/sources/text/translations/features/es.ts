@@ -10551,8 +10551,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Recibe las novedades que te importan.",
             "ownerSubtitle": "Esta sesión es tuya, así que siempre recibirás sus novedades.",
             "externalAttachedOnly": "La sincronización en segundo plano está desactivada, así que las actualizaciones pueden llegar solo mientras esta sesión esté conectada.",
-            "sheetTitle": ({ name }) => `Seguir ${name}`,
-            "sheetSubtitle": "Cuánto te enteras",
+            "panelTitle": "Recibe novedades de esta sesión",
+            "panelSubtitle": "Te llegan como notificaciones o esperan en tu bandeja.",
             "suppressed": "Las novedades están desactivadas. Sigue siendo tuya.",
             "turnOff": "Desactivar novedades",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "también la sigue" : "también la siguen"}`,
@@ -10569,21 +10569,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Cuánto te enteras",
             "presetDescription": {
-                "everything": "Te interrumpe cada vez que pasa algo. Los mensajes llegan en silencio a la bandeja.",
-                "important": "Te interrumpe solo cuando te necesita, falla o se atasca. Lo demás espera en silencio en la bandeja.",
+                "everything": "Te interrumpe cada vez que pasa algo.",
+                "important": "Te interrumpe solo cuando te necesita, falla o se atasca.",
                 "quiet": "Nada te interrumpe. Las novedades esperan en silencio en la bandeja.",
-                "custom": "Elige qué te interrumpe, qué llega en silencio y qué queda fuera."
+                "custom": "Elige cómo te llega cada evento."
             },
             "customTitle": "Cada evento",
-            "group": {
-                "interrupt": "Te interrumpe",
-                "quiet": "Llega en silencio",
-                "off": "No incluido"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Bandeja"
-            },
             "delivery": {
                 "off": "No",
                 "quiet": "Bandeja",
@@ -10592,13 +10583,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "Cuánto se entera",
                 "presetDescription": {
-                    "everything": "La despierta con todo lo que ocurra. Los mensajes esperan a su próximo turno.",
-                    "important": "Solo la despierta cuando algo la necesita, falla o se atasca. Todo lo demás espera a su próximo turno.",
+                    "everything": "La despierta con todo lo que ocurra.",
+                    "important": "Solo la despierta cuando algo la necesita, falla o se atasca.",
                     "quiet": "Nada la despierta. Las novedades esperan a su próximo turno.",
-                    "custom": "Elige qué la despierta, qué espera a su próximo turno y qué se deja fuera."
+                    "custom": "Elige cómo le llega cada evento."
                 },
-                "group": { "interrupt": "La despierta", "quiet": "Espera a su próximo turno" },
-                "channel": { "interrupt": "Despertar", "quiet": "Próximo turno" },
                 "delivery": { "interrupt": "Despertar", "quiet": "Próximo turno" }
             },
             "events": {

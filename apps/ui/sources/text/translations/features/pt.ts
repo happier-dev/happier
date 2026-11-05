@@ -10547,8 +10547,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Recebe as atualizações que te interessam.",
             "ownerSubtitle": "Esta sessão é tua, por isso as atualizações chegam-te sempre.",
             "externalAttachedOnly": "A sincronização em segundo plano está desativada, por isso as atualizações podem chegar apenas enquanto esta sessão estiver ligada.",
-            "sheetTitle": ({ name }) => `Seguir ${name}`,
-            "sheetSubtitle": "Quanto você fica sabendo",
+            "panelTitle": "Receba atualizações desta sessão",
+            "panelSubtitle": "Chegam como notificações ou esperam na sua caixa.",
             "suppressed": "As atualizações estão desativadas. Ela continua sendo sua.",
             "turnOff": "Desativar atualizações",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "também a segue" : "também a seguem"}`,
@@ -10565,21 +10565,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Quanto você acompanha",
             "presetDescription": {
-                "everything": "Interrompe você sempre que algo acontece. Mensagens chegam em silêncio na caixa.",
-                "important": "Interrompe você só quando precisa de você, falha ou trava. O resto espera em silêncio na caixa.",
+                "everything": "Interrompe você sempre que algo acontece.",
+                "important": "Interrompe você só quando precisa de você, falha ou trava.",
                 "quiet": "Nada interrompe você. As novidades esperam em silêncio na caixa.",
-                "custom": "Escolha o que interrompe você, o que chega em silêncio e o que fica de fora."
+                "custom": "Escolha como cada evento chega até você."
             },
             "customTitle": "Cada evento",
-            "group": {
-                "interrupt": "Interrompe você",
-                "quiet": "Chega em silêncio",
-                "off": "Não incluído"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Caixa"
-            },
             "delivery": {
                 "off": "Não",
                 "quiet": "Caixa",
@@ -10588,13 +10579,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "O quanto ela fica sabendo",
                 "presetDescription": {
-                    "everything": "Acorda-a a cada acontecimento. As mensagens esperam pelo próximo turno dela.",
-                    "important": "Só a acorda quando algo precisa dela, falha ou trava. Todo o resto espera pelo próximo turno dela.",
+                    "everything": "Acorda-a a cada acontecimento.",
+                    "important": "Só a acorda quando algo precisa dela, falha ou trava.",
                     "quiet": "Nada a acorda. As novidades esperam pelo próximo turno dela.",
-                    "custom": "Escolha o que a acorda, o que espera pelo próximo turno dela e o que fica de fora."
+                    "custom": "Escolha como cada evento chega até ela."
                 },
-                "group": { "interrupt": "Acorda-a", "quiet": "Espera pelo próximo turno" },
-                "channel": { "interrupt": "Acordar", "quiet": "Próximo turno" },
                 "delivery": { "interrupt": "Acordar", "quiet": "Próximo turno" }
             },
             "events": {

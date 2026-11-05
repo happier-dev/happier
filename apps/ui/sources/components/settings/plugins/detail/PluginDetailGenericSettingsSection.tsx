@@ -187,7 +187,6 @@ export function PluginSettingTextField(props: Readonly<{
      */
     disabledReason?: string | null;
 }>) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const isSecret = isRedactedField(props.field);
     const multiline = props.field.control === 'textarea';
@@ -260,11 +259,10 @@ export function PluginSettingTextField(props: Readonly<{
                                 <RoundButton
                                     testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.delete`}
                                     size="normal"
-                                    display="inverted"
+                                    display="quietDestructive"
                                     title={t('settingsPlugins.secretFieldActions.delete')}
                                     accessibilityLabel={`${t('settingsPlugins.secretFieldActions.delete')}: ${props.field.title}`}
                                     accessibilityHint={t('settingsPlugins.secretFieldActions.deleteHint')}
-                                    textStyle={{ color: theme.colors.state.danger.foreground }}
                                     disabled={props.saving || props.persistenceDisabled}
                                     onPress={props.onDelete}
                                 />

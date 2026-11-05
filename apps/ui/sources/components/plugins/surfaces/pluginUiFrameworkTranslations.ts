@@ -99,17 +99,11 @@ function resolveFollowPolicyEditorTranslations(): Readonly<Record<string, string
             [`${key}.preset.${preset}`, t(`session.follow.policy.${preset}`)],
             [`${key}.presetDescription.${preset}`, t(`session.follow.policyEditor.presetDescription.${preset}`)],
         ])),
-        ...Object.fromEntries((['interrupt', 'quiet', 'off'] as const).map((group) => [`${key}.group.${group}`, t(`session.follow.policyEditor.group.${group}`)])),
-        ...Object.fromEntries((['interrupt', 'quiet'] as const).map((channel) => [`${key}.channel.${channel}`, t(`session.follow.policyEditor.channel.${channel}`)])),
         ...Object.fromEntries((['off', 'quiet', 'interrupt'] as const).map((delivery) => [`${key}.delivery.${delivery}`, t(`session.follow.policyEditor.delivery.${delivery}`)])),
         // A Session receiver gets the same two channels as Wake and Next turn.
         [`${key}.session.presetLabel`]: t('session.follow.policyEditor.session.presetLabel'),
         ...Object.fromEntries((['everything', 'important', 'quiet', 'custom'] as const).map((preset) => [`${key}.session.presetDescription.${preset}`, t(`session.follow.policyEditor.session.presetDescription.${preset}`)])),
-        ...Object.fromEntries((['interrupt', 'quiet'] as const).flatMap((group) => [
-            [`${key}.session.group.${group}`, t(`session.follow.policyEditor.session.group.${group}`)],
-            [`${key}.session.channel.${group}`, t(`session.follow.policyEditor.session.channel.${group}`)],
-            [`${key}.session.delivery.${group}`, t(`session.follow.policyEditor.session.delivery.${group}`)],
-        ])),
+        ...Object.fromEntries((['interrupt', 'quiet'] as const).map((delivery) => [`${key}.session.delivery.${delivery}`, t(`session.follow.policyEditor.session.delivery.${delivery}`)])),
         ...Object.fromEntries(Object.entries(FOLLOW_EVENT_COPY).map(([id, copy]) => [`${key}.event.${id}`, t(`session.follow.policyEditor.events.${copy}`)])),
         ...Object.fromEntries(Object.entries(FOLLOW_EVENT_DESCRIPTION_COPY).map(([id, copy]) => [`${key}.eventDescription.${id}`, t(`session.follow.policyEditor.eventDescriptions.${copy}`)])),
     };

@@ -19,8 +19,8 @@ export const en = {
         "subtitle": "Get the updates that matter to you.",
         "ownerSubtitle": "You own this session, so its updates always reach you.",
         "externalAttachedOnly": "Background sync is off, so updates may arrive only while this session is attached.",
-            "sheetTitle": ({ name }: { name: string }) => `Follow ${name}`,
-            "sheetSubtitle": "How much you hear about it",
+            "panelTitle": "Get updates from this session",
+            "panelSubtitle": "Updates reach you as notifications or wait in your Inbox.",
             "suppressed": "Updates are off. You still own it.",
             "turnOff": "Turn off updates",
             "alsoFollow": ({ facts, count }: { facts: string; count: number }) => `${facts} ${count === 1 ? "also follows it" : "also follow it"}`,
@@ -37,21 +37,12 @@ export const en = {
     "policyEditor": {
         "presetLabel": "How much you hear",
         "presetDescription": {
-            "everything": "Interrupts you whenever something happens. Messages arrive quietly in Inbox.",
-            "important": "Interrupts you only when it needs you, fails or stalls. Everything else waits quietly in Inbox.",
+            "everything": "Interrupts you whenever something happens.",
+            "important": "Interrupts you only when it needs you, fails or stalls.",
             "quiet": "Nothing interrupts you. Updates wait quietly in Inbox.",
-            "custom": "Choose what interrupts you, what arrives quietly and what is left out."
+            "custom": "Choose how each event reaches you."
         },
         "customTitle": "Each event",
-        "group": {
-            "interrupt": "Interrupts you",
-            "quiet": "Arrives quietly",
-            "off": "Not included"
-        },
-        "channel": {
-            "interrupt": "Push",
-            "quiet": "Inbox"
-        },
         "delivery": {
             "off": "Off",
             "quiet": "Inbox",
@@ -60,13 +51,11 @@ export const en = {
         "session": {
             "presetLabel": "How much it hears",
             "presetDescription": {
-                "everything": "Wakes it whenever something happens. Messages wait for its next turn.",
-                "important": "Wakes it only when something needs it, fails or stalls. Everything else waits for its next turn.",
+                "everything": "Wakes it whenever something happens.",
+                "important": "Wakes it only when something needs it, fails or stalls.",
                 "quiet": "Nothing wakes it. Updates wait for its next turn.",
-                "custom": "Choose what wakes it, what waits for its next turn and what is left out."
+                "custom": "Choose how each event reaches it."
             },
-            "group": { "interrupt": "Wakes it", "quiet": "Waits for its next turn" },
-            "channel": { "interrupt": "Wake", "quiet": "Next turn" },
             "delivery": { "interrupt": "Wake", "quiet": "Next turn" }
         },
         "events": {

@@ -3,15 +3,22 @@ import { projectAccountSessionFollowEditorStateV1, type PersonalFollowOnceV1 } f
 import type { SetSessionFollowRequest } from '@happier-dev/protocol/sessions/follow/api';
 import type { FollowPolicyEditorEditV1 } from '@happier-dev/protocol/sessions/follow/followPolicyEditorV1';
 
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { HappierDivider, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon } from '@/components/ui/icons/Icon';
+import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useListPresentation } from '@/components/ui/lists/listPresentation';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { FollowPolicyEditorBinding, FollowPolicySection } from './FollowPolicyEditorBinding';
@@ -51,8 +58,7 @@ export type AccountSessionFollowEditorProps = Readonly<{
         sourceTurnId: string | null;
         onOnce(once: PersonalFollowOnceV1 | null): Promise<void> | void;
     }>;
-    /** The followed Session's name and identity mark, for the header ("Follow <session>"). */
-    sessionTitle?: string;
+    /** The followed Session's identity mark, beside the header. */
     sessionMark?: React.ReactNode;
     /** Done: the host closes the popover or leaves the page. */
     onClose?(): void;
@@ -66,9 +72,10 @@ export type AccountSessionFollowEditorProps = Readonly<{
 }>;
 
 /**
- * The one personal Follow editor (lab P2-A): "Follow <session>" and how much you hear about it, the
- * shared level editor and what each level means, Voice and Notify me once, quiet hours and who else
- * follows it, then Unfollow · Done. The popover and the phone page place the same parts.
+ * The one personal Follow editor (lab P2-A): what following does and where updates arrive, the shared
+ * level editor (each level with its meaning, the chosen one's breakdown), Voice and Notify me once under
+ * a divider, quiet hours and who else follows it as quiet links, then Turn off · Done on one footer row.
+ * The popover and the phone page place the same parts.
  */
 export function AccountSessionFollowEditor(props: AccountSessionFollowEditorProps) {
     const { state } = props;
@@ -143,6 +150,7 @@ export function AccountSessionFollowEditor(props: AccountSessionFollowEditorProp
         </ItemGroup> : null}
         {policyModel ? <>
             <FollowPolicySection>{policyEditor}</FollowPolicySection>
+            <FollowOptionsDivider />
             <ItemGroup>
                 <Item
                     title={t('session.follow.voice.title')}
@@ -182,40 +190,36 @@ export function AccountSessionFollowEditor(props: AccountSessionFollowEditorProp
             </ItemGroup>
             {onceRow ? <ItemGroup>{onceRow}</ItemGroup> : null}
         </> : null}
-        {/* Quiet facts that change what reaches you, each leading where it is changed. */}
+        {/* Quiet facts that change what reaches you, each a plain link to where it is changed. */}
         <ItemGroup surface="none">
-            <Item
-                testID="session-follow-quiet-hours"
-                density="compact"
-                showDivider={false}
-                icon={<Icon name={props.quietHours ? 'moon' : 'bell'} />}
-                title={props.quietHours === 'on' ? t('session.follow.editor.quietHoursOn')
-                    : props.quietHours ? t('session.follow.editor.quietHours', { range: props.quietHours })
-                        : t('session.follow.settingsLink')}
-                titleLines={0}
-                onPress={props.onOpenNotificationSettings}
-            />
-            {alsoCount > 0 && also && props.onOpenPeople ? <Item
-                testID="session-follow-people"
-                density="compact"
-                showDivider={false}
-                icon={<Icon name="users" />}
-                title={t('session.follow.editor.alsoFollow', {
-                    facts: joinHappierFacts(
-                        also.people > 0 ? t('session.collaboration.pane.followersPeople', { count: also.people }) : null,
-                        also.sessions > 0 ? t('session.collaboration.pane.followersSessions', { count: also.sessions }) : null,
-                    ),
-                    count: alsoCount,
-                })}
-                titleLines={0}
-                detail={t('session.follow.editor.people')}
-                onPress={props.onOpenPeople}
-            /> : null}
+            <BareSectionContent>
+                <View style={styles.links}>
+                    <Text style={styles.note} testID="session-follow-quiet-hours">
+                        {props.quietHours ? <>{props.quietHours === 'on' ? t('session.follow.editor.quietHoursOn')
+                            : t('session.follow.editor.quietHours', { range: props.quietHours })}{' '}</> : null}
+                        <TextLinkButton size="meta" label={t('session.follow.settingsLink')} onPress={props.onOpenNotificationSettings}
+                            testID="session-follow-settings" />
+                    </Text>
+                    {alsoCount > 0 && also && props.onOpenPeople ? <Text style={styles.note}>
+                        {t('session.follow.editor.alsoFollow', {
+                            facts: joinHappierFacts(
+                                also.people > 0 ? t('session.collaboration.pane.followersPeople', { count: also.people }) : null,
+                                also.sessions > 0 ? t('session.collaboration.pane.followersSessions', { count: also.sessions }) : null,
+                            ),
+                            count: alsoCount,
+                        })}{' · '}
+                        <TextLinkButton size="meta" label={t('session.follow.editor.people')} onPress={props.onOpenPeople}
+                            testID="session-follow-people" />
+                    </Text> : null}
+                </View>
+            </BareSectionContent>
         </ItemGroup>
     </>;
 
     // Owner tracking survives suppression, but the delivery choice is editable in both states.
     // Nothing is offered before the first read.
+    // Leaving is a choice about the whole follow, so it stands at the footer's start as quiet danger text, apart
+    // from the Done that closes the panel. An owner stays tracked, so what it can do is turn delivery off.
     const footer = pending ? null : <SectionButtonRow
         trailing={!deliveryEnabled ? <RoundButton
             testID="session-follow-follow"
@@ -226,25 +230,33 @@ export function AccountSessionFollowEditor(props: AccountSessionFollowEditorProp
                 props.onSet({ notificationLevel: 'important', includeInVoice: false });
             }}
         /> : <RoundButton testID="session-follow-done" title={t('common.done')} onPress={() => props.onClose?.()} />}
-    >
-        {deliveryEnabled ? <RoundButton
-                testID="session-follow-unfollow"
-                display="inverted"
-                // An owner stays tracked, so what it can do is turn delivery off.
-                title={isSessionOwner ? t('session.follow.editor.turnOff') : t('session.follow.unfollow')}
-                disabled={!state.online || state.saving || !canManage}
-                onPress={props.onRemove}
-            /> : null}
-    </SectionButtonRow>;
+    >{deliveryEnabled ? <RoundButton
+        testID="session-follow-unfollow"
+        display="quietDestructive"
+        title={isSessionOwner ? t('session.follow.editor.turnOff') : t('session.follow.unfollow')}
+        disabled={!state.online || state.saving || !canManage}
+        onPress={props.onRemove}
+    /> : null}</SectionButtonRow>;
 
     const parts: AccountSessionFollowEditorParts = {
-        title: props.sessionTitle ? t('session.follow.editor.sheetTitle', { name: props.sessionTitle }) : t('session.follow.editor.title'),
-        subtitle: t('session.follow.editor.sheetSubtitle'),
+        // What following does, and the one sentence of where its updates arrive.
+        title: t('session.follow.editor.panelTitle'),
+        subtitle: t('session.follow.editor.panelSubtitle'),
         mark: props.sessionMark ?? null,
         body,
         footer,
     };
     return <>{props.frame ? props.frame(parts) : <>{parts.body}{parts.footer}</>}</>;
+}
+
+/**
+ * The hairline above the secondary options. On a page the sections are sheets and already stand apart; a
+ * popover separates them with this one hairline. It reads the list presentation where it is mounted.
+ */
+function FollowOptionsDivider() {
+    const { theme } = useUnistyles();
+    if (useListPresentation() === 'page') return null;
+    return <HappierDivider color={theme.colors.border.default} style={styles.divider} testID="session-follow-divider" />;
 }
 
 type OnceChoice = 'off' | 'turn' | 'attention';
@@ -294,3 +306,13 @@ function NotifyOnceRow(props: Readonly<{
         }}
     />;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    // The divider stands on the rows' edges, like the hairlines between them.
+    divider: { marginHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, marginVertical: theme.space.s4 },
+    links: { gap: theme.space.s4, paddingTop: theme.space.s4 },
+    note: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+}));

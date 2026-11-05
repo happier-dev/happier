@@ -10536,8 +10536,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "大切な更新を受け取ります。",
             "ownerSubtitle": "このセッションはあなたのものなので、更新は常に届きます。",
             "externalAttachedOnly": "バックグラウンド同期がオフのため、このセッションが接続されている間のみ更新が届く場合があります。",
-            "sheetTitle": ({ name }) => `フォロー：${name}`,
-            "sheetSubtitle": "どれだけ知らせるか",
+            "panelTitle": "このセッションの更新を受け取る",
+            "panelSubtitle": "更新は通知で届くか、受信箱で待ちます。",
             "suppressed": "更新はオフです。このセッションは引き続きあなたのものです。",
             "turnOff": "更新をオフにする",
             "alsoFollow": ({ facts, count }) => `${facts}もフォローしています`,
@@ -10554,21 +10554,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "受け取る量",
             "presetDescription": {
-                "everything": "何かあるたびに通知します。メッセージは受信箱に静かに届きます。",
-                "important": "対応が必要なとき、失敗や停滞のときだけ通知します。それ以外は受信箱で静かに待ちます。",
+                "everything": "何かあるたびに通知します。",
+                "important": "対応が必要なとき、失敗や停滞のときだけ通知します。",
                 "quiet": "通知はしません。更新は受信箱で静かに待ちます。",
-                "custom": "通知するもの、静かに届くもの、含めないものを選びます。"
+                "custom": "イベントごとに届け方を選びます。"
             },
             "customTitle": "イベントごと",
-            "group": {
-                "interrupt": "通知する",
-                "quiet": "静かに届く",
-                "off": "含めない"
-            },
-            "channel": {
-                "interrupt": "プッシュ",
-                "quiet": "受信箱"
-            },
             "delivery": {
                 "off": "オフ",
                 "quiet": "受信箱",
@@ -10577,13 +10568,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "どこまで受け取るか",
                 "presetDescription": {
-                    "everything": "何かが起きるたびに起こします。メッセージは次のターンまで待ちます。",
-                    "important": "用事があるとき、失敗したとき、止まったときだけ起こします。それ以外は次のターンまで待ちます。",
+                    "everything": "何かが起きるたびに起こします。",
+                    "important": "用事があるとき、失敗したとき、止まったときだけ起こします。",
                     "quiet": "何も起こしません。更新は次のターンまで待ちます。",
-                    "custom": "何で起こすか、次のターンまで待つか、対象外にするかを選びます。"
+                    "custom": "イベントごとに届け方を選びます。"
                 },
-                "group": { "interrupt": "起こす", "quiet": "次のターンまで待つ" },
-                "channel": { "interrupt": "起こす", "quiet": "次のターン" },
                 "delivery": { "interrupt": "起こす", "quiet": "次のターン" }
             },
             "events": {

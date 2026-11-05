@@ -10547,8 +10547,8 @@ const sessionFollowTranslations: Pick<Record<
             "subtitle": "Rep les actualitzacions que t’importen.",
             "ownerSubtitle": "Ets propietari d’aquesta sessió, així que sempre en rebràs les novetats.",
             "externalAttachedOnly": "La sincronització en segon pla està desactivada, així que les actualitzacions poden arribar només mentre aquesta sessió estigui connectada.",
-            "sheetTitle": ({ name }) => `Segueix ${name}`,
-            "sheetSubtitle": "Quant en saps",
+            "panelTitle": "Rep novetats d’aquesta sessió",
+            "panelSubtitle": "Les novetats t’arriben com a notificacions o esperen a la teva safata.",
             "suppressed": "Les actualitzacions estan desactivades. Continua sent teva.",
             "turnOff": "Desactiva les actualitzacions",
             "alsoFollow": ({ facts, count }) => `${facts} ${count === 1 ? "també la segueix" : "també la segueixen"}`,
@@ -10565,21 +10565,12 @@ const sessionFollowTranslations: Pick<Record<
         "policyEditor": {
             "presetLabel": "Quant en vols saber",
             "presetDescription": {
-                "everything": "T'interromp sempre que passa alguna cosa. Els missatges arriben en silenci a la safata.",
-                "important": "T'interromp només quan et necessita, falla o s'encalla. La resta espera en silenci a la safata.",
+                "everything": "T'interromp sempre que passa alguna cosa.",
+                "important": "T'interromp només quan et necessita, falla o s'encalla.",
                 "quiet": "Res no t'interromp. Les novetats esperen en silenci a la safata.",
-                "custom": "Tria què t'interromp, què arriba en silenci i què queda fora."
+                "custom": "Tria com t’arriba cada esdeveniment."
             },
             "customTitle": "Cada esdeveniment",
-            "group": {
-                "interrupt": "T'interromp",
-                "quiet": "Arriba en silenci",
-                "off": "No inclòs"
-            },
-            "channel": {
-                "interrupt": "Push",
-                "quiet": "Safata"
-            },
             "delivery": {
                 "off": "No",
                 "quiet": "Safata",
@@ -10588,13 +10579,11 @@ const sessionFollowTranslations: Pick<Record<
             "session": {
                 "presetLabel": "Quant en sent parlar",
                 "presetDescription": {
-                    "everything": "El desperta cada vegada que passa alguna cosa. Els missatges esperen el seu pròxim torn.",
-                    "important": "Només el desperta quan alguna cosa el necessita, falla o s’encalla. Tota la resta espera el seu pròxim torn.",
+                    "everything": "El desperta cada vegada que passa alguna cosa.",
+                    "important": "Només el desperta quan alguna cosa el necessita, falla o s’encalla.",
                     "quiet": "Res no el desperta. Les novetats esperen el seu pròxim torn.",
-                    "custom": "Tria què el desperta, què espera el seu pròxim torn i què queda fora."
+                    "custom": "Tria com li arriba cada esdeveniment."
                 },
-                "group": { "interrupt": "El desperta", "quiet": "Espera el seu pròxim torn" },
-                "channel": { "interrupt": "Despertar", "quiet": "Pròxim torn" },
                 "delivery": { "interrupt": "Despertar", "quiet": "Pròxim torn" }
             },
             "events": {
