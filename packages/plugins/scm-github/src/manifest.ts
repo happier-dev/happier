@@ -1453,6 +1453,11 @@ function createGithubPlugin() {
               schema: { type: 'string', minLength: 1 },
               secret: true,
             }],
+      setup: {
+              url: 'https://github.com/settings/personal-access-tokens/new',
+              checklist: ['Generate a fine-grained personal access token and choose its resource owner, repositories, and expiration.', 'Grant the repository and organization permissions needed for the actions you want to use; an organization may require approval.', 'Copy the generated token and paste it here.'],
+              createKeyTitle: 'Open GitHub fine-grained tokens',
+            },
           }, {
             id: 'native-import',
             kind: 'manual',
@@ -1469,6 +1474,11 @@ function createGithubPlugin() {
               default: 'native',
               presentation: { control: 'select', options: [{ value: 'native', title: 'GitHub CLI login' }] },
             }],
+      setup: {
+              url: 'https://cli.github.com/manual/gh_auth_login',
+              checklist: ['On the computer you will import from, run gh auth login and complete the GitHub sign-in.', 'Choose that computer in Happier to import its saved GitHub CLI login.'],
+              createKeyTitle: 'Read GitHub CLI login instructions',
+            },
           }],
         },
         capabilities: ['scmHostingToken'],
