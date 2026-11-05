@@ -42,10 +42,12 @@ export function resolveDeploymentStoredDefinitionRevisionV1(
 ): number | null {
     if (!previous) return 1;
     if (previous.kind !== 'stored') return null;
-    if (previous.document === candidate.document && previous.composeDigest !== candidate.composeDigest) return null;
+    const sameSource = previous.document === candidate.document
+        && sameStrictJsonValue(previous.publicFiles ?? [], candidate.publicFiles ?? []);
+    if (sameSource && previous.composeDigest !== candidate.composeDigest) return null;
     const sameList = (left: readonly string[], right: readonly string[]) =>
         left.length === right.length && left.every((value, index) => value === right[index]);
-    const unchanged = previous.document === candidate.document
+    const unchanged = sameSource
         && sameList(previous.profiles, candidate.profiles) && sameList(previous.services, candidate.services)
         && previous.primaryService === candidate.primaryService;
     return previous.contentRevision + (unchanged ? 0 : 1);

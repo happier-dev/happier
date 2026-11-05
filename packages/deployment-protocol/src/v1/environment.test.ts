@@ -2,11 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentV1, createDeploymentTargetLinkV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema, EnvironmentSecretBindingV1Schema,
-    createOwnServerEnvironmentConfigurationV1 } from './environment.js';
+    createOwnServerEnvironmentConfigurationV1, resolveDeploymentStoredDefinitionRevisionV1 } from './environment.js';
 import { DeploymentV1Schema, OwnServerDeploymentInputBasisV1Schema } from './deployment.js';
 import { DeploymentTargetLinkV1Schema } from './target.js';
 
 describe('multi-Machine deployment contracts', () => {
+    it('advances the stored source revision when only a public file changes', () => {
+        const document = 'services: {app: {image: app:1}}';
+        const previous = { kind: 'stored' as const, document, profiles: [], services: ['app'], contentRevision: 2,
+            composeDigest: `sha256:${'a'.repeat(64)}` as const, publicFiles: [{ path: 'files/app.conf', content: 'first' }] };
+        const candidate = { ...previous, composeDigest: `sha256:${'b'.repeat(64)}` as const,
+            publicFiles: [{ path: 'files/app.conf', content: 'second' }] };
+        expect(resolveDeploymentStoredDefinitionRevisionV1(previous, candidate)).toBe(3);
+        expect(resolveDeploymentStoredDefinitionRevisionV1(previous, { ...previous })).toBe(2);
+    });
     it('rejects explicit null instead of authoring a default for an invalid own-server choice', () => {
         for (const field of ['rollout', 'autoRestorePreviousRelease', 'backupBeforeMigration', 'migrationFailurePolicy', 'serviceExports']) {
             // Exercise the exported JavaScript boundary with malformed external input.
