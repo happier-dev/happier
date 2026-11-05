@@ -3,6 +3,8 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    defineProtocolString,
+    type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
@@ -51,3 +53,24 @@ export const TriageListInvocationErrorV1Schema = defineProtocolObject({
     requestId: TriageIdentifierV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 export type TriageListInvocationErrorV1 = ReturnType<typeof TriageListInvocationErrorV1Schema.parse>;
+
+/** One failure/read envelope for the domain-versioned protocol subpaths. */
+export const TriageReadUnavailableV1Schema = defineProtocolObject({
+    kind: defineProtocolLiteral('unavailable'), failure: TriageSourceFailureV1Schema,
+}, { policy: 'closed' });
+
+export function defineTriageValueResultV1<T>(value: ProtocolComposableSchema<T>) {
+    return defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('value'), value }, { policy: 'closed' }),
+        TriageReadUnavailableV1Schema,
+    ]);
+}
+
+export function defineTriageConditionalReadV1<T>(value: ProtocolComposableSchema<T>) {
+    const validator = defineProtocolString().optional();
+    return defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('value'), value, validator }, { policy: 'closed' }),
+        defineProtocolObject({ kind: defineProtocolLiteral('notModified'), validator }, { policy: 'closed' }),
+        TriageReadUnavailableV1Schema,
+    ]);
+}

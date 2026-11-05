@@ -30,6 +30,21 @@
  * to each source's own mounted surface, where the panel lifetime lives.
  */
 
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
+
+/** Executable projection of this owner's page, shared by versioned domains. */
+export function defineTriagePagedPanelPageV1<TRow, TIncomplete>(
+    row: ProtocolComposableSchema<TRow>, incomplete: ProtocolComposableSchema<TIncomplete>,
+) {
+    return defineProtocolObject({
+        rows: defineProtocolArray(row),
+        omittedRowCount: defineProtocolNumber({ integer: true, minimum: 0 }),
+        projectionTruncated: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+        continuation: defineProtocolString({ minLength: 1 }).nullable(),
+        incomplete: incomplete.nullable(),
+    }, { policy: 'closed' });
+}
+
 export type TriagePagedPanelStateV1<TRow, TFailure, TIncomplete = never> = Readonly<{
     kind: 'idle' | 'loading' | 'ready' | 'unavailable';
     rows: readonly TRow[];

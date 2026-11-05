@@ -7,6 +7,16 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./releases/v1": {
+      "happier-source": "./src/releases/v1/index.ts",
+      "types": "./dist/releases/v1/index.d.ts",
+      "default": "./dist/releases/v1/index.js"
+    },
+    "./releases/testing/v1": {
+      "happier-source": "./src/releases/testing/v1/index.ts",
+      "types": "./dist/releases/testing/v1/index.d.ts",
+      "default": "./dist/releases/testing/v1/index.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
