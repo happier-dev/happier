@@ -1321,7 +1321,7 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     transcriptToolCallsCollapsedPreviewCount: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value): unknown => typeof value === 'number' && Number.isFinite(value)
         ? Math.max(0, Math.min(15, Math.trunc(value)))
         : value), accountNonNegativeInteger(15)), DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT, 'transcript presentation'),
-    transcriptToolCallsGroupShowBackground: accountPreference(z.boolean(), true, 'transcript presentation'),
+    transcriptToolCallsGroupShowBackground: accountPreference(z.boolean(), false, 'transcript presentation'),
     transcriptMessageTimestampDisplayMode: accountPreference(z.enum(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES), 'hover_web_hidden_mobile', 'transcript presentation'),
     transcriptMessageSelectionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptMessageCopyActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
