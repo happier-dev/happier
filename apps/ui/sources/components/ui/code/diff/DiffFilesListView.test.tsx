@@ -27,7 +27,8 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async importOriginal => ({
+    ...await importOriginal<Record<string, unknown>>(),
     LegendList: (props: any) => {
         legendListMockState = legendListMockState ?? { props: null };
         legendListMockState.props = props;
@@ -67,6 +68,9 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () => ({
     useInlineDiffVirtualizationThresholds: () => ({ lineThreshold: 50_000, byteThreshold: 100 }),
 }));
+
+// Collect the real owner after boundary setup, before interaction deadlines begin.
+await import('./DiffFilesListView');
 
 describe('DiffFilesListView', () => {
     it('keeps the folded-lines control translucent while retaining expansion', async () => {
@@ -321,7 +325,6 @@ describe('DiffFilesListView', () => {
             />);
 
         const listProps = getLegendListProps();
-        expect(Array.isArray(listProps.style)).toBe(true);
         expect(flattenStyle(listProps.style)).toMatchObject({ flex: 1, minHeight: 0, overflowAnchor: 'none' });
     });
 

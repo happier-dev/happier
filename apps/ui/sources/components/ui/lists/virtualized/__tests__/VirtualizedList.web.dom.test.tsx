@@ -4,12 +4,15 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type ViewToken } from 'react-native';
 
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 
 import { VirtualizedList } from '../VirtualizedList';
 import { CollectionList } from '../../collection/CollectionList';
+import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
+import { installClampedWebScrollGeometry } from '@/dev/testkit/legend/webScrollGeometry';
+import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 
@@ -101,8 +104,10 @@ async function flushLegendWork(): Promise<void> {
 describe('VirtualizedList web DOM integration', () => {
     let container: HTMLDivElement;
     let root: Root;
+    let initialScrollBy: PropertyDescriptor | undefined;
 
     beforeEach(() => {
+        initialScrollBy = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollBy');
         vi.useFakeTimers();
         resizeObservers.clear();
         container = document.createElement('div');
@@ -179,6 +184,8 @@ describe('VirtualizedList web DOM integration', () => {
         await act(async () => root.unmount());
         container.remove();
         vi.restoreAllMocks();
+        if (initialScrollBy) Object.defineProperty(HTMLElement.prototype, 'scrollBy', initialScrollBy);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'scrollBy');
         vi.unstubAllGlobals();
         vi.useRealTimers();
     });
@@ -418,5 +425,61 @@ describe('VirtualizedList web DOM integration', () => {
         expect(container.querySelector('[data-testid="row:first-0"]')).toBeNull();
         expect(mountedRows()).toBeLessThan(40);
     });
+
+    it('keeps unchanged Review rows mounted and quiet when 59,165 files gain two entries', async () => {
+        installClampedWebScrollGeometry();
+        const initialFiles = Array.from({ length: 59_165 }, (_, index) => ({ key: `count-${index}`, added: 1, removed: 0 }));
+        const renders: string[] = [];
+        const mounts: string[] = [];
+        const unmounts: string[] = [];
+        let toggle: (key: string) => void;
+        function RowBody({ file, expanded }: { file: (typeof initialFiles)[number]; expanded: boolean }) {
+            renders.push(file.key);
+            React.useLayoutEffect(() => {
+                mounts.push(file.key);
+                return () => { unmounts.push(file.key); };
+            }, [file.key]);
+            return <div data-row-height={expanded ? '120' : '84'} data-file-id={file.key}>{file.added}</div>;
+        }
+        const renderFileRow = ({ file, expanded }: { file: (typeof initialFiles)[number]; expanded: boolean }) => <RowBody file={file} expanded={expanded} />;
+        function Review({ files }: { files: typeof initialFiles }) {
+            const allKeys = React.useMemo(() => files.map(file => file.key), [files]);
+            const [viewableIndices, setViewableIndices] = React.useState<readonly number[]>([]);
+            const expansion = useScmDiffExpandedKeys({ allKeys, viewableIndices, tooLarge: true,
+                aheadCount: 14, behindCount: 8, resetKey: 'same-review' });
+            toggle = expansion.toggleCollapsed;
+            return <DiffFilesListView files={files} virtualizeFileList expandedKeys={expansion.expandedKeys}
+                onViewableItemsChanged={({ viewableItems }: { viewableItems: ViewToken[] }) => setViewableIndices(viewableItems.flatMap(token => typeof token.index === 'number' ? [token.index] : []))}
+                onToggleExpanded={expansion.toggleCollapsed} canRenderInlineDiffs={false} wrapLines showLineNumbers showPrefix
+                renderFileRow={renderFileRow} />;
+        }
+        const render = (files: typeof initialFiles) => act(async () => root.render(
+            <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}><Review files={files} /></div>,
+        ));
+        await render(initialFiles);
+        await flushLegendWork();
+        await act(async () => toggle!(initialFiles[0]!.key));
+        await flushLegendWork();
+        expect(container.querySelector('[data-file-id="count-0"]')?.getAttribute('data-row-height')).toBe('84');
+        const mountedCount = container.querySelectorAll('[data-file-id]').length;
+        expect(mountedCount).toBeGreaterThan(0);
+        expect(mountedCount).toBeLessThan(40);
+        renders.length = mounts.length = unmounts.length = 0;
+        await render([...initialFiles, { key: 'count-new-a', added: 1, removed: 0 }, { key: 'count-new-b', added: 1, removed: 0 }]);
+        await flushLegendWork();
+        expect.soft(renders, 'an append preserves the folds and identities of existing rows').toEqual([]);
+        expect.soft(mounts).toEqual([]);
+        expect.soft(unmounts).toEqual([]);
+        expect(container.querySelectorAll('[data-file-id]').length).toBeLessThan(40);
+        // A real visible data change must still reach its row.
+        renders.length = mounts.length = unmounts.length = 0;
+        await render([{ ...initialFiles[0]!, added: 2 }, ...initialFiles.slice(1)]);
+        await flushLegendWork();
+        expect(new Set(renders)).toEqual(new Set(['count-0']));
+        expect(container.querySelector('[data-file-id="count-0"]')?.textContent).toBe('2');
+        expect(mounts).toEqual([]);
+        expect(unmounts).toEqual([]);
+    });
+
 
 });

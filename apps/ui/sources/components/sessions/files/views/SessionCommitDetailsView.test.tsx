@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
@@ -38,7 +38,8 @@ function commitDiff(count = 1): string {
     }).join('\n');
 }
 
-beforeAll(prepareSessionFilesViewTestkit);
+// Collect the real store and executor before interaction deadlines begin.
+await prepareSessionFilesViewTestkit();
 beforeEach(async () => {
     browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
     diffResponse.mockReset().mockResolvedValue({ success: true, diff: commitDiff() });

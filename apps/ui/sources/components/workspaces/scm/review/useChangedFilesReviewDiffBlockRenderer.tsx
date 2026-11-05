@@ -11,12 +11,11 @@ import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 const EMPTY_REVIEW_COMMENT_DRAFTS_BY_FILE_PATH: ReadonlyMap<string, readonly ReviewCommentDraft[]> = new Map();
 
-type DiffFileFacts = Pick<ChangedFilesReviewDiffBlockProps, 'isBinaryContent' | 'estimatedChangedLines' | 'onOpenFile'>;
+type DiffFileFacts = Pick<ChangedFilesReviewDiffBlockProps, 'isBinaryContent' | 'estimatedChangedLines' | 'onOpenFile' | 'imageCompare' | 'snapshotSignature'>;
 
 export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     theme: any;
     sessionId: string;
-    snapshotSignature: string | null;
     workspaceScope?: WorkspaceScopeBase | null;
     diffStateSource: ChangedFilesReviewDiffStateSource;
     reviewCommentsEnabled?: boolean;
@@ -33,8 +32,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     flat?: boolean;
     evidenceOnly?: boolean;
     hunkNotes?: ChangedFilesReviewDiffBlockProps['hunkNotes'];
-    /** Before/after facts per changed image path, from the Review's comparison entries. */
-    getImageCompare?: (path: string) => ChangedFilesReviewDiffBlockProps['imageCompare'];
     /** Keep / Discard rows on every file's changes (one checkout, one discard owner). */
     getHunkReview?: (path: string) => Readonly<{ hunks: NonNullable<ChangedFilesReviewDiffBlockProps['hunkReview']>;
         reviewUnits: ChangedFilesReviewDiffBlockProps['reviewUnits'] }>;
@@ -42,7 +39,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     const {
         theme,
         sessionId,
-        snapshotSignature,
         workspaceScope,
         diffStateSource,
         reviewCommentsEnabled,
@@ -85,7 +81,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
             <ChangedFilesReviewDiffBlock
                 theme={theme}
                 sessionId={sessionId}
-                snapshotSignature={snapshotSignature}
+                snapshotSignature={fileFacts.snapshotSignature}
                 workspaceScope={workspaceScope ?? null}
                 filePath={path}
                 isBinaryContent={fileFacts.isBinaryContent}
@@ -104,7 +100,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 flat={flat}
                 evidenceOnly={input.evidenceOnly}
                 hunkNotes={input.hunkNotes}
-                imageCompare={input.getImageCompare?.(path) ?? null}
+                imageCompare={fileFacts.imageCompare ?? null}
                 onOpenFile={fileFacts.onOpenFile}
                 hunkReview={review?.hunks ?? null}
                 reviewUnits={review?.reviewUnits}
@@ -116,7 +112,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         input.evidenceOnly,
         input.hunkNotes,
         input.getHunkReview,
-        input.getImageCompare,
         input.findModel,
         input.findActive,
         onDeleteReviewCommentDraft,
@@ -128,7 +123,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         reviewCommentDraftsByDiffFilePath,
         reviewCommentsEnabled,
         sessionId,
-        snapshotSignature,
         theme,
         workspaceScope,
     ]);

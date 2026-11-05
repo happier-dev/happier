@@ -27,7 +27,8 @@ installCodeDiffCommonModuleMocks({
     },
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@legendapp/list/react-native')>(),
     LegendList: React.forwardRef((props: any, ref: any) => {
         if (ref) {
             ref.current = {
@@ -61,6 +62,9 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () => ({
     useInlineDiffVirtualizationThresholds: () => ({ lineThreshold: 50_000, byteThreshold: 100 }),
 }));
+
+// Collect the real owner after boundary setup, before interaction deadlines begin.
+await import('./DiffFilesListView');
 
 describe('DiffFilesListView measurement-cache contract', () => {
     it('clears the canonical measurement cache before toggling expansion', async () => {

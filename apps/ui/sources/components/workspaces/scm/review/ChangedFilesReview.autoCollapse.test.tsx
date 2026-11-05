@@ -295,6 +295,9 @@ async function renderChangedFilesReview() {
     return screen;
 }
 
+// Collect the real owner after boundary setup, before interaction deadlines begin.
+await import('./ChangedFilesReview');
+
 describe('ChangedFilesReview (tooLarge behavior)', () => {
     beforeEach(() => {
         sessionScmDiffFileSpy.mockClear();

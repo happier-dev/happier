@@ -46,7 +46,6 @@ describe('useChangedFilesReviewDiffBlockRenderer', () => {
         const hook = await renderHook(() => useChangedFilesReviewDiffBlockRenderer({
             theme: {},
             sessionId: 'session-1',
-            snapshotSignature: 'snapshot-1',
             workspaceScope: null,
             diffStateSource: createChangedFilesReviewDiffStateSource(),
             reviewCommentsEnabled: true,
@@ -57,7 +56,7 @@ describe('useChangedFilesReviewDiffBlockRenderer', () => {
             ],
         }));
 
-        const node = hook.getCurrent()('src/a.ts', { estimatedChangedLines: 12 });
+        const node = hook.getCurrent()('src/a.ts', { estimatedChangedLines: 12, snapshotSignature: null });
 
         if (!React.isValidElement<DiffBlockElementProps>(node)) {
             throw new Error('Expected diff block element');

@@ -39,7 +39,10 @@ import { useInitialScrollRestore } from '@/components/workspaces/scm/review/useI
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
-import { buildScmDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
+import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import type { ChangedFilesReviewDiffBlockProps } from './ChangedFilesReviewDiffBlock';
+import { useCapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
+import { buildScmDiffSnapshotSignature, buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
@@ -107,6 +110,8 @@ type ReviewListFile = DiffFileEntry & Readonly<{
     sectionTitle: string | undefined;
     highlighted: boolean;
     attribution: SessionAttributedFile | undefined;
+    imageCompare: ChangedFilesReviewDiffBlockProps['imageCompare'];
+    snapshotSignature: string | null;
 }>;
 
 function ReviewListDiff(props: Readonly<{
@@ -122,6 +127,8 @@ function ReviewListDiff(props: Readonly<{
         isBinaryContent: file.reviewFile.isBinary === true,
         estimatedChangedLines: added + removed,
         onOpenFile: onFilePress ? openFile : undefined,
+        imageCompare: file.imageCompare,
+        snapshotSignature: file.snapshotSignature,
     })}</>;
 }
 
@@ -346,10 +353,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [diffConfig.availableModes, hasIncludedDelta, hasPendingDelta]);
 
     const entryDeltaByPath = React.useMemo(() => {
-        const map = new Map<string, ScmEntryDelta>();
+        const map = new Map<string, ScmEntryDelta & { entry: ScmWorkingSnapshot['entries'][number] }>();
         for (const entry of snapshot?.entries ?? []) {
             if (!entry?.path) continue;
-            map.set(entry.path, entryToDelta(entry));
+            map.set(entry.path, { ...entryToDelta(entry), entry });
         }
         return map;
     }, [snapshot?.entries]);
@@ -652,7 +659,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         tooLarge: tooLargeForExpansion,
         aheadCount: viewabilityConfig.aheadCount,
         behindCount: viewabilityConfig.behindCount,
-        resetKey: `${reviewScopeKey}:${snapshotShapeSignature ?? 'nosig'}:${diffArea}`,
+        resetKey: `${reviewScopeKey}:${diffArea}`,
         initialCollapsedKeys: props.initialCollapsedPaths ?? comparisonDefaultCollapsedPaths,
         onCollapsedKeysChange: props.onCollapsedPathsChange,
         viewableExpansionEnabled,
@@ -1085,18 +1092,13 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             if (destination) focusLine({ filePath: cursor.path, lineId: destination.revealLineId });
         },
     });
-    const getHunkReview = props.hunkReview ? (path: string) => ({
-        hunks: controller.hunksForPath(path), reviewUnits: props.hunkReview?.source.kind === 'captured' ? controller.reviewUnitsForPath(path) : undefined,
-    }) : undefined;
-    const getImageCompare = React.useCallback((path: string) => {
-        if (props.hunkReview?.source.kind === 'captured') {
-            const comparison = props.hunkReview.source.comparison;
-            const file = comparison.inventory.files.find(file => file.path === path);
-            return file ? { kind: 'captured' as const, file, comparisonId: comparison.id } : null;
-        }
-        const entry = snapshot?.entries.find(file => file.path === path);
-        return entry ? { kind: 'workingTree' as const, changeKind: entry.kind, area: diffArea, signature: snapshotSignature } : null;
-    }, [props.hunkReview?.source, snapshot, diffArea, snapshotSignature]);
+    const capturedComparison = props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison : null;
+    const capturedFileByPath = useCapturedFileByPath(capturedComparison);
+    const { hunksForPath, reviewUnitsForPath } = controller;
+    const capturedReview = capturedComparison !== null;
+    const getHunkReview = React.useMemo(() => reviewEnabled ? (path: string) => ({
+        hunks: hunksForPath(path), reviewUnits: capturedReview ? reviewUnitsForPath(path) : undefined,
+    }) : undefined, [reviewEnabled, capturedReview, hunksForPath, reviewUnitsForPath]);
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
         hunkNotes,
         evidenceOnly: props.evidenceOnly,
@@ -1107,7 +1109,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         findActive: findOpen,
         theme,
         sessionId,
-        snapshotSignature,
         workspaceScope,
         diffStateSource,
         reviewCommentsEnabled,
@@ -1117,7 +1118,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         onReviewCommentError: props.onReviewCommentError,
         flat: Boolean(props.comparisonChrome),
         getHunkReview,
-        getImageCompare,
     });
 
     const onFilePressPinned = props.onFilePressPinned;
@@ -1246,22 +1246,38 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     // entries rather than making a renderer close over the entire metadata/attribution inventory.
     const publishedFiles = React.useRef<readonly ReviewListFile[]>([]);
     const diffFiles = React.useMemo(() => {
-        const incoming: ReviewListFile[] = reviewFileEntries.map((entry, index) => ({
-            key: entry.key,
-            filePath: entry.key,
-            isComplete: entry.file.isComplete,
-            added: entry.file.linesAdded,
-            removed: entry.file.linesRemoved,
-            kind: entry.file.status === 'added' || entry.file.status === 'untracked' ? 'new'
-                : entry.file.status === 'deleted' ? 'deleted' : entry.file.status === 'renamed' ? 'renamed' : undefined,
-            reviewFile: entry.file,
-            showDivider: reviewFileEntries[index + 1]?.sectionKey === entry.sectionKey,
-            sectionTitle: entry.indexInSection === 0 ? entry.sectionTitle : undefined,
-            highlighted: highlightedPath === entry.file.fullPath,
-            attribution: attributedEntriesByPath.get(entry.file.fullPath),
-        }));
+        const incoming: ReviewListFile[] = reviewFileEntries.map((entry, index) => {
+            // Only image previews consume a revision identity. Text diffs update through the diff store.
+            const viewer = resolveFileViewerKind({ path: entry.key, isBinaryContent: entry.file.isBinary });
+            const hasPreview = viewer.kind === 'image' || viewer.kind === 'svg' || viewer.kind === 'pdf';
+            const hasMediaFacts = hasPreview || viewer.kind === 'audio' || viewer.kind === 'video';
+            const capturedFile = hasMediaFacts ? capturedFileByPath?.get(entry.key) : undefined;
+            const workingEntry = hasMediaFacts ? entryDeltaByPath.get(entry.key)?.entry : undefined;
+            const imageSignature = hasPreview ? workingEntry && snapshot
+                ? buildScmFileDiffSnapshotSignature(snapshot, workingEntry) : snapshotSignature : null;
+            const imageCompare: ReviewListFile['imageCompare'] = capturedComparison
+                ? capturedFile ? { kind: 'captured', file: capturedFile, comparisonId: capturedComparison.id } : null
+                : workingEntry ? { kind: 'workingTree', changeKind: workingEntry.kind, area: diffArea, signature: imageSignature } : null;
+            return {
+                key: entry.key,
+                filePath: entry.key,
+                isComplete: entry.file.isComplete,
+                added: entry.file.linesAdded,
+                removed: entry.file.linesRemoved,
+                kind: entry.file.status === 'added' || entry.file.status === 'untracked' ? 'new'
+                    : entry.file.status === 'deleted' ? 'deleted' : entry.file.status === 'renamed' ? 'renamed' : undefined,
+                reviewFile: entry.file,
+                showDivider: reviewFileEntries[index + 1]?.sectionKey === entry.sectionKey,
+                sectionTitle: showSectionHeaders && entry.indexInSection === 0 ? entry.sectionTitle : undefined,
+                highlighted: highlightedPath === entry.file.fullPath,
+                attribution: attributedEntriesByPath.get(entry.file.fullPath),
+                imageCompare,
+                snapshotSignature: imageSignature,
+            };
+        });
         return publishedFiles.current = retainKeyedRows(publishedFiles.current, incoming, file => file.key);
-    }, [reviewFileEntries, attributedEntriesByPath, highlightedPath]);
+    }, [reviewFileEntries, attributedEntriesByPath, highlightedPath, showSectionHeaders,
+        capturedComparison, capturedFileByPath, entryDeltaByPath, snapshot, snapshotSignature, diffArea]);
 
     const renderFileRow = React.useCallback<NonNullable<DiffFilesListViewProps<ReviewListFile>['renderFileRow']>>((params) => {
         const file = params.file.reviewFile;

@@ -687,6 +687,7 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
 }));
 
 // Boundaries are installed above; collect the real owner outside the interaction deadline.
+await import('./ChangedFilesReview');
 
 describe('ChangedFilesReview', () => {
     it('prefers a freshly resolved web scroll root over a retained root', async () => {

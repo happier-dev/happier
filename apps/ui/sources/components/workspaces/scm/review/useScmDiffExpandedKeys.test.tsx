@@ -81,6 +81,27 @@ describe('useScmDiffExpandedKeys', () => {
         await hook.unmount();
     });
 
+    it('keeps manual folds and expansions when the initial file window changes, and resets on a new scope', async () => {
+        const initialProps: { allKeys: readonly string[]; resetKey: string } = {
+            allKeys: largeReviewKeys, resetKey: 'one-review',
+        };
+        const hook = await renderHook((props: { allKeys: readonly string[]; resetKey: string }) => useScmDiffExpandedKeys({
+            ...props, viewableIndices: noViewableIndices, tooLarge: true, aheadCount: 1, behindCount: 0,
+        }), { initialProps });
+        await act(async () => {
+            hook.getCurrent().toggleCollapsed('a');
+            hook.getCurrent().toggleCollapsed('g');
+        });
+        const allKeys = ['new', ...largeReviewKeys];
+        await hook.rerender({ allKeys, resetKey: 'one-review' });
+        expect(hook.getCurrent().expandedKeys.has('a')).toBe(false);
+        expect(hook.getCurrent().expandedKeys.has('g')).toBe(true);
+        await hook.rerender({ allKeys, resetKey: 'another-review' });
+        expect(hook.getCurrent().expandedKeys.has('a')).toBe(true);
+        expect(hook.getCurrent().expandedKeys.has('g')).toBe(false);
+        await hook.unmount();
+    });
+
     it('starts large reviews with the initial bounded prefetch window expanded', async () => {
         const hook = await renderHook(() => useScmDiffExpandedKeys({
             allKeys: largeReviewKeys,

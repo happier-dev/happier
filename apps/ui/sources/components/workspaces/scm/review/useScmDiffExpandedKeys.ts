@@ -115,7 +115,12 @@ export function useScmDiffExpandedKeys(input: Readonly<{
 
     const [autoExpandedKeys, setAutoExpandedKeys] = React.useState<Set<string>>(() => new Set());
 
+    // Inventory edits update the window, not the person's folds. Only a new review/mode or
+    // externally supplied collapsed paths reset those choices; use the latest admitted seeds then.
+    const resetSeedsRef = React.useRef({ initialAutoExpandedKeySet, initialCollapsedKeySet });
+    resetSeedsRef.current = { initialAutoExpandedKeySet, initialCollapsedKeySet };
     React.useEffect(() => {
+        const { initialAutoExpandedKeySet, initialCollapsedKeySet } = resetSeedsRef.current;
         if (!input.tooLarge) {
             setAutoExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
             setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
@@ -131,17 +136,16 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         setCollapsedKeys((prev) => (
             areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set(initialCollapsedKeySet)
         ));
-    }, [initialAutoExpandedKeySet, initialCollapsedKeySet, input.resetKey, input.tooLarge]);
+    }, [initialCollapsedKeysSignature, input.resetKey, input.tooLarge]);
 
     React.useEffect(() => {
         if (!input.tooLarge) return;
         if (input.viewableExpansionEnabled === false) return;
-        const nextKeys = buildExpandedWindow(input);
-        if (!nextKeys) return;
+        const nextKeys = buildExpandedWindow(input) ?? initialAutoExpandedKeySet;
         setAutoExpandedKeys((prev) => {
             return areStringSetsEqual(prev, nextKeys) ? prev : nextKeys;
         });
-    }, [input.aheadCount, input.allKeys, input.behindCount, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
+    }, [initialAutoExpandedKeySet, input.aheadCount, input.allKeys, input.behindCount, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
 
     const expandedKeys = React.useMemo(() => {
         if (!input.tooLarge) {
@@ -157,7 +161,7 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         const allowedKeys = new Set(input.allKeys);
         const out = new Set<string>();
         for (const key of autoKeys) {
-            if (collapsedKeys.has(key)) continue;
+            if (!allowedKeys.has(key) || collapsedKeys.has(key)) continue;
             out.add(key);
         }
         for (const key of manualExpandedKeys) {
