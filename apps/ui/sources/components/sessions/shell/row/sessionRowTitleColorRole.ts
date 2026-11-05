@@ -5,7 +5,7 @@ export type SessionListActiveColorModeV1 =
     | 'attentionOnly'
     | 'allActive';
 
-export type SessionRowTitleColorRole = 'primary' | 'secondary';
+export type SessionRowTitleColorRole = 'primary' | 'secondary' | 'tertiary';
 
 export function normalizeSessionListActiveColorMode(value: unknown): SessionListActiveColorModeV1 {
     return value === 'attentionOnly' || value === 'allActive'
@@ -22,7 +22,8 @@ export function resolveSessionRowTitleColorRole(input: Readonly<{
     titleTone: SessionRowTitleTone;
 }>): SessionRowTitleColorRole {
     if (input.selected) return 'primary';
-    if (!input.isConnected) return 'secondary';
+    // An offline row recedes below a read one, but unread news still has to be findable.
+    if (!input.isConnected && input.attentionState !== 'unread') return 'tertiary';
 
     if (input.mode === 'allActive') {
         return input.isSessionActive || input.titleTone !== 'quiet' ? 'primary' : 'secondary';

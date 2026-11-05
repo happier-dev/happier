@@ -1284,9 +1284,7 @@ const SessionItemContent = React.memo(
             attentionState: rowAttentionState,
             titleTone: rowPresentation.titleTone,
         });
-        const sessionTitleColor = sessionTitleColorRole === 'primary'
-            ? theme.colors.text.primary
-            : theme.colors.text.secondary;
+        const sessionTitleColor = theme.colors.text[sessionTitleColorRole];
         const sessionTitleStyle = [
             styles.sessionTitle,
             compact ? styles.sessionTitleCompact : null,

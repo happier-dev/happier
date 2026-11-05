@@ -63,7 +63,7 @@ describe('resolveSessionRowTitleColorRole', () => {
         })).toBe('secondary');
     });
 
-    it('keeps selected rows primary and disconnected rows secondary', () => {
+    it('keeps selected rows primary and steps disconnected rows down to tertiary', () => {
         expect(resolveSessionRowTitleColorRole({
             mode: 'attentionOnly',
             selected: true,
@@ -80,6 +80,19 @@ describe('resolveSessionRowTitleColorRole', () => {
             isSessionActive: true,
             attentionState: 'permission_required',
             titleTone: 'emphasized',
-        })).toBe('secondary');
+        })).toBe('tertiary');
+    });
+
+    it('never lets a disconnected row hide that it is unread', () => {
+        for (const mode of ['activityAndAttention', 'attentionOnly', 'allActive'] as const) {
+            expect(resolveSessionRowTitleColorRole({
+                mode,
+                selected: false,
+                isConnected: false,
+                isSessionActive: false,
+                attentionState: 'unread',
+                titleTone: 'emphasized',
+            })).toBe('primary');
+        }
     });
 });
