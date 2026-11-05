@@ -3,6 +3,7 @@ import { View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -79,9 +80,42 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 24,
         ...Typography.default(),
     },
+    // Embedded, the view is a step on its host's column (like the scanner and link entry beside
+    // it): copy, the QR and the actions start at the column's edge under the host's heading, the
+    // QR stands on the pane without a card, and the other ways in are quiet text actions.
     embeddedSectionLead: {
         marginTop: 0,
-        marginBottom: theme.space.s8,
+        marginBottom: 0,
+        textAlign: 'left',
+    },
+    embeddedNoticeCard: {
+        marginBottom: theme.space.s16,
+    },
+    embeddedStatusCard: {
+        marginTop: theme.space.s16,
+        borderWidth: 0,
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+        alignItems: 'flex-start',
+        backgroundColor: 'transparent',
+        gap: theme.space.s12,
+    },
+    embeddedQrBlockInner: {
+        alignItems: 'flex-start',
+        paddingVertical: 0,
+    },
+    embeddedTargetName: {
+        marginTop: 0,
+        textAlign: 'left',
+    },
+    embeddedActions: {
+        width: '100%',
+        marginTop: theme.space.s24,
+        alignItems: 'flex-start',
+        gap: theme.space.s16,
+    },
+    embeddedPrimary: {
+        width: '100%',
     },
     qrBlock: {
         alignItems: 'center',
@@ -105,16 +139,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
         color: theme.colors.text.primary,
     },
-    embeddedQrBlock: {
-        paddingVertical: theme.space.s6,
-    },
     footer: {
         marginTop: theme.space.s16,
         alignItems: 'center',
         width: '100%',
-    },
-    embeddedFooter: {
-        marginTop: theme.space.s8,
     },
     footerButton: {
         width: '100%',
@@ -248,6 +276,26 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, []);
 
+    const hasStatusContent = presentation.activity
+        || (presentation.contextualFacts !== 'none' && targetLabel != null)
+        || pairing.phase === 'ready';
+    const openSecretKeyLogin = () => {
+        if (embedded && props.onOpenSecretKeyLogin) {
+            props.onOpenSecretKeyLogin();
+            return;
+        }
+        const target = props.targetProfileId
+            ? resolveHomeAuthenticationTarget({ kind: 'saved_profile', profileRef: props.targetProfileId })
+            : null;
+        router.push(props.targetProfileId ? {
+            pathname: '/restore/manual',
+            params: {
+                targetServerId: props.targetProfileId,
+                targetServerUrl: target?.canonicalServerUrl ?? '',
+            },
+        } : '/restore/manual');
+    };
+
     if (requiresComputerSetup && pairing.phase === 'succeeded') {
         const frame = <View style={[styles.container, embedded ? styles.embeddedContainer : null]}>
             <View style={[styles.contentWrapper, embedded ? styles.embeddedContentWrapper : null]}>
@@ -263,7 +311,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         <View style={[styles.container, embedded ? styles.embeddedContainer : null]}>
             <View style={[styles.contentWrapper, embedded ? styles.embeddedContentWrapper : null]}>
                 {restoreRedirectNotice ? (
-                    <View style={styles.noticeCard}>
+                    <View style={[styles.noticeCard, embedded ? styles.embeddedNoticeCard : null]}>
                         <Text style={styles.noticeTitle}>{restoreRedirectNotice.title}</Text>
                         <Text style={styles.noticeBody}>{restoreRedirectNotice.body}</Text>
                     </View>
@@ -273,19 +321,20 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     {t(presentation.primaryTranslationKey)}
                 </Text>
 
-                <View
-                    style={[styles.statusCard, embedded ? styles.embeddedQrBlock : null]}
+                {/* On the step column an empty status block (no progress, Home or QR) draws nothing. */}
+                {embedded && !hasStatusContent ? null : <View
+                    style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}
                     accessibilityLiveRegion={presentation.liveRegion}
                 >
                     {presentation.activity ? (
                         <ActivitySpinner size="small" />
                     ) : null}
                     {presentation.contextualFacts !== 'none' && targetLabel ? (
-                        <Text style={styles.targetName}>{targetLabel}</Text>
+                        <Text style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>{targetLabel}</Text>
                     ) : null}
                     {pairing.phase === 'ready' ? (
                         <>
-                            <View testID="restore-requester-qr" style={styles.qrBlock}>
+                            <View testID="restore-requester-qr" style={[styles.qrBlock, embedded ? styles.embeddedQrBlockInner : null]}>
                                 {pairing.qrAvailable ? (
                                     <PairingQrCode link={pairing.link} size={264} />
                                 ) : (
@@ -298,10 +347,41 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             />
                         </>
                     ) : null}
-                </View>
+                </View>}
 
-                {!claimOwnsNavigation ? (
-                <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                {!claimOwnsNavigation && embedded ? (
+                    <View style={styles.embeddedActions}>
+                        {presentation.recoveryAction === 'retry' || presentation.recoveryAction === 'create_new_qr' ? (
+                            <View style={styles.embeddedPrimary}>
+                                <RoundButton
+                                    testID={presentation.recoveryAction === 'retry'
+                                        ? 'restore-requester-retry'
+                                        : 'restore-requester-create-new-qr'}
+                                    size="large"
+                                    title={presentation.recoveryAction === 'retry'
+                                        ? t('common.retry')
+                                        : t('connect.generateNewQrCode')}
+                                    action={reversePairing.start}
+                                />
+                            </View>
+                        ) : null}
+                        {reversePairing.canCancel ? (
+                            <TextLinkButton testID="restore-requester-cancel" label={t('common.cancel')} onPress={reversePairing.cancel} />
+                        ) : null}
+                        {canOpenScanner && props.onOpenScanQr ? (
+                            <TextLinkButton testID="restore-open-scan-qr" label={t('connect.scanQrCodeOnDevice')} onPress={props.onOpenScanQr} />
+                        ) : null}
+                        {props.onOpenPairingLinkEntry ? (
+                            <TextLinkButton testID="restore-enter-pairing-link" label={t('connect.enterUrlManually')} onPress={props.onOpenPairingLinkEntry} />
+                        ) : null}
+                        <TextLinkButton testID="restore-open-manual" label={t('connect.restoreWithSecretKeyInstead')} onPress={openSecretKeyLogin} />
+                        {providerResetEnabled ? (
+                            <TextLinkButton testID="restore-open-lost-access" label={t('connect.lostAccessLink')} onPress={() => router.push('/restore/lost-access')} />
+                        ) : null}
+                    </View>
+                ) : null}
+                {!claimOwnsNavigation && !embedded ? (
+                <View style={styles.footer}>
                     {reversePairing.canCancel ? (
                         <>
                             <View style={styles.footerButton}>
@@ -378,22 +458,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             size="normal"
                             title={t('connect.restoreWithSecretKeyInstead')}
                             display="inverted"
-                            onPress={() => {
-                                if (embedded && props.onOpenSecretKeyLogin) {
-                                    props.onOpenSecretKeyLogin();
-                                    return;
-                                }
-                                const target = props.targetProfileId
-                                    ? resolveHomeAuthenticationTarget({ kind: 'saved_profile', profileRef: props.targetProfileId })
-                                    : null;
-                                router.push(props.targetProfileId ? {
-                                    pathname: '/restore/manual',
-                                    params: {
-                                        targetServerId: props.targetProfileId,
-                                        targetServerUrl: target?.canonicalServerUrl ?? '',
-                                    },
-                                } : '/restore/manual');
-                            }}
+                            onPress={openSecretKeyLogin}
                         />
                     </View>
                     {providerResetEnabled ? (

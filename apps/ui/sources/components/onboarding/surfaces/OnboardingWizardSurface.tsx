@@ -13,22 +13,10 @@ import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardModalShell } from '../ui/WizardModalShell';
 import {
     type OnboardingWizardController,
-    useOnboardingWizardController,
     type OnboardingWizardSurfaceProps,
 } from './useOnboardingWizardController';
 
 export type { OnboardingWizardSurfaceProps } from './useOnboardingWizardController';
-
-export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
-    const controller = useOnboardingWizardController(props);
-
-    return (
-        <OnboardingWizardSurfacePresentation
-            {...props}
-            controller={controller}
-        />
-    );
-}
 
 export type OnboardingWizardSurfacePresentationProps = Readonly<OnboardingWizardSurfaceProps & {
     controller: OnboardingWizardController;

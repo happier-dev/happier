@@ -4,7 +4,7 @@ import { standardCleanup } from '@/dev/testkit';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
-import { setOnboardingWizardAwaitingAuthResumeIntent, setOnboardingWizardPreAuthResumeIntent } from './wizardResume';
+import { setOnboardingWizardAwaitingAuthResumeIntent } from './wizardResume';
 
 const RELAY_URL = 'https://relay.example.test';
 
@@ -26,9 +26,6 @@ describe('wizardResume', () => {
     it('persists onboarding resume phases through the canonical pending setup intent', async () => {
         await activateRelay();
 
-        setOnboardingWizardPreAuthResumeIntent(`${RELAY_URL}/`);
-        expect(getPendingSetupIntent()).toMatchObject({ branch: 'thisComputer', phase: 'pre_auth' });
-
         setOnboardingWizardAwaitingAuthResumeIntent(`${RELAY_URL}/`);
         expect(getPendingSetupIntent()).toMatchObject({ branch: 'thisComputer', phase: 'awaiting_auth' });
     });
@@ -37,7 +34,6 @@ describe('wizardResume', () => {
         await activateRelay();
         setPendingSetupIntent({ branch: 'askHappier', phase: 'awaiting_auth', relayUrl: RELAY_URL });
 
-        setOnboardingWizardPreAuthResumeIntent(RELAY_URL);
         setOnboardingWizardAwaitingAuthResumeIntent(RELAY_URL);
 
         expect(getPendingSetupIntent()).toMatchObject({ branch: 'askHappier', phase: 'awaiting_auth' });

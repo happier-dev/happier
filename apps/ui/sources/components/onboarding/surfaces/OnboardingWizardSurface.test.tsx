@@ -248,7 +248,7 @@ const { RemoteSshChecklistStep } = await import('../checklists/remoteSsh/RemoteS
 const { LocalRelayAccessControlSection } = await import('@/components/settings/server/localControl/LocalRelayAccessControlSection');
 const { RelayAccessConfigFieldsStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessConfigFieldsStep');
 const { RelayAccessTailscalePrerequisitesStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessTailscalePrerequisitesStep');
-await import('./OnboardingWizardSurface');
+await import('@/dev/testkit/harness/onboardingWizardHarness');
 const initialStorageState = storage.getState();
 
 function SignedOutAuth({ children }: React.PropsWithChildren) {

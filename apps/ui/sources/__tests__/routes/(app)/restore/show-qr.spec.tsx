@@ -26,26 +26,21 @@ vi.mock('@/components/account/restore/RestoreQrView', () => ({
     }),
 }));
 
-vi.mock('@/components/onboarding/unauthShell', async () => {
+vi.mock('@/components/onboarding/ui/AuthRouteStepFrame', async () => {
     const React = await import('react');
     return {
-        UnauthenticatedSplitShell: (props: {
+        AuthRouteStepFrame: (props: {
             children?: React.ReactNode;
-            stepId: string;
-            isWelcomeStep: boolean;
-            allowMobileBrandHero?: boolean;
-            onOpenRelayCustomFlow: () => void;
-            onBrandHeroGetStarted: () => void;
+            testID: string;
+            title: string;
             onBack?: () => void;
         }) =>
             React.createElement(
-                'UnauthenticatedSplitShell',
+                'AuthRouteStepFrame',
                 {
-                    stepId: props.stepId,
-                    isWelcomeStep: props.isWelcomeStep,
-                    allowMobileBrandHero: props.allowMobileBrandHero,
+                    testID: props.testID,
+                    title: props.title,
                     hasBack: typeof props.onBack === 'function',
-                    testID: `unauth-shell-route-${props.stepId}`,
                 },
                 props.children,
             ),
@@ -67,16 +62,14 @@ describe('/restore/show-qr', () => {
         expect(screen.findByTestId('restore-show-qr-view')).toBeNull();
     });
 
-    it('renders reverse QR for the exact requested profile inside the unauthenticated split shell', async () => {
+    it('renders reverse QR for the exact requested profile in the titled step frame', async () => {
         routeState.params = { serverId: 'home-b-profile', entryIntent: 'add_home' };
         const screen = await renderScreen(<Screen />);
 
-        const shell = screen.findByTestId('unauth-shell-route-restore-show-qr');
-        expect(shell).toBeTruthy();
-        expect(shell?.props.stepId).toBe('restore-show-qr');
-        expect(shell?.props.isWelcomeStep).toBe(false);
-        expect(shell?.props.allowMobileBrandHero).toBe(false);
-        expect(shell?.props.hasBack).toBe(true);
+        const frame = screen.findByTestId('restore-show-qr');
+        expect(frame).toBeTruthy();
+        expect(frame?.props.title).toBeTruthy();
+        expect(frame?.props.hasBack).toBe(true);
         expect(screen.findByTestId('restore-show-qr-view')?.props.targetProfileId).toBe('home-b-profile');
         expect(screen.findByTestId('restore-show-qr-view')?.props.entryIntent).toBe('add_home');
     });

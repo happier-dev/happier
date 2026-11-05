@@ -63,7 +63,7 @@ const authEntryOptions = {
 } satisfies AuthEntryOptions;
 
 // Collect the real UI graph before the behavior deadline; no internal owner is mocked.
-await import('./OnboardingWizardSurface');
+await import('@/dev/testkit/harness/onboardingWizardHarness');
 
 async function enterManualHomeAddress(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const customAddress = screen.findByTestId('onboarding-wizard-relay:customUrl');
@@ -107,7 +107,7 @@ describe('first-run custom Home address connection', () => {
         const { listServerProfiles, getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
         const beforeProfiles = listServerProfiles();
         const beforeFocus = getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
             isDesktopShell: true,
@@ -149,7 +149,7 @@ describe('first-run custom Home address connection', () => {
         });
         const { listServerProfiles, getActiveServerSnapshot, resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
         const beforeProfiles = listServerProfiles();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
             isDesktopShell: true,
@@ -186,7 +186,7 @@ describe('first-run custom Home address connection', () => {
         const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
         const { selectAccountServiceEndpoint } = await import('@/sync/ops/accountDirectory/selectAccountServiceEndpoint');
         const { useAccountServiceEntryOptions } = await import('@/components/account/auth/useAccountServiceEntryOptions');
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         function Entry() {
             const accountServiceEntry = useAccountServiceEntryOptions();
             return <OnboardingWizardSurface

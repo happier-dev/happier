@@ -249,14 +249,13 @@ describe('pendingSetupIntent', () => {
 
     it('preserves an Ask Happier Start through implicit machine-wizard relatching and dismissal, but permits an explicit setup choice', async () => {
         const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
-        const { setOnboardingWizardPreAuthResumeIntent, setOnboardingWizardAwaitingAuthResumeIntent } = await import('@/components/onboarding/state/wizardResume');
+        const { setOnboardingWizardAwaitingAuthResumeIntent } = await import('@/components/onboarding/state/wizardResume');
         const { dismissPendingSetupIntent } = await import('./dismissPendingSetupIntent');
         await activateServerWithoutAccount('https://ask-happier.example.test');
         clearPendingSetupIntent();
         setPendingSetupIntent({ branch: 'askHappier', phase: 'awaiting_auth', relayUrl: 'https://ask-happier.example.test' });
         const started = getPendingSetupIntent();
         expect(started?.branch).toBe('askHappier');
-        setOnboardingWizardPreAuthResumeIntent('https://ask-happier.example.test');
         expect(getPendingSetupIntent()).toBe(started);
         setOnboardingWizardAwaitingAuthResumeIntent('https://ask-happier.example.test');
         expect(getPendingSetupIntent()).toBe(started);

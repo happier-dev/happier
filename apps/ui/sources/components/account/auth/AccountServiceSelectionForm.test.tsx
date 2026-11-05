@@ -344,7 +344,7 @@ describe('AccountServiceSelectionForm', () => {
                     headers: { 'Content-Type': 'application/json' },
                 })
         ));
-        const { OnboardingWizardSurface } = await import('@/components/onboarding/surfaces/OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const { selectAccountServiceEndpoint } = await import('@/sync/ops/accountDirectory/selectAccountServiceEndpoint');
         const { resolveSelectedAccountServiceEndpoint } = await import('@/sync/domains/server/serverProfiles');
         const screen = await renderScreen(
