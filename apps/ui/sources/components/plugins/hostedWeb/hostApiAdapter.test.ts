@@ -9,7 +9,7 @@ import type {
     PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import {
-    PLUGIN_UI_HOST_API_VERSION_V1,
+    PLUGIN_UI_HOST_API_BASE_VERSION_V1,
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiSelectActionInputResultV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
@@ -557,7 +557,7 @@ describe('hosted web plugin host API adapter', () => {
             origin: 'https://preview.happier.test',
             identity: canonicalIdentity,
             payload: {
-                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+                apiVersion: PLUGIN_UI_HOST_API_BASE_VERSION_V1,
                 wireVersion: 1,
                 identity: canonicalIdentity,
                 subPath: 'work/ideas.md',
@@ -790,7 +790,7 @@ describe('hosted web plugin host API adapter', () => {
         }))).resolves.toMatchObject({
             payload: {
                 kind: 'negotiated',
-                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+                apiVersion: PLUGIN_UI_HOST_API_BASE_VERSION_V1,
                 methods: ['context', 'selectActionInput'],
             },
         });
@@ -803,7 +803,7 @@ describe('hosted web plugin host API adapter', () => {
         }))).resolves.toMatchObject({
             payload: {
                 kind: 'negotiated',
-                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+                apiVersion: PLUGIN_UI_HOST_API_BASE_VERSION_V1,
                 methods: ['context', 'selectActionInput'],
             },
         });

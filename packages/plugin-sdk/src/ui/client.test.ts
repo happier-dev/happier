@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { PLUGIN_UI_HOST_API_BASE_VERSION_V1, PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -41,7 +42,7 @@ describe('hosted-web plugin UI public client factory', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') listener?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context'],
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
@@ -77,7 +78,7 @@ describe('hosted-web plugin UI public client factory', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context'],
                         } });
                 }
@@ -117,7 +118,7 @@ describe('hosted-web plugin UI public client factory', () => {
         expect(posted).toEqual([expect.objectContaining({ kind: 'ready', identity })]);
 
         dispatch({ identity: { instanceId: 'mount-1', mountNonce: 'nonce-1' }, version: 1, direction: 'hostToFrame', sequence: 1, origin: 'https://plugin.test', kind: 'bootstrap', payload: {
-                authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, apiVersion: '1.0.0', wireVersion: 1, identity } });
+                authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, apiVersion: PLUGIN_UI_HOST_API_BASE_VERSION_V1, wireVersion: 1, identity } });
         dispatch({ identity: { instanceId: 'mount-1', mountNonce: 'nonce-1' }, version: 1, sequence: 2, requestSequence: 1, kind: 'ack', payload: { accepted: true } });
 
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -156,7 +157,7 @@ describe('hosted-web plugin UI public client factory', () => {
                 subscribe(next) { listener = next; return { dispose: () => { listener = undefined; } }; },
                 send(message) {
                     if (message.kind === 'negotiate') listener?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'notify'],
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
@@ -204,7 +205,7 @@ describe('hosted-web plugin UI public client factory', () => {
                 subscribe(next: (message: unknown) => void) { listener = next; return { dispose: () => { listener = undefined; } }; },
                 send(message: PluginUiHostApiWireEnvelopeV1) {
                     if (message.kind === 'negotiate') listener?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context'],
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
@@ -236,7 +237,7 @@ describe('hosted-web plugin UI public client factory', () => {
                 subscribe(next: (message: unknown) => void) { listener = next; return { dispose: () => { listener = undefined; } }; },
                 send(message: PluginUiHostApiWireEnvelopeV1) {
                     if (message.kind === 'negotiate') listener?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context'],
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({

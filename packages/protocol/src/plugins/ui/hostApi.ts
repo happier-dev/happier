@@ -1,5 +1,5 @@
 import semver from 'semver';
-import { PLUGIN_UI_HOST_API_VERSION_V1 } from './hostApiDefinition.js';
+import { PLUGIN_UI_HOST_API_VERSIONS_V1 } from './hostApiDefinition.js';
 
 export * from './hostApiDefinition.js';
 
@@ -23,16 +23,18 @@ export function isPluginUiHostApiVersionCompatibleWithVersionV1(
 }
 
 /**
- * The sole range-satisfaction decision for Host API negotiation.
- *
- * The wire carries a semver range, not one spelling of the current range. A
- * host with this initial API therefore accepts every valid range containing
- * the canonical version and refuses malformed or incompatible ranges before
- * advertising any methods.
+ * Current-host artifact admission accepts any supported semantic generation.
+ * Explicit older-host checks still compare only the supplied host version.
  */
 export function isPluginUiHostApiVersionCompatibleV1(range: unknown): boolean {
-  return isPluginUiHostApiVersionCompatibleWithVersionV1(
-    PLUGIN_UI_HOST_API_VERSION_V1,
-    range,
-  );
+  return resolvePluginUiHostApiVersionV1(range) !== null;
+}
+
+/**
+ * Select the oldest supported generation satisfying the client's declaration.
+ * A broad 1.0 range cannot prove that an installed SDK knows later enum members.
+ */
+export function resolvePluginUiHostApiVersionV1(range: unknown): (typeof PLUGIN_UI_HOST_API_VERSIONS_V1)[number] | null {
+  return PLUGIN_UI_HOST_API_VERSIONS_V1.find(version =>
+    isPluginUiHostApiVersionCompatibleWithVersionV1(version, range)) ?? null;
 }

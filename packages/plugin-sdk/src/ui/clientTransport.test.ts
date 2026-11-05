@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { PluginUiExecuteActionRequestV1Schema, PluginUiHostApiSurfaceContextV1Schema, PluginUiSelectActionInputResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { getActionSpec } from '@happier-dev/protocol';
@@ -20,6 +21,19 @@ const surface: SurfaceContext = createSurfaceContextFixture();
 
 const identity = { instanceId: 'mount-1', mountNonce: 'nonce-1' } as const;
 
+describe('Host API negotiation admission', () => {
+    it('settles a malformed addressed negotiation instead of waiting for an absent version', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        await expect(createPluginUiHostApiClientFromTransport({ identity, negotiationTimeoutMs: 25, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, identity, kind: 'negotiated',
+                    apiVersion: '1.1.0', methods: ['context', 'future-unknown-method'] });
+            },
+        } })).rejects.toMatchObject({ code: 'invalid_negotiation' });
+    });
+});
+
 describe('linked Session activity over the hosted transport', () => {
     it('carries activity and unread and rejects an unrecognized nested disclosure', async () => {
         let receive: ((message: unknown) => void) | undefined;
@@ -28,7 +42,7 @@ describe('linked Session activity over the hosted transport', () => {
             subscribe(listener) { receive = listener; return { dispose() {} }; },
             send(message) {
                 if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: '1.0.0', methods: ['readSession'],  });
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readSession'],  });
                 if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
                     requestId: message.requestId, method: message.method, result: {
                         sessionId: 'linked', lifecycle: 'active', runtime: 'idle', operational: 'none',
@@ -51,7 +65,7 @@ describe('caller-owned Action admission over the hosted transport', () => {
             subscribe(listener) { receive = listener; return { dispose() {} }; },
             send(message) {
                 if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: '1.0.0', methods: ['admitAction'],  });
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['admitAction'],  });
                 if (message.kind === 'request') {
                     expect(PluginUiExecuteActionRequestV1Schema.parse(message.payload)).toEqual({ action: 'save', input: { id: 'view-a' } });
                     receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId, method: message.method,
@@ -109,7 +123,7 @@ describe('plugin UI domain client transport adapter', () => {
             subscribe(listener) { receive = listener; return { dispose() {} }; },
             send(message) {
                 if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: '1.0.0', methods: ['executeAction'],  });
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['executeAction'],  });
                 if (message.kind !== 'request') return;
                 const request = PluginUiExecuteActionRequestV1Schema.parse(message.payload);
                 const action = request.action;
@@ -143,7 +157,7 @@ describe('plugin UI domain client transport adapter', () => {
             subscribe(listener) { receive = listener; return { dispose() {} }; },
             send(message) {
                 if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: '1.0.0', methods: ['readResource'],  });
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readResource'],  });
                 if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
                     requestId: message.requestId, method: message.method,
                     result: JSON.stringify(message.payload) === JSON.stringify({ resource: reference })
@@ -164,7 +178,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                        apiVersion: '1.0.0', methods: ['widgetArea'],  });
+                        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['widgetArea'],  });
                     else if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
                         requestId: message.requestId, method: message.method,
                         result: { ok: false, errorCode: 'widget_area_not_declared', error: 'widget_area_not_declared' } });
@@ -183,7 +197,7 @@ describe('plugin UI domain client transport adapter', () => {
         const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
             subscribe(listener) { receive = listener; return { dispose() {} }; },
             send(message) {
-                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['readEntityDragItem', 'updateEntityDragDrop'],  });
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readEntityDragItem', 'updateEntityDragDrop'],  });
                 if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId, method: message.method, result: message.method === 'readEntityDragItem' ? null : { accepted: true } });
             },
         } });
@@ -205,7 +219,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose() {} }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                        apiVersion: '1.0.0', methods: ['readStoredImage'],  });
+                        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readStoredImage'],  });
                     else if (message.kind === 'request' && message.method === 'readStoredImage') {
                         reads += 1;
                         requests.push(message.payload);
@@ -246,7 +260,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['openNewSession'],
                         });
                     } else if (message.kind === 'request' && message.method === 'openNewSession') {
@@ -287,7 +301,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['confirm'],
                     });
                     if (message.kind === 'request' && message.method === 'confirm') receive?.({
@@ -322,7 +336,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['openNewSession'],
                         });
                     } else if (message.kind === 'request') {
@@ -389,7 +403,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'watchContext'],
                         });
                     }
@@ -459,7 +473,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['publishCurrentUiContext'],
                         });
                     }
@@ -538,7 +552,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: [
                                 'activeComposer',
                                 'readComposer',
@@ -676,7 +690,7 @@ describe('plugin UI domain client transport adapter', () => {
             send(message) {
                 sent.push(message);
                 if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: '1.0.0', methods: ['readComposer', 'watchComposer', 'applyComposer', 'focusComposer',
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readComposer', 'watchComposer', 'applyComposer', 'focusComposer',
                         'setComposerDecorations', 'acquireComposerInputLock', 'pickComposerMedia'],  });
                 if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
                     requestId: message.requestId, method: message.method,
@@ -729,7 +743,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['pickComposerMedia', 'inspectComposerContent', 'releaseComposerContent'],
                         });
                         return;
@@ -797,7 +811,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: [],
                         });
                     }
@@ -825,7 +839,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'executeAction', 'readResource', 'watchContext', 'watchResource', 'openSurface', 'diagnostic', 'readClipboard', 'writeClipboard', 'openExternalLink'],
                         });
                     }
@@ -849,14 +863,14 @@ describe('plugin UI domain client transport adapter', () => {
 
         const api = await clientPromise;
         expect(api.version()).toEqual({
-            apiVersion: '1.0.0',
+            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: 1,
             methods: expect.arrayContaining(['executeAction', 'watchContext']),
         });
         expect(api.version().methods).toEqual(
             ['context', 'executeAction', 'readResource', 'watchContext', 'watchResource', 'openSurface', 'diagnostic', 'readClipboard', 'writeClipboard', 'openExternalLink'],
         );
-        expect(api.version().apiVersion).toBe('1.0.0');
+        expect(api.version().apiVersion).toBe(PLUGIN_UI_HOST_API_VERSION_V1);
         expect(sent[0]).toMatchObject({ kind: 'negotiate', identity });
     });
 
@@ -873,7 +887,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context'],
                         });
                     }
@@ -943,7 +957,7 @@ describe('plugin UI domain client transport adapter', () => {
                         wireVersion: 1,
                         kind: 'negotiated',
                         identity,
-                        apiVersion: '1.0.0',
+                        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'watchContext'],
                     });
                     if (message.kind === 'request' && message.method === 'context') receive?.({
@@ -1077,7 +1091,7 @@ describe('plugin UI domain client transport adapter', () => {
         const api = await createPluginUiHostApiClientFromTransport({
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
             identity,
-            apiRange: '^1.0.0',
+            apiRange: PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1,
             transport: {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
@@ -1087,7 +1101,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'selectActionInput', 'executeAction'],
                         });
                     }
@@ -1256,7 +1270,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['selectActionInput', 'executeAction'],
                         });
                     }
@@ -1419,7 +1433,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['selectActionInput'],
                         });
                     }
@@ -1486,7 +1500,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'selectActionInput'],
                         });
                     }
@@ -1535,7 +1549,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') {
-                        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['selectActionInput'],  });
+                        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['selectActionInput'],  });
                     }
                     if (message.kind === 'request' && message.method === 'selectActionInput') {
                         queueMicrotask(() => receive?.({
@@ -1575,7 +1589,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['executeAction'],
                         });
                     }
@@ -1623,7 +1637,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['executeAction'],
                         });
                     }
@@ -1674,7 +1688,7 @@ describe('plugin UI domain client transport adapter', () => {
                                 wireVersion: 1,
                                 kind: 'negotiated',
                                 identity,
-                                apiVersion: '1.0.0',
+                                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                                 methods: ['context'],
                             });
                         }
@@ -1726,7 +1740,7 @@ describe('plugin UI domain client transport adapter', () => {
                                 wireVersion: 1,
                                 kind: 'negotiated',
                                 identity,
-                                apiVersion: '1.0.0',
+                                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                                 methods: ['context'],
                             });
                         }
@@ -1783,7 +1797,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'executeAction'],
                         });
                     }
@@ -1828,7 +1842,7 @@ describe('plugin UI domain client transport adapter', () => {
                             wireVersion: 1,
                             kind: 'negotiated',
                             identity,
-                            apiVersion: '1.0.0',
+                            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['context', 'watchContext'],
                         });
                     }
@@ -1884,7 +1898,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'watchContext'],
                     });
                 },
@@ -1939,7 +1953,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'watchContext'],
                     });
                 },
@@ -1982,7 +1996,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'watchContext'],
                     });
                 },
@@ -2023,7 +2037,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context', 'watchContext', 'diagnostic'],
                     });
                 },
@@ -2106,7 +2120,7 @@ describe('plugin UI domain client transport adapter', () => {
         void pending.then((value) => settlements.push(value), (error: unknown) => settlements.push(error));
         await vi.advanceTimersByTimeAsync(30_001);
         expect(settlements).toEqual([]);
-        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'],  });
+        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'],  });
         const api = await pending;
         await expect(api.context()).resolves.toEqual(surface);
         cancellation.abort();
@@ -2161,7 +2175,7 @@ describe('plugin UI domain client transport adapter', () => {
         const error = pending.catch((cause: unknown) => cause);
         cancellation.abort();
         await expect(error).resolves.toMatchObject({ code: 'aborted' });
-        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'],  });
+        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'],  });
         expect(disposal).toHaveBeenCalledOnce();
         expect(disconnected.mock.calls).toEqual([['aborted']]);
     });
@@ -2178,7 +2192,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['executeAction'],
                     });
                 },
@@ -2204,7 +2218,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['executeAction'],
                     });
                 },
@@ -2228,7 +2242,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) {
                     receive = listener;
                     queueMicrotask(() => listener({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context'],
                     }));
                     return { dispose: () => { transportDisposals += 1; } };
@@ -2241,7 +2255,7 @@ describe('plugin UI domain client transport adapter', () => {
                 },
             },
         });
-        expect(api.version().apiVersion).toBe('1.0.0');
+        expect(api.version().apiVersion).toBe(PLUGIN_UI_HOST_API_VERSION_V1);
         await expect(api.context()).rejects.toMatchObject({ code: 'invalid_payload' });
         expect(transportDisposals).toBe(0);
     });
@@ -2260,7 +2274,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['selectActionInput'],
                     });
                 },
@@ -2299,7 +2313,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['executeAction'],
                     });
                 },
@@ -2369,7 +2383,7 @@ describe('plugin UI domain client transport adapter', () => {
                     sent.push(message);
                     if (message.kind === 'negotiate') {
                         receive?.({
-                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['openNewSession', 'executeAction', 'applyComposer', 'confirm', 'readResource', 'openSurface'],
                         });
                     }
@@ -2406,7 +2420,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['executeAction'],
                     });
                 },
@@ -2460,7 +2474,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['executeAction', 'readClipboard'],
                     });
                 },
@@ -2488,7 +2502,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['context'],
                     });
                 },
@@ -2522,7 +2536,7 @@ describe('plugin UI domain client transport adapter', () => {
                     sent.push(message);
                     if (message.kind === 'negotiate') {
                         receive?.({
-                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['openSurface'],
                         });
                         return;
@@ -2587,7 +2601,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['openSurface'],
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['openSurface'],
                     });
                     if (message.kind === 'request') receive?.({
                         wireVersion: 1, kind: 'result', identity, requestId: message.requestId, method: message.method, result: null,
@@ -2618,7 +2632,7 @@ describe('plugin UI domain client transport adapter', () => {
                     sent.push(message);
                     if (message.kind === 'negotiate') {
                         receive?.({
-                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['openConnectedAccounts'],
                         });
                         return;
@@ -2677,7 +2691,7 @@ describe('plugin UI domain client transport adapter', () => {
                     sent.push(message);
                     if (message.kind === 'negotiate') {
                         receive?.({
-                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['replacePageLocation'],
                         });
                         return;
@@ -2727,7 +2741,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     if (message.kind === 'negotiate') {
                         receive?.({
-                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                             methods: ['replacePageLocation'],
                         });
                         return;
@@ -2754,7 +2768,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: [],
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: [],
                     });
                 },
             },
@@ -2787,8 +2801,8 @@ describe('plugin UI domain client transport adapter', () => {
             transport: {
                 subscribe(listener) {
                     queueMicrotask(() => {
-                        listener({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'],  });
-                        listener({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'],  });
+                        listener({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'],  });
+                        listener({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'],  });
                     });
                     return { dispose: () => undefined };
                 },
@@ -2811,7 +2825,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['statOpenableContent', 'readOpenableContent'],
                     });
                 },
@@ -2873,7 +2887,7 @@ describe('plugin UI domain client transport adapter', () => {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['readResource'],
                     });
                 },
@@ -2905,7 +2919,7 @@ describe('plugin UI domain client transport adapter', () => {
                         wireVersion: 1,
                         kind: 'negotiated',
                         identity,
-                        apiVersion: '1.0.0',
+                        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['watchResource'],
                     });
                 },
@@ -2964,7 +2978,7 @@ describe('plugin UI domain client transport adapter', () => {
                     // This mount installed `readResource` only, which is what
                     // makes the `unsupported_method` control below decisive.
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['readResource'],
                     });
                 },
@@ -3002,7 +3016,7 @@ describe('plugin UI domain client transport adapter', () => {
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
-                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
                         methods: ['watchContext'],
                     });
                 },

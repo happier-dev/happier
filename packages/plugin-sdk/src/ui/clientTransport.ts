@@ -1,6 +1,7 @@
+import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenConnectedAccountsResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { ComposerDecorationResultV1Schema, ComposerFocusResultV1Schema, ComposerReadResultV1Schema, ComposerSnapshotV1Schema, ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import { ComposerContentHandleV1Schema, ComposerContentInspectWireResultV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { OpenableContentReadResultV1Schema, OpenableContentStatResultV1Schema } from '@happier-dev/protocol/plugins/openableContent';
@@ -429,6 +430,7 @@ export async function createPluginUiHostApiClientFromTransport(
     let terminalError: PluginUiHostApiClientError | undefined;
     let negotiated: { version: PluginUiHostApiVersion } | undefined;
     const requestedApiRange = options.apiRange ?? PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1;
+    const expectedApiVersion = resolvePluginUiHostApiVersionV1(requestedApiRange);
     let negotiationTimeout: ReturnType<typeof setTimeout> | undefined;
     let resolveNegotiation!: () => void;
     let rejectNegotiation!: (error: PluginUiHostApiClientError) => void;
@@ -494,18 +496,28 @@ export async function createPluginUiHostApiClientFromTransport(
     }
     transportSubscription = options.transport.subscribe((raw) => {
         const parsed = PluginUiHostApiWireEnvelopeV1Schema.safeParse(raw);
-        if (!parsed.success || !pluginUiHostApiWireIdentitiesEqual(options.identity, parsed.data.identity)) return;
+        if (!parsed.success) {
+            if (raw && typeof raw === 'object' && Reflect.get(raw, 'kind') === 'negotiated') {
+                const address = PluginUiHostApiWireIdentityV1Schema.safeParse(Reflect.get(raw, 'identity'));
+                if (address.success && pluginUiHostApiWireIdentitiesEqual(options.identity, address.data)) {
+                    disconnect('invalid_negotiation');
+                }
+            }
+            return;
+        }
+        if (!pluginUiHostApiWireIdentitiesEqual(options.identity, parsed.data.identity)) return;
         const message = parsed.data;
         if (message.kind === 'negotiated') {
             if (negotiated) {
                 disconnect('invalid_negotiation');
                 return;
             }
-            if (message.apiVersion !== PLUGIN_UI_HOST_API_VERSION_V1) {
+            if (message.apiVersion !== expectedApiVersion) {
                 disconnect('incompatible_api_version');
                 return;
             }
-            if (new Set(message.methods).size !== message.methods.length) {
+            if (new Set(message.methods).size !== message.methods.length
+                || message.methods.some(method => !isPluginUiHostMethodSupportedInVersionV1(method, message.apiVersion))) {
                 disconnect('invalid_negotiation');
                 return;
             }

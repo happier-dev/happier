@@ -28,6 +28,8 @@ import {
   PluginUiHostMethodV1Schema,
   isPluginUiHostApiVersionCompatibleV1,
   isPluginUiHostApiVersionCompatibleWithVersionV1,
+  resolvePluginUiHostApiVersionV1,
+  isPluginUiHostMethodSupportedInVersionV1,
 } from './hostApi.js';
 
 const NOT_A_HOST_METHOD = '__not_a_host_method__';
@@ -92,8 +94,8 @@ function parseHostMethod(method: string): boolean {
 /**
  * SDK-EU-28 direct-cut closure. The canonical tuple is the only place a
  * host-method name is written down. Its complete produced vocabulary is the
- * initial semantic 1.0 contract: no staged/released projection or later
- * semantic version can withhold an already-produced method from a consumer.
+ * vocabulary derives from explicit introduction-version facts; supported
+ * installed readers receive only the methods in their semantic generation.
  */
 describe('plugin UI initial host-method vocabulary closure', () => {
   it('publishes Composer document operations and one generalized disposer', () => {
@@ -142,7 +144,7 @@ describe('plugin UI initial host-method vocabulary closure', () => {
   });
 
   it('makes selectActionInput part of the sole initial 1.0 declaration contract', () => {
-    expect(PLUGIN_UI_HOST_API_VERSION_V1).toBe('1.0.0');
+    expect(PLUGIN_UI_HOST_API_VERSION_V1).toBe('1.1.0');
     expect(PLUGIN_UI_HOST_METHODS_V1).toContain('selectActionInput');
     expect(PluginUiHostMethodV1Schema.options).toEqual([...PLUGIN_UI_HOST_METHODS_V1]);
 
@@ -156,7 +158,7 @@ describe('plugin UI initial host-method vocabulary closure', () => {
   });
 
   it('owns the one compatible Host API range rather than comparing a draft literal', () => {
-    expect(PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1).toBe('^1.0.0');
+    expect(PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1).toBe('^1.1.0');
     for (const range of ['^1', '^1.0.0', '>=1.0.0 <2.0.0']) {
       expect(isPluginUiHostApiVersionCompatibleV1(range)).toBe(true);
     }
@@ -168,6 +170,17 @@ describe('plugin UI initial host-method vocabulary closure', () => {
   it('uses ordinary semver prerelease exclusion for an explicitly supplied host version', () => {
     expect(isPluginUiHostApiVersionCompatibleWithVersionV1('1.1.0-beta.1', '>=1.0.0 <2.0.0')).toBe(false);
     expect(isPluginUiHostApiVersionCompatibleWithVersionV1('1.1.0-beta.1', '>=1.1.0-beta.0 <2.0.0')).toBe(true);
+  });
+
+  it('selects the oldest admitted semantic generation and projects its supported methods', () => {
+    for (const range of ['^1', '^1.0.0', '>=1.0.0 <2.0.0']) {
+      expect(resolvePluginUiHostApiVersionV1(range)).toBe('1.0.0');
+    }
+    expect(resolvePluginUiHostApiVersionV1('^1.1.0')).toBe('1.1.0');
+    expect(resolvePluginUiHostApiVersionV1('^1.2.0')).toBeNull();
+    expect(resolvePluginUiHostApiVersionV1('not-a-range')).toBeNull();
+    expect(isPluginUiHostMethodSupportedInVersionV1('selectActionInput', '1.0.0')).toBe(true);
+    expect(isPluginUiHostMethodSupportedInVersionV1('context', 'unknown')).toBe(false);
   });
 
   it('owns strict diagnostic and utility-effect request grammars at the Host API boundary', () => {

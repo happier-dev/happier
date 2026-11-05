@@ -6,7 +6,7 @@ import type {
     PluginUiHostApiWireIdentityV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginHostedWebBridgeEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
-import { PluginUiHostApiWireEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PLUGIN_UI_HOST_API_VERSION_V1, PluginUiHostApiWireEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
     awaitHostedWebPluginUiHostApiClientBootstrap,
@@ -101,6 +101,61 @@ function readyAcknowledgementMessage(input: Readonly<{
 }
 
 describe('hosted-web UI client bootstrap', () => {
+    it('projects only semantic 1.0 context presentation, including observed context updates', async () => {
+        // The installed generation's strict theme reader rejects statusTint:
+        // ownerfix-iteration2-old-context-admission.json pins the real refusal.
+        const harness = createRealm();
+        installHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: bootstrapMessage() });
+        const { transport } = await awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        const legacy = vi.fn();
+        const current = vi.fn();
+        const receive = (payload: unknown, requestSequence?: number) => harness.dispatch({
+            source: harness.parent, origin: 'https://host.test', data: requestSequence === undefined
+                ? { version: 1, identity, direction: 'hostToFrame', sequence: 20, kind: 'hostApi', payload }
+                : { version: 1, identity, sequence: 20, requestSequence, kind: 'result', payload },
+        });
+        for (const [apiVersion, listener] of [['1.0.0', legacy], ['1.1.0', current]] as const) {
+            transport.subscribe(listener);
+            transport.send({ wireVersion: 1, identity, kind: 'negotiate', apiRange: `^${apiVersion}` });
+            const request = PluginHostedWebBridgeEnvelopeV1Schema.parse(harness.posted.at(-1)?.message);
+            receive({ wireVersion: 1, identity, kind: 'negotiated', apiVersion, methods: ['context', 'watchContext', 'readResource', 'watchResource'] }, request.sequence);
+        }
+        const surface = createSurfaceContextFixture({
+            mountId: 'retained-mount',
+            accountScope: { serverId: 'home-1', accountId: 'account-1' },
+            requesterExecutionReady: false,
+            machineExecutionReady: true,
+        });
+        const theme = { ...surface.theme, statusTint: { success: '#111', warning: '#222', attention: '#333', danger: '#444', info: '#555', neutral: '#666' } };
+        const snapshot = { surface: { ...surface, theme }, activity: { active: true } };
+        const base = { wireVersion: 1, identity } as const;
+        transport.send({ ...base, kind: 'subscribe', method: 'watchContext', requestId: 'watch-context', subscriptionId: 'context-events' });
+        transport.send({ ...base, kind: 'subscribe', method: 'watchResource', requestId: 'watch-resource', subscriptionId: 'resource-events' });
+        receive({ ...base, kind: 'result', method: 'context', requestId: 'context', result: snapshot });
+        expect(legacy.mock.lastCall?.[0].result).toEqual({ ...snapshot, surface });
+        expect(current.mock.lastCall?.[0].result).toEqual(snapshot);
+        receive({ ...base, kind: 'subscription', subscriptionId: 'context-events', event: snapshot });
+        expect(legacy.mock.lastCall?.[0].event).toEqual({ ...snapshot, surface });
+        expect(current.mock.lastCall?.[0].event).toEqual(snapshot);
+        receive({ ...base, kind: 'result', method: 'readResource', requestId: 'resource', result: snapshot });
+        expect(legacy.mock.lastCall?.[0].result).toEqual(snapshot);
+        receive({ ...base, kind: 'subscription', subscriptionId: 'resource-events', event: snapshot });
+        expect(legacy.mock.lastCall?.[0].event).toEqual(snapshot);
+        expect(current.mock.lastCall?.[0].event).toEqual(snapshot);
+        transport.send({ ...base, kind: 'disposeHostResource', requestId: 'dispose-context', subscriptionId: 'context-events' });
+        transport.send({ ...base, kind: 'subscribe', method: 'watchResource', requestId: 'reuse-resource', subscriptionId: 'context-events' });
+        receive({ ...base, kind: 'subscription', subscriptionId: 'context-events', event: snapshot });
+        expect(legacy.mock.lastCall?.[0].event).toEqual(snapshot);
+        transport.send({ ...base, kind: 'subscribe', method: 'watchContext', requestId: 'rejected-context', subscriptionId: 'rejected-events' });
+        receive({ ...base, kind: 'error', method: 'watchContext', requestId: 'rejected-context', error: { name: 'PluginError', code: 'unavailable' } });
+        transport.send({ ...base, kind: 'subscribe', method: 'watchResource', requestId: 'resource-after-rejection', subscriptionId: 'rejected-events' });
+        receive({ ...base, kind: 'subscription', subscriptionId: 'rejected-events', event: snapshot });
+        expect(legacy.mock.lastCall?.[0].event).toEqual(snapshot);
+        // Projection and delivery themselves never send an additional request.
+        expect(harness.posted).toHaveLength(9);
+    });
+
     it.each([false, true])('shares one guest lifecycle across independent SDK copies (Account Data: %s)', async (accountData) => {
         // The realm and ports model browser boundaries; both SDK module graphs
         // and the public RenderContext factory execute their real logic.
@@ -128,8 +183,8 @@ describe('hosted-web UI client bootstrap', () => {
             const wire = PluginUiHostApiWireEnvelopeV1Schema.parse(envelope.payload);
             wireMessages.push(wire);
             if (wire.kind === 'negotiate') hostPort.postMessage({
-                version: 1, direction: 'hostToFrame', sequence: envelope.sequence, identity, kind: 'hostApi',
-                payload: { wireVersion: 1, identity, kind: 'negotiated', apiVersion: '1.0.0', methods: ['context', 'watchContext'],  },
+                version: 1, sequence: envelope.sequence, requestSequence: envelope.sequence, identity, kind: 'result',
+                payload: { wireVersion: 1, identity, kind: 'negotiated', apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context', 'watchContext'],  },
             });
             if (wire.kind === 'request' && wire.method === 'context') hostPort.postMessage({
                 version: 1, direction: 'hostToFrame', sequence: envelope.sequence, identity, kind: 'hostApi',
@@ -222,7 +277,9 @@ describe('hosted-web UI client bootstrap', () => {
                 if (envelope.kind === 'ready') { push('bootstrap', bootstrapMessage().payload); return; }
                 if (envelope.kind !== 'hostApi') return;
                 const wire = envelope.payload;
-                if (wire.kind === 'negotiate') push('hostApi', { wireVersion: 1, identity, kind: 'negotiated', apiVersion: '1.0.0', methods: ['context', 'watchContext'],  });
+                if (wire.kind === 'negotiate') harness.dispatch({ data: { version: 1, identity,
+                    sequence: envelope.sequence, requestSequence: envelope.sequence, kind: 'result',
+                    payload: { wireVersion: 1, identity, kind: 'negotiated', apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context', 'watchContext'] } } });
                 else if (wire.kind === 'request' || wire.kind === 'subscribe') {
                     if (wire.kind === 'subscribe') subscriptionId = wire.subscriptionId;
                     push('hostApi', { wireVersion: 1, identity, kind: 'result', requestId: wire.requestId, method: wire.method, ...(wire.method === 'context' ? { result: { surface, activity: { active: true } } } : {}) });

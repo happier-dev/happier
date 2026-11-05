@@ -5,6 +5,8 @@ import type { PluginHostedWebAccountDataBridgeChangeV1, PluginHostedWebAccountDa
 
 import { createPluginUiHostApiClientFromTransport, PluginUiHostApiClientError } from './clientTransport.js';
 import { applyPluginUiThemeCssVariables, type PluginUiThemeVariableTarget } from './themeCssVariables.js';
+import { createHostedWebNegotiation } from './hostedWebNegotiation.js';
+import { projectPluginUiRenderContextForHostApiVersionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import {
     PLUGIN_UI_HOST_API_CLIENT_BOOTSTRAP_KEY,
     readPluginUiHostApiClientBootstrap,
@@ -254,11 +256,9 @@ function createHostedWebBootstrapController(
     let accountDataCapability = false;
     let createAccountDataTransport: (() => HostedWebAccountDataTransport) | null = null;
     let documentPort: HostedWebMessagePort | null = null;
-    const sentSequences = new Set<number>();
     const listeners = new Set<(message: unknown) => void>();
-    const negotiatedListeners = new Set<(message: unknown) => void>();
-    let negotiationRequest: Extract<PluginUiHostApiWireEnvelopeV1, { kind: 'negotiate' }> | undefined;
-    let negotiationReply: Extract<PluginUiHostApiWireEnvelopeV1, { kind: 'negotiated' }> | undefined;
+    const negotiations = createHostedWebNegotiation();
+    const contextSubscriptions = new Map<string, string>();
     const accountDataListeners = new Set<(
         change: PluginHostedWebAccountDataBridgeChangeV1,
     ) => void>();
@@ -291,19 +291,31 @@ function createHostedWebBootstrapController(
         }
         parent?.postMessage(envelope, config.hostOrigin);
     };
-    const deliver = (wire: PluginUiHostApiWireEnvelopeV1): void => {
+    const deliver = (wire: PluginUiHostApiWireEnvelopeV1, requestSequence?: number): void => {
         const expected = identity;
         if (!expected || !pluginUiHostApiWireIdentitiesEqual(expected, wire.identity)) return;
         if (wire.kind === 'negotiated') {
-            if (negotiationReply) {
-                fail('invalid_negotiation', 'The hosted plugin UI received a duplicate negotiation reply.');
-                return;
+            if (!negotiations.deliver(wire, requestSequence)) {
+                fail('invalid_negotiation', 'The hosted plugin UI received an uncorrelated negotiation reply.');
             }
-            negotiationReply = wire;
+            return;
+        }
+        if (wire.kind === 'error' && wire.method === 'watchContext') {
+            for (const [subscriptionId, requestId] of contextSubscriptions) {
+                if (requestId === wire.requestId) contextSubscriptions.delete(subscriptionId);
+            }
         }
         for (const listener of listeners) {
-            if (wire.kind === 'negotiated') negotiatedListeners.add(listener);
-            listener(wire);
+            const version = negotiations.versionFor(listener);
+            if (wire.kind === 'result' && wire.method === 'context') {
+                const result = projectPluginUiRenderContextForHostApiVersionV1(wire.result, version);
+                listener(result === wire.result ? wire : { ...wire, result });
+            } else if (wire.kind === 'subscription' && contextSubscriptions.has(wire.subscriptionId)) {
+                const event = projectPluginUiRenderContextForHostApiVersionV1(wire.event, version) ?? wire.event;
+                listener(event === wire.event ? wire : { ...wire, event });
+            } else {
+                listener(wire);
+            }
         }
     };
     const disconnectAccountData = (error: PluginUiHostApiClientError): void => {
@@ -317,6 +329,7 @@ function createHostedWebBootstrapController(
         if (state === 'disconnected') return;
         const currentIdentity = identity;
         state = 'disconnected';
+        contextSubscriptions.clear();
         removeListener();
         removeExternalLinkCarrier();
         removeCallerPresentation();
@@ -338,6 +351,7 @@ function createHostedWebBootstrapController(
     const disconnectFromHost = (reason: string): void => {
         if (state === 'disconnected') return;
         state = 'disconnected';
+        contextSubscriptions.clear();
         removeListener();
         removeExternalLinkCarrier();
         removeCallerPresentation();
@@ -385,26 +399,17 @@ function createHostedWebBootstrapController(
                 if (!pluginUiHostApiWireIdentitiesEqual(identity, wire.identity)) {
                     throw new TypeError('Plugin UI host wire identity does not match the hosted surface.');
                 }
-                // Independently bundled local clients share one opening wire
-                // negotiation. Each still validates the host's reply itself.
-                if (wire.kind === 'negotiate') {
-                    if (negotiationRequest) {
-                        if (wire.apiRange !== negotiationRequest.apiRange) {
-                            throw new PluginUiHostApiClientError('invalid_negotiation', 'The hosted plugin UI clients requested different API ranges.');
-                        }
-                        if (negotiationReply) {
-                            for (const listener of listeners) {
-                                if (negotiatedListeners.has(listener)) continue;
-                                negotiatedListeners.add(listener);
-                                listener(negotiationReply);
-                            }
-                        }
-                        return;
-                    }
-                    negotiationRequest = wire;
+                // Subscribe then negotiate is the client transport contract.
+                // Equal ranges share work; different SDK generations never
+                // receive each other's closed negotiation reply.
+                if (wire.kind === 'negotiate' && !negotiations.request(wire)) return;
+                if (wire.kind === 'subscribe' && wire.method === 'watchContext') {
+                    contextSubscriptions.set(wire.subscriptionId, wire.requestId);
+                } else if (wire.kind === 'disposeHostResource') {
+                    contextSubscriptions.delete(wire.subscriptionId);
                 }
                 sequence += 1;
-                sentSequences.add(sequence);
+                if (wire.kind === 'negotiate') negotiations.bindSequence(wire.apiRange, sequence);
                 sendEnvelope(PluginHostedWebBridgeEnvelopeV1Schema.parse({
                     version: 1,
                     identity: config.identity,
@@ -415,13 +420,14 @@ function createHostedWebBootstrapController(
             },
             subscribe(listener: (message: unknown) => void) {
                 listeners.add(listener);
+                negotiations.add(listener);
                 let disposed = false;
                 return Object.freeze({
                     dispose() {
                         if (disposed) return;
                         disposed = true;
                         listeners.delete(listener);
-                        negotiatedListeners.delete(listener);
+                        negotiations.remove(listener);
                     },
                 });
             },
@@ -644,11 +650,18 @@ function createHostedWebBootstrapController(
             collectionPending.resolve(payload.data);
             return;
         }
-        if (!sentSequences.has(response.data.requestSequence) || response.data.kind !== 'result') return;
+        if (response.data.kind !== 'result') {
+            if (negotiations.isPending(response.data.requestSequence)) {
+                fail('invalid_negotiation', 'The host rejected the plugin UI negotiation.');
+            }
+            return;
+        }
         const wire = PluginUiHostApiWireEnvelopeV1Schema.safeParse(response.data.payload);
-        if (wire.success && identity && pluginUiHostApiWireIdentitiesEqual(identity, wire.data.identity)) {
-            sentSequences.delete(response.data.requestSequence);
-            deliver(wire.data);
+        if (wire.success) {
+            if (!identity || !pluginUiHostApiWireIdentitiesEqual(identity, wire.data.identity)) return;
+            deliver(wire.data, response.data.requestSequence);
+        } else if (negotiations.isPending(response.data.requestSequence)) {
+            fail('invalid_negotiation', 'The host returned an invalid plugin UI negotiation.');
         }
     };
     const handleMessage = (rawEvent: unknown): void => {

@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol';
 import {
     PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1,
+    PLUGIN_UI_HOST_API_BASE_VERSION_V1,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiHostApiWireEnvelopeV1Schema,
@@ -500,7 +501,7 @@ describe('createPluginUiTestkit', () => {
                 adapter: createSemanticAdapter().adapter,
                 apiRange,
             });
-            expect(fixture.context.hostApi.version().apiVersion).toBe(PLUGIN_UI_HOST_API_VERSION_V1);
+            expect(fixture.context.hostApi.version().apiVersion).toBe(PLUGIN_UI_HOST_API_BASE_VERSION_V1);
             await fixture.dispose();
         }
 

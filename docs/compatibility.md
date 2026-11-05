@@ -4414,6 +4414,38 @@ are not artifact admission keys. Artifact bytes are addressed by digest. A
 daemon-process-local occurrence establishes contribution currentness, but it
 must not become a second byte identity or mount-compatibility gate.
 
+Hosted Plugin UI also negotiates each SDK client's semantic API generation
+within wire epoch 1. Installed 1.0 SDKs have a closed method enum and require an
+exact 1.0.0 reply, even though they request `^1.0.0`. The current host therefore
+selects the oldest supported generation satisfying the client's declared range
+and advertises only methods introduced by that generation. The current SDK
+requests `^1.1.0`; `actionControl` and `openManagedMachineConfiguration` start in
+1.1.0. One Protocol definition owns method names and introduction versions.
+The pre-negotiation bootstrap remains 1.0.0; different SDK copies in one realm
+receive separately correlated negotiation replies, with sharing only for equal
+ranges. Semantic generation selects representation and advertised methods, not
+dispatch authority. Current presentation and an older authored SDK intentionally
+share one document identity; ordinary requests and subscriptions carry no
+per-client semantic version. Dispatch has one document-scoped authority set:
+installed handlers intersected with transport support and the mounting ceiling.
+After the existing ready/bootstrap transition it enforces that set even before
+negotiation; negotiating 1.0 neither revokes a 1.1 sibling's methods nor grants
+an uninstalled or withheld operation. Closed wire and operation payload schemas
+remain enforced. A 1.1 wire negotiation request reaching a 1.0-only Host API receives
+the existing typed `incompatible_api_version` outcome. An older host's injected
+single-range controller may instead refuse a later 1.1 client locally after
+its presentation client negotiated 1.0, surfacing `transport_unavailable`.
+That historical controller direction retains safe refusal, not a guaranteed
+direct-wire error reason. All envelopes, identities, method enums and
+operation payloads remain closed. This fixes observed installed-artifact skew;
+it neither reopens the retired draft 1.1/1.2 strata nor promises dev-to-0.2 rollback.
+The same installed reader's closed theme predates optional `statusTint`.
+Protocol owns its 1.0 context presentation projection, consumed per negotiated
+client by the shared guest delivery seam for context results and registered
+context observations only. Current 1.1 clients retain the field. Resource JSON,
+mount/target identity, Account scope and readiness facts remain unchanged.
+
+
 A wire epoch describes compatible semantics, not an exact property census. Every
 material object boundary, including nested objects, is classified explicitly as
 `closed`, `additive-open/drop`, or `additive-open/preserve`; a parent policy

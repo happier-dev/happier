@@ -1,4 +1,7 @@
 export {
+  PLUGIN_UI_HOST_API_BASE_VERSION_V1,
+  PLUGIN_UI_HOST_API_VERSIONS_V1,
+  isPluginUiHostMethodSupportedInVersionV1,
   PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1,
   PLUGIN_UI_HOST_API_VERSION_V1,
   PLUGIN_UI_HOST_METHODS_V1,
@@ -12,6 +15,8 @@ export {
   type PluginUiHostSubscriptionMethodV1,
   type PluginUiHostTransportOperationV1,
 } from './hostApiDefinition.js';
+export { resolvePluginUiHostApiVersionV1 } from './hostApi.js';
+export { projectPluginUiRenderContextForHostApiVersionV1 } from './hostApiPresentation.js';
 export * from './storedImage.js';
 export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';

@@ -22,7 +22,7 @@ import {
   PluginUiHostApiWireEnvelopeV1Schema,
   PluginUiHostApiWireIdentityV1Schema,
 } from './hostApiWire.js';
-import { PLUGIN_UI_HOST_API_VERSION_V1 } from './hostApiDefinition.js';
+import { PLUGIN_UI_HOST_API_BASE_VERSION_V1 } from './hostApiDefinition.js';
 import { PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema } from './hostApiRequests.js';
 import { ComposerRefV1Schema } from './composer.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -208,7 +208,7 @@ export const PluginHostedWebBridgeHostApiMessageEnvelopeV1Schema =
  * are intentionally absent.
  */
 export const PluginHostedWebBridgeBootstrapPayloadV1Schema = z.strictObject({
-  apiVersion: z.literal(PLUGIN_UI_HOST_API_VERSION_V1),
+  apiVersion: z.literal(PLUGIN_UI_HOST_API_BASE_VERSION_V1),
   wireVersion: z.literal(PLUGIN_UI_HOST_API_WIRE_VERSION_V1),
   identity: PluginUiHostApiWireIdentityV1Schema,
   /** Installed source metadata for SDK authoring, never wire authority. */

@@ -1,7 +1,7 @@
 import {
     PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
-    PLUGIN_UI_HOST_API_VERSION_V1,
+    PLUGIN_UI_HOST_API_BASE_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     ComposerSnapshotV1Schema,
     PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema,
@@ -17,7 +17,8 @@ import {
     pluginUiSelectedActionInputMatchesOperation,
     pluginUiSelectedActionInputsEqual,
     pluginUiTargetedContributionOperationKey,
-    isPluginUiHostApiVersionCompatibleV1,
+    resolvePluginUiHostApiVersionV1,
+    isPluginUiHostMethodSupportedInVersionV1,
     type PluginHostedWebBridgeEnvelopeV1,
     type PluginHostedWebBridgeHostMessageEnvelopeV1,
     type PluginHostedWebAccountDataBridgeChangeV1,
@@ -335,6 +336,10 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             }),
         );
     };
+    // Dispatch authority is document-scoped: installed ∩ transport ∩ ceiling.
+    // Semantic negotiation only projects a client's readable advertisement.
+    // Current presentation and older authored SDKs share this wire identity,
+    // so a later 1.0 negotiation cannot revoke a 1.1 sibling's operations.
     let canonicalMethods = resolveCanonicalMethods();
     /**
      * In-flight canonical requests, keyed by wire request id, each holding the
@@ -504,7 +509,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             origin: bootstrap.frameOrigin,
             kind: 'bootstrap',
             payload: {
-                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+                apiVersion: PLUGIN_UI_HOST_API_BASE_VERSION_V1,
                 wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
                 identity: binding.identity,
                 ...(binding.authorPlugin === undefined ? {} : { authorPlugin: binding.authorPlugin }),
@@ -603,7 +608,8 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         if (disposed) return canonicalDisconnected(envelope, 'host_api_handler_disposed');
 
         if (message.kind === 'negotiate') {
-            if (!isPluginUiHostApiVersionCompatibleV1(message.apiRange)) {
+            const apiVersion = resolvePluginUiHostApiVersionV1(message.apiRange);
+            if (!apiVersion) {
                 return canonicalDisconnected(envelope, 'incompatible_api_version');
             }
             const negotiatedMethods = resolveCanonicalMethods();
@@ -612,8 +618,8 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                 wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
                 kind: 'negotiated',
                 identity: binding.identity,
-                apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
-                methods: [...canonicalMethods],
+                apiVersion,
+                methods: [...canonicalMethods].filter(method => isPluginUiHostMethodSupportedInVersionV1(method, apiVersion)),
             }));
         }
         if (message.kind === 'cancel') {
