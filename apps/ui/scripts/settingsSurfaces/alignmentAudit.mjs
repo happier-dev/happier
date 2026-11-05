@@ -10,6 +10,13 @@
  *   PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright \
  *   node apps/ui/scripts/settingsSurfaces/alignmentAudit.mjs --label before \
  *     [--routes /settings/account,/plugins] [--viewports 1440,390] [--out <dir>] [--seed-paths <p1,p2>]
+ *     [--census] [--cdp http://127.0.0.1:<port>]
+ *
+ * `--census` measures the app's other destinations too (Store, Workflows, Projects, Discussions and so on),
+ * so a title, control or first row that drifts between any two pages is flagged, not only inside Settings.
+ * `--cdp` measures in an already signed-in managed browser (`dev-targets browser start`): it reuses that
+ * browser's page and sets each width through the window bounds, because a viewport override stalls rendering
+ * after navigation on those browsers.
  *
  * Env: HAPPIER_AUDIT_BASE_URL (default http://127.0.0.1:19364). Writes `audit-<label>.json` and
  * `audit-<label>.txt` (the outlier table, also printed) to `--out` (default .happier/qa/fidelity/craft-f).
@@ -39,6 +46,8 @@ function parseArgs(argv) {
         else if (flag === '--out') args.out = path.resolve(value);
         else if (flag === '--routes') args.routes = value.split(',').map((r) => r.trim()).filter(Boolean);
         else if (flag === '--seed-paths') args.seedPaths = value.split(',').map((r) => r.trim()).filter(Boolean);
+        else if (flag === '--cdp') args.cdp = value;
+        else if (flag === '--census') { args.census = true; continue; }
         else continue;
         i += 1;
     }
@@ -79,6 +88,19 @@ const EXTRA_ROUTES = [
     { pattern: 'session/:id/info', bind: 'session' },
     { pattern: 'session/:id/details', bind: 'session' },
     { pattern: 'session/:id/sharing', bind: 'session' },
+];
+
+/** The app's other destinations, measured under `--census` with the same page anatomy. */
+const CENSUS_ROUTES = [
+    { pattern: 'plugins/bots' },
+    { pattern: 'plugins/panels' },
+    { pattern: 'workflows' },
+    { pattern: 'projects' },
+    { pattern: 'discussions' },
+    { pattern: 'inbox' },
+    { pattern: 'machines' },
+    { pattern: 'deployments' },
+    { pattern: 'artifacts' },
 ];
 
 /**
@@ -327,6 +349,32 @@ function measurePage() {
         .filter((b) => b && (!header || b.top >= header.bottom - 1)).sort((a, b) => a.top - b.top)[0];
     if (header && firstBlock) result.gaps.headerToFirstBlock = r(firstBlock.top - header.bottom);
 
+    // The census's two extra edges: the first control under the header, then the first content row under that.
+    if (result.title && result.leading) result.gaps.markToTitle = r(result.title.left - (result.leading.left + result.leading.width));
+    if (header) {
+        // Only what stands in the title's own column: a rail or a list beside the page is not under its header.
+        const columnLeft = result.title?.column?.left ?? (result.title?.left ?? 0) - 40;
+        const inTitleColumn = (el) => rectOf(el).left >= columnLeft - 1;
+        const below = (selector, floor) => candidates(selector)
+            .filter(inTitleColumn)
+            .filter((el) => rectOf(el).top >= floor - 1)
+            .sort((a, b) => rectOf(a).top - rectOf(b).top || rectOf(a).left - rectOf(b).left)[0] ?? null;
+        const control = below('input, textarea, [role="searchbox"], [role="tablist"], [role="radiogroup"]', header.bottom);
+        if (control) {
+            result.firstControl = box(control, 'first-control');
+            result.gaps.headerToFirstControl = r(result.firstControl.top - header.bottom);
+        }
+        const row = candidates('[role="row"], [role="link"], [role="button"], a')
+            .filter(inTitleColumn)
+            .filter((el) => { const rect = rectOf(el); return rect.width >= 200 && rect.height >= 24 && rect.height <= 120; })
+            .filter((el) => rectOf(el).top >= (result.firstControl?.bottom ?? header.bottom) - 1)
+            .sort((a, b) => rectOf(a).top - rectOf(b).top)[0] ?? null;
+        if (row) {
+            result.firstRow = box(row, 'first-row');
+            result.gaps.toFirstRow = r(result.firstRow.top - (result.firstControl?.bottom ?? header.bottom));
+        }
+    }
+
     // Empty-state copy.
     result.emptyStates = textLeaves
         .filter((el) => /^(no\b.*\byet\b|nothing\b|no [a-z ]+ (found|configured|available|added))/i.test((el.textContent ?? '').trim()))
@@ -394,6 +442,8 @@ function mode(values) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? null;
 }
 
+let CENSUS = false;
+
 function computeOutliers(results) {
     const outliers = [];
     const add = (entry, what, value, expected) => outliers.push({ route: entry.route, viewport: entry.viewport, what, value, expected });
@@ -418,6 +468,14 @@ function computeOutliers(results) {
             singleRow: mode(all((m) => m.rows.filter((row) => row.single).map((row) => row.height))),
             columnWidth: mode(all((m) => [m.column?.width])),
         };
+        // Across every measured page: one title height, one title block, one edge for what stands under it.
+        const everywhere = (pick) => measured.flatMap((e) => pick(e.m)).filter((v) => typeof v === 'number');
+        const censusModes = {
+            titleTop: mode(everywhere((m) => [m.title?.top])),
+            titleToSubtitle: mode(everywhere((m) => [m.gaps.titleToSubtitle])),
+            markToTitle: mode(everywhere((m) => [m.gaps.markToTitle])),
+            headerToFirstControl: mode(everywhere((m) => [m.gaps.headerToFirstControl])),
+        };
         const off = (value, expected) => typeof value === 'number' && expected !== null && Math.abs(value - expected) > TOLERANCE_PX;
         for (const e of measured) {
             const m = e.m;
@@ -428,6 +486,16 @@ function computeOutliers(results) {
                 if (abs ? off(b.left, absMode) : off(b.relLeft, relMode)) add(e, `${what} ${abs ? 'left' : 'relLeft'} ("${b.text}")`, abs ? b.left : b.relLeft, abs ? absMode : relMode);
             };
             e.modes = modes;
+            if (CENSUS) {
+            if (off(m.title?.top, censusModes.titleTop)) add(e, 'title top offset', m.title.top, censusModes.titleTop);
+            if (off(m.gaps.titleToSubtitle, censusModes.titleToSubtitle)) add(e, 'title→subtitle gap', m.gaps.titleToSubtitle, censusModes.titleToSubtitle);
+            if (off(m.gaps.markToTitle, censusModes.markToTitle)) add(e, 'mark→title gap', m.gaps.markToTitle, censusModes.markToTitle);
+            if (off(m.gaps.headerToFirstControl, censusModes.headerToFirstControl)) add(e, 'header→first control gap', m.gaps.headerToFirstControl, censusModes.headerToFirstControl);
+            const titleEdge = (m.leading ?? m.title)?.left;
+            for (const edge of [m.firstControl, m.firstRow]) {
+                if (edge && typeof titleEdge === 'number' && Math.abs(edge.left - titleEdge) > TOLERANCE_PX) add(e, `${edge.kind} left vs title edge ("${edge.text}")`, edge.left, titleEdge);
+            }
+            }
             if (!m.title) add(e, m.navTitle ? `no in-page title (nav header "${m.navTitle.text}")` : 'no page title detected', null, 'page title');
             else if (!m.title.owner) add(e, `title not PageHeader typography (${m.title.fontSize}/${m.title.lineHeight})`, m.title.fontSize, '22/28');
             left(m.leading ?? m.title, modes.titleLeft, modes.titleRel, m.leading ? 'leading mark' : 'title');
@@ -467,6 +535,7 @@ function classOf(what) {
 
 async function main() {
     const args = parseArgs(process.argv.slice(2));
+    CENSUS = args.census === true;
     const runStarted = Date.now();
     mkdirSync(args.out, { recursive: true });
     const { patterns, skipped: registrySkipped } = readRegistryPatterns();
@@ -474,14 +543,19 @@ async function main() {
     const bindings = {};
     for (const seed of args.seedPaths) bindHref(bindings, patterns, seed);
 
-    const browser = await chromium.launch();
+    const browser = args.cdp ? await chromium.connectOverCDP(args.cdp) : await chromium.launch();
     const results = [];
     const timings = {};
     try {
         for (const width of args.viewports) {
             const viewportStarted = Date.now();
-            const context = await browser.newContext({ storageState: STORAGE_STATE, viewport: { width, height: VIEWPORT_HEIGHTS[width] ?? 900 }, colorScheme: 'light' });
-            const page = await context.newPage();
+            const context = args.cdp ? browser.contexts()[0] : await browser.newContext({ storageState: STORAGE_STATE, viewport: { width, height: VIEWPORT_HEIGHTS[width] ?? 900 }, colorScheme: 'light' });
+            const page = args.cdp ? context.pages()[0] : await context.newPage();
+            if (args.cdp) {
+                const session = await context.newCDPSession(page);
+                const { windowId } = await session.send('Browser.getWindowForTarget');
+                await session.send('Browser.setWindowBounds', { windowId, bounds: { width, height: VIEWPORT_HEIGHTS[width] ?? 900 } });
+            }
             const errors = [];
             page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)));
             const firstLoadStarted = Date.now();
@@ -499,7 +573,7 @@ async function main() {
             }
             if (!loaded) {
                 timings[`firstLoadFailed@${width}`] = Date.now() - firstLoadStarted;
-                await context.close();
+                if (!args.cdp) await context.close();
                 continue;
             }
             await settle(page);
@@ -512,6 +586,7 @@ async function main() {
                     ...patterns.filter((p) => !p.includes('[')).map((p) => ({ route: `/${p}`, group: 'settings' })),
                     ...patterns.filter((p) => p.includes('[')).map((p) => ({ pattern: p, group: 'settings' })),
                     ...EXTRA_ROUTES.map((extra) => ({ extra, group: 'extra' })),
+                    ...(args.census ? CENSUS_ROUTES.map((extra) => ({ extra, group: 'extra' })) : []),
                 ];
             let previousSignature = '';
             // Routes that bounced to the app root while the bundle was still warming get one more try.
@@ -556,7 +631,7 @@ async function main() {
             }
             timings[`viewport@${width}`] = Date.now() - viewportStarted;
             timings[`pageErrors@${width}`] = errors.length;
-            await context.close();
+            if (!args.cdp) await context.close();
         }
     } finally {
         await browser.close();

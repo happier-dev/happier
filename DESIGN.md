@@ -646,6 +646,16 @@ live in the page-presentation owners in code.
   leads. Home's greeting over its planet is Home's own moment, not a page title. A page never chooses;
   `HappierPageHeader` decides from what navigation says. The title sits at one height on every page,
   with or without header actions. Only a detail actually open beside a list shares that list's top band.
+- **A title block is one unit.** Mark, title and purpose read as one block: the mark is drawn large in a slot
+  that hugs it, close to the title, and the purpose sits right under the title. A page never sizes its own mark;
+  `PageHeaderMarkIcon` draws it (plugins: `PageHeader`'s `leading`).
+- **Overflow is "…".** Every overflow trigger is the glyph alone, with "More" as its accessible name, on
+  tabs, toolbars, rows and plugin pages. Words stay only where every neighbour has words: a phone's labelled
+  tab bar, which follows the person's labels setting.
+- **One filter pattern.** Common filters stand inline and take one press: chips for values that can combine,
+  a segmented control for a short either-or. Only the long tail sits behind a menu, the shared condition
+  editor. A filter's state has one home: a chip that says it is on takes the place of its token. Chips offer
+  values that exist as filter facts; a chip never counts or filters by anything its list cannot back.
 - **Sections read before their controls.** A sentence-case section title with its explanation above
   the rows, then one card sheet. Row dividers use the divider ink and run from the rows' text edge
   (past the leading column when the section reserves one) to the sheet's trailing edge; the last row

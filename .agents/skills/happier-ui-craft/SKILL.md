@@ -106,6 +106,13 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
   names its current model, List engine and layout owners. Pages consume them rather than building
   another generic collection. A domain-specific page composition can bind those owners.
 
+**Shared patterns** (`DESIGN.md` → Configuration surfaces)
+
+- Overflow triggers are "…" alone; the word is the accessible name.
+- A title block is one unit: `PageHeaderMarkIcon` draws the mark, `PageHeader` owns the gaps. Never pick a mark size.
+- Filters are inline and one press: chips or a segmented control for what people filter by most, a menu only
+  for the long tail. Bind real filter facts; the chip's state replaces its token.
+
 **Phones recompose**
 
 - Only a switch, a short value or a chevron sits right of a label; everything wider moves beneath.
@@ -137,6 +144,14 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
    touched surface, render real heavy data at the lab, wide and phone widths, measure frame, grid, type
    and rhythm, and classify each difference as a defect, an accepted refinement or a lab update.
 5. **Review against the checklist** in `references/validation.md` before handing off.
+
+A surface that existed in `../0.2` must match or beat 0.2 side by side before it lands: run both, same
+state and size, and record the pair. Being newer is not being better; a 0.3 surface that loses to 0.2 is a
+defect even when it matches its lab.
+
+Any lane that changes rendered output, Sol logic lanes included, gets whole-page design acceptance from an
+Opus pass before it reports done. The lane names the surfaces it changed; the pass judges each whole page live.
+A lane that cannot get that pass reports `visual: not seen`, not done.
 
 This loop applies to every change that alters what renders, whatever the lane is called. A
 "behavior", "fix", "parity" or QA lane that adds a state, a control, a row, copy, an error or a repair

@@ -38,7 +38,8 @@ Description of what the section controls, above it.
   spacing and sheet insets come from `pageListMetrics.ts`. The page title, its purpose line, every
   section title and every sheet share one left edge; a page never adds its own horizontal padding or
   margin to line something up. Collection detail panes and settings-like pages outside Settings use the
-  same owners. `apps/ui/scripts/settingsSurfaces/alignmentAudit.mjs` measures the drift.
+  same owners. `apps/ui/scripts/settingsSurfaces/alignmentAudit.mjs` measures the drift; `--census` adds the app's other
+  destinations, with each page's title top, title block, first control and first row.
 - **Back** on a sub-page is filled into `PageHeader`'s back slot by the navigation chrome. The title
   and purpose (or the leading mark, when there is one) stay on the content's left edge; on wide panes
   the arrow sits in the gutter left of that edge, centred on the title line, and it falls back onto
