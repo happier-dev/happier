@@ -292,7 +292,7 @@ async function reconcileWorkflowRunAttentionAndHintTx(tx: Tx, accountId: string,
         && AUTOMATION_RUN_TERMINAL_STATES.some((state) => state === after.state);
     if (!inputDeliverable && !(after.originDeliveryAckRevision !== null && (becameTerminal || attentionChanged))) return;
     await markAccountChangesForSessionAccounts({ tx, sessionId: after.originSessionId, accountIds: [accountId],
-        hint: { kind: "workflow-run-delivery", runId, revision: after.revision } });
+        hint: { kind: "workflow-run-delivery", runId, revision: after.revision, usageAccountingChanged: false } });
     if (inputDeliverable || (after.originDeliveryAckRevision !== null && becameTerminal)) {
         await publishManagedContextWakeInTx(tx, { runId, originSessionId: after.originSessionId });
     }

@@ -46,6 +46,8 @@ import {
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 import { eventRouter } from "@/app/events/eventRouter";
 import { createFakeSocket } from "@/app/api/testkit/socketHarness";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
@@ -1445,12 +1447,24 @@ describe("workflowRunService (integration)", () => {
         const resolved = await change();
         expect(resolved!.cursor).toBeGreaterThan(attention!.cursor);
         expect(resolved).toMatchObject({ hint: { kind: "workflow-run-delivery", runId: seeded.runId, revision: 4 } });
+        expect([admitted!, attention!, resolved!].filter(change => readSessionUsageAccountingChangedV1(change, 0))).toHaveLength(0);
+        // A real transcript-count change must survive a later delivery-only hint
+        // when the client has not consumed that accounting input yet.
+        await inTx(async tx => {
+            await tx.session.update({ where: { id: seeded.sessionId }, data: { seq: { increment: 1 } } });
+            await markAccountChanged(tx, { accountId: seeded.accountId, kind: "session", entityId: seeded.sessionId,
+                hint: { lastMessageSeq: 1 } });
+        });
+        const transcript = await change();
+        expect(readSessionUsageAccountingChangedV1(transcript!, resolved!.cursor)).toBe(true);
         await transitionWorkflowRun({ ...seeded, parentAttempt: 1, expectedRevision: 4, state: "succeeded",
             checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n), custodyState: "settled",
             invocationTransitions: [{ id: seeded.rootId, expectedLifecycle: "pending", lifecycle: "completed" }] });
         const terminal = await change();
         expect(terminal!.cursor).toBeGreaterThan(resolved!.cursor);
         expect(terminal).toMatchObject({ accountId: seeded.accountId, hint: { kind: "workflow-run-delivery", runId: seeded.runId, revision: 5 } });
+        expect(readSessionUsageAccountingChangedV1(terminal!, resolved!.cursor)).toBe(true);
+        expect(readSessionUsageAccountingChangedV1(terminal!, transcript!.cursor)).toBe(false);
         expect(await db.accountChange.count({ where: { kind: "session", entityId: seeded.sessionId, accountId: { not: seeded.accountId } } })).toBe(0);
     });
 
