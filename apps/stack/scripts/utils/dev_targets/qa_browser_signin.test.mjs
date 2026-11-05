@@ -7,8 +7,9 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, confirmHomeAliasUrl, step = 'restore' } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore' } = {}) {
   let view = 'restore';
+  let submitted = false;
   let aliasConfirmed = false;
   let credentialFilled = false;
   const observers = new Set();
@@ -20,13 +21,14 @@ async function observe({ alias = false, migrationDeclined = false, confirmHomeAl
   const input = new Input();
   const confirm = { click() { aliasConfirmed = true; publish(); } };
   const dialog = {
-    textContent: migrationDeclined ? 'Error: Home canonical URL migration was not applied' : `Reached ${canonicalServerUrl}, previously ${aliasUrl}`,
-    querySelector: () => confirm,
+    getAttribute: name => name === 'aria-label' ? blockingDialog?.title ?? 'Error' : null,
+    textContent: blockingDialog?.text ?? (migrationDeclined ? 'Error: Home canonical URL migration was not applied' : `Reached ${canonicalServerUrl}, previously ${aliasUrl}`),
+    querySelector: selector => selector === '[data-testid="web-modal-confirm"]' ? (blockingDialog?.confirm === false ? null : confirm) : null,
   };
   const document = {
     documentElement: {},
     querySelector(selector) {
-      if (migrationDeclined && selector === '[role="dialog"]') return dialog;
+      if ((migrationDeclined || (blockingDialog && (!blockingAfterSubmit || submitted))) && selector === '[role="dialog"]') return dialog;
       if (alias && !aliasConfirmed && view === 'restore') {
         if (selector === '[role="dialog"]') return dialog;
         if (selector.includes('web-modal-confirm')) return confirm;
@@ -37,7 +39,11 @@ async function observe({ alias = false, migrationDeclined = false, confirmHomeAl
       if (view !== 'restore') return null;
       if (selector === '[data-testid="restore-manual-wizard"] input') return input;
       if (selector === '[data-testid="restore-manual-submit"]') return {
-        click() { view = 'home'; location.pathname = '/'; credentialFilled = false; publish(); },
+        click() {
+          submitted = true;
+          if (!blockingAfterSubmit) { view = 'home'; location.pathname = '/'; credentialFilled = false; }
+          publish();
+        },
       };
       return null;
     },
@@ -109,7 +115,31 @@ test('restores normally when there is no Home alias warning', async () => {
 });
 
 test('reports a declined canonical migration instead of treating its error dialog as alias consent', async () => {
-  assert.equal((await observe({ migrationDeclined: true })).result, 'home_migration_declined');
+  assert.deepEqual((await observe({ migrationDeclined: true })).result, { reason: 'home_migration_declined', title: 'Error' });
+});
+
+test('reports reachability blockers before and after submission without clicking or retaining input', async () => {
+  for (const blockingAfterSubmit of [false, true]) {
+    const observed = await observe({ blockingAfterSubmit, blockingDialog: {
+      confirm: !blockingAfterSubmit, title: 'Error', text: 'Error Happier couldn’t reach a Home at that address. Check the address and that the Home is running. Cancel Retry',
+    }, confirmHomeAliasUrl: aliasUrl });
+    assert.deepEqual(observed.result, { reason: 'home_reachability_failed', title: 'Error' });
+    assert.equal(observed.aliasConfirmed, false);
+    assert.equal(observed.credentialFilled, false);
+  }
+});
+
+test('leaves other blocking dialogs untouched and omits an unsafe title', async () => {
+  const observed = await observe({ blockingDialog: { title: randomBytes(32).toString('base64url'), text: 'Unexpected confirmation Cancel Continue' } });
+  assert.deepEqual(observed.result, { reason: 'blocking_dialog', title: null });
+  assert.equal(observed.aliasConfirmed, false);
+  assert.equal(observed.credentialFilled, false);
+});
+
+test('preserves the blocker reason and safe title through the CDP sign-in result', async () => {
+  assert.deepEqual(await profileSignin({ restoreOutcome: { reason: 'home_reachability_failed', title: 'Error' } }), {
+    ok: false, reason: 'home_reachability_failed', title: 'Error',
+  });
 });
 
 test('projects both descriptor revisions without returning feature payloads or URL credentials', async () => {
@@ -201,8 +231,8 @@ test('reads Account identity only from this main-frame navigation, ignoring prev
 });
 
 test('reports a declined migration with both safe Home origins and descriptor revisions', async () => {
-  assert.deepEqual(await profileSignin({ restoreOutcome: 'home_migration_declined' }), {
-    ok: false, reason: 'home_migration_declined', expectedOrigin: canonicalServerUrl, actualOrigin: aliasUrl,
+  assert.deepEqual(await profileSignin({ restoreOutcome: { reason: 'home_migration_declined', title: 'Error' } }), {
+    ok: false, reason: 'home_migration_declined', title: 'Error', expectedOrigin: canonicalServerUrl, actualOrigin: aliasUrl,
     expectedRevision: 27, actualRevision: 62,
   });
 });

@@ -39,11 +39,17 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
     return document.querySelector('[data-testid="settings-account-identity"]') ? 'account' : null;
   });
   let confirmedDialog;
-  const aliasWarning = () => {
+  const blockingDialog = () => {
     const dialog = document.querySelector('[role="dialog"]');
-    if (dialog?.textContent.includes('Home canonical URL migration was not applied')) return 'home_migration_declined';
-    const confirm = dialog?.querySelector('[data-testid="web-modal-confirm"]');
-    if (!confirm || dialog === confirmedDialog) return null;
+    if (!dialog || dialog === confirmedDialog) return null;
+    // Only public, fixed modal labels may leave the credential page. Other
+    // titles and the message can contain input or credentials and stay here.
+    const label = dialog.getAttribute('aria-label');
+    const title = ['Error', 'Warning', 'Confirmation'].includes(label) ? label : null;
+    if (dialog.textContent.includes('Home canonical URL migration was not applied')) {
+      return { reason: 'home_migration_declined', title };
+    }
+    const confirm = dialog.querySelector('[data-testid="web-modal-confirm"]');
     // Consent names both addresses. Never accept an arbitrary confirmation or
     // infer trust from a Home's public identity claim.
     const comparable = value => {
@@ -53,8 +59,14 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
       .map(value => comparable(value.replace(/[.,;!?)]*$/, '')));
     const expected = comparable(expectedHomeUrl);
     const alias = comparable(confirmHomeAliasUrl);
-    if (!expected || !alias || expected === alias || addresses.length !== 2
-      || !addresses.includes(expected) || !addresses.includes(alias)) {
+    if (!confirm || !expected || addresses.length !== 2 || !addresses.includes(expected)) {
+      return {
+        reason: /Happier couldn[’']t reach a Home at that address/.test(dialog.textContent)
+          ? 'home_reachability_failed' : 'blocking_dialog',
+        title,
+      };
+    }
+    if (!alias || expected === alias || !addresses.includes(alias)) {
       return 'home_alias_confirmation_required';
     }
     confirmedDialog = dialog;
@@ -63,12 +75,12 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
   };
   const ready = await waitFor(() => {
     if (document.querySelector('[data-testid="home-unreachable"]')) return 'home_unavailable';
-    const warning = aliasWarning();
+    const warning = blockingDialog();
     if (warning) return warning;
     if (location.pathname !== '/restore/manual') return 'restore_entry_unavailable';
     return document.querySelector('[data-testid="restore-manual-wizard"] input');
   });
-  if (typeof ready === 'string') return ready;
+  if (typeof ready === 'string' || ready?.reason) return ready;
   // Use the native setter so React receives the same input event as typing.
   const fill = value => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(ready, value);
@@ -80,7 +92,7 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
     // Separate the fill and click like user input, allowing React to commit.
     await new Promise(requestAnimationFrame);
     const outcome = waitFor(() => {
-      const warning = aliasWarning();
+      const warning = blockingDialog();
       if (warning) return warning;
       if (document.querySelector('[data-testid="restore-manual-wizard"] [role="alert"]')) return 'restore_failed';
       return home();
@@ -259,9 +271,12 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       const submitted = step('restore', key);
       key = '';
       const outcome = await submitted;
-      if (outcome === 'home_migration_declined') {
+      if (outcome?.reason === 'home_reachability_failed' || outcome?.reason === 'blocking_dialog') {
+        throw Object.assign(failure(outcome.reason), { title: outcome.title });
+      }
+      if (outcome?.reason === 'home_migration_declined') {
         const revisions = await step('home-revisions');
-        throw Object.assign(failure(outcome), revisions, { expectedOrigin,
+        throw Object.assign(failure(outcome.reason), revisions, { title: outcome.title, expectedOrigin,
           actualOrigin: confirmHomeAliasUrl ? new URL(confirmHomeAliasUrl).origin : null });
       }
       if (outcome !== 'home') throw failure(['home_unavailable', 'restore_entry_unavailable', 'home_alias_confirmation_required'].includes(outcome) ? outcome : 'restore_failed');
@@ -299,8 +314,9 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     // Browser/Playwright/CDP errors may contain the filled value. Only our closed
     // reason vocabulary can cross this boundary; never return exception text.
     const reasons = ['invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
-      'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required', 'home_origin_mismatch', 'home_migration_declined'];
+      'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required', 'home_origin_mismatch', 'home_migration_declined', 'home_reachability_failed', 'blocking_dialog'];
     const result = { ok: false, reason: reasons.includes(error?.reason) ? error.reason : 'browser_unavailable' };
+    if (result.reason === 'home_reachability_failed' || result.reason === 'blocking_dialog' || result.reason === 'home_migration_declined') result.title = error.title;
     if (result.reason === 'home_origin_mismatch' || result.reason === 'home_migration_declined') {
       result.expectedOrigin = error.expectedOrigin;
       result.actualOrigin = error.actualOrigin;
