@@ -2,7 +2,6 @@ import { alertComposerActionResultFailure, alertComposerRunnerRestartFailure, al
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
-import { readRuntimeDescriptorV1FromMetadata } from "@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat";
 import type { CliAuthStatusData } from "@/sync/api/capabilities/capabilitiesProtocol";
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 import { resolveEffectiveApiTokenPermissionModeV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
@@ -16,8 +15,6 @@ import { getPromptLibraryCatalogValue } from "@/sync/store/settings/promptLibrar
 import { refreshPromptLibraryCatalog } from "@/sync/engine/settings/promptLibraryCatalogEngine";
 import { areServerAccountScopesEqual } from "@/sync/domains/scope/serverAccountScope";
 import { mergeOptionPickerProbes } from "@/components/sessions/pickers/mergeOptionPickerProbes";
-import { resolveNewSessionOperationalBackendTarget, resolveNewSessionModelCapabilityProbeContext } from "@/components/sessions/new/modules/newSessionCapabilityProbeContext";
-import { readSessionConnectedServiceBindings } from "@/sync/domains/connectedServices/readSessionConnectedServiceBindings";
 import type { SessionModelOptionsContext } from "@/sync/domains/models/modelOptions";
 import { PendingNavigationPill } from "@/components/sessions/pendingNavigation/PendingNavigationPill";
 import { PendingNavigationSettledNotice } from "@/components/sessions/pendingNavigation/PendingNavigationSettledNotice";
@@ -98,7 +95,6 @@ import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/se
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
 import { storage, useIsMachineListSettled, useLocalSetting, useProfile, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
-import type { Settings } from "@/sync/domains/settings/settings";
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
 import { isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
@@ -176,6 +172,7 @@ import { SESSION_PROVIDER_LIMITS_SETTINGS } from "@/components/settings/session/
 import { useMountedActionExecution } from "@/components/approvals/useMountedActionExecution";
 import { isSessionLocallyAttached } from "@/sync/domains/session/control/sessionLocalControl";
 import { resolveSessionNativeGoalOwner } from "@/sync/domains/session/control/sessionGoalExecutionCapabilities";
+import { buildSessionModelDiscoveryContext } from "@/sync/ops/sessionModelDiscovery";
 import { computeSessionModelConfigOptionControls, findModelOptionForEffectiveModelId, getModelOptionsForSession, isModelSelectableForSession, resolveCanonicalNativeModelSelectionRef, resolveSessionModelLabel } from "@/sync/domains/models/modelOptions";
 import { isArmedModelOnlySessionChange } from "@/providers/session/resolveSessionRoutePresentation";
 import { readArmedRouteContinuationLabel } from "@/components/sessions/agentInput/components/agentContinuationSubmitPresentation";
@@ -4329,31 +4326,18 @@ export function useSessionComposerController({
             : undefined
     ), [declarationContext, existingSessionHiddenNativeModelKeys, existingSessionNativeModels, existingSessionSelectedModelRef,
         providerAgentTargetKey, providerModelProjection.data, providerModelProjection.status, providersFeatureEnabled]);
-    const resolveSessionModelDiscoveryContext = React.useCallback((settings: Settings): SessionModelDiscoveryContext => {
+    const resolveSessionModelDiscoveryContext = React.useCallback((settings: Readonly<Record<string, unknown>>): SessionModelDiscoveryContext => {
         const target = resolveSessionActionDefaultTarget(sessionActionDefaultBackend);
-        const backendTarget = target ? resolveNewSessionOperationalBackendTarget({
-            backendTarget: target, runtimeCarrierAgentId: agentId,
-        }) : null;
         const selectedMachineId = controlMachineTarget?.machineId ?? machineId ?? null;
-        return {
-            backendTarget,
-            runtimeCarrierAgentId: agentId,
-            selectedMachineId,
-            capabilityServerId: sessionRouteServerId,
-            cwd: liveAuthoringContext.snapshot.directory,
+        return buildSessionModelDiscoveryContext({
+            target, agentId, machineId: selectedMachineId, serverId: sessionRouteServerId,
+            directory: liveAuthoringContext.snapshot.directory,
+            profileId: liveComposerState.profileId,
+            metadata: ownerMetadata, settings, accountScope: sessionAccountScope,
             enabled: canSelectModel,
-            probeContext: target ? resolveNewSessionModelCapabilityProbeContext({
-                backendTarget: target,
-                runtimeCarrierAgentId: agentId,
-                settings,
-                selectedProfileId: liveComposerState.profileId,
-                runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(ownerMetadata),
-                machineId: selectedMachineId,
-                connectedServices: agentId ? readSessionConnectedServiceBindings({ metadata: ownerMetadata, agentId }) : null,
-            }) : null,
-        };
+        });
     }, [sessionActionDefaultBackend, agentId, controlMachineTarget?.machineId, machineId, sessionRouteServerId,
-        liveAuthoringContext.snapshot.directory, liveComposerState.profileId, canSelectModel, ownerMetadata]);
+        liveAuthoringContext.snapshot.directory, liveComposerState.profileId, canSelectModel, ownerMetadata, sessionAccountScope]);
     const existingSessionSourceBrowse = React.useMemo(() => ({
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,

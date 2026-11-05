@@ -11,7 +11,7 @@ import {
 import { resolveConfiguredAgentRuntimeKindFromUiBehavior } from '@/agents/registry/registryUiBehavior';
 import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import type { Settings } from '@/sync/domains/settings/settings';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type NewSessionCapabilityProbeContext = Readonly<{
@@ -106,10 +106,11 @@ export function resolveNewSessionOperationalProviderId(params: Readonly<{
 
 export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     selectedProfileId?: string | null;
     runtimeCarrierAgentId?: string | null;
     machineId?: string | null;
+    accountScope?: ServerAccountScope | null;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     connectedServices?: ConnectedServiceBindingsV2 | null;
@@ -125,11 +126,12 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     if (!agentId) {
         return null;
     }
-    // `settings` is the canonical parsed Account settings. The open engine picker
+    // `settings` is the caller's consumed-key Account view. The open engine picker
     // resolves this on every render, so it is read as given, never re-parsed.
     const runtimeKind = params.runtimeDescriptorV1 ? null : resolveConfiguredAgentRuntimeKindFromUiBehavior({
         agentId,
         settings: params.settings,
+        accountScope: params.accountScope,
         ...(params.pluginSettings ? { pluginSettings: params.pluginSettings } : {}),
         ...(params.machineId?.trim() ? { machineId: params.machineId } : {}),
     });
@@ -159,10 +161,11 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
 
 export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     selectedProfileId?: string | null;
     runtimeCarrierAgentId?: string | null;
     machineId?: string | null;
+    accountScope?: ServerAccountScope | null;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     connectedServices?: ConnectedServiceBindingsV2 | null;
