@@ -162,6 +162,24 @@ describe("the source's own write in the header", () => {
     expect(calls).toEqual(['squash']);
   });
 
+  it('offers Merge\'s alternatives in the row\'s one More menu, never a second ⋯ beside Merge', async () => {
+    const calls: string[] = [];
+    const fixture = await mountSourceWrite({
+      id: 'merge', title: 'Merge', disabledReason: null, pending: false,
+      readiness: { label: 'Ready to merge', enabled: true, reason: null },
+      unmetRequirements: [],
+      alternatives: [{
+        id: 'updateBranch', title: 'Update branch', disabledReason: null, pending: false,
+        execute: async () => { calls.push('updateBranch'); },
+      }],
+      execute: async () => { calls.push('merge'); },
+    }, 'write-alternatives');
+    await expect(fixture.queryByRole('button', { name: 'Merge options' })).resolves.toBeUndefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'More actions' }));
+    await fixture.press(await fixture.getByRole('menuitem', { name: 'Update branch' }));
+    expect(calls).toEqual(['updateBranch']);
+  });
+
   it('runs a write without methods directly (Mark ready)', async () => {
     const calls: (string | undefined)[] = [];
     const fixture = await mountSourceWrite({

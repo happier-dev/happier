@@ -1147,6 +1147,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     state.kind === 'window' ? state.window.lanes : [],
   );
   const pinsByEntry = React.useMemo(() => indexTriagePinsByEntry(marks.pins), [marks.pins]);
+  // The page's one refresh (lab: "Updated · ⟳"): a press re-reads the list and, once, the open entry through its
+  // existing exact read; the generation tells the mounted detail's Activity to re-read its source as well.
+  const [detailRefreshGeneration, setDetailRefreshGeneration] = React.useState(0);
+  const refreshPage = React.useCallback(() => {
+    refresh();
+    if (selectedRow === null) return;
+    setDetailRefreshGeneration((generation) => generation + 1);
+    void completePostMutation().catch(() => undefined);
+  }, [completePostMutation, refresh, selectedRow]);
   const selectedConnectionLabel = React.useMemo(() => {
     const selection = surface.selection;
     if (selection === null) return null;
@@ -1556,7 +1565,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         break;
       case 'refresh':
         if (refreshState.kind === 'blocked') return { status: 'unavailable' };
-        await refresh();
+        refreshPage();
         break;
       case 'loadMore': {
         if (operation.section === 'linkedSessions') {
@@ -1574,7 +1583,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailTabs, detailSessions, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, taskAudience, visibleOrder]);
+  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailTabs, detailSessions, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refreshPage, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, taskAudience, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
@@ -2074,7 +2083,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         label: text('plugins.triage.surface.refresh', 'Refresh'),
         busy: refreshState.kind === 'running',
         disabled: refreshState.kind === 'blocked',
-        onPress: refresh,
+        onPress: refreshPage,
       }}
       more={{
         label: moreLabel,
@@ -2182,6 +2191,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => surface.selection === null ? null : (
     detailRow !== null ? (
       <TriageDetailRegion
+        refreshGeneration={detailRefreshGeneration}
         sourcePanelActions={sourcePanel.actions}
         tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
         sessionSelection={{ value: detailTab?.key === selectedKey ? detailTab.sessionId ?? null : null,

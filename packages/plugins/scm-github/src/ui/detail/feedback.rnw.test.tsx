@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import React, { act } from 'react';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -106,6 +109,7 @@ const answers: {
 const dispatched: string[] = [];
 const mutationInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
+const pageRefreshes = new WeakMap<PluginUiTestkit, () => void>();
 let nextChecksGate: Promise<JsonValue> | null = null;
 
 function withFeedbackPageEvidence(value: JsonValue): JsonValue {
@@ -123,11 +127,21 @@ async function mountFeedback(
   platform: 'web' | 'ios' = 'web',
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
+  let refreshPage = () => {};
+  function MountedPage({ context }: { context: RenderContext }): React.ReactElement {
+    const [generation, setGeneration] = React.useState(0);
+    refreshPage = () => setGeneration((value) => value + 1);
+    const body = renderSurface(context);
+    if (body !== null && !React.isValidElement(body)) throw new Error('Expected a native GitHub surface');
+    return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration: generation }}>
+      {body}
+    </TriageActivityAgentProvider>;
+  }
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-201', mountNonce: 'fixture-mount-201' },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: renderSurface,
+      surface: defineUiSurface((context) => <MountedPage context={context} />),
       surfaceContext: createSurfaceContextFixture({ platform }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: input,
@@ -214,8 +228,13 @@ async function mountFeedback(
       },
     }) as PluginUiTestkit;
   });
+  pageRefreshes.set(fixture, () => refreshPage());
   mounted.push(fixture);
   return fixture;
+}
+
+async function refreshPage(detail: PluginUiTestkit): Promise<void> {
+  await act(async () => { pageRefreshes.get(detail)!(); });
 }
 
 async function openFeedback(detail: PluginUiTestkit): Promise<void> {
@@ -624,9 +643,7 @@ describe('the mounted GitHub Feedback plane', () => {
       kind: 'unavailable',
       failure: { class: 'permission', code: 'github_forbidden' },
     };
-    await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Re-read this feedback from GitHub' }));
-    });
+    await refreshPage(detail);
 
     await expect(detail.getByText('Review: Approved'))
       .resolves.toEqual({ content: 'Review: Approved' });
@@ -655,9 +672,7 @@ describe('the mounted GitHub Feedback plane', () => {
       kind: 'unavailable',
       failure: { class: 'permission', code: 'github_forbidden' },
     };
-    await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Re-read this feedback from GitHub' }));
-    });
+    await refreshPage(detail);
 
     await expect(detail.getByText('1 failing')).resolves.toEqual({ content: '1 failing' });
     await expect(detail.getByText('Part of this feedback could not be read'))
@@ -738,10 +753,10 @@ describe('the mounted GitHub Feedback plane', () => {
 
   it('re-reads each feedback connection and checks through their existing reader owners', async () => {
     const detail = await mountFeedback(launchInput('pull-request'));
+    expect(dispatched).toEqual([]);
     await openFeedback(detail);
-    await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Re-read this feedback from GitHub' }));
-    });
+    expect(dispatched).toHaveLength(5);
+    await refreshPage(detail);
 
     expect([...dispatched].sort()).toEqual([
       GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
@@ -773,15 +788,20 @@ describe('the mounted GitHub Feedback plane', () => {
     nextChecksGate = new Promise<JsonValue>((resolve) => {
       settleChecks = resolve;
     });
-    await act(async () => {
+    if (tabName === 'Feedback') await refreshPage(detail);
+    else await act(async () => {
       await detail.press(await detail.getByRole('button', { name: refreshName }));
     });
 
-    const pendingRefresh = await detail.getByRole('button', {
-      name: refreshName,
-      state: { disabled: true },
-    });
-    await expect(detail.press(pendingRefresh)).rejects.toMatchObject({ code: 'stale_surface' });
+    if (tabName === 'Feedback') {
+      await expect(detail.queryByRole('button', { name: refreshName })).resolves.toBeUndefined();
+      await refreshPage(detail);
+    } else {
+      const pendingRefresh = await detail.getByRole('button', {
+        name: refreshName, state: { disabled: true },
+      });
+      await expect(detail.press(pendingRefresh)).rejects.toMatchObject({ code: 'stale_surface' });
+    }
     expect(dispatched.filter(
       (action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
     )).toHaveLength(2);
@@ -794,6 +814,9 @@ describe('the mounted GitHub Feedback plane', () => {
       name: refreshName,
       state: { disabled: true },
     })).resolves.toBeUndefined();
-    await expect(detail.getByRole('button', { name: refreshName })).resolves.toBeDefined();
+    if (tabName === 'Feedback') {
+      await refreshPage(detail);
+      expect(dispatched.filter((action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks)).toHaveLength(3);
+    } else await expect(detail.getByRole('button', { name: refreshName })).resolves.toBeDefined();
   });
 });

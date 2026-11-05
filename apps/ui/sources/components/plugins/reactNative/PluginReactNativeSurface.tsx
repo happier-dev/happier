@@ -124,6 +124,8 @@ type PluginReactNativeSurfaceProps = Readonly<{
     interactionEnabled?: boolean;
     /** Layout/route presentation eligibility; distinct from availability. */
     focusEligible?: boolean;
+    /** An embedded `content` mount is sized by what it draws instead of taking the owner's free space. */
+    embeddedPresentation?: 'content' | 'fill';
     /**
      * Exact host-admitted bytes identity. It is stamped only on the enabled
      * boundary below, after the verified loader has produced a renderable
@@ -137,7 +139,7 @@ type PluginReactNativeSurfaceProps = Readonly<{
         machineId?: string | null;
         serverId?: string | null;
     }>;
-    /** Targeted caller fallback, consumed only for a contributor render crash. */
+    /** Targeted caller crash fallback; a nonempty fallback also reserves the embedded slot while loading. */
     targetedFallback?: React.ReactNode;
     /**
      * A caller that owns the chrome (a Composer chip's own icon and label) draws this in place of
@@ -170,6 +172,10 @@ const resetFeedbackStyles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         minHeight: 0,
+        position: 'relative',
+    },
+    contentSurface: {
+        minWidth: 0,
         position: 'relative',
     },
     retainedStatus: {
@@ -775,7 +781,11 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         return (
             <>
             {initialLoadInFlight ? (
-                <PluginSurfaceFallback testID="plugin-rn-ui-loading" state="loading" />
+                // Optional content stays quiet until it can render. A caller with a fallback reserves a visible
+                // slot, so keep that slot visible while loading too. Composer-owned chrome keeps its placeholder.
+                props.embeddedPresentation === 'content' && props.stateFallback === undefined && props.targetedFallback == null
+                    ? null
+                    : <PluginSurfaceFallback testID="plugin-rn-ui-loading" state="loading" />
             ) : props.stateFallback !== undefined ? props.stateFallback : (
                 <PluginReactNativeUnavailable
                     diagnostics={unavailableDiagnostics}
@@ -817,7 +827,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 focusEligible={props.focusEligible}
                 loadedRuntimeIdentity={props.loadedRuntimeIdentity}
             >
-                <Animated.View style={[resetFeedbackStyles.surface, contentRevealStyle]}>
+                <Animated.View style={[props.embeddedPresentation === 'content' ? resetFeedbackStyles.contentSurface : resetFeedbackStyles.surface, contentRevealStyle]}>
                     <PluginReactNativeSurfaceRenderer
                         module={module}
                         renderContext={renderContext}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { ComposerReferenceCandidatePageV1, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
+import type { SessionPullRequestNativeStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
 import type { TriageSourcePanelOperationV1, TriageSourcePanelResultV1 } from './sourcePanelProtocol.js';
@@ -14,12 +15,25 @@ export type TriageSourcePanelActionsV1 = Readonly<{
 
 /** A source's existing confirmed write, offered to its mounted detail header. */
 export type TriageDetailPrimaryWriteV1 = Readonly<{
+  /** Source-local control identity, not another Action registry. */
+  id?: string;
   title: string;
   /** Null means offered; a reason keeps an unavailable write explainable. */
   disabledReason: string | null;
   pending: boolean;
+  /** The source's own read of this entry is still out: every entry action waits with this one (it keeps its place). */
+  reading?: boolean;
   /** Source-owned choices, with no implicit selection by the header. */
   methods?: readonly Readonly<{ id: string; title: string }>[];
+  /** Exact acknowledged requirements for the shared destructive confirmation. */
+  unmetRequirements?: readonly Readonly<{ kind: string; id: string; label: string }>[];
+  /** Native status and ordinary-action availability are deliberately distinct. */
+  readiness?: Readonly<{ label: string; enabled: boolean; reason: string | null }>;
+  /** Same native value/freshness contract as the Session Resource; never write authority. */
+  nativeStatus?: SessionPullRequestNativeStatusV1;
+  alternatives?: readonly TriageDetailPrimaryWriteV1[];
+  /** Lazy provider policy explanation, called only when its disclosure opens. */
+  readRequirements?: () => Promise<void>;
   /** Source-rendered settled feedback, through the incumbent write presenter. */
   feedback?: React.ReactNode;
   /** Enters the source's ordinary Action/confirmation path. Never bypass approval. */

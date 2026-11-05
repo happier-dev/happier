@@ -4,7 +4,7 @@ import {
   Banner, Button, EmptyState, ErrorState, Item, ItemGroup, LoadingState, ScrollArea,
   Text, defineUiSurface, useExecutePluginAction, usePluginTranslation, useTabPanelActivity,
 } from '@happier-dev/plugin-ui';
-import { TriageDetailInstance, TriageDetailPanel, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentTail, TriageDetailInstance, TriageDetailPanel, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import {
   TriageDetailSurfaceInputV1Schema, triagePagedPanelInitialState, triagePagedPanelReducer,
   describeTriageSourceFailureV1, type TriageDetailSurfaceInputV1, type TriageSourceFailureV1,
@@ -66,6 +66,7 @@ function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; 
       {state.canLoadMore && <Button variant="secondary" title={text('plugins.linear.detail.more')} disabled={state.pending}
         onPress={() => load(state.continuation ?? undefined)} />}
     </>}
+    {section === 'comments' ? <TriageActivityAgentTail /> : null}
   </>;
 }
 

@@ -20,6 +20,7 @@ import {
   type TriageActionV1,
 } from '../../settings/actions.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
+import { TriageSourceWriteCluster, triageSourceWriteReplacedByNativeStateV1, useTriageMergeChoicesV1 } from './sourceWriteCluster.js';
 
 /**
  * The Triage common header's action controls (`core/SESSIONS.md` §1,
@@ -93,6 +94,7 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
    * The source keeps custody of the write and its confirmation; this control only calls `execute`.
    */
   sourceWrite?: TriageDetailPrimaryWriteV1;
+  sourceLabel?: string;
   /** A quiet control beside Ask that stays in sight (the source's own changes, which open `section`). */
   beside?: React.ReactNode;
   /** An inline section under the action row (the source's write form); forms never ride inside a menu. */
@@ -159,46 +161,6 @@ const EXTRA_ITEM_PREFIX = 'triage-more:';
 const NO_PREPARATION_COPY =
   'This source cannot prepare a review workspace, so actions that need one cannot start here.';
 
-/**
- * The source's offered write, as the header shows it. A write with methods asks for one through the shared menu
- * (there is no implicit default); one method is named on the button itself; none runs the write directly. Pending
- * or unavailable, the control stays in place, disabled, and an unavailable one says why under the row.
- */
-function TriageSourceWriteControl(props: Readonly<{ write: TriageDetailPrimaryWriteV1 }>): React.ReactElement {
-  const { write } = props;
-  const [open, setOpen] = React.useState(false);
-  const methods = write.methods;
-  const blocked = write.pending || write.disabledReason !== null || (methods !== undefined && methods.length === 0);
-  if (methods !== undefined && methods.length > 1 && !blocked) {
-    return (
-      <Menu
-        open={open}
-        onOpenChange={setOpen}
-        trigger={write.title}
-        triggerAppearance="control"
-        triggerAccessibilityLabel={write.title}
-        items={methods.map((method) => ({ id: method.id, label: method.title }))}
-        onSelect={(id) => {
-          setOpen(false);
-          void write.execute(id);
-        }}
-      />
-    );
-  }
-  const only = methods?.length === 1 ? methods[0] : undefined;
-  return (
-    <Button
-      // One method is still an explicit choice: the menu row it would have been is the button's name.
-      title={only === undefined || blocked ? write.title : only.title}
-      variant="secondary"
-      size="small"
-      disabled={blocked}
-      busy={write.pending}
-      onPress={() => (only === undefined ? write.execute() : write.execute(only.id))}
-    />
-  );
-}
-
 function TriageEntryActionButton(props: Readonly<{
   action: TriageActionV1;
   entryRef: TriageEntryRefV1;
@@ -237,6 +199,8 @@ export function TriageEntryActionControls(
     [actions, workflowSubject],
   );
   const [refusal, setRefusal] = React.useState<TriageEntryActionRefusalV1 | null>(null);
+  // Merge's alternatives join this row's one ⋯ rather than a second ⋯ beside Merge.
+  const mergeChoices = useTriageMergeChoicesV1(props.sourceWrite, props.sourceLabel);
   const press = React.useCallback((request: TriageEntryActionRequestV1) => {
     setRefusal(null);
     void (async () => {
@@ -270,7 +234,7 @@ export function TriageEntryActionControls(
   const beside = offered.find((action) => action !== primary && readTriageActionIntentV1(action) === 'ask') ?? null;
   const overflowActions = offered.filter((action) => action !== primary && action !== beside);
   const extraItems = props.overflowItems ?? [];
-  const hasOverflow = overflowActions.length > 0 || extraItems.length > 0;
+  const hasOverflow = overflowActions.length > 0 || extraItems.length > 0 || mergeChoices !== null;
   // The reason a control cannot start sits with that control: under the row when a blocked action is in sight,
   // as the subtitle of its own menu row when it waits behind More, so the row never says "cannot" beside an action
   // that can.
@@ -294,7 +258,7 @@ export function TriageEntryActionControls(
       action={action}
       entryRef={entryRef}
       sourceInstanceId={sourceInstanceId}
-      blocked={isTriageActionBlockedV1(action, reviewPreparation)}
+      blocked={isTriageActionBlockedV1(action, reviewPreparation) || props.sourceWrite?.reading === true}
       primary={action.actionId === primaryActionId}
       onPress={onPress}
     />
@@ -302,6 +266,7 @@ export function TriageEntryActionControls(
   const moreLabel = text('plugins.triage.surface.detail.moreActions', 'More actions');
   const actionItemId = (action: TriageActionV1) => `${ACTION_ITEM_PREFIX}${action.actionId}`;
   const menuItems = [
+    ...(mergeChoices === null ? [] : mergeChoices.readinessItems),
     ...overflowActions.map((action) => {
       const titleKey = readTriageActionTitleKeyV1(action);
       const blocked = isTriageActionBlockedV1(action, reviewPreparation);
@@ -317,9 +282,13 @@ export function TriageEntryActionControls(
       label: item.label,
       ...(item.disabled === true ? { disabled: true } : {}),
     })),
+    ...(mergeChoices === null ? [] : mergeChoices.items),
   ];
+  // The source's merge alternatives follow the entry's own actions in the same ⋯; a merge method choice keeps its group.
+  const menuGroups = mergeChoices === null ? [] : mergeChoices.groups;
   const selectMenuItem = (id: string) => {
     setMoreOpen(false);
+    if (mergeChoices !== null && mergeChoices.run(id)) return;
     const action = overflowActions.find((candidate) => actionItemId(candidate) === id);
     if (action !== undefined) {
       press({ action, entryRef, sourceInstanceId });
@@ -341,6 +310,8 @@ export function TriageEntryActionControls(
             triggerIcon="more"
             triggerAccessibilityLabel={moreLabel}
             items={menuItems}
+            {...(menuGroups.length === 0 ? {} : { groups: [...menuGroups], showGroupLabels: true })}
+            {...(mergeChoices?.explanation == null ? {} : { sheet: { title: moreLabel, footer: mergeChoices.explanation } })}
             onSelect={selectMenuItem}
           />
         ) : null}
@@ -350,7 +321,7 @@ export function TriageEntryActionControls(
           // One group, so a narrow row (a phone's pinned footer) moves the source's controls to their own line
           // together rather than splitting them.
           <Row gap="small" align="center">
-            {props.sourceWrite === undefined ? null : <TriageSourceWriteControl write={props.sourceWrite} />}
+            {props.sourceWrite === undefined ? null : <TriageSourceWriteCluster write={props.sourceWrite} sourceLabel={props.sourceLabel} choices="host" />}
             {props.beside ?? null}
           </Row>
         )}
@@ -372,8 +343,10 @@ export function TriageEntryActionControls(
         />
       )}
       {blockedInRow ? preparationReason : null}
-      {/* Why the source's write cannot run, said quietly beside the disabled control's row, never a dead button. */}
-      {props.sourceWrite?.disabledReason == null ? null : (
+      {/* Why the source's write cannot run, said quietly beside the disabled control's row, never a dead button. The
+          readiness line that explains it elsewhere lives behind this row's ⋯ here, so only a native state line (a
+          queue, auto-merge, which replaces the button) already says it. */}
+      {props.sourceWrite?.disabledReason == null || triageSourceWriteReplacedByNativeStateV1(props.sourceWrite) ? null : (
         <Status tone="muted" label={props.sourceWrite.disabledReason} />
       )}
       {props.sourceWrite?.feedback == null ? null : props.sourceWrite.feedback}

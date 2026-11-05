@@ -142,6 +142,9 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
             {props.frame.title ? (
                 <PaneHeader
                     testID={`${testID}.header`}
+                    // A detail is about one thing, so it opens on that thing's name at page-title size over its
+                    // facts line (lab c7 detail), the same title its pushed form shows on a phone.
+                    size="large"
                     title={props.frame.title}
                     {...(body?.subtitleLeading === undefined
                         ? { subtitle: props.frame.subtitle }

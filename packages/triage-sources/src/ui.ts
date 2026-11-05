@@ -28,6 +28,7 @@ export {
   type TriagePostMutationCompletionV1,
   type TriagePostMutationProviderStateClassifierV1,
 } from './ui/postMutation.js';
+export { TriageActivityAgentProvider, TriageActivityAgentTail, type TriageActivityAgentV1 } from './ui/activityAgent.js';
 export { TriageDetailInstance, TriageDetailPanel, useTriageDetailRequest } from './ui/detailPanel.js';
 export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
 export {

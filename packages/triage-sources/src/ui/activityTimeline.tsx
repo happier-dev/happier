@@ -17,6 +17,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
+import { useTriageActivityAgent } from './activityAgent.js';
 import { TriageTextPreview } from './textPreview.js';
 
 /**
@@ -34,6 +35,7 @@ export type TriageActivityKindV1 =
   | 'assignment'
   | 'check'
   | 'escalation'
+  | 'session'
   | 'other';
 
 /** One event in an entry's Activity, mapped by its source from the provider's own record. */
@@ -90,8 +92,8 @@ export type TriageActivityTimelineProps = Readonly<{
   /** One per collection the source still has pages of; each keeps its own cursor. */
   continuations?: readonly TriageActivityContinuationV1[];
   /**
-   * The source's manual re-read of every collection it merged (detail panels never poll). It sits with the rail's
-   * own paging controls as one quiet glyph, so reading on and reading again live in one place.
+   * The source's re-read of every collection it merged (detail panels never poll). The page's one refresh control
+   * runs it, once per press; the Activity draws no refresh of its own.
    */
   refresh?: TriageActivityRefreshV1;
   /** After the stream: what was read, the comment box. */
@@ -116,6 +118,7 @@ const MARKER_ICON: Readonly<Record<TriageActivityKindV1, IconName>> = Object.fre
   assignment: 'assigned',
   check: 'check',
   escalation: 'escalating',
+  session: 'terminal',
   other: 'info',
 });
 
@@ -191,12 +194,11 @@ function activityEventContent(
   };
 }
 
-function ContinuationButtons({ continuations, refresh }: Readonly<{
+function ContinuationButtons({ continuations }: Readonly<{
   continuations: readonly TriageActivityContinuationV1[];
-  refresh?: TriageActivityRefreshV1;
 }>): React.ReactElement | null {
-  if (continuations.length === 0 && refresh === undefined) return null;
-  // Quiet controls at the rail's edge, not full-width blocks: paging and re-reading are rare reaches, the events lead.
+  if (continuations.length === 0) return null;
+  // Quiet controls at the rail's edge, not full-width blocks: paging is a rare reach, the events lead.
   return (
     <Row gap="small" align="center" wrap>
       {continuations.map((continuation) => (
@@ -210,15 +212,6 @@ function ContinuationButtons({ continuations, refresh }: Readonly<{
           onPress={continuation.onLoadMore}
         />
       ))}
-      {refresh === undefined ? null : (
-        <IconButton
-          icon={<Icon name="refresh" tone="secondary" />}
-          accessibilityLabel={refresh.label}
-          {...(refresh.labelKey === undefined ? {} : { accessibilityLabelKey: refresh.labelKey })}
-          disabled={refresh.pending}
-          onPress={refresh.onRefresh}
-        />
-      )}
     </Row>
   );
 }
@@ -233,7 +226,23 @@ function ContinuationButtons({ continuations, refresh }: Readonly<{
  * its own continuation here.
  */
 export function TriageActivityTimeline(props: TriageActivityTimelineProps): React.ReactElement {
-  const events = React.useMemo(() => orderTriageActivityEventsV1(props.events), [props.events]);
+  // The entry's Session events (handed over by Triage, when it mounts this detail) read in the same order.
+  const agent = useTriageActivityAgent();
+  const events = React.useMemo(
+    () => orderTriageActivityEventsV1(agent.events.length === 0 ? props.events : [...props.events, ...agent.events]),
+    [agent.events, props.events],
+  );
+  const tail = agent.tail ?? null;
+  // The page's one refresh re-reads this Activity: once per press, through the source's own re-read.
+  const refreshGeneration = agent.refreshGeneration ?? 0;
+  const latestRefresh = React.useRef(props.refresh);
+  latestRefresh.current = props.refresh;
+  const seenGeneration = React.useRef(refreshGeneration);
+  React.useEffect(() => {
+    if (refreshGeneration === seenGeneration.current) return;
+    seenGeneration.current = refreshGeneration;
+    void latestRefresh.current?.onRefresh();
+  }, [refreshGeneration]);
   const hostApi = usePluginHostApi();
   const continuations = props.continuations ?? [];
   const earlier = continuations.filter((continuation) => continuation.reads === 'earlier');
@@ -254,9 +263,10 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
       // An earlier page is a pure prepend: the row the reader was on stays where it was.
       preserveVisibleContentPositionOnPrepend
       empty={props.empty}
-      endContent={later.length === 0 && props.refresh === undefined && props.footer === undefined ? undefined : (
+      endContent={later.length === 0 && props.footer === undefined && tail === null ? undefined : (
         <Stack gap="small" style={{ paddingTop: 8 }}>
-          <ContinuationButtons continuations={later} {...(props.refresh === undefined ? {} : { refresh: props.refresh })} />
+          <ContinuationButtons continuations={later} />
+          {tail}
           {props.footer}
         </Stack>
       )}

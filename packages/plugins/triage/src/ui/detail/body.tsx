@@ -77,7 +77,6 @@ function SourceDetailInstance(props: Readonly<{
   fallback: React.ReactNode;
   overviewLead?: React.ReactNode;
   overviewTail?: React.ReactNode;
-  activityTail?: React.ReactNode;
 }>): React.ReactElement {
   const [lastPanel, setLastPanel] = React.useState(props.panel ?? 'overview');
   if (props.panel !== null && props.panel !== lastPanel) setLastPanel(props.panel);
@@ -90,7 +89,7 @@ function SourceDetailInstance(props: Readonly<{
       <Stack gap={overview ? 'large' : 'medium'}>
         {overview ? props.overviewLead : null}
         <TriageDetailPanelMount mount={props.mount} panel={panel} fallback={props.fallback} />
-        {overview ? props.overviewTail : panel === 'activity' ? props.activityTail : null}
+        {overview ? props.overviewTail : null}
       </Stack>
     </ScrollArea>
   );
@@ -112,8 +111,6 @@ export function TriageDetailTabbedBody(props: Readonly<{
   overviewLead?: React.ReactNode;
   /** After the source's steps: Triage's own — the fix PR and ③ the agent. */
   overviewTail: React.ReactNode;
-  /** After the Activity panel: the live agent card. */
-  activityTail?: React.ReactNode;
   /**
    * Triage's own last tab: the linked Session, live (plan 05 §4.6). Absent without a linked
    * Session, and never a source panel.
@@ -167,7 +164,6 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   fallback={props.fallback}
                   overviewLead={props.overviewLead}
                   overviewTail={props.overviewTail}
-                  activityTail={props.activityTail}
                 />
               </Tabs.Item>
               <Tabs.Item value="fixPullRequest" title="" retention="retain">

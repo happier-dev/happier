@@ -980,6 +980,48 @@ describe('PluginReactNativeSurface', () => {
         }
     });
 
+    it('keeps optional content quiet but shows loading for a declared embedded fallback slot', async () => {
+        // A card slot in a pane (the Git pane's PR card) must not claim the pane with a page skeleton that
+        // then collapses when the plugin has nothing to show; a destination keeps its page-shaped placeholder.
+        const pending = createDeferred<PluginReactNativeSurfaceModule>();
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const element = (embeddedPresentation?: 'content' | 'fill', targetedFallback?: React.ReactNode) => <PluginReactNativeSurface
+            surfaceId="surface_1"
+            renderContext={defaultRenderContext}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            load={() => pending.promise}
+            loadPolicy={{ source: 'installedArtifact' }}
+            cacheKey={`cache_embedded_${embeddedPresentation ?? 'destination'}_${targetedFallback != null}`}
+            {...(embeddedPresentation ? { embeddedPresentation } : {})}
+            {...(targetedFallback === undefined ? {} : { targetedFallback })}
+        />;
+        const destination = await renderScreen(element());
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(destination.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
+
+        const content = await renderScreen(element('content'));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(content.findByTestId('plugin-rn-ui-loading')).toBeNull();
+        expect(content.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+
+        const silentContent = await renderScreen(element('content', null));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(silentContent.findByTestId('plugin-rn-ui-loading')).toBeNull();
+
+        // Triage already reserves its source's detail slot with a fallback. Its sibling agent step must not
+        // look like the entire Overview while the source artifact supplying the first steps is loading.
+        const requiredContent = await renderScreen(element('content', <React.Fragment>Source detail unavailable</React.Fragment>));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(requiredContent.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
+        expect(requiredContent.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+
+        pending.resolve({ renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-card' }) });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(content.findByTestId('plugin-native-card')).toBeTruthy();
+        expect(requiredContent.findByTestId('plugin-native-card')).toBeTruthy();
+        expect(requiredContent.findByTestId('plugin-rn-ui-loading')).toBeNull();
+    });
+
     it('retries a nonpersisted loader failure with a fresh mount attempt', async () => {
         const healthyModule = {
             renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-loader-retry-healthy' }),

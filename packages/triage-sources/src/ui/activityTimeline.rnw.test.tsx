@@ -6,6 +6,7 @@ import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestki
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TriageActivityAgentProvider } from './activityAgent.js';
 import { TriageActivityTimeline, type TriageActivityEventV1 } from './activityTimeline.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,6 +66,48 @@ describe('TriageActivityTimeline', () => {
     await expect(page.queryByText('Nothing happened yet')).resolves.toBeUndefined();
   });
 
+  it('mixes the mounting Triage target\'s Session events into the stream and ends with its agent tail before the composer', async () => {
+    const agent = {
+      events: [event('happier-session:s1', 3, 'Fixed the lint error', { kind: 'session', actor: 'Codex' })],
+      tail: <Text value="Agent card" />,
+    };
+    const sourceEvents = [event('note:old', 10, 'Opened the pull request'), event('event:new', 1, 'Checks failed')];
+    await mount(() => (
+      <TriageActivityAgentProvider value={agent}>
+        <TriageActivityTimeline events={sourceEvents} locale="en" nowMs={NOW_MS}
+          accessibilityLabel="Activity" empty={EMPTY} footer={<Text value="Comment box" />} />
+      </TriageActivityAgentProvider>
+    ));
+    const text = document.body.textContent ?? '';
+    const order = ['Opened the pull request', 'Fixed the lint error', 'Checks failed', 'Agent card', 'Comment box']
+      .map((words) => text.indexOf(words));
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+  });
+
+  it('re-reads through the source once per page refresh, never on mount, and draws no refresh control of its own', async () => {
+    const reads: string[] = [];
+    let bump: () => void = () => undefined;
+    function Page(): React.ReactElement {
+      const [generation, setGeneration] = React.useState(0);
+      bump = () => setGeneration((value) => value + 1);
+      return (
+        <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration: generation }}>
+          <TriageActivityTimeline events={[event('note', 1, 'Commented')]} locale="en" nowMs={NOW_MS}
+            accessibilityLabel="Activity" empty={EMPTY}
+            refresh={{ label: 'Re-read this activity', pending: false, onRefresh: () => { reads.push('read'); } }} />
+        </TriageActivityAgentProvider>
+      );
+    }
+    const page = await mount(() => <Page />);
+    expect(reads).toEqual([]);
+    await expect(page.queryByRole('button', { name: 'Re-read this activity' })).resolves.toBeUndefined();
+    await act(async () => { bump(); });
+    expect(reads).toEqual(['read']);
+    await act(async () => { bump(); });
+    expect(reads).toEqual(['read', 'read']);
+  });
+
   it('keeps each collection\'s own continuation and merges the next page into the same stream', async () => {
     const calls: string[] = [];
     function Paged(): React.ReactElement {
@@ -100,34 +143,6 @@ describe('TriageActivityTimeline', () => {
     // The earlier page lands before the remark already on screen, not stapled after it.
     expect(text.indexOf('Opened the issue')).toBeGreaterThanOrEqual(0);
     expect(text.indexOf('Opened the issue')).toBeLessThan(text.indexOf('Commented recently'));
-  });
-
-  it('offers the re-read beside the rail\'s own paging, ahead of the footer, and inert while a read runs', async () => {
-    const calls: string[] = [];
-    const render = (pending: boolean) => () => (
-      <TriageActivityTimeline events={[event('note:recent', 2, 'Commented recently', { kind: 'comment', actor: 'Jonas' })]}
-        locale="en" nowMs={NOW_MS} accessibilityLabel="Activity" empty={EMPTY}
-        continuations={[{ key: 'events', title: 'Load more events', pending: false, onLoadMore: () => { calls.push('more'); } }]}
-        refresh={{ label: 'Re-read activity', pending, onRefresh: () => { calls.push('refresh'); } }}
-        footer={<Text value="Write a comment" />}
-      />
-    );
-    const page = await mount(render(false));
-    const refresh = await page.getByRole('button', { name: 'Re-read activity' });
-    const more = await page.getByRole('button', { name: 'Load more events' });
-    // One quiet row of stream controls at the rail's edge: reading on and reading again sit together.
-    const refreshNode = document.querySelector('[aria-label="Re-read activity"]');
-    const moreNode = [...document.querySelectorAll('[role="button"]')].find(node => node.textContent === 'Load more events');
-    expect(refreshNode?.parentElement).toBe(moreNode?.parentElement);
-    const text = document.body.textContent ?? '';
-    expect(text.indexOf('Load more events')).toBeLessThan(text.indexOf('Write a comment'));
-    await act(async () => { await page.press(refresh); });
-    await act(async () => { await page.press(more); });
-    expect(calls).toEqual(['refresh', 'more']);
-
-    await mounted.splice(0)[0]?.dispose();
-    await mount(render(true));
-    expect(document.querySelector('[aria-label="Re-read activity"]')?.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('says nothing happened instead of drawing an empty rail', async () => {
