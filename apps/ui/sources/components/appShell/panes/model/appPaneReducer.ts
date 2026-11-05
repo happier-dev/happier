@@ -94,6 +94,7 @@ export type AppPaneAction =
     /** The page that owned the active scope left the screen: no page's panes are active until one is. */
     | { type: 'releaseScope'; scopeId: string }
     | { type: 'setMainHidden'; scopeId: string; hidden: boolean }
+    | { type: 'setMainTab'; scopeId: string; tabId: string | null }
     /** An open that reaches Details through the route (the shared file opener) names its region first. */
     | { type: 'recordDetailsOpener'; scopeId: string; origin: DetailsOpenerRegion }
     | { type: 'openRight'; scopeId: string; tabId?: string }
@@ -183,6 +184,7 @@ function createEmptyScopeState(initialRight?: InitialRightPaneState): PaneScopeS
 function isEmptyScopeState(scope: PaneScopeState): boolean {
     return (
         scope.mainHidden === false
+        && scope.mainTabId == null
         && scope.right.isOpen === false
         && scope.right.activeTabId == null
         && scope.right.selectedDestination == null
@@ -221,6 +223,7 @@ function getOwnPaneTabStateEntry(
 function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): boolean {
     return (
         left.mainHidden === right.mainHidden
+        && (left.mainTabId ?? null) === (right.mainTabId ?? null)
         && left.right.isOpen === right.right.isOpen
         && left.right.activeTabId === right.right.activeTabId
         && areSelectedPaneDestinationsEqual(left.right.selectedDestination, right.right.selectedDestination)
@@ -357,6 +360,9 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'setMainHidden':
             return upsertScope(state, action.scopeId, (scope) => scope.mainHidden === action.hidden
                 ? scope : { ...scope, mainHidden: action.hidden });
+        case 'setMainTab':
+            return upsertScope(state, action.scopeId, scope => (scope.mainTabId ?? null) === action.tabId
+                ? scope : { ...scope, mainTabId: action.tabId });
         case 'recordDetailsOpener': {
             const prev = state.scopes[action.scopeId];
             if (!prev || prev.details.openedFrom === action.origin) return state;

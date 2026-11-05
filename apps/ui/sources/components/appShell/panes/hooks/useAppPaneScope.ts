@@ -46,6 +46,7 @@ type AppPaneScopeDetailsStateView = {
 
 type AppPaneScopeStateView = {
     mainHidden: boolean;
+    mainTabId?: string | null;
     right: PaneScopeState['right'];
     details: AppPaneScopeDetailsStateView;
     bottom: PaneScopeState['bottom'];
@@ -60,6 +61,7 @@ export type NativeOverlayFocusReturnCaptureProps = Readonly<{
 export type AppPaneScopeApi = {
     scopeId: string;
     scopeState: AppPaneScopeStateView | null;
+    setMainTab: (tabId: string | null) => void;
     /** The current pane state is retained in memory but its device write failed. */
     persistenceFailed?: boolean;
     /** Native input capture props for the scope root that contains a pane opener. */
@@ -118,6 +120,7 @@ function getScopeState(scopeState: PaneScopeState | null): AppPaneScopeStateView
     if (!scopeState) return null;
     return {
         mainHidden: scopeState.mainHidden,
+        mainTabId: scopeState.mainTabId,
         right: scopeState.right,
         details: buildDetailsWorkspaceStateView(scopeState.details),
         bottom: scopeState.bottom,
@@ -273,6 +276,10 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
 
     const closeRight = React.useCallback(() => {
         dispatch({ type: 'closeRight', scopeId });
+    }, [dispatch, scopeId]);
+
+    const setMainTab = React.useCallback((tabId: string | null) => {
+        dispatch({ type: 'setMainTab', scopeId, tabId });
     }, [dispatch, scopeId]);
 
     const setRightTab = React.useCallback((tabId: string) => {
@@ -434,6 +441,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         detailsOverlayFocusReturnRef,
         bottomOverlayFocusReturnRef,
         mainOverlayFocusReturnRef,
+        setMainTab,
         openRight,
         closeRight,
         setRightTab,
@@ -470,6 +478,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         detailsOverlayFocusReturnRef,
         bottomOverlayFocusReturnRef,
         mainOverlayFocusReturnRef,
+        setMainTab,
         openRight,
         closeRight,
         setRightTab,

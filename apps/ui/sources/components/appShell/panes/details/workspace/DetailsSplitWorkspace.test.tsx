@@ -104,6 +104,7 @@ const pane = {
             tabState: {},
         },
     },
+    setMainTab: vi.fn(),
     openRight: vi.fn(),
     closeRight: vi.fn(),
     setRightTab: vi.fn(),

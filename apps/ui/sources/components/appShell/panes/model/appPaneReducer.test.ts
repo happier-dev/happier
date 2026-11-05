@@ -62,6 +62,39 @@ describe('appPaneReduce', () => {
         expect(state.scopes[scopeId].mainHidden).toBe(false);
     });
 
+    it('checkpoints the desktop main page independently and leaves it intact on phone writes', async () => {
+        const { serializePersistedPaneScope, normalizePersistedPaneScopes } = await import('./paneScopePersistence');
+        const { PersistedPaneScopeSchema } = await import('./paneScopePersistenceSchema');
+        const scopeId = 'session:main-checkpoint';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'setMainTab', scopeId, tabId: 'info' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId, tabId: 'files' });
+        const previous = PersistedPaneScopeSchema.parse(serializePersistedPaneScope(state.scopes[scopeId], { preserveDesktopVisibility: false }));
+        const phone = { ...state.scopes[scopeId], mainTabId: 'agents' };
+        const saved = serializePersistedPaneScope(phone, { preserveDesktopVisibility: true, previous });
+        const restored = normalizePersistedPaneScopes({ [scopeId]: PersistedPaneScopeSchema.parse(saved) }, true)[scopeId];
+        expect(restored.mainTabId).toBe('info');
+        expect(restored.right.activeTabId).toBe('files');
+        expect(restored.right.isOpen).toBe(true);
+    });
+    it('keeps the main page independent from companion selection and close, including a retained checkpoint', () => {
+        const scopeId = 'session:independent-navigation';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'setMainTab', scopeId, tabId: 'info' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId, tabId: 'files' });
+        expect(state.scopes[scopeId].mainTabId).toBe('info');
+        expect(state.scopes[scopeId].right.activeTabId).toBe('files');
+        const companion = state.scopes[scopeId].right;
+        state = appPaneReduce(state, { type: 'setMainTab', scopeId, tabId: 'agents' });
+        expect(state.scopes[scopeId].right).toBe(companion);
+        expect(appPaneReduce(state, { type: 'setMainTab', scopeId, tabId: 'agents' })).toBe(state);
+        state = appPaneReduce(state, { type: 'closeRight', scopeId });
+        expect(state.scopes[scopeId].mainTabId).toBe('agents');
+        const restored = createAppPaneState({ maxScopesInMemory: 3, persistedScopes: state.scopes });
+        expect(restored.scopes[scopeId].mainTabId).toBe('agents');
+        state = appPaneReduce(restored, { type: 'setMainTab', scopeId, tabId: null });
+        expect(state.scopes[scopeId].mainTabId).toBeNull();
+        expect(state.scopes[scopeId].right.activeTabId).toBe('files');
+    });
     it('applies an explicit file turn opener over the retained scope without replacing editor or reading state', () => {
         const scopeId = 'session:turn-file';
         const tab = createFileTab('src/a.ts');
