@@ -11,6 +11,7 @@ import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
 
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
@@ -18,7 +19,9 @@ export type MachineRpcMethod =
   | (typeof RPC_METHODS)[keyof typeof RPC_METHODS]
   | (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS]
   | (typeof ACTION_OPERATION_RPC_METHODS_V1)[keyof typeof ACTION_OPERATION_RPC_METHODS_V1]
-  | (typeof ACTION_OPERATION_RPC_METHODS_V2)[keyof typeof ACTION_OPERATION_RPC_METHODS_V2];
+  | (typeof ACTION_OPERATION_RPC_METHODS_V2)[keyof typeof ACTION_OPERATION_RPC_METHODS_V2]
+  | typeof CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD
+  | typeof CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD;
 
 export type EphemeralRunnerMachineRpcAuthority =
   | 'readTranscript'
@@ -957,6 +960,13 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
 }
 
 export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
+  // Native Connect uses the daemon custodian's Account credentials and secret
+  // stores. Machine Manage does not grant authority over that Account.
+  ...serverRequiredRows([
+    CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
+    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
+  ], 'auth', 'Native connected-account commands use the custodian Account credentials, secrets and connection persistence; shared Machine grants do not confer that Account authority.')
+    .map(policy => ({ ...policy, sharedMachineAccess: 'custodian_only' as const })),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_AGENTS_INSTALL_START, RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
     RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST,
@@ -1138,6 +1148,8 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
     ...Object.values(RPC_METHODS),
     ...Object.values(SESSION_RPC_METHODS),
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
+    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
     ...Object.values(ACTION_OPERATION_RPC_METHODS_V1), ...Object.values(ACTION_OPERATION_RPC_METHODS_V2),
     MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ...MANAGED_MACHINE_ACTION_IDS_V1,
   ]);

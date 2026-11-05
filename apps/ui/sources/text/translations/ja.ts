@@ -4811,6 +4811,7 @@ localTailscale: {
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '接続サービスの操作に失敗しました。更新して再試行してください。',
       accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountSharedMachineUnavailable: "共有マシンではアカウントを接続できません。自分のマシンを使うか、サービスが対応している場合はマシンを必要としないアカウントのサインイン方法を選んでください。",
       accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
       accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
       accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',

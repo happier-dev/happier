@@ -12,6 +12,7 @@ import { resolveMachineRpcGovernance } from './governanceV1.js';
 import { getActionSpec } from '../../../../actions/actionSpecs.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '../../../../connect/connectedServicePoolSelection.js';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
 import { resolveSocketRpcSessionAuthorization } from '../../../../rpc/socket.js';
 
 async function importRpcPolicy() {
@@ -30,6 +31,15 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(resolve(method).sharedMachineAccess).toBe('custodian_only');
     }
   });
+  it.each([CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD])(
+    'explicitly classifies custodian Account connected-account access for %s', async method => {
+      const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+      expect(MACHINE_RPC_ROUTE_POLICIES.some(policy => policy.method === method)).toBe(true);
+      expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', sharedMachineAccess: 'custodian_only', serverRequiredReason: 'auth',
+      });
+    },
+  );
   it('keeps the isolation set proof for its exact-target admission preview', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'set-proof', binding: {

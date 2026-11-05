@@ -4214,6 +4214,7 @@ export const ru: TranslationStructure = {
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',
       accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountSharedMachineUnavailable: "Подключение аккаунта на общей Машине недоступно. Используйте свою Машину или, если сервис это поддерживает, способ входа в Аккаунт, не требующий Машины.",
       accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
       accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
       accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',

@@ -1,3 +1,4 @@
+import { randomUUID } from '@/platform/randomUUID';
 import {
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
@@ -245,18 +246,25 @@ export async function runConnectedAccountControlCommand(
         machineId: input.machineId,
         command: input.command,
     });
-    const response = await machineRpcWithServerScope<
-        unknown,
-        typeof payload
-    >({
-        serverId: input.serverId,
-        machineId: input.machineId,
-        method: CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
-        payload,
-        ...(assertCurrent
-            ? { onIssued: assertCurrent }
-            : {}),
-        ...(input.signal ? { signal: input.signal } : {}),
-    });
-    return ConnectedAccountDaemonControlResponseSchema.parse(response);
+    const requestId = randomUUID();
+    try {
+        const response = await machineRpcWithServerScope<
+            unknown,
+            typeof payload
+        >({
+            serverId: input.serverId,
+            machineId: input.machineId,
+            method: CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
+            requestId,
+            payload,
+            ...(assertCurrent
+                ? { onIssued: assertCurrent }
+                : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
+        });
+        return ConnectedAccountDaemonControlResponseSchema.parse(response);
+    } catch (error) {
+        if (error && typeof error === 'object') Object.assign(error, { requestId });
+        throw error;
+    }
 }

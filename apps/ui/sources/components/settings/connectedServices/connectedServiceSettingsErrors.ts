@@ -7,10 +7,16 @@ type ErrorLike = Readonly<{
     status?: unknown;
     generation?: unknown;
     resetAtMs?: unknown;
+    requestId?: unknown;
 }>;
 
 function asErrorLike(error: unknown): ErrorLike {
     return error && typeof error === 'object' ? error as ErrorLike : {};
+}
+
+export function readConnectedServiceSettingsErrorRequestId(error: unknown): string | undefined {
+    const requestId = asErrorLike(error).requestId;
+    return typeof requestId === 'string' ? requestId : undefined;
 }
 
 export function readConnectedServiceSettingsErrorCode(error: unknown): string | null {
@@ -63,6 +69,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         : t('connectedServices.errors.generic');
 
     switch (code) {
+        case RPC_ERROR_CODES.FORBIDDEN:
+            return t('connectedServices.errors.accountSharedMachineUnavailable');
         case 'plugin_account_execution_unavailable':
         case 'plugin_ui_declaration_pending':
         case 'plugin_ui_declaration_invalid':

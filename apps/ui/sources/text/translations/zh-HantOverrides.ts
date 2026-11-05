@@ -2573,6 +2573,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: '連線服務動作失敗。請重新整理後再試。',
             accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountSharedMachineUnavailable: "目前不支援在共用機器上連接帳號。請在自己的機器上連接，或在服務支援時選擇不需要機器的帳戶登入方式。",
             accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
             accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
             accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',

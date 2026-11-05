@@ -1,3 +1,4 @@
+import { ConnectedAccountFailureDetails } from './ConnectedAccountFailureDetails';
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appShell/workspace/destinationRoute';
 
@@ -73,6 +74,7 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import {
     isConnectedServiceCredentialReferencedByGroupError,
     readConnectedServiceSettingsErrorCode,
+    readConnectedServiceSettingsErrorRequestId,
     resolveConnectedServiceSettingsErrorMessage,
     resolveConnectedServiceSettingsErrorRecovery,
 } from '../connectedServiceSettingsErrors';
@@ -337,12 +339,12 @@ const ConnectedAccountServiceController = React.memo(
     const accountDirectIdRef = React.useRef<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     // Whether the failure came from loading the sign-in (nothing changed) or from a change: one copy owner reads it.
-    const [{ code: errorCode, phase: errorPhase }, setError] = React.useState<{
-        code: string | null; phase: 'load' | 'change';
+    const [{ code: errorCode, phase: errorPhase, requestId: errorRequestId }, setError] = React.useState<{
+        code: string | null; phase: 'load' | 'change'; requestId?: string;
     }>({ code: null, phase: 'change' });
-    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change') => {
+    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change', requestId?: string) => {
         setError(previous => phase === 'load' && code !== null && previous.code !== null && previous.phase === 'change'
-            ? previous : { code, phase });
+            ? previous : { code, phase, requestId });
     }, []);
     const panelRef = React.useRef(controllerProps.panel);
     panelRef.current = controllerProps.panel;
@@ -392,7 +394,8 @@ const ConnectedAccountServiceController = React.memo(
         };
     }, [accountAbortLifetime, accountLifetime]);
     const onDescriptionError = React.useCallback((error: unknown) => {
-        setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_service_description_unavailable', 'load');
+        setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_service_description_unavailable', 'load',
+            readConnectedServiceSettingsErrorRequestId(error));
     }, [setErrorCode]);
     const hasExplicitAuthenticationIntent = activeModeId !== null || panelIntent?.kind === 'reconnect' || Boolean(route?.focus);
     const selectedDescriptionMachineId = hasExplicitAuthenticationIntent
@@ -719,11 +722,11 @@ const ConnectedAccountServiceController = React.memo(
         const request = createLinkedAbortController(getLifecycleSignal());
         void refreshDescription(request.signal).catch(error => {
             if (isControllerCurrent() && !request.signal.aborted) {
-                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable', 'load');
+                onDescriptionError(error);
             }
         });
         return () => request.dispose();
-    }, [accountServiceDescription.current, description, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, refreshDescription, selectedDescriptionMachineId]);
+    }, [accountServiceDescription.current, description, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, onDescriptionError, refreshDescription, selectedDescriptionMachineId]);
 
     React.useEffect(() => {
         if (!description) return;
@@ -944,7 +947,8 @@ const ConnectedAccountServiceController = React.memo(
         })().catch((error) => {
             if (isControllerCurrent() && !request.signal.aborted && generation === flowGenerationRef.current) {
                 discoveredScopeRef.current = null;
-                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_attempt_discovery_unavailable', 'load');
+                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_attempt_discovery_unavailable', 'load',
+                    readConnectedServiceSettingsErrorRequestId(error));
             }
         });
         return () => {
@@ -985,7 +989,8 @@ const ConnectedAccountServiceController = React.memo(
         } catch (error) {
             if (!isControllerCurrent()) return false;
             setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable',
-                command.operation === 'beginConnect' || command.operation === 'beginReconnect' ? 'load' : 'change');
+                command.operation === 'beginConnect' || command.operation === 'beginReconnect' ? 'load' : 'change',
+                readConnectedServiceSettingsErrorRequestId(error));
             return false;
         } finally {
             if (isControllerCurrent()) setBusy(false);
@@ -1075,7 +1080,8 @@ const ConnectedAccountServiceController = React.memo(
             }
             await refreshDescription();
         } catch (error) {
-            if (isControllerCurrent()) setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable', errorPhase);
+            if (isControllerCurrent()) setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable', errorPhase,
+                readConnectedServiceSettingsErrorRequestId(error));
         } finally {
             if (isControllerCurrent()) setRetryingDescription(false);
         }
@@ -1627,6 +1633,12 @@ const ConnectedAccountServiceController = React.memo(
                             disabled: busy || retryingDescription,
                             onPress: () => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); },
                         }}
+                    />
+                    <ConnectedAccountFailureDetails
+                        key={`${errorCode}:${errorRequestId ?? attemptId ?? ''}`}
+                        code={errorCode}
+                        correlationId={errorRequestId ?? attemptId}
+                        scope={'scope' in accountLifetime ? accountLifetime.scope : null}
                     />
                 </ConnectedAccountFormSection>
             ) : null}

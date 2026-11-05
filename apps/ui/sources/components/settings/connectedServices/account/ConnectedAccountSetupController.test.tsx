@@ -1,3 +1,4 @@
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +18,7 @@ import {
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { Modal, ModalProvider } from '@/modal';
+import { t } from '@/text';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
@@ -153,6 +155,28 @@ const configurationReply: Extract<ConnectedAccountDaemonControlResponse, { statu
 };
 
 describe('ConnectedAccountSetupController real ownership', () => {
+    it('explains a native Connect permission refusal and retains its request identity before an attempt exists', async () => {
+        let requestId: string | undefined;
+        vi.spyOn(apiSocket, 'machineRPC').mockImplementation(async <R, A>(machineId: string, method: string, payload: A,
+            options?: Parameters<typeof apiSocket.machineRPC>[3]): Promise<R> => {
+            if (method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD) {
+                requestId = options?.requestId;
+                throw new RpcError('private permission diagnostics', RPC_ERROR_CODES.FORBIDDEN);
+            }
+            return await answerConnectedCommand(machineId, method, payload) as R;
+        });
+        const screen = await renderScreen(element());
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error')).not.toBeNull());
+            expect(screen.getTextContent()).toContain(t('connectedServices.errors.accountSharedMachineUnavailable'));
+            expect(requestId).toEqual(expect.any(String));
+            await screen.pressByTestIdAsync('connected-account:error-details-toggle');
+            expect(screen.getTextContent()).toContain(requestId!);
+            expect(screen.getTextContent()).toContain(RPC_ERROR_CODES.FORBIDDEN);
+            expect(screen.getTextContent()).not.toContain('private permission diagnostics');
+        } finally { await screen.unmount(); }
+    });
+
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
     let selection: MachineAdministrationTargetSelectionV1;
     const authenticationCommands: AuthenticationCommand[] = [];

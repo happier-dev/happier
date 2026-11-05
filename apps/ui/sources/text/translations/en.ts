@@ -4799,6 +4799,7 @@ const enConnectedServices = {
     generic: 'The change didn’t finish. Refresh and try again.',
     accountRuntimeChanged:
       'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+    accountSharedMachineUnavailable: "Connecting an account on a shared Machine isn't available. Connect on your own Machine, or choose an Account sign-in method that doesn't need a Machine if this service offers one.",
     accountMachineUnavailable:
       'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
     accountServiceUnavailable:
