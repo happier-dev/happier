@@ -212,7 +212,7 @@ describe('createLocalPageTitleEnricher', () => {
         expect(called).toBe(false);
     });
 
-    it('evicts the oldest cache entry once the configured cap is exceeded', async () => {
+    it('does not refetch unchanged titles within their TTL when an inventory exceeds 512 endpoints', async () => {
         const fetchCounts = new Map<string, number>();
         const enricher = createLocalPageTitleEnricher({
             timeoutMs: 100,
@@ -220,7 +220,6 @@ describe('createLocalPageTitleEnricher', () => {
             concurrency: 1,
             successTtlMs: 60_000,
             failureTtlMs: 60_000,
-            maxCacheEntries: 2,
             fetch: async (url) => {
                 const key = String(url);
                 fetchCounts.set(key, (fetchCounts.get(key) ?? 0) + 1);
@@ -233,29 +232,16 @@ describe('createLocalPageTitleEnricher', () => {
             },
         });
 
-        const a = 'http://127.0.0.1:3001/';
-        const b = 'http://127.0.0.1:3002/';
-        const c = 'http://127.0.0.1:3003/';
-
-        await enricher.fetchTitle(a);
-        await enricher.fetchTitle(b);
-        // Re-fetching a/b within TTL is served from cache (no extra fetch): proves the
-        // entries are genuinely cached, so the later re-fetch can only be eviction.
-        await enricher.fetchTitle(a);
-        await enricher.fetchTitle(b);
-        expect(fetchCounts.get(a)).toBe(1);
-        expect(fetchCounts.get(b)).toBe(1);
-
-        // c exceeds the cap (2), evicting the oldest entry (a, insertion-order FIFO);
-        // b stays cached as the most-recently-inserted survivor.
-        await enricher.fetchTitle(c);
-        await enricher.fetchTitle(b);
-        expect(fetchCounts.get(b)).toBe(1);
-
-        // a was evicted, so re-fetching it issues a fresh request (unbounded cache would
-        // have kept it and this would stay 1).
-        await enricher.fetchTitle(a);
-        expect(fetchCounts.get(a)).toBe(2);
+        // Cross the removed FIFO threshold: every address remains a valid current endpoint.
+        const urls = Array.from({ length: 513 }, (_, index) => `http://127.0.0.1:${3000 + index}/`);
+        for (const url of urls) await enricher.fetchTitle(url);
+        expect([...fetchCounts.values()].reduce((sum, count) => sum + count, 0)).toBe(urls.length);
+        for (const url of urls) await enricher.fetchTitle(url);
+        expect([...fetchCounts.values()].reduce((sum, count) => sum + count, 0)).toBe(urls.length);
+        await expect(enricher.fetchTitle('http://127.0.0.1:9000/')).resolves.toMatchObject({
+            title: 'http://127.0.0.1:9000/',
+        });
+        expect(fetchCounts.get('http://127.0.0.1:9000/')).toBe(1);
     });
 });
 

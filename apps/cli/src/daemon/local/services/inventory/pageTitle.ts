@@ -21,16 +21,8 @@ export type LocalPageTitleEnricherParams = Readonly<{
     concurrency: number;
     successTtlMs: number;
     failureTtlMs: number;
-    /**
-     * Hard upper bound on cached title entries. A long-lived daemon scanning many
-     * ephemeral loopback ports would otherwise grow the TTL-only cache without limit;
-     * once exceeded, the oldest entry is evicted (insertion-order FIFO).
-     */
-    maxCacheEntries?: number;
     fetch: typeof fetch;
 }>;
-
-const DEFAULT_LOCAL_PAGE_TITLE_MAX_CACHE_ENTRIES = 512;
 
 function decodeHtmlEntity(input: string): string {
     return input
@@ -148,18 +140,6 @@ function isHtmlResponse(response: Response): boolean {
 
 export function createLocalPageTitleEnricher(params: LocalPageTitleEnricherParams): LocalPageTitleEnricher {
     const cache = new Map<string, Readonly<{ expiresAt: number; value: LocalPageTitleResult | null }>>();
-    const maxCacheEntries = Math.max(1, Math.trunc(params.maxCacheEntries ?? DEFAULT_LOCAL_PAGE_TITLE_MAX_CACHE_ENTRIES));
-    const setCacheEntry = (key: string, entry: Readonly<{ expiresAt: number; value: LocalPageTitleResult | null }>) => {
-        // Re-insert so an updated key moves to the most-recent position, then evict the
-        // oldest insertion-order entries until within the bound.
-        cache.delete(key);
-        cache.set(key, entry);
-        while (cache.size > maxCacheEntries) {
-            const oldest = cache.keys().next().value;
-            if (oldest === undefined) break;
-            cache.delete(oldest);
-        }
-    };
     const active = { count: 0 };
     const waiters: Array<() => void> = [];
 
@@ -215,7 +195,7 @@ export function createLocalPageTitleEnricher(params: LocalPageTitleEnricherParam
             await acquire();
             try {
                 const value = await fetchOnce(url, 3);
-                setCacheEntry(url, {
+                cache.set(url, {
                     value,
                     expiresAt: now + (value ? params.successTtlMs : params.failureTtlMs),
                 });
