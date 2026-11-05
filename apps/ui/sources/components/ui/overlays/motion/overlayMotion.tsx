@@ -477,6 +477,8 @@ export const useOverlayPanelMotion: (params: OverlayPanelMotionParams) => Overla
 
 export function OverlayMotionFrame(props: Readonly<{
     visible: boolean;
+    /** An owning placement gate already hides this frame until it can enter. */
+    disabled?: boolean;
     kind: OverlayMotionKind;
     direction?: OverlayMotionDirection;
     style?: StyleProp<ViewStyle>;
@@ -492,6 +494,7 @@ export function OverlayMotionFrame(props: Readonly<{
     }), [props.direction, props.kind]);
     const motion = useOverlayMotionAnimation({
         visible: props.visible,
+        disabled: props.disabled,
         preset,
         elementRef,
     });

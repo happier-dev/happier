@@ -24,6 +24,7 @@ const POST_LAYOUT_TICKS = 2;
 
 let mockPopoverContentDomRect: { width: number; height: number } | null = null;
 let mockPopoverContentRefKind: 'dom' | 'opaque' = 'dom';
+let mockPopoverContentResize: (() => void) | null = null;
 
 async function flushInitialPositioning() {
     await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS, frames: 1 });
@@ -85,11 +86,7 @@ installPopoverCommonModuleMocks({
             }),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
             Animated: {
-                Value: function Value(this: any, initial: number) {
-                    this.__value = initial;
-                    this.interpolate = () => this;
-                },
-                timing: () => ({ start: () => undefined }),
+                ...native.Animated,
                 View: (props: any) => React.createElement('AnimatedView', props, props.children),
             },
         });
@@ -105,6 +102,15 @@ describe('Popover (web)', () => {
 
     beforeEach(() => {
         restorePopoverWebGlobals = withPopoverWebGlobals();
+        // This host renderer has no DOM: report its simulated content layout through
+        // the browser ResizeObserver port, which owns web portal measurement.
+        vi.stubGlobal('ResizeObserver', class {
+            constructor(private readonly callback: () => void) {}
+            observe() { mockPopoverContentResize = this.callback; }
+            disconnect() {
+                if (mockPopoverContentResize === this.callback) mockPopoverContentResize = null;
+            }
+        });
     });
 
     afterEach(() => {
@@ -114,6 +120,7 @@ describe('Popover (web)', () => {
         restorePopoverWebGlobals = null;
         mockPopoverContentDomRect = null;
         mockPopoverContentRefKind = 'dom';
+        mockPopoverContentResize = null;
         vi.useRealTimers();
         vi.unstubAllGlobals();
     });
@@ -268,6 +275,8 @@ describe('Popover (web)', () => {
 
         const contentView = findPopoverContentView(screen);
         await act(async () => {
+            mockPopoverContentDomRect = { width: 220, height: 160 };
+            mockPopoverContentResize?.();
             contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 220, height: 160 } } });
         });
 
@@ -947,6 +956,8 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
         await act(async () => {
+            mockPopoverContentDomRect = { width: 200, height: 120 };
+            mockPopoverContentResize?.();
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
@@ -1214,6 +1225,8 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
         await act(async () => {
+            mockPopoverContentDomRect = { width: 200, height: 120 };
+            mockPopoverContentResize?.();
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
@@ -1347,6 +1360,8 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
 
         await act(async () => {
+            mockPopoverContentDomRect = { width: 180, height: 120 };
+            mockPopoverContentResize?.();
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 120 } } });
         });
 
@@ -1391,6 +1406,8 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
 
         await act(async () => {
+            mockPopoverContentDomRect = { width: 180, height: 140 };
+            mockPopoverContentResize?.();
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 140 } } });
         });
 

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isEligibleFocusTarget, listWebFocusableElements } from './webFocusableElements';
 
 import {
     readDocumentFocusReturnTarget,
@@ -8,16 +9,6 @@ import {
     type FocusReturnRef,
     type FocusReturnTarget,
 } from './focusReturn';
-
-const WEB_OVERLAY_FOCUSABLE_SELECTOR = [
-    'a[href]',
-    'button:not([disabled])',
-    'input:not([disabled]):not([type="hidden"])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[contenteditable="true"]',
-    '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 export type WebOverlayFocusContainmentOptions = Readonly<{
     active: boolean;
@@ -154,7 +145,7 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
             const container = options.containerRef.current;
             if (!container || isWithinInertSubtree(container)) return;
 
-            const focusableElements = listFocusableElements(container);
+            const focusableElements = listWebFocusableElements(container);
             if (focusableElements.length === 0) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -199,20 +190,14 @@ function takePreMutationFocusReturnTarget(ref: FocusReturnMutableRef | null): Fo
  * around it, since that is what the person came to fill in.
  */
 export function focusFirstEntryWithin(container: HTMLElement): boolean {
-    const focusable = listFocusableElements(container);
+    const focusable = listWebFocusableElements(container);
     const entry = focusable.find((element) => element.matches('textarea, input, [contenteditable="true"]'));
     return focusElement(entry ?? focusable[0] ?? null);
 }
 
 function focusFirstElement(container: HTMLElement): boolean {
-    const firstFocusableElement = listFocusableElements(container)[0] ?? null;
+    const firstFocusableElement = listWebFocusableElements(container)[0] ?? null;
     return firstFocusableElement ? focusElement(firstFocusableElement) : false;
-}
-
-function listFocusableElements(container: HTMLElement): HTMLElement[] {
-    return Array.from(container.querySelectorAll<HTMLElement>(WEB_OVERLAY_FOCUSABLE_SELECTOR)).filter(
-        isEligibleFocusTarget,
-    );
 }
 
 function isWithinInertSubtree(element: HTMLElement): boolean {
@@ -226,21 +211,6 @@ function isReleasedFocusSuppressed(container: HTMLElement): boolean {
     const focused = document.activeElement;
     return focused != null && focused !== document.body && focused !== document.documentElement
         && !container.contains(focused);
-}
-
-function isEligibleFocusTarget(target: FocusReturnTarget): target is HTMLElement {
-    if (!canFocus(target)) return false;
-    if (typeof HTMLElement === 'undefined' || !(target instanceof HTMLElement)) return false;
-    if (target.hidden || target.getAttribute('aria-hidden') === 'true') return false;
-    if (target.getAttribute('aria-disabled') === 'true' || target.hasAttribute('disabled')) return false;
-    if (target.closest('[hidden], [aria-hidden="true"], [inert]') != null) return false;
-
-    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
-        const style = window.getComputedStyle(target);
-        if (style.display === 'none' || style.visibility === 'hidden') return false;
-    }
-
-    return true;
 }
 
 function canFocus(target: FocusReturnTarget): target is HTMLElement {

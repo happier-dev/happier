@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
-import { ModalConfig, ModalContextValue, ModalType } from './types';
+import { ModalConfig, ModalContextValue, ModalType, type CustomModalConfig } from './types';
 import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
 import { WebPromptModal } from './components/WebPromptModal';
@@ -82,7 +82,11 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         const id = generateId();
         // Child autofocus runs before the modal shell's layout effect. Capture the
         // opener before mounting, then let the existing modal focus owner restore it.
-        const focusReturnRef = config.focusReturnRef ?? (
+        // A menu item may disappear as it opens a card. Its persistent view anchor
+        // owns the return target on both anchored desktop cards and phone sheets.
+        const chrome = config.type === 'custom' ? (config as Omit<CustomModalConfig, 'id'>).chrome : undefined;
+        const anchor = chrome?.kind === 'card' ? chrome.anchor : undefined;
+        const focusReturnRef = config.focusReturnRef ?? (anchor?.kind === 'view' ? anchor.ref : undefined) ?? (
             Platform.OS === 'web' && typeof document !== 'undefined'
                 ? { current: readDocumentFocusReturnTarget(document) }
                 : undefined

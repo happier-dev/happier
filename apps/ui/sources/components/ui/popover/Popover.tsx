@@ -35,6 +35,7 @@ import type {
     ResolvedPopoverPlacement,
 } from './_types';
 import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } from './measure';
+import { useWebPopoverContentMeasure } from './useWebPopoverContentMeasure';
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { PopoverBackdrop } from './backdrop';
 import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
@@ -682,8 +683,9 @@ function AnchoredPopover(props: PopoverProps) {
         focusFirstInteractiveDescendant();
         return stopPendingFocus;
         // Rendered options and focus adapters may change while this intent is
-        // pending or cancelled. Only another opening may arm it again.
-    }, [open]);
+        // pending or cancelled. Only another opening, or a press taking over an
+        // open hover preview (`autoFocusOnOpen` turning true), may arm it again.
+    }, [autoFocusOnOpen, open]);
 
     React.useEffect(() => {
         if (Platform.OS === 'web' || !open || !openingFocus.current.autoFocusOnOpen) {
@@ -829,10 +831,21 @@ function AnchoredPopover(props: PopoverProps) {
         maxWidth: maxWidthCap,
         placement: placement === 'auto' || placement === 'auto-vertical' || placement === 'auto-horizontal' ? 'top' : placement,
     }));
-    const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(computed.placement);
     const [anchorRectState, setAnchorRectState] = React.useState<WindowRect | null>(null);
     const [boundaryRectState, setBoundaryRectState] = React.useState<WindowRect | null>(null);
     const [contentRectState, setContentRectState] = React.useState<WindowRect | null>(null);
+    // The side the popover is shown on, which its position and its entrance both follow. A designed panel
+    // (`fit: 'shift'`) that placement hung below its trigger is measured at its own height: when it does not fit
+    // below but fits above, it opens above, whole, instead of sliding up over the trigger; it slides only when it
+    // fits on neither side.
+    const shownPlacement: PopoverLayoutProps['placement'] = (() => {
+        if (computed.placement !== 'bottom' || props.fit !== 'shift' || !anchorRectState || !contentRectState) return computed.placement;
+        const boundary = boundaryRectState ?? getFallbackBoundaryRect({ windowWidth, windowHeight });
+        const fitsBelow = anchorRectState.y + anchorRectState.height + gap + contentRectState.height <= boundary.y + boundary.height;
+        const fitsAbove = anchorRectState.y - gap - contentRectState.height >= boundary.y;
+        return !fitsBelow && fitsAbove ? 'top' : 'bottom';
+    })();
+    const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(shownPlacement);
     /**
      * Where an open side popover first settled, as an offset from its anchor's top. Content that grows
      * after opening (a field expands, a sub-page pushes) keeps this top and grows downward, rising only
@@ -1286,9 +1299,11 @@ function AnchoredPopover(props: PopoverProps) {
             });
         };
 
-        scheduleFrame(() => {
+        if (Platform.OS === 'web') {
             void measureWithRetries(0);
-        });
+        } else {
+            scheduleFrame(() => { void measureWithRetries(0); });
+        }
     }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
@@ -1579,7 +1594,7 @@ function AnchoredPopover(props: PopoverProps) {
                     boundaryRect.y,
                     Math.min(boundaryRect.y + boundaryRect.height - contentHeight, anchorRectState.y - contentHeight - gap),
                 );
-                return computed.placement === 'top' ? topForTop : topForBottom;
+                return shownPlacement === 'top' ? topForTop : topForBottom;
             })();
 
             // The box carries the edge padding as a transparent gutter, so the box may reach the boundary's
@@ -1595,7 +1610,7 @@ function AnchoredPopover(props: PopoverProps) {
                 //
                 // For top-placed portals we can pin the bottom edge to (anchorTop - gap) using `bottom`,
                 // which avoids depending on the measured content height for vertical positioning.
-                if (computed.placement === 'top') {
+                if (shownPlacement === 'top') {
                     const anchorTopInPortalSpace =
                         position === 'absolute'
                             ? (anchorRectState.y - webPortalOffsetY)
@@ -1758,113 +1773,12 @@ function AnchoredPopover(props: PopoverProps) {
     })();
     const motionVisible = open && (!(shouldPortalWeb || shouldPortalNative) || portalOpacity > 0);
 
-    React.useLayoutEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (!open) return;
-        if (!shouldPortalWeb) return;
-
-        let isCancelled = false;
-        let cancelScheduledMeasure: (() => void) | null = null;
-        let resizeObserver: ResizeObserver | null = null;
-        let observedContentEl: HTMLElement | null = null;
-
-        const observeContent = (contentEl: HTMLElement) => {
-            if (observedContentEl === contentEl) return;
-            resizeObserver?.disconnect();
-            resizeObserver = null;
-            observedContentEl = contentEl;
-            try {
-                resizeObserver = new ResizeObserver(() => {
-                    measure();
-                });
-                resizeObserver.observe(contentEl);
-            } catch {
-                // Best-effort only: ResizeObserver isn't available in every environment.
-            }
-        };
-
-        const measure = () => {
-            if (isCancelled) return false;
-            // A web portal is committed outside the source subtree. The first
-            // layout effect can run before that DOM node is discoverable, so
-            // resolve it on every bounded retry instead of failing permanently.
-            const contentEl = getContentDomElement();
-            if (!contentEl || typeof contentEl.getBoundingClientRect !== 'function') return false;
-            observeContent(contentEl);
-            const rect = contentEl.getBoundingClientRect();
-            const width = rect?.width;
-            const height = rect?.height;
-            if (![width, height].every((n) => Number.isFinite(n)) || width <= 0 || height <= 0) return false;
-
-            const next: WindowRect = { x: 0, y: 0, width, height };
-            // Avoid rerender loops from tiny float changes
-            setContentRectState((prev) => {
-                if (!prev) return next;
-                if (Math.abs(prev.width - next.width) > 1 || Math.abs(prev.height - next.height) > 1) {
-                    return next;
-                }
-                return prev;
-            });
-            return true;
-        };
-
-        const scheduleMeasure = (attempt: number) => {
-            if (isCancelled) return;
-            let didRun = false;
-            let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-            let frameHandle: number | null = null;
-            const runOnce = () => {
-                if (didRun || isCancelled) return;
-                didRun = true;
-                if (fallbackTimer !== null) clearTimeout(fallbackTimer);
-                fallbackTimer = null;
-                if (frameHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
-                    globalThis.cancelAnimationFrame(frameHandle);
-                }
-                frameHandle = null;
-                cancelScheduledMeasure = null;
-                if (!measure() && attempt < 5) scheduleMeasure(attempt + 1);
-            };
-            if (typeof globalThis.requestAnimationFrame === 'function') {
-                frameHandle = globalThis.requestAnimationFrame(runOnce);
-                fallbackTimer = setTimeout(runOnce, 50);
-            } else {
-                fallbackTimer = setTimeout(runOnce, 0);
-            }
-            cancelScheduledMeasure = () => {
-                didRun = true;
-                if (fallbackTimer !== null) clearTimeout(fallbackTimer);
-                if (frameHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
-                    globalThis.cancelAnimationFrame(frameHandle);
-                }
-            };
-        };
-
-        scheduleMeasure(0);
-
-        return () => {
-            isCancelled = true;
-            cancelScheduledMeasure?.();
-            resizeObserver?.disconnect();
-        };
-    }, [getContentDomElement, open, shouldPortalWeb]);
-
-    // A web portal first renders its content under the window-sized bound, then under its placement's own bound.
-    // Read the content box again as soon as that bound changes, before paint: a frame placed from the earlier,
-    // taller height would show the panel over its trigger for a frame and hover whichever row then lies under a
-    // resting pointer (a long menu's highlight jumping away from the current choice).
-    React.useLayoutEffect(() => {
-        if (Platform.OS !== 'web' || !open || !shouldPortalWeb) return;
-        const contentEl = getContentDomElement();
-        if (!contentEl || typeof contentEl.getBoundingClientRect !== 'function') return;
-        const rect = contentEl.getBoundingClientRect();
-        if (!(rect.width > 0) || !(rect.height > 0)) return;
-        setContentRectState((prev) => (
-            prev && Math.abs(prev.width - rect.width) <= 1 && Math.abs(prev.height - rect.height) <= 1
-                ? prev
-                : { x: 0, y: 0, width: rect.width, height: rect.height }
-        ));
-    }, [computed.maxHeight, computed.maxWidth, computed.placement, getContentDomElement, open, shouldPortalWeb]);
+    useWebPopoverContentMeasure({
+        enabled: Platform.OS === 'web' && open && shouldPortalWeb && anchorRectState !== null,
+        getContentElement: getContentDomElement,
+        layout: computed,
+        publish: setContentRectState,
+    });
 
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
@@ -2102,13 +2016,15 @@ function AnchoredPopover(props: PopoverProps) {
                     if (!layout) return;
                     const next = { x: 0, y: 0, width: layout.width ?? 0, height: layout.height ?? 0 };
                     // Avoid rerender loops from tiny float changes
-                    setContentRectState((prev) => {
-                        if (!prev) return next;
-                        if (Math.abs(prev.width - next.width) > 1 || Math.abs(prev.height - next.height) > 1) {
-                            return next;
-                        }
-                        return prev;
-                    });
+                    if (Platform.OS !== 'web' || !shouldPortalWeb) {
+                        setContentRectState((prev) => {
+                            if (!prev) return next;
+                            if (Math.abs(prev.width - next.width) > 1 || Math.abs(prev.height - next.height) > 1) {
+                                return next;
+                            }
+                            return prev;
+                        });
+                    }
 
                     // Measurement recovery.
                     //
@@ -2146,6 +2062,7 @@ function AnchoredPopover(props: PopoverProps) {
                         <ModalPortalTargetProvider target={popoverModalPortalTargetRef.current}>
                             <OverlayMotionFrame
                                 visible={motionVisible}
+                                disabled={portalOpacity === 0}
                                 kind="popover"
                                 direction={popoverMotionDirection}
                             >
@@ -2156,6 +2073,7 @@ function AnchoredPopover(props: PopoverProps) {
                 ) : (
                     <OverlayMotionFrame
                         visible={motionVisible}
+                        disabled={portalOpacity === 0}
                         kind="popover"
                         direction={popoverMotionDirection}
                     >

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
+import { listWebFocusableElements } from './webFocusableElements';
 
 type FocusableFocusReturnTarget = Readonly<{
     focus?: (options?: Readonly<{ preventScroll?: boolean }>) => void;
@@ -99,7 +100,11 @@ function focusTarget(target: FocusReturnTarget): boolean {
         return true;
     }
     const activeElement = document.activeElement;
-    return activeElement === target || target.contains(activeElement);
+    if (activeElement === target || target.contains(activeElement)) return true;
+    // Menu geometry belongs to a non-focusable wrapper around its surviving
+    // trigger. Return to that control using the same eligibility owner as overlays.
+    const control = listWebFocusableElements(target)[0];
+    return control ? focusTarget(control) : false;
 }
 
 /**

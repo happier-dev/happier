@@ -98,7 +98,12 @@ async function renderPanel(
   const style = flattenStyle(
     findPopoverContentView(screen, 'AddPanel')?.props?.style,
   );
-  return { maxHeight: seen.at(-1), style };
+  // The entrance motion's side: the popover's motion frame carries the side it enters from.
+  const motion = screen.root.findAll((node) => node.props?.kind === 'popover' && typeof node.props?.direction === 'string');
+  const panelTop = style.top !== undefined
+    ? Number(style.top) + Number(style.paddingTop ?? 0)
+    : 800 - Number(style.bottom) - Number(style.paddingBottom ?? 0) - (over.contentHeight ?? 600);
+  return { maxHeight: seen.at(-1), style, panelTop, direction: motion[0]?.props?.direction as string | undefined };
 }
 
 describe('Popover: a designed panel keeps its size when neither side of its trigger holds it', { timeout: 180_000 }, () => {
@@ -108,6 +113,21 @@ describe('Popover: a designed panel keeps its size when neither side of its trig
     // Below the trigger would end at 1040; the panel moves up until its bottom meets the window (800 - 600).
     expect(Number(style.top) + Number(style.paddingTop ?? 0)).toBe(200);
     expect(style.bottom).toBeUndefined();
+  });
+
+  it('opens a panel above its trigger when it does not fit below but fits above, instead of covering the trigger', async () => {
+    // A "+" low in a rail (lab: Credentials Secrets): 800 - 532 - 8 = 260 below, 500 - 8 = 492 above, panel 400.
+    const { panelTop, direction } = await renderPanel('shift', { anchorTop: 500, contentHeight: 400 });
+    // It ends a gap above the trigger, whole, with its actions inside the window.
+    expect(panelTop).toBe(500 - 8 - 400);
+    // It enters from its trigger's side, as any popover placed above does.
+    expect(direction).toBe('top');
+  });
+
+  it('keeps a panel that fits below its trigger below it', async () => {
+    const { panelTop, direction } = await renderPanel('shift', { anchorTop: 100, contentHeight: 400 });
+    expect(panelTop).toBe(100 + 32 + 8);
+    expect(direction).toBe('bottom');
   });
 
   it('never lets a panel hung above its trigger start above the window while its size is out of date', async () => {
