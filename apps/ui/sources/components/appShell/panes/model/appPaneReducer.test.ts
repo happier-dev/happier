@@ -1,3 +1,6 @@
+import { createBotTemplateEditorDetailsTab } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
+import { normalizePersistedPaneScopes, serializePersistedPaneScope } from './paneScopePersistence';
+import { PersistedPaneScopeSchema } from './paneScopePersistenceSchema';
 import { describe, expect, it } from 'vitest';
 import { appPaneReduce, createAppPaneState } from './appPaneReducer';
 import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
@@ -34,6 +37,31 @@ function getDetailsView(state: ReturnType<typeof createAppPaneState>, scopeId: s
 }
 
 describe('appPaneReduce', () => {
+    it.each(['reload', 'navigation', 'selection'] as const)('places a restored template beside chat instead of over Info after %s', path => {
+        const scopeId = 'session:restored-template';
+        const template = createBotTemplateEditorDetailsTab({ serverId: 'home', artifactId: 'draft' });
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), {
+            type: 'openDetailsTab', scopeId, tab: template, openAs: 'pinned',
+        });
+        state = appPaneReduce(state, { type: 'openRight', scopeId, tabId: 'info' });
+        expect(state.scopes[scopeId].right.isOpen).toBe(true);
+        const scope = state.scopes[scopeId];
+        if (path === 'reload') {
+            const saved = PersistedPaneScopeSchema.parse(serializePersistedPaneScope(scope, { preserveDesktopVisibility: false }));
+            state = createAppPaneState({ maxScopesInMemory: 3,
+                persistedScopes: normalizePersistedPaneScopes({ [scopeId]: saved }, true) });
+        } else if (path === 'navigation') {
+            state = appPaneReduce(state, { type: 'restoreScope', scopeId, scope });
+        } else {
+            state = appPaneReduce(state, { type: 'setActiveDetailsTab', scopeId, tabKey: template.key });
+        }
+        expect(getDetailsView(state, scopeId).activeTabKey).toBe(template.key);
+        expect(state.scopes[scopeId].details.isOpen).toBe(true);
+        expect(state.scopes[scopeId].right.isOpen).toBe(false);
+        expect(state.scopes[scopeId].right.activeTabId).toBe('info');
+        expect(state.scopes[scopeId].mainHidden).toBe(false);
+    });
+
     it('applies an explicit file turn opener over the retained scope without replacing editor or reading state', () => {
         const scopeId = 'session:turn-file';
         const tab = createFileTab('src/a.ts');

@@ -6,6 +6,7 @@ import { closeTerminalDetailsTabs, moveTerminalWorkspaceToPane } from './termina
 import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 import { migrateLegacyDetailsWorkspaceState, serializeDetailsWorkspaceState } from '../details/workspace/migrateLegacyDetailsWorkspaceState';
+import { placeDetailsInSideColumn } from './detailsPanePlacement';
 
 type PersistedPaneScope = z.infer<typeof PersistedPaneScopeSchema>;
 
@@ -101,9 +102,9 @@ export function normalizePersistedPaneScopes(
         const bottomDocked = normalized.bottom.isOpen
             ? moveTerminalWorkspaceToPane(normalized, normalized.bottom.selectedDestination, 'bottom')
             : normalized;
-        return [scopeId, bottomDocked.right.isOpen
+        return [scopeId, placeDetailsInSideColumn(bottomDocked.right.isOpen
             ? moveTerminalWorkspaceToPane(bottomDocked, bottomDocked.right.selectedDestination, 'right')
-            : bottomDocked];
+            : bottomDocked)];
     }));
 }
 
