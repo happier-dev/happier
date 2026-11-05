@@ -41,6 +41,9 @@ export type ShellColumnActionOwner = Readonly<{
   tabs?: readonly string[];
   activeTab?: string;
   label?: string;
+  items?: ScopeActionOutputById['shell.column.get']['items'];
+  /** Presentation borrowed by the existing Navigation Settings operation. */
+  openNavigationCustomizer?(): Promise<void>;
   arrangementAvailable?: boolean;
   selectTab?(tab: string): void;
   setVisible(visible: boolean): void;
@@ -118,6 +121,10 @@ export type FileViewActionOwner = Readonly<{
 }>;
 const fileViewOwners = new Map<string, () => FileViewActionOwner>();
 
+/** Private mounted target retained by one UI invocation through Inbox approval. No copied view state. */
+export type MountedScopeActionOwner =
+  Readonly<{ kind: 'shell.column'; column: ShellColumn; read: () => ShellColumnActionOwner }>;
+
 /** Mounted controller bridge only: the pane tab remains the sole view-state owner. */
 export function registerFileViewActionOwner(key: string, read: () => FileViewActionOwner): () => void {
   fileViewOwners.set(key, read);
@@ -175,7 +182,8 @@ function readSessionListOwner(input: ScopeActionInputById['session.list.view.get
 }
 
 export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unknown,
-  context?: Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId'>): Promise<unknown> {
+  context?: Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId'>,
+  mountedOwner?: MountedScopeActionOwner): Promise<unknown> {
   if (actionId === 'file.editor.save' || actionId === 'file.editor.resolve') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
     const owners = [...fileEditorOwners].map(owner => owner.read()).filter(owner =>
@@ -218,18 +226,22 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
   if (actionId === 'shell.column.get' || actionId === 'shell.column.set') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
     const columnId = input.column ?? 'navigation';
-    const column = readShellColumnActionOwner(columnId);
+    const column = mountedOwner?.kind === 'shell.column'
+      ? mountedOwner.column === columnId ? mountedOwner.read() : null
+      : readShellColumnActionOwner(columnId);
     if (!column) return unavailable('client_surface_unavailable');
     if (actionId === 'shell.column.get') return { present: column.present, visible: column.visible, available: column.available,
       ...(column.tabs ? { tabs: column.tabs } : {}), ...(column.activeTab === undefined ? {} : { activeTab: column.activeTab }),
-      ...(column.label === undefined ? {} : { label: column.label }) };
+      ...(column.label === undefined ? {} : { label: column.label }), ...(column.items === undefined ? {} : { items: column.items }) };
     const update = ScopeActionInputSchemas['shell.column.set'].parse(rawInput);
     if (!column.present || !column.available) return unavailable('client_control_unavailable');
     if (update.tab !== undefined) {
-      if (columnId !== 'side' || !column.selectTab || !column.tabs?.includes(update.tab)) return unavailable('client_control_unavailable');
+      if (!column.selectTab || !column.tabs?.includes(update.tab)
+        || column.items?.some(item => item.id === update.tab && !item.available)) return unavailable('client_control_unavailable');
       column.selectTab(update.tab);
+    } else {
+      column.setVisible(update.visible);
     }
-    column.setVisible(update.tab === undefined ? update.visible : true);
     return { ok: true };
   }
   const input = ScopeActionInputSchemas[actionId].parse(rawInput);

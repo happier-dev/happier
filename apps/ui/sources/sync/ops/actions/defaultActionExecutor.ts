@@ -725,6 +725,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; signal?: AbortSignal }>) => void;
   /** Exact mounted invocation whose intent must remain live through shared approval. */
   hostActionApprovalLifetime?: Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'ui' }>;
+  /** Exact mounted view command target; policy and raw terminal remain canonical. */
+  scopeActionOwner?: import('./scopeActionFamily').MountedScopeActionOwner;
   listContributedActionDefinitions?: NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>;
   readContributedActionSchemas?: NonNullable<ActionExecutorDeps['readContributedActionSchemas']>;
   /** Optional surface-local policy composed with the canonical Action settings policy. */
@@ -1265,7 +1267,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     scopeAction: async ({ actionId, input, context }) => {
       throwIfAborted(context.signal);
       accountContext?.assertCurrent();
-      return await invokeScopeAction(actionId, input, context);
+      return await invokeScopeAction(actionId, input, context, opts?.scopeActionOwner);
     },
     diagnosticsAction: async ({ actionId, context }) => {
       if (!accountContext) return { status: 'unavailable' };

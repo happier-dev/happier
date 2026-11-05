@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { ScopeActionOutputSchemas } from '@happier-dev/protocol/actions/scopeActionFamily';
 
@@ -13,6 +13,26 @@ import { invokeScopeAction, registerFileEditorActionOwner, registerSessionListSc
 afterEach(() => { standardCleanup(); clearSessionListViewFilterRetentionForTests(); });
 
 describe('client scope Actions through canonical mounted owners', () => {
+  it('reads and selects a mounted main page through one admitted Action effect', async () => {
+    let activeTab = 'chat';
+    let selections = 0;
+    const setVisible = vi.fn();
+    const items = [{ id: 'chat', label: 'Chat', available: true, placement: 'pinned' as const, pageKind: 'session' },
+      { id: 'info', label: 'Info', available: true, placement: 'pinned' as const, pageKind: 'session' }];
+    const unregister = registerShellColumnActionOwner('main', () => ({ present: true, visible: true, available: true,
+      tabs: items.map(item => item.id), items, activeTab, selectTab: tab => { activeTab = tab; selections++; }, setVisible }));
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ scopeAction: ({ actionId, input }) => invokeScopeAction(actionId, input) }));
+    try {
+      expect(await executor.execute('shell.column.get', { column: 'main' }, { surface: 'ui' })).toMatchObject({ ok: true, result: { items, activeTab: 'chat' } });
+      expect(selections).toBe(0);
+      expect(await executor.execute('shell.column.set', { column: 'main', visible: true, tab: 'info' }, { surface: 'ui' })).toMatchObject({ ok: true });
+      expect(activeTab).toBe('info');
+      expect(selections).toBe(1);
+      expect(setVisible).not.toHaveBeenCalled();
+      expect(await executor.execute('shell.column.set', { column: 'main', visible: true, tab: 'missing' }, { surface: 'ui' })).toMatchObject({ ok: false });
+      expect(selections).toBe(1);
+    } finally { unregister(); }
+  });
   it('routes mounted editor commands through the executor, targets tabs, and releases retired owners', async () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ scopeAction: ({ actionId, input }) => invokeScopeAction(actionId, input) }));
     // Exercise the approved execution path; the protocol suite separately proves Ask-first defaults.
@@ -67,7 +87,7 @@ describe('client scope Actions through canonical mounted owners', () => {
       registerShellColumnActionOwner('navigation', () => ({ present: true, available: true, visible: navigationVisible, setVisible: value => { navigationVisible = value; } })),
       registerShellColumnActionOwner('main', () => ({ present: true, available: true, visible: mainVisible, label: 'Hide session', setVisible: value => { mainVisible = value; } })),
       registerShellColumnActionOwner('side', () => ({ present: true, available: true, visible: sideVisible, tabs: ['files', 'plugin:notes'], activeTab,
-        selectTab: tab => { activeTab = tab; }, setVisible: value => { sideVisible = value; } })),
+        selectTab: tab => { activeTab = tab; sideVisible = true; }, setVisible: value => { sideVisible = value; } })),
     ];
     try {
       expect(await executor.execute('shell.column.set', { column: 'main', visible: false }, { surface: 'agent' })).toEqual({ ok: true, result: { ok: true } });
