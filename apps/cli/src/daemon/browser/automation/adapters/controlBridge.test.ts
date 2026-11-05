@@ -1381,6 +1381,32 @@ describe('control adapter automation transport bridge', () => {
     expect(calls.some((c) => c.method === 'Runtime.evaluate')).toBe(true);
   });
 
+  it.each([
+    { url: 'https://example.test/reset-password?token=8f3a#access_token=private', expectedUrl: 'https://example.test/reset-password' },
+    { url: 'https://example.test/search?q=private#private', expectedUrl: 'https://example.test/search?q' },
+    { url: 'https://example.test/welcome', expectedUrl: 'https://example.test/welcome' },
+    { url: 'not a URL?token=private', expectedUrl: undefined },
+    { url: undefined, expectedUrl: undefined },
+  ])('redacts secrets from the getStatus URL while preserving public status ($url)', async ({ url, expectedUrl }) => {
+    const { surface } = fakeContextCapture(method => method === 'Page.getNavigationHistory'
+      ? { currentIndex: 1, entries: [{ id: 1, url: 'https://example.test/previous' }, { id: 2, url, title: 'Current page' }] }
+      : {});
+    const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });
+
+    const result = await transport.dispatchPageQuery({
+      ...view,
+      actionKind: 'getStatus',
+      navigationGeneration: 7,
+      payload: {},
+    });
+
+    expect(result).toEqual({ ok: true, data: {
+      ...(expectedUrl ? { url: expectedUrl } : {}),
+      title: 'Current page',
+      navigationGeneration: 7,
+    } });
+  });
+
   it('fails a query view_closed when the page handle cannot be resolved', async () => {
     const { surface } = fakeContextCapture(() => ({}), () => null);
     const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });

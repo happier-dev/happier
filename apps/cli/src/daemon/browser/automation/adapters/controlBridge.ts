@@ -14,6 +14,7 @@ import type {
 import type { BrowserContextRoutes } from '../../context/routes';
 import type { BrowserDaemonControlAdapter } from '../../control/types';
 import { BrowserSidecarCdpTransportError, isBrowserSidecarCdpCommandNotDispatched } from '../../sidecar/cdpTransport';
+import { redactSidecarContextUrl } from '../../sidecar/diagnostics/redaction';
 import type { BrowserAutomationAdapterExecuteResult, BrowserAutomationAdapterExecutionContext } from './types';
 import type { BrowserAutomationViewRef } from '../owners';
 import {
@@ -580,10 +581,11 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         case 'getStatus': {
           const history = await dispatchPageCommand(handle, 'Page.getNavigationHistory', undefined, query);
           const entry = readCurrentHistoryEntry(history);
+          const url = redactSidecarContextUrl(stringField(entry, 'url'));
           return {
             ok: true,
             data: {
-              ...(stringField(entry, 'url') ? { url: stringField(entry, 'url') } : {}),
+              ...(url ? { url } : {}),
               ...(stringField(entry, 'title') ? { title: stringField(entry, 'title') } : {}),
               navigationGeneration: query.navigationGeneration,
             },
