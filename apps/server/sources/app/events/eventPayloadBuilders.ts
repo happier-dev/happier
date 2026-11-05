@@ -705,6 +705,7 @@ export function buildUsageEphemeral(
     key: string,
     tokens: Record<string, number>,
     cost: Record<string, number>,
+    providerSource?: Readonly<{ providerConnectionId: string; machineId?: string }>,
 ): Extract<EphemeralEvent, { type: 'usage' }> {
     return {
         type: 'usage',
@@ -712,6 +713,8 @@ export function buildUsageEphemeral(
         key,
         tokens,
         cost,
+        ...(providerSource ? { providerConnectionId: providerSource.providerConnectionId,
+            ...(providerSource.machineId ? { machineId: providerSource.machineId } : {}) } : {}),
         timestamp: Date.now()
     };
 }

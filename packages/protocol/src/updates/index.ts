@@ -482,6 +482,9 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
     tokens: z.record(z.string(), z.number()),
     cost: z.record(z.string(), z.number()),
     timestamp: TimestampMsSchema,
+    /** Captured request source; a wake hint, never permission to read that connection. */
+    providerConnectionId: z.optional(z.string().check(z.minLength(1))),
+    machineId: z.optional(z.string().check(z.minLength(1))),
   }),
   /**
    * Content-free invalidation to a Team credential resource's usage readers after a

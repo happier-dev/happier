@@ -690,6 +690,10 @@ function emitUsageEventAfterTransaction(
                 `${request.agentId}:${request.modelId ?? 'unknown'}`,
                 toLegacyUsageEphemeralTokens(request.tokens),
                 toLegacyUsageEphemeralCost(request.cost),
+                request.attribution?.source.kind === 'provider' ? {
+                    providerConnectionId: request.attribution.source.providerConnectionId,
+                    ...(request.machineId ? { machineId: request.machineId } : {}),
+                } : undefined,
             ),
             recipientFilter: { type: 'user-scoped-only' },
         });

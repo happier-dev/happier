@@ -63,6 +63,35 @@ describe("usageWriteService", () => {
         ]);
     });
 
+    it('pushes the captured Provider connection for a completed request without inferring the current Session selection', async () => {
+        const account = await db.account.create({ data: { publicKey: 'provider-connection-usage-wake' } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: 'provider-connection-usage-wake', encryptionMode: 'plain',
+            metadata: JSON.stringify({ providerConnectionId: 'connection-selected-later' }),
+        } });
+        await db.machine.create({ data: { id: 'provider-usage-machine', accountId: account.id, metadata: '{}' } });
+        const request = UsageEventIngestRequestSchema.parse({
+            sessionId: session.id, machineId: 'provider-usage-machine', turnId: 'turn-1', externalKey: 'request-1',
+            observedAt: 100, agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            attribution: { v: 1, turnId: 'turn-1', source: { kind: 'provider', providerId: null, providerConnectionId: 'connection-used' } },
+            tokens: { input: 2, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+        });
+        expect(await recordUsageEvent(account.id, request)).toMatchObject({ ok: true });
+        const wake = vi.mocked(eventRouter.emitEphemeral).mock.calls.at(-1)?.[0];
+        expect(wake).toMatchObject({ userId: account.id, recipientFilter: { type: 'user-scoped-only' } });
+        expect(EphemeralUpdateSchema.parse(wake?.payload)).toMatchObject({
+            type: 'usage', id: session.id, providerConnectionId: 'connection-used', machineId: 'provider-usage-machine',
+        });
+        expect(await recordUsageEvent(account.id, request)).toMatchObject({ ok: true });
+        expect(vi.mocked(eventRouter.emitEphemeral).mock.calls.filter(([event]) => event.payload.type === 'usage')).toHaveLength(1);
+
+        const { attribution: _attribution, ...withoutAttribution } = request;
+        expect(await recordUsageEvent(account.id, { ...withoutAttribution, externalKey: 'legacy-request' })).toMatchObject({ ok: true });
+        const unattributedWake = vi.mocked(eventRouter.emitEphemeral).mock.calls.at(-1)?.[0];
+        expect(unattributedWake?.payload).not.toHaveProperty('providerConnectionId');
+    });
+
     it('retains the earliest matching runtime order on a delayed duplicate without upgrading stored attribution', async () => {
         const account = await db.account.create({ data: { publicKey: 'runtime-order' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: 'runtime-order', encryptionMode: 'plain', metadata: '{}' } });
