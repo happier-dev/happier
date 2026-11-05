@@ -422,6 +422,12 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    */
   loading?: boolean;
   /**
+   * How many rows the reading list is known to hold (a folder's child count), so its loading rows reserve that
+   * much; without it a page-scrolling list reserves a short run (lab `rp` ST 1) and a bounded one fills its view.
+   * A grid reads it as rows of cards (a shelf that shows one row reserves one row).
+   */
+  loadingRows?: number;
+  /**
    * A row's controls. Called as a hook inside each row, so it must be one stable module-level hook; it may read
    * the caller's own context.
    */
@@ -725,11 +731,16 @@ const COLLECTION_SKELETON_GEOMETRY = Object.freeze({
  * list and the row hairline — as many as fill what is on screen, so nothing moves when the real rows land
  * and "empty" is never said early.
  */
+const PAGE_LOADING_RUN_ROWS = 7;
+
 function CollectionSkeletonRows(props: Readonly<{
   theme: HappierUiTheme;
   rowHeight: number;
   twoLines: boolean;
   viewportHeight: number | null;
+  /** Rows known to be coming, else `pageRun` (a page-scrolling list) caps the fill at a short run. */
+  rows?: number;
+  pageRun?: boolean;
   /** The row insets the placeholders stand at; the table's own unless a ruled resting list sets its inset. */
   ruledInsetPx?: number;
   testID?: string;
@@ -738,7 +749,11 @@ function CollectionSkeletonRows(props: Readonly<{
 }>): ReactElement {
   const { theme } = props;
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
-  const count = props.viewportHeight === null ? 1 : Math.max(1, Math.ceil(props.viewportHeight / props.rowHeight));
+  const fill = props.viewportHeight === null ? 1 : Math.max(1, Math.ceil(props.viewportHeight / props.rowHeight));
+  // A page-scrolling list's own height is only what it draws, so it cannot say how many rows fill the view: it
+  // reserves the short run instead of measuring itself down to one row.
+  const count = props.rows !== undefined ? Math.max(1, props.pageRun === true ? Math.round(props.rows) : Math.min(fill, Math.round(props.rows)))
+    : props.pageRun === true ? PAGE_LOADING_RUN_ROWS : fill;
   return (
     <HappierSkeletonRows
       rows={count}
@@ -2382,6 +2397,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
                     {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
                     {...(props.loading === undefined ? {} : { loading: props.loading })}
+                    {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}
                     {...(props.empty === undefined ? {} : { empty: props.empty })}
                     {...(pageScroll ? { pageScroll: true } : {})}
                     {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -2408,6 +2424,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                         rowHeight={rowGeometry === 'table' ? metrics.tableRow : metrics.listRow}
                         twoLines={rowGeometry === 'list'}
                         viewportHeight={viewportHeight}
+                        {...(props.loadingRows === undefined ? {} : { rows: props.loadingRows })}
                         {...(ruledInsetPx === null ? {} : { ruledInsetPx })}
                         {...(props.testID === undefined ? {} : { testID: props.testID })}
                       />

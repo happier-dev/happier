@@ -10,9 +10,20 @@ import {
 describe('plugin UI resource subscriptions', () => {
   it.each([
     ['machines.services.logs', 'machines.services.logs.read'],
+    ['deployments.logs', 'deployments.logs.read'],
+    ['deployments.health.edge', 'deployments.health.current'],
+    ['machines.services.list', 'machines.services.list'],
     ['usage.query', 'usage.query'],
   ] satisfies Array<[Parameters<typeof resolvePluginUiHostReadActionIdV1>[0], string]>)('admits %s through its canonical %s Action', (hostRead, actionId) => {
     expect(resolvePluginUiHostReadActionIdV1(hostRead)).toBe(actionId);
+  });
+  it('admits the exact Machine Services list through the same host Resource transport', () => {
+    const resource = { hostRead: 'machines.services.list', input: { serverId: 'home-a', machineId: 'machine-a' } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource, subscriptionId: 'services' }).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchOpenRequestSchema.safeParse({ machineId: 'machine-a', subscriptionId: 'services', resource }).success).toBe(true);
+    for (const extra of [{ accountId: 'foreign' }, { serviceId: 'other' }]) {
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, input: { ...resource.input, ...extra } }, subscriptionId: 'services' }).success).toBe(false);
+    }
   });
   it('admits an exact consumer and purpose authority watch without accepting credential or routing inputs', () => {
     const resource = { readAuthority: { consumer: { pluginId: 'acme.external', localId: 'read-ci' }, purpose: 'github', input: {} } };

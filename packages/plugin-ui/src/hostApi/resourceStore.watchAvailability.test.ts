@@ -30,6 +30,7 @@ const refreshedValue: ResourceContent = {
 function createReconnectingHostApi() {
   let online = false;
   let current = onlineValue;
+  const recoveryListeners = new Set<() => void>();
   let deliver: ((event: ResourceSubscriptionEvent) => void) | null = null;
   const disposeWatch = vi.fn();
   const offline = () => Object.assign(new Error('The daemon transport is unavailable.'), {
@@ -60,7 +61,11 @@ function createReconnectingHostApi() {
     } as unknown as PluginUiHostApi,
     readResource,
     watchResource,
-    reconnect() { online = true; },
+    onWatchRecovery(listener: () => void) {
+      recoveryListeners.add(listener);
+      return { dispose() { recoveryListeners.delete(listener); } };
+    },
+    reconnect() { online = true; for (const listener of [...recoveryListeners]) listener(); },
     setResource(next: ResourceContent) { current = next; },
     invalidate(digest: string) {
       deliver?.({ version: 1, subscriptionId: 'sub-1', kind: 'invalidated', digest });
@@ -120,8 +125,9 @@ describe('plugin UI Resource watch availability', () => {
   });
 
   it('resumes live watching on the same entry when a reconnect re-advertises watchResource', async () => {
+    vi.useFakeTimers();
     const host = createReconnectingHostApi();
-    const client = createPluginUiHostApiResourceClient(host.api);
+    const client = { ...createPluginUiHostApiResourceClient(host.api), onWatchRecovery: host.onWatchRecovery };
     const store = createPluginUiResourceStore({ client, pluginId: 'acme.preview' });
     const entry = store.getEntry('review-summary');
     const unsubscribe = entry.subscribe(() => undefined, true);
@@ -131,6 +137,9 @@ describe('plugin UI Resource watch availability', () => {
     await vi.waitFor(() => {
       expect(entry.getSnapshot().subscription).toBe('reconnecting');
     });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(host.watchResource).toHaveBeenCalledTimes(1);
 
     host.reconnect();
 
@@ -166,6 +175,7 @@ describe('plugin UI Resource watch availability', () => {
   });
 
   it('keeps the last-known-good value continuous while the watch is only temporarily down', async () => {
+    vi.useFakeTimers();
     // The finding's exact shape: canonical reads still recover bytes while the
     // invalidation channel cannot open. Recovery must reuse the SAME entry
     // without ever dropping the value it already admitted.
@@ -211,7 +221,12 @@ describe('plugin UI Resource watch availability', () => {
       });
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(watchResource).toHaveBeenCalledTimes(1);
     watchOnline = true;
+    // Explicit Retry is also a recovery signal for public hosts without a
+    // host-private reconnect subscription.
+    await entry.refresh();
     await vi.waitFor(
       () => { expect(entry.getSnapshot().subscription).toBe('live'); },
       { timeout: 4_000 },

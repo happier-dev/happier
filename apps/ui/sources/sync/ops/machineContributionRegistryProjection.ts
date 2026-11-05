@@ -1125,7 +1125,9 @@ async function invokeHostLogsResource(
         if (options.accountId && account.accountId !== options.accountId) return {
             ok: false, code: 'action_account_scope_changed', reason: 'unavailable',
         };
-        const actionId = 'machines.services.logs.read';
+        const actionId = resource.hostRead === 'machines.services.list' ? 'machines.services.list'
+            : resource.hostRead === 'deployments.health.edge' ? 'deployments.health.current'
+            : resource.hostRead === 'deployments.logs' ? 'deployments.logs.read' : 'machines.services.logs.read';
         const result = await executeOriginalAccountMachineAction({ account, actionId,
             requestId: randomUUID(), machineId, input: resource.input, resourceContinuation: continuation,
             ...(options.signal ? { signal: options.signal } : {}) });

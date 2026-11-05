@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 
 /** Core's text owner, so the chip follows the user's font scale. */
 function InlineCodeText(props: HappierInlineCodeTextProps) {
-    return <Text style={props.style as StyleProp<TextStyle>}>{props.children}</Text>;
+    return <Text testID={props.testID} style={props.style as StyleProp<TextStyle>}>{props.children}</Text>;
 }
 
 /**
@@ -16,11 +16,12 @@ function InlineCodeText(props: HappierInlineCodeTextProps) {
  * owner plugin surfaces draw with): it supplies only core's text owner, mono face, inks and the
  * density-aware `s4` inset.
  */
-export const InlineCode = React.memo((props: Readonly<{ children: React.ReactNode; style?: StyleProp<TextStyle> }>) => {
+export const InlineCode = React.memo((props: Readonly<{ children: React.ReactNode; style?: StyleProp<TextStyle>; testID?: string }>) => {
     const { theme } = useUnistyles();
     return (
         <HappierInlineCode
             Text={InlineCodeText}
+            testID={props.testID}
             fontFamily={Typography.mono().fontFamily}
             ink={theme.colors.text.primary}
             fill={theme.colors.surface.elevated}

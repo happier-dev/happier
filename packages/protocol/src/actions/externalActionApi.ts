@@ -1611,7 +1611,7 @@ export const ExternalActionApprovalDecisionAdmissionV1Schema = lazyZodSchema(() 
 
 export { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 export { createDeploymentCandidatePublicationV1 } from '../deployments/deploymentCandidatePublicationV1.js';
-export { isDeploymentNativeReadActionIdV1 } from '../deployments/deploymentReadAdmissionV1.js';
+export { isDeploymentNativeReadActionIdV1, projectDeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionIdV1, projectDeploymentPreparationAdmissionV1, deploymentPreparationOperationForActionV1,
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 

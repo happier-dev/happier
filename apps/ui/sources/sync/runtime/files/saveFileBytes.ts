@@ -6,10 +6,24 @@ import { downloadWebFile } from './downloadWebFile';
 import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from './nativeCacheFileSink';
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
 import { createDesktopDownloadFileSink, openInDefaultApp } from './openInDefaultApp';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+
+/** Platform effect for files.save; Action admission and source acquisition happen above this boundary. */
+export const saveClientFile: NonNullable<ActionExecutorDeps['saveClientFile']> = async ({ bytes, fileName, signal }) => {
+    try {
+        const status = await saveFileBytes({ bytes, fileName, mimeType: 'text/plain', UTI: 'public.plain-text',
+            action: 'save', isCurrent: () => signal?.aborted !== true });
+        return { status };
+    } catch {
+        return { ok: false, errorCode: 'file_save_unavailable', error: 'file_save_unavailable' };
+    }
+};
 
 type FileHandoffInput = Readonly<{
     fileName: string;
     mimeType: string;
+    dialogTitle?: string;
+    UTI?: string;
     isCurrent?: () => boolean;
     onHandoff?: () => void;
     action?: 'save' | 'open' | 'share';
@@ -80,6 +94,7 @@ async function saveNativeFile(input: FileHandoffInput, fill: (sink: NativeCacheF
         const shared = await shareNativeCacheFile({
             fileUri: sink.fileUri, name: input.fileName, mimeType: input.mimeType, isCurrent: input.isCurrent,
             action: input.action, onHandoff: input.onHandoff,
+            dialogTitle: input.dialogTitle, UTI: input.UTI,
         });
         if (shared.status === 'canceled') return 'canceled';
         if (shared.status === 'unavailable') throw new Error(t('files.fileSharingUnavailable'));

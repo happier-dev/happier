@@ -21,6 +21,16 @@
       "happier-source": "./src/testing/v1/index.ts",
       "types": "./dist/testing/v1/index.d.ts",
       "default": "./dist/testing/v1/index.js"
+    },
+    "./ci/v1": {
+      "happier-source": "./src/ci/v1/index.ts",
+      "types": "./dist/ci/v1/index.d.ts",
+      "default": "./dist/ci/v1/index.js"
+    },
+    "./ci/testing/v1": {
+      "happier-source": "./src/ci/testing/v1/index.ts",
+      "types": "./dist/ci/testing/v1/index.d.ts",
+      "default": "./dist/ci/testing/v1/index.js"
     }
   },
   "files": [

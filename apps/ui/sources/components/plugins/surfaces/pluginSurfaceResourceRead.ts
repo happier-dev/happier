@@ -5,6 +5,8 @@ import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -108,7 +110,13 @@ export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, si
 }
 
 /** A direct host-stamped Resource binding without a public Surface envelope. */
-export type PluginContextualResourceBinding = PluginSurfaceResourceBinding;
+export type PluginContextualResourceBinding = PluginSurfaceResourceBinding | Readonly<
+    Omit<PluginSurfaceResourceBinding, 'expectedCallerOccurrenceId' | 'read'> & {
+        expectedCallerOccurrenceId?: never;
+        hostResource: Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
+        read?: typeof machinePluginUiResourceRead;
+    }
+>;
 
 /**
  * Resource work belongs to the mounted controller as well as its individual
@@ -180,12 +188,33 @@ function assertCurrentContextualResourceClient(
  * binding; plugin code never writes it.
  */
 export function createPluginContextualResourceReadClient(input: Readonly<{
-    pluginId: string;
+    pluginId?: string;
     resource: PluginContextualResourceBinding;
     isCurrent?: () => boolean;
 }>): Pick<PluginUiResourceClient, 'readResource'> {
     return Object.freeze({
         async readResource(resource, options) {
+            if ('hostResource' in input.resource) {
+                const read = input.resource.read ?? machinePluginUiResourceRead;
+                const held = input.resource.hostResource;
+                const selected = PluginUiHostReadReferenceV1Schema.safeParse(resource);
+                if (!selected.success || pluginUiResourceReferenceKey(selected.data, null) !== pluginUiResourceReferenceKey(held, null))
+                    return resourceClientFailure('plugin_resource_request_invalid', 'Host Resource reference is not current');
+                const signal = options?.signal;
+                assertCurrentContextualResourceClient(input.isCurrent, signal);
+                if (input.resource.machineId === null) return resourceClientFailure('plugin_resource_transport_unavailable', 'Resource requires a Machine');
+                const outcome = await read(input.resource.machineId, { serverId: input.resource.serverId ?? null,
+                    ...(input.resource.accountId ? { accountId: input.resource.accountId } : {}),
+                    resource: held, ...(signal ? { signal } : {}) });
+                assertCurrentContextualResourceClient(input.isCurrent, signal);
+                if (!outcome.supported) {
+                    const failure = mapMachinePluginUiResourceTransportFailure(outcome.reason);
+                    return resourceClientFailure(failure.code, 'Resource transport is unavailable', failure);
+                }
+                if (!outcome.result.ok) return resourceClientFailure(outcome.result.code, 'Resource is unavailable');
+                return { contentType: outcome.result.contentType, digest: outcome.result.digest,
+                    bytes: decodeBase64(outcome.result.bytesBase64, 'base64') };
+            }
             const read = input.resource.read ?? machinePluginUiResourceRead;
             if (!input.pluginId) return resourceClientFailure('plugin_resource_not_found', 'Resource caller is unavailable');
             const reference = readPluginSurfaceResourceReference(input.pluginId, resource);

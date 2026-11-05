@@ -1,5 +1,6 @@
 // V1 is the only public Channels business-protocol epoch.
 export * from './bounds.js';
+export * from './ci/index.js';
 export type {
     ConversationJsonObjectV1,
     ConversationJsonValueV1,

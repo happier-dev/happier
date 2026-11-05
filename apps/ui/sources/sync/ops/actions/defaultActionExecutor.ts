@@ -1295,6 +1295,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     bugReportSubmit: createBugReportSubmitAction(accountContext ?? null),
     appUpdateAction: executeAppUpdateAction,
     updatesAction: createUpdatesAction(accountContext),
+    saveClientFile: async args => {
+      const { saveClientFile } = await import('@/sync/runtime/files/saveFileBytes');
+      return saveClientFile(args);
+    },
     externalUrlOpen: async ({ url, signal }) => {
       throwIfAborted(signal);
       accountContext?.assertCurrent();

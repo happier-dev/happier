@@ -122,6 +122,7 @@ export type CollectionCardsProps<Item> = Readonly<{
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
   /** Items are still arriving: the grid holds its geometry with skeleton cards. */
   loading?: boolean;
+  loadingRows?: number;
   empty?: ReactNode;
   /** The grid scrolls with the page around it (the Collection's `scroll="page"`): it draws no scroller of its own. */
   pageScroll?: boolean;
@@ -812,9 +813,11 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   const inner = props.width === null ? null : props.width - 2 * GUTTER;
   if (props.loading === true && keys.length === 0) {
     // The last known count, else as many rows as fill what is on screen (the table's skeleton rule).
-    const rowsOnScreen = props.height === null || props.height === undefined
-      ? 1
-      : Math.max(1, Math.ceil(props.height / (geometry.cardHeight + GUTTER)));
+    const rowsOnScreen = props.loadingRows !== undefined
+      ? Math.max(1, props.loadingRows)
+      : props.height === null || props.height === undefined
+        ? 1
+        : Math.max(1, Math.ceil(props.height / (geometry.cardHeight + GUTTER)));
     const count = lastKnownCount.current > 0 ? lastKnownCount.current : geometry.columns * rowsOnScreen;
     const rows: number[][] = [];
     for (let index = 0; index < count; index += 1) {

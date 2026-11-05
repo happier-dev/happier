@@ -426,7 +426,7 @@ export function buildLocalServiceRows(input: Readonly<{
  */
 export function selectLocalServiceRowForInventoryEntry(
     rows: readonly ServiceRow[],
-    entry: Readonly<{ inventoryEntryId: string; port: number }>,
+    entry: Readonly<{ inventoryEntryId?: string; port: number }>,
 ): ServiceRow | null {
     return rows.find((row) => inventoryIdFromTarget(row.target) === entry.inventoryEntryId)
         ?? rows.find((row) => row.target.source === 'inventory_entry' && row.portLabel === `:${entry.port}`)

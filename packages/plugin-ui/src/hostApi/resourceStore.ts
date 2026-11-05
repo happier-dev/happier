@@ -39,6 +39,8 @@ export type PluginUiResourceClient = Readonly<{
     options?: Parameters<PluginUiHostApi['watchResource']>[2]) => Promise<
     Disposable & Readonly<{ admittedDigest?: string }>
   >;
+  /** Host-private Machine push/reconnect signal for a refused transient watch admission. */
+  onWatchRecovery?: (listener: () => void) => Disposable;
   /**
    * The author-facing diagnostic channel for this mount. A refused renderable
    * image is invisible on every user-facing surface by design, so without this
@@ -171,14 +173,11 @@ type MutableEntry = {
   watchUnsupported: boolean;
   /** A terminal protocol/failure arm is not retried for this mount scope. */
   watchFailureTerminal: boolean;
-  watchRetryTimer: ReturnType<typeof setTimeout> | null;
-  watchRetryAttempts: number;
+  watchRecovery: Disposable | null;
   rereadRetryTimer: ReturnType<typeof setTimeout> | null;
   rereadRetryAttempts: number;
 };
 
-/** Retry only a failed initial open; established-watch recovery stays owner-local in the host adapter. */
-const WATCH_OPEN_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
 const RESOURCE_REREAD_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
 
 /**
@@ -208,7 +207,8 @@ export function pluginUiResourceReferenceKey(
   return typeof normalized === 'string'
     ? `bare:${normalized}`
     : 'hostRead' in normalized
-      ? `host:${normalized.hostRead}\u0000${createCanonicalJsonSigningInput(normalized.input)}`
+      ? `host:${normalized.hostRead}\u0000${createCanonicalJsonSigningInput(
+        normalized.hostRead === 'machines.services.logs' || normalized.hostRead === 'deployments.logs' ? normalized : normalized.input)}`
       : `qualified:${normalized.pluginId}\u0000${normalized.localId}`;
 }
 
@@ -433,12 +433,9 @@ export function createPluginUiResourceStore(input: Readonly<{
     };
   }
 
-  function clearWatchRetry(entry: MutableEntry): void {
-    if (entry.watchRetryTimer !== null) {
-      clearTimeout(entry.watchRetryTimer);
-      entry.watchRetryTimer = null;
-    }
-    entry.watchRetryAttempts = 0;
+  function clearWatchRecovery(entry: MutableEntry): void {
+    entry.watchRecovery?.dispose();
+    entry.watchRecovery = null;
   }
 
   function clearRereadRetry(entry: MutableEntry): void {
@@ -452,8 +449,8 @@ export function createPluginUiResourceStore(input: Readonly<{
   function stopWatch(entry: MutableEntry, terminal: boolean): void {
     const hadWatchLifecycle = entry.watch !== null
       || entry.watchEstablishing
-      || entry.watchRetryTimer !== null;
-    clearWatchRetry(entry);
+      || entry.watchRecovery !== null;
+    clearWatchRecovery(entry);
     // A reread retry is meaningful only while this exact watch remains live.
     // Terminal watch events, zero subscribers, disposal, and Account retirement
     // all pass through this owner and therefore cancel it here.
@@ -759,7 +756,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     });
   }
 
-  function scheduleWatchOpenRetry(entry: MutableEntry): void {
+  function waitForWatchRecovery(entry: MutableEntry): void {
     if (
       !isEntryCurrent(entry)
       || entry.liveSubscriberCount === 0
@@ -767,19 +764,13 @@ export function createPluginUiResourceStore(input: Readonly<{
       || entry.watchEstablishing
       || entry.watchUnsupported
       || entry.watchFailureTerminal
-      || entry.watchRetryTimer !== null
+      || entry.watchRecovery !== null
     ) {
       return;
     }
-    const delayMs = WATCH_OPEN_RETRY_BACKOFF_MS[
-      Math.min(entry.watchRetryAttempts, WATCH_OPEN_RETRY_BACKOFF_MS.length - 1)
-    ]!;
-    entry.watchRetryAttempts += 1;
-    entry.watchRetryTimer = setTimeout(() => {
-      entry.watchRetryTimer = null;
-      if (!isEntryCurrent(entry) || entry.liveSubscriberCount === 0) return;
+    entry.watchRecovery = input.client.onWatchRecovery?.(() => {
       startWatch(entry);
-    }, delayMs);
+    }) ?? null;
   }
 
   function startWatch(entry: MutableEntry): void {
@@ -788,9 +779,9 @@ export function createPluginUiResourceStore(input: Readonly<{
       || entry.liveSubscriberCount === 0
       || entry.watch
       || entry.watchEstablishing
-      || entry.watchRetryTimer !== null
     ) return;
     if (entry.watchUnsupported || entry.watchFailureTerminal) return;
+    clearWatchRecovery(entry);
     const watchResource = input.client.watchResource;
     if (!watchResource) {
       entry.watchUnsupported = true;
@@ -819,7 +810,6 @@ export function createPluginUiResourceStore(input: Readonly<{
           }
           return;
         }
-        clearWatchRetry(entry);
         entry.watch = watch;
         entry.watchEstablishing = false;
         publish(entry, { ...entry.snapshot, subscription: 'live' });
@@ -872,9 +862,9 @@ export function createPluginUiResourceStore(input: Readonly<{
         }
         if (failure.unsupported || !failure.retryable || hasLostResourceReadAuthority(resourceError)) return;
         // A transient live transport failure never makes Resource bytes
-        // unavailable. Keep one LKG owner, refresh it canonically, and retry
-        // only the failed initial open at a bounded rate.
-        scheduleWatchOpenRetry(entry);
+        // unavailable. Keep one LKG owner and wait for the host's existing
+        // Machine push/reconnect or an explicit Refresh, never an idle timer.
+        waitForWatchRecovery(entry);
       },
     );
   }
@@ -903,8 +893,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       watchEstablishing: false,
       watchUnsupported: false,
       watchFailureTerminal: false,
-      watchRetryTimer: null,
-      watchRetryAttempts: 0,
+      watchRecovery: null,
       rereadRetryTimer: null,
       rereadRetryAttempts: 0,
     };
@@ -984,6 +973,7 @@ export function createPluginUiResourceStore(input: Readonly<{
                 error: Object.freeze({ code: 'plugin_surface_retired', message: 'Resource surface is retired.' }) }));
               return;
             }
+            if (entry!.snapshot.subscription === 'reconnecting') startWatch(entry!);
             (entry!.reading ? entry!.queuedRefreshWaiters : entry!.refreshWaiters).add(resolve);
             requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
           });

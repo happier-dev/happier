@@ -257,7 +257,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const selectedEnvironment = await resolveProjectEnvironmentSelection({ root, selection: environmentSelection });
         if (selectedEnvironment.kind === 'refused') return refuse(selectedEnvironment.code);
         // Unevaluated Nix is a passive inspection fact, not an unsupported
-        // environment. Review its bytes here; the qualified native producer
+        // toolchain. Review its bytes here; the qualified native producer
         // evaluates under the admitted setup consent or terminal approval.
         if (selectedEnvironment.coverage === 'partial'
             && (selectedEnvironment.diagnostics.length === 0

@@ -9,6 +9,8 @@ import {
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import type { PluginUiResourceClient, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
+import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
@@ -85,7 +87,7 @@ function resourceClientFailure(
  * a resource cache, Session registry, or plugin-visible Activity id.
  */
 export function createPluginContextualResourceWatchClient(input: Readonly<{
-    pluginId: string;
+    pluginId?: string;
     resource: PluginContextualResourceBinding;
     subscriptionIdPrefix: string;
     isCurrent?: () => boolean;
@@ -93,16 +95,29 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
     delayMs?: (ms: number, signal: AbortSignal) => Promise<void>;
 }>): Readonly<{
     watchResource: NonNullable<PluginUiResourceClient['watchResource']>;
+    onWatchRecovery: NonNullable<PluginUiResourceClient['onWatchRecovery']>;
 }> {
     const owner = createContextualResourceWatchOwner(input);
     let nextSubscription = 0;
     return Object.freeze({
+        onWatchRecovery(listener) {
+            const machineId = input.resource.machineId;
+            const release = machineId === null ? () => {} : subscribeMachineContributionRegistryProjectionInvalidation({
+                machineId, serverId: input.resource.serverId ?? null,
+            }, listener);
+            return { dispose: release };
+        },
         async watchResource(resource, listener, options) {
-            const reference = readPluginSurfaceResourceReference(input.pluginId, resource);
+            const host = 'hostResource' in input.resource ? input.resource.hostResource : null;
+            const hostReference = host ? PluginUiHostReadReferenceV1Schema.safeParse(resource) : null;
+            if (host && (!hostReference?.success
+                || pluginUiResourceReferenceKey(hostReference.data, null) !== pluginUiResourceReferenceKey(host, null)))
+                return resourceClientFailure('plugin_resource_request_invalid', 'Host Resource reference is not current');
+            const reference = host ? { localId: host.hostRead } : input.pluginId ? readPluginSurfaceResourceReference(input.pluginId, resource) : null;
             if (!reference) {
                 return resourceClientFailure('plugin_resource_request_invalid', 'Resource reference is invalid');
             }
-            if (reference.pluginId !== input.pluginId) {
+            if (!host && 'pluginId' in reference && reference.pluginId !== input.pluginId) {
                 return resourceClientFailure('plugin_resource_not_found', 'Resource is not declared for this plugin');
             }
             if (typeof listener !== 'function') {
@@ -129,7 +144,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
                 return resourceClientFailure(
                     opened.reason,
                     opened.reason,
-                    { retryable: !opened.terminal },
+                    { ...opened.metadata, retryable: !opened.terminal },
                 );
             }
             if (signal?.aborted || input.isCurrent?.() === false) {
@@ -154,6 +169,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
         },
     } satisfies Readonly<{
         watchResource: NonNullable<PluginUiResourceClient['watchResource']>;
+        onWatchRecovery: NonNullable<PluginUiResourceClient['onWatchRecovery']>;
     }>);
 }
 

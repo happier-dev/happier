@@ -38,6 +38,7 @@ export function resolveMachineServiceLogsApprovalLifetime(actionId: ActionId | n
     const admitted = MachineServiceLogsReadInputV1Schema.safeParse(input);
     const original = MachineServiceLogsReadInputV1Schema.safeParse(envelope.input);
     const reference = envelope.resourceContinuation?.params.resource;
+    if (reference && reference.hostRead !== 'machines.services.logs') return undefined;
     if (!admitted.success || !original.success || !sameStrictJsonValue(admitted.data, original.data)
       || (envelope.machineServiceLogsGeneration?.expectedGeneration ?? reference?.expectedGeneration) !== resource.expectedGeneration
       || envelope.machineServiceLogsGeneration && envelope.machineServiceLogsGeneration.expectedGeneration !== resource.expectedGeneration

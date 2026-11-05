@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { isPluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol';
+import { ManagedServiceNativeLogResultV1Schema, MachineServicesListResultV1Schema, DeploymentActionOutputSchemasV1,
+    DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -12,8 +13,9 @@ import type { RegisterActionSpecRpcHandlersParams } from './registerActionSpecRp
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
-type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' }>;
+type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
 type ReadObservation = NonNullable<NonNullable<ActionExecutorContext['machineServiceLogsResource']>['observation']>
     & Readonly<{ invalidate(): void }>;
 
@@ -100,13 +102,22 @@ export function createDaemonHostResourceRead(input: Readonly<{
         const result = await executor.execute(actionId, request, {
             ...buildActionExecutorContextForRpc({ ...context, actionId, serverId: request.serverId }),
             ...context?.localActionContext,
-            machineServiceLogsResource: { expectedGeneration: reference.expectedGeneration,
-                sourceRevision: reference.sourceRevision,
-                ...(observation ? { observation } : {}) },
+            ...(reference.hostRead === 'machines.services.logs' || reference.hostRead === 'deployments.logs' ? {
+                machineServiceLogsResource: { expectedGeneration: reference.hostRead === 'deployments.logs' ? reference.sourceRevision : reference.expectedGeneration,
+                    sourceRevision: reference.sourceRevision,
+                    ...(observation ? { observation } : {}) },
+            } : observation ? { machineServicesListResource: observation } : {}),
         });
         await current(context);
         if (!result.ok) throw new PluginError({ code: result.errorCode, message: result.error });
-        const value = ManagedServiceNativeLogResultV1Schema.parse(result.result);
+        const deploymentLogs = reference.hostRead === 'deployments.logs' ? DeploymentActionOutputSchemasV1['deployments.logs.read'].parse(result.result) : null;
+        if (deploymentLogs && !deploymentLogs.ok) throw new PluginError({ code: deploymentLogs.error });
+        const edge = reference.hostRead === 'deployments.health.edge'
+            ? DeploymentHealthCurrentResultV1Schema.parse(result.result) : null;
+        if (edge && !edge.ok) throw new PluginError({ code: edge.error });
+        const value = edge?.ok ? edge : deploymentLogs?.ok ? deploymentLogs.logs : reference.hostRead === 'machines.services.list'
+            ? MachineServicesListResultV1Schema.parse(result.result)
+            : ManagedServiceNativeLogResultV1Schema.parse(result.result);
         const bytes = Buffer.from(JSON.stringify(value), 'utf8');
         const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}` as const;
         return { value, bytes, digest };
@@ -118,6 +129,27 @@ export function createDaemonHostResourceRead(input: Readonly<{
         read,
         async observe(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
             signal: AbortSignal, emit: (digest: string) => void, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
+            if (reference.hostRead === 'deployments.health.edge') {
+                const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                const projection = lease?.registry.currentDomainEdgeObservation;
+                if (!lease || !projection) {
+                    await lease?.release();
+                    throw new PluginError({ code: 'service_unavailable' });
+                }
+                const onChange = projection.subscribe(() => {
+                    if (signal.aborted) return;
+                    void read(reference, machineId, context).then(value => {
+                        if (!signal.aborted) emit(value.digest);
+                    }).catch(error => {
+                        if (!signal.aborted) end({ code: 'unavailable',
+                            diagnostics: [isPluginError(error) ? error.code : 'plugin_resource_unavailable'] });
+                    });
+                });
+                try {
+                    const initial = await read(reference, machineId, context);
+                    return { digest: initial.digest, async dispose() { onChange.dispose(); await lease.release(); } };
+                } catch (error) { onChange.dispose(); await lease.release(); throw error; }
+            }
             const retire = () => end();
             const unavailable = (error: unknown) => {
                 if (!signal.aborted) end({ code: 'unavailable',

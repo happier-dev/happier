@@ -362,6 +362,7 @@ type HarnessOptions = Readonly<{
   grouping?: HappierCollectionGrouping<Entry>;
   boardLayout?: CollectionProps<Entry>['boardLayout'];
   loading?: boolean;
+  loadingRows?: number;
   empty?: React.ReactNode;
   anatomy?: CollectionAnatomy<Entry>;
   header?: CollectionProps<Entry>['header'];
@@ -453,6 +454,7 @@ function Harness(props: HarnessProps): ReactElement {
         : { detailHeader: props.detailHeader })}
       windowStatement="3 loaded · complete"
       {...(props.loading === undefined ? {} : { loading: props.loading })}
+      {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}
       {...(props.empty === undefined ? {} : { empty: props.empty })}
       {...(props.header === undefined ? {} : { header: props.header })}
       {...(props.footer === undefined ? {} : { footer: props.footer })}
@@ -3685,6 +3687,30 @@ describe('grid', () => {
     expect(count).toBeGreaterThan(4);
     view.measure(1440, 9000);
     expect(view.queryAll('collection:skeleton-card')).toHaveLength(count);
+    view.unmount();
+  });
+
+  it('reserves only the rows a page grid will render when the caller knows them (a shelf\'s one row)', () => {
+    const view = mount({
+      presentation: 'grid',
+      scroll: 'page',
+      grouped: false,
+      anatomy: described,
+      items: [],
+      loading: true,
+      loadingRows: 1,
+    });
+    const viewport = view.query('collection') as unknown as {
+      __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void;
+    };
+    act(() => {
+      viewport.__reactLayoutHandler?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 800 } },
+      });
+    });
+    view.measure(1440, 800);
+    // 1440 fits four cards: one row of them, not the rows that would fill the page.
+    expect(view.queryAll('collection:skeleton-card')).toHaveLength(4);
     view.unmount();
   });
 

@@ -50,6 +50,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     let reconciled: Intent | null | undefined;
     let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let reconciliation: Promise<void> | undefined;
+    const intentListeners = new Set<() => void>();
     const adoptedHandles = new Map<string, MachineManagedServiceHandle>();
     const readIntent = () => {
         const metadata = input.readMetadata();
@@ -153,6 +154,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             }
             reconciled = intent;
             registry = lease.registry;
+            if (changed) for (const listener of intentListeners) listener();
         } finally { await lease.release(); }
     }
     async function reconcile(serviceId?: string): Promise<void> {
@@ -278,6 +280,57 @@ export function createMachineServicesRuntime(input: Readonly<{
             if (request.actionId === 'machines.services.list' || request.actionId === 'machines.services.detail') {
                 const serviceId = 'serviceId' in parsed.data ? parsed.data.serviceId : undefined;
                 const environmentId = 'environmentId' in parsed.data ? parsed.data.environmentId : undefined;
+                const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource : undefined;
+                if (observation) {
+                    const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                    if (!lease || observation.signal.aborted) { await lease?.release(); return unavailable(); }
+                    try {
+                        const owner = lease.registry.projectManagedServices;
+                        const homeServerIdentityId = await resolveServerProfileHomeIdentityId(target.serverId);
+                        const invalidate = () => { if (!observation.signal.aborted) observation.invalidate(); };
+                        // Demand-time baseline only. Subscribe before the admitted read so creation/retirement cannot fall in a read→watch gap.
+                        const initial = [...owner.listMachineServices(), ...owner.listProjectServices()].filter(handle =>
+                            (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === target.machineId
+                            && (!environmentId || handle.kind === 'environment' && handle.environmentId === environmentId));
+                        const subscription = owner.machineServiceRows.subscribe(target.machineId, initial, change => {
+                            if ((!environmentId || change.handle.kind === 'environment' && change.handle.environmentId === environmentId)
+                                && (target.serverId === change.serverId
+                                    || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) invalidate();
+                        });
+                        if (!environmentId) intentListeners.add(invalidate);
+                        let released = false;
+                        let accessSubscription: { dispose(): Promise<void> } | undefined;
+                        const dispose = async () => {
+                            if (released) return;
+                            released = true;
+                            observation.signal.removeEventListener('abort', dispose);
+                            intentListeners.delete(invalidate);
+                            subscription.dispose();
+                            await accessSubscription?.dispose();
+                        };
+                        observation.signal.addEventListener('abort', dispose, { once: true });
+                        observation.accept({ dispose });
+                        if (request.observeEnvironmentAccessChanges) {
+                            // Subscribe before the initial ACL read. Its initial reset is covered by that read;
+                            // subsequent authority changes retire this open disclosure, never grant access.
+                            let establishing = true;
+                            const access = await request.observeEnvironmentAccessChanges(event => {
+                                if (observation.signal.aborted) return;
+                                if (event.kind === 'retired' || !establishing && (event.kind === 'reset'
+                                    || (environmentId ? event.environmentIds.includes(environmentId)
+                                        : owner.listProjectServices().some(handle => handle.kind === 'environment'
+                                            && handle.machineId === target.machineId && event.environmentIds.includes(handle.environmentId))))) {
+                                    observation.retire();
+                                }
+                            });
+                            establishing = false;
+                            if ('errorCode' in access) { await dispose(); return access; }
+                            accessSubscription = access;
+                            if (released) await access.dispose();
+                        }
+                        if (observation.signal.aborted) { await dispose(); return unavailable(); }
+                    } finally { await lease.release(); }
+                }
                 const projection = await projectServices(request, serviceId, environmentId);
                 if (!projection) return unavailable();
                 if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows };
