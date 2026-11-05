@@ -5,7 +5,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 export const VoiceAttemptFailureKindSchema = lazyZodSchema(() => z.enum([
   'mic_permission_denied', 'mic_unavailable', 'speech_recognition_unavailable', 'mic_permission_revoked',
   'mic_ended', 'mic_plateau', 'transport_disconnect', 'provider_error', 'provider_auth_invalid',
-  'provider_setup_required', 'execution_machine_unavailable', 'reconnect_exhausted', 'audio_context_suspended',
+  'provider_setup_required', 'execution_machine_unavailable', 'audio_context_suspended',
   'stt_timeout', 'tts_failed', 'turn_aborted', 'authentication_required', 'session_unavailable',
   'unsupported_runtime', 'update_required', 'feature_unavailable', 'service_temporarily_unavailable',
 ]));

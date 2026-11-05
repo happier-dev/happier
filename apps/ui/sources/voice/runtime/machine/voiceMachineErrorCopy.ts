@@ -71,8 +71,6 @@ export function resolveVoiceMachineErrorTranslationKey(
     switch (kind) {
         case 'mic_permission_revoked':
             return VOICE_MACHINE_ERROR_TRANSLATION_KEYS.mic_permission_denied;
-        case 'reconnect_exhausted':
-            return VOICE_MACHINE_ERROR_TRANSLATION_KEYS.transport_disconnect;
         default:
             return VOICE_MACHINE_ERROR_TRANSLATION_KEYS[kind];
     }
