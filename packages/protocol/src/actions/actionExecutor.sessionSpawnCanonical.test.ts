@@ -175,6 +175,7 @@ describe('session.spawn_new canonical execution', () => {
   });
 
   it.each([
+    { failure: new RpcError('private Machine content details', 'MACHINE_ENCRYPTION_UNAVAILABLE'), code: 'spawn_failed', retryable: false },
     { failure: new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN), code: 'permission_denied', retryable: false },
     { failure: new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE), code: 'incompatible_target', retryable: false },
     { failure: Object.assign(new Error('Machine RPC timed out'), { code: 'MACHINE_RPC_TIMEOUT' }), code: 'spawn_failed', retryable: true },
@@ -189,6 +190,12 @@ describe('session.spawn_new canonical execution', () => {
     const result = await createActionExecutor(deps as ActionExecutorDeps).execute('session.spawn_new', canonicalInput,
       { surface: 'ui', authority: 'present_user' });
     expect(result).toMatchObject({ ok: true, result: { type: 'error', code, retryable } });
+    if (failure instanceof RpcError && failure.rpcErrorCode === 'MACHINE_ENCRYPTION_UNAVAILABLE') {
+      expect(result).toMatchObject({ result: { launchError: {
+        kind: 'launch_error', code: failure.rpcErrorCode, message: failure.rpcErrorCode,
+      } } });
+      expect(JSON.stringify(result)).not.toContain('private Machine content details');
+    }
     if (code === 'incompatible_target') expect(result).toMatchObject({ result: {
       incompatibleTarget: { reason: 'target_preparation_rpc_unavailable' },
     } });

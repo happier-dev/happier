@@ -81,6 +81,7 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'VOICE_AGENT_TARGET_MACHINE_OFFLINE'
         || reason === 'VOICE_CONVERSATION_TARGET_MISSING'
         || reason === 'VOICE_AGENT_TARGET_MACHINE_KEY_UNAVAILABLE'
+        || reason === 'MACHINE_ENCRYPTION_UNAVAILABLE'
         || reason === 'daemon_streaming_stt_machine_unreachable') return 'execution_machine_unavailable';
     if (preferredKind) return preferredKind;
     if (isVoiceMachineErrorKind(reason)) return reason;

@@ -1,11 +1,13 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { readRpcErrorCode } from '../../rpc/errors.js';
 
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
 import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
 import type { SessionSpawnNewInputV2 } from './sessionSpawnNewInputV2.js';
+import type { SessionSpawnNewResultV1 } from './sessionSpawnNewResultV1.js';
 import type { SessionExecutionTargetV1 } from './sessionExecutionTargetV1.js';
 
 /**
@@ -71,6 +73,54 @@ export const SessionCreationTargetPreparationResultV1Schema = lazyZodSchema(() =
 export type SessionCreationTargetPreparationResultV1 = z.infer<
   typeof SessionCreationTargetPreparationResultV1Schema
 >;
+
+/** One response owner for UI and CLI preparation, including pre-handler RPC refusals.
+ * Only classified preparation causes are exposed; daemon error prose stays private.
+ */
+export function readSessionCreationTargetPreparationResultV1(raw: unknown):
+  | Readonly<{ ok: true; preparedTarget: Extract<SessionCreationTargetPreparationResultV1, { ok: true }> }>
+  | Readonly<{ ok: false; result: Extract<SessionSpawnNewResultV1, { type: 'error' }> }> {
+  const prepared = SessionCreationTargetPreparationResultV1Schema.safeParse(raw);
+  if (prepared.success) return prepared.data.ok
+    ? { ok: true, preparedTarget: prepared.data }
+    : { ok: false, result: projectSessionCreationTargetPreparationFailureV1(prepared.data) };
+  const refusal = projectSessionCreationTargetPreparationRpcFailureV1(raw);
+  if (refusal) return { ok: false, result: refusal };
+  return { ok: false, result: { type: 'error', code: 'incompatible_target', retryable: false,
+    incompatibleTarget: { reason: 'target_preparation_invalid_result' } } };
+}
+
+/** Raw UI replies and CLI transport exceptions carry the same classified refusal. */
+export function projectSessionCreationTargetPreparationRpcFailureV1(
+  error: unknown,
+): Extract<SessionSpawnNewResultV1, { type: 'error' }> | null {
+  const code = readRpcErrorCode(error) ?? (
+    error !== null && typeof error === 'object' && !('ok' in error)
+      && 'error' in error && typeof error.error === 'string' && 'errorCode' in error
+      ? error.errorCode : undefined
+  );
+  return code === 'agent_isolation_unavailable' || code === 'filesystem_identity_custody_unavailable'
+    || code === 'MACHINE_ENCRYPTION_UNAVAILABLE'
+    ? { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code, message: code } }
+    : null;
+}
+
+/** Creation adapters preserve the target's closed refusal vocabulary identically. */
+export function projectSessionCreationTargetPreparationFailureV1(
+  failure: Extract<SessionCreationTargetPreparationResultV1, { ok: false }>,
+): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
+  switch (failure.code) {
+    case 'invalid_directory':
+      return { type: 'error', code: 'invalid_input', retryable: false };
+    case 'checkout_unavailable':
+      return { type: 'error', code: 'incompatible_target', retryable: false,
+        incompatibleTarget: { reason: 'checkout_unavailable' } };
+    case 'checkout_failed':
+      return { type: 'error', code: 'spawn_failed', retryable: true,
+        launchError: { kind: 'launch_error', code: failure.code, message: failure.code } };
+  }
+}
 
 /** Worktrees and managed directories retain their separate materialization owner. */
 export function needsSessionCreationDirectoryApprovalPreflightV1(

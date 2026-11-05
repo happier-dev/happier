@@ -518,6 +518,7 @@ import {
 import {
   SessionCreationDirectoryApprovalV1Schema,
   type SessionCreationDirectoryApprovalV1,
+  projectSessionCreationTargetPreparationRpcFailureV1,
 } from '../sessions/creation/sessionCreationTargetPreparationV1.js';
 import { ExecutionRunSendRequestSchema } from '../execution/runs/index.js';
 import { ExecutionRunCancelTurnRequestSchema } from '../execution/runs/cancelTurn.js';
@@ -2617,6 +2618,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         });
       } catch (error) {
         const rpcCode = readRpcErrorCode(error);
+        const preparationFailure = !ctx.signal?.aborted && projectSessionCreationTargetPreparationRpcFailureV1(error);
+        if (preparationFailure) return completeSpawnActionResult(preparationFailure);
         if (!ctx.signal?.aborted && (rpcCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcCode === RPC_ERROR_CODES.METHOD_NOT_FOUND)) {
           return completeSpawnActionResult({ type: 'error', code: 'incompatible_target', retryable: false,
             incompatibleTarget: { reason: 'target_preparation_rpc_unavailable' } });

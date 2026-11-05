@@ -13,6 +13,14 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
+    it('presents a directory-preflight Machine content refusal with the Machine remedy', () => {
+        const refusal = createRpcCallError({ error: 'private Machine content details', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+        const failure = classifyVoiceMachineError(refusal, { kind: 'provider_error' });
+        expect(failure).toMatchObject({ kind: 'execution_machine_unavailable',
+            reason: 'MACHINE_ENCRYPTION_UNAVAILABLE', presentation: 'error' });
+        expect(resolveVoiceMachineErrorTranslationKey(failure.kind, failure.reason))
+            .toBe('voice.readiness.execution_machine_missing');
+    });
     it.each(['VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED', 'execution_run_protocol_unsupported'])(
         'keeps the backend refusal %s actionable through first-Send rejection', code => {
             const refusal = createRpcCallError({ error: 'private backend details', errorCode: code });

@@ -4,16 +4,18 @@ import { GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID, GLOBAL_VOICE_AGENT_STARTUP_
 import { SessionOrganizationSnapshotResponseSchema} from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { SessionSpawnNewInputV2Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { SessionSpawnNewResultV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedHomeAccountToken, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -28,6 +30,7 @@ import { captureMachinePresenceObservation } from '@/sync/domains/machines/reach
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -36,6 +39,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
 let state: any = { sessions: {}, machines: {}, machineListByServerId: {}, authoringMemory: {}, settings: {} };
 let homeId = '';
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let actionHttp: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
 const spawnSession = vi.fn();
 const readSessions = vi.fn();
 const readSession = vi.fn();
@@ -115,9 +119,11 @@ function publishCarrierFixture(observePresence = true) {
     return [id, session];
   }));
   const machines = Object.fromEntries(Object.entries(state.machines).map(([id, partial]) => [id,
-    createMachineFixture({ activeAt: (partial as ReturnType<typeof createMachineFixture>).active === false ? 0 : Date.now(), ...partial as Parameters<typeof createMachineFixture>[0], id })]));
+    createMachineFixture({ storageMode: 'plain', access: createPlainMachineRowFixture({ id, accountId: 'voice-account' }).access,
+      activeAt: (partial as ReturnType<typeof createMachineFixture>).active === false ? 0 : Date.now(), ...partial as Parameters<typeof createMachineFixture>[0], id })]));
   captureCarrierSessionRecords();
-  storage.setState({ sessions: structuredClone(sessions), machines: structuredClone(machines), machineListByServerId: structuredClone(state.machineListByServerId),
+  storage.setState({ sessions: structuredClone(sessions), machines: structuredClone(machines),
+    machineListByServerId: structuredClone({ [homeId]: Object.values(machines), ...state.machineListByServerId }),
     authoringMemory: structuredClone(state.authoringMemory), settings: settingsParse(state.settings) });
   // Authored current Machine fixtures include their presence observation; they
   // are not a cache retained from the previous Account transport's teardown.
@@ -127,6 +133,10 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   const purposeResponse = await purposes.handle(input, init);
   if (purposeResponse) return purposeResponse;
   const path = new URL(String(input)).pathname;
+  if (path.startsWith('/v1/actions/')) {
+    const response = await actionHttp?.handle(new URL(String(input)), init);
+    if (response) return response;
+  }
   if (path === '/health') return Response.json({});
   if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
   if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: 0 });
@@ -137,6 +147,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
   if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
   if (path === '/v1/artifacts') return Response.json([]);
+  if (path === '/v1/machines/managed/actions/list') return Response.json(ManagedListOutputV1Schema.parse({ machines: [] }));
   if (path === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
     schemaVersion: 1, version: 0, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
   } }));
@@ -145,6 +156,8 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     const machines = { ...Object.fromEntries((state.machineListByServerId[homeId] ?? []).map((machine: ReturnType<typeof createMachineFixture>) => [machine.id, machine])), ...state.machines };
     const rows = Object.entries(machines).map(([id, partial]) => ({ ...createPlainMachineRowFixture({ id, accountId: 'voice-account' }),
       ...partial as Parameters<typeof createMachineFixture>[0],
+      installationId: actionHttp?.machine.installationId,
+      installationPublicKey: actionHttp?.machine.installationPublicKey,
       activeAt: (partial as ReturnType<typeof createMachineFixture>).activeAt ?? ((partial as ReturnType<typeof createMachineFixture>).active === false ? 0 : Date.now()),
       metadata: (partial as ReturnType<typeof createMachineFixture>).metadata === null ? null : encodePlainMachineStoredContent({ ...createMachineFixture().metadata, ...(partial as ReturnType<typeof createMachineFixture>).metadata }),
     }));
@@ -236,8 +249,15 @@ describe('voiceConversationSession', () => {
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.setState({ autoTargetMachineByScope: {}, scope: 'global', primaryActionSessionAddress: null, voiceLiveContextSessionAddresses: [], lastFocusedSessionAddress: null });
     state = { settings: {} };
-    account = await restoreServerAccountForTest({ serverUrl: 'https://voice-carrier.example.test', accountId: 'voice-account', credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(respondToServerRequest) });
-    homeId = account.home.id;
+    actionHttp = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://voice-carrier.example.test',
+      serverIdentityId: 'srv_voice-carrier-home', accountId: 'voice-account', machineId: 'm1', actionId: 'session.spawn_new',
+      tokenEpoch: 0, execute: async input => projectSessionSpawnNewActionResultV1(
+        SessionSpawnNewResultV1Schema.parse(await dispatchMachineRpc(RPC_METHODS.SESSION_SPAWN_NEW, input))) });
+    account = await restoreServerAccountForTest({ serverUrl: 'https://voice-carrier.example.test',
+      serverIdentityId: 'srv_voice-carrier-home', accountId: 'voice-account',
+      credentials: { token: createServedHomeAccountToken('voice-account', true) },
+      credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(respondToServerRequest) });
+    homeId = account.serverId;
     state = { sessions: {}, machines: {}, machineListByServerId: {}, authoringMemory: {}, settings: {} };
     storage.setState({ sessionListIndexByServerId: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} });
     state.machines = {
@@ -265,7 +285,7 @@ describe('voiceConversationSession', () => {
     };
   });
 
-  it('ensureVoiceConversationSessionId spawns and then marks the session as a hidden voice conversation', async () => {
+  it.each([false, true])('ensureVoiceConversationSessionId spawns and marks a hidden conversation after retained Machine recovery (%s)', async recovered => {
     const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
@@ -277,8 +297,19 @@ describe('voiceConversationSession', () => {
       };
     });
 
+    if (recovered) state.machines.m1.active = false;
     publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
+    if (recovered) {
+      const retainedMachine = storage.getState().machines.m1!;
+      state.machines.m1.active = true;
+      publishMachineActivity(retainedMachine, { active: true, activeAt: Date.now() }, []);
+    }
+    const outcome = await ensureVoiceConversationSessionId().then(sessionId => ({ sessionId }), async error => {
+      const { getBugReportUserActionTrail } = await import('@/utils/system/bugReportActionTrail');
+      return { failure: error instanceof Error ? error.message : 'unknown', spawnCalls: spawnSession.mock.calls.length,
+        trail: getBugReportUserActionTrail().filter(item => item.action.startsWith('session.spawn_new.')) };
+    });
+    expect(outcome).toEqual({ sessionId: 'sys_voice' });
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm1' },
@@ -291,6 +322,25 @@ describe('voiceConversationSession', () => {
       .not.toHaveProperty('agentSessionStartupInstructionsV1');
 
     expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'sys_voice')?.systemSessionV1).toMatchObject({ v: 1, key: 'voice_conversation', hidden: true });
+  });
+
+  it('retains the directory-preflight Machine content refusal for the Voice presenter', async () => {
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
+    // A readable projection without mode/access cannot authorize an RPC payload.
+    state.machines.m1.storageMode = undefined;
+    state.machines.m1.access = undefined;
+    publishCarrierFixture();
+    const failure = await ensureVoiceConversationSessionId().then(() => null, (error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: 'MACHINE_ENCRYPTION_UNAVAILABLE', message: 'MACHINE_ENCRYPTION_UNAVAILABLE',
+    });
+    const { classifyVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+    const { resolveVoiceMachineErrorTranslationKey } = await import('@/voice/runtime/machine/voiceMachineErrorCopy');
+    const presented = classifyVoiceMachineError(failure, { kind: 'provider_error' });
+    expect(presented).toMatchObject({ kind: 'execution_machine_unavailable', reason: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+    expect(resolveVoiceMachineErrorTranslationKey(presented.kind, presented.reason))
+      .toBe('voice.readiness.execution_machine_missing');
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('sends global startup instructions only when the old/new daemon projection declares V1', async () => {

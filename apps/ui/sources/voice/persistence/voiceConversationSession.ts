@@ -207,7 +207,6 @@ function resolveVoiceHomeDirectory(state: any, machineId: string): string | null
     const agentCfg = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(state)).agent;
     const subdir = normalizeNonEmptyString(agentCfg?.voiceHomeSubdirName) ?? 'voice-agent';
     const machine = resolveMachineForActiveServerFromState(state, machineId);
-    if (machine && machine.active === false) return null;
     const happyHomeDir = normalizeNonEmptyString(machine?.metadata?.happyHomeDir);
     if (happyHomeDir) {
         return resolveMachineAbsolutePath({

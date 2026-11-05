@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { readMachineActionRpcResult } from '../../actions/executor/actionFailureEnvelope.js';
 import { deriveSessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 
 import {
   SessionCreationTargetPreparationRequestV1Schema,
   SessionCreationTargetPreparationResultV1Schema,
+  readSessionCreationTargetPreparationResultV1,
 } from './sessionCreationTargetPreparationV1.js';
 
 describe('Session creation target preparation V1', () => {
+  it.each(['agent_isolation_unavailable', 'filesystem_identity_custody_unavailable', 'MACHINE_ENCRYPTION_UNAVAILABLE'] as const)(
+    'preserves %s after the real CLI Machine transport envelope reader throws it', code => {
+    let refused: unknown;
+    try {
+      readMachineActionRpcResult({ error: 'private native detail', errorCode: code,
+        details: { directory: '/private/requester/home', reason: 'private custody detail' } });
+    } catch (error) { refused = error; }
+    expect(readSessionCreationTargetPreparationResultV1(refused)).toEqual({ ok: false,
+      result: { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code, message: code } } });
+  });
+
   it('carries the canonical creation tag for a managed intent without accepting a raw creation key', () => {
     const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'attempt' });
     expect(SessionCreationTargetPreparationRequestV1Schema.parse({ directory: { kind: 'managed' }, sessionCreationTag }))
