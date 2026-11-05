@@ -54,10 +54,14 @@ describe('canonical model price catalog', () => {
   it('projects standard text-token rates from the heterogeneous public file without inventing cache prices', () => {
     const catalog = parseLiteLlmModelPriceCatalog({ sample_spec: {}, model: { mode: 'chat', input_cost_per_token: 0.000002,
       output_cost_per_token: 0.00001, cache_read_input_token_cost: 0.0000002, input_cost_per_token_above_200k_tokens: 9 },
-      image: { mode: 'image_generation', input_cost_per_token: 1, output_cost_per_token: 2 } }, bundledUsageModelPriceCatalog.provenance);
+      image: { mode: 'image_generation', input_cost_per_token: 1, output_cost_per_token: 2 },
+      malformed: { mode: 'chat', input_cost_per_token: -1, output_cost_per_token: 1 },
+      ' ': { mode: 'chat', input_cost_per_token: 1, output_cost_per_token: 1 },
+    }, bundledUsageModelPriceCatalog.provenance);
     expect(Object.keys(catalog.models)).toEqual(['model']);
     expect(catalog.models.model).toMatchObject({ inputUsdPerMillion: 2, outputUsdPerMillion: 10 });
     expect(catalog.models.model?.cacheReadUsdPerMillion).toBeCloseTo(0.2);
+    expect(resolveUsageModelPrice('malformed', catalog)).toBeNull();
     const tokens = { total: 1_000_000, input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000, reasoning: 0 };
     expect(estimateUsageModelCost('model', tokens, catalog)).toBeNull();
     expect(() => parseLiteLlmModelPriceCatalog({ model: { mode: 'chat', input_cost_per_token: -1, output_cost_per_token: 1 } }, catalog.provenance)).toThrow();

@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { LITELLM_BUNDLED_SNAPSHOT } from './usageModelPriceSnapshot.js';
-import { canonicalUsageModelPriceId, UsageModelPriceCatalogSchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance, type UsageModelPriceRates, type UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
+import { canonicalUsageModelPriceId, UsageModelPriceCatalogSchema, UsageModelPriceEntrySchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance, type UsageModelPriceRates, type UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
 export * from './usageModelPriceSchemas.js';
 
 export const LITELLM_MODEL_PRICE_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
@@ -12,6 +12,8 @@ export function parseLiteLlmModelPriceCatalog(value: unknown, provenance: UsageM
   const models: UsageModelPriceCatalog['models'] = {};
   for (const [id, raw] of Object.entries(value)) {
     if (id === 'sample_spec' || raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const modelId = UsageModelPriceCatalogSchema.shape.models._zod.def.keyType.safeParse(id);
+    if (!modelId.success) continue;
     const mode = Reflect.get(raw, 'mode');
     if (mode !== 'chat' && mode !== 'completion') continue;
     const input = Reflect.get(raw, 'input_cost_per_token');
@@ -23,19 +25,24 @@ export function parseLiteLlmModelPriceCatalog(value: unknown, provenance: UsageM
       if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) throw new Error('model_price_file_invalid');
       return amount * 1_000_000;
     };
-    const cacheRead = readRate('cache_read_input_token_cost');
-    const cacheWrite = readRate('cache_creation_input_token_cost');
-    const reasoning = readRate('output_cost_per_reasoning_token');
-    const provider: unknown = Reflect.get(raw, 'litellm_provider');
-    const source: unknown = Reflect.get(raw, 'source');
-    const sourceUrl = typeof source === 'string' && z.url().safeParse(source).success ? source : undefined;
-    Object.defineProperty(models, id, { enumerable: true, configurable: true, writable: true, value: {
-      inputUsdPerMillion: readRate('input_cost_per_token'), outputUsdPerMillion: readRate('output_cost_per_token'),
-      ...(cacheRead === undefined ? {} : { cacheReadUsdPerMillion: cacheRead }),
-      ...(cacheWrite === undefined ? {} : { cacheWriteUsdPerMillion: cacheWrite }),
-      ...(reasoning === undefined ? {} : { reasoningUsdPerMillion: reasoning }),
-      ...(typeof provider === 'string' && provider ? { provider } : {}), ...(sourceUrl ? { sourceUrl } : {}),
-    } });
+    try {
+      const cacheRead = readRate('cache_read_input_token_cost');
+      const cacheWrite = readRate('cache_creation_input_token_cost');
+      const reasoning = readRate('output_cost_per_reasoning_token');
+      const provider: unknown = Reflect.get(raw, 'litellm_provider');
+      const source: unknown = Reflect.get(raw, 'source');
+      const sourceUrl = typeof source === 'string' && z.url().safeParse(source).success ? source : undefined;
+      const entry = UsageModelPriceEntrySchema.safeParse({
+        inputUsdPerMillion: readRate('input_cost_per_token'), outputUsdPerMillion: readRate('output_cost_per_token'),
+        ...(cacheRead === undefined ? {} : { cacheReadUsdPerMillion: cacheRead }),
+        ...(cacheWrite === undefined ? {} : { cacheWriteUsdPerMillion: cacheWrite }),
+        ...(reasoning === undefined ? {} : { reasoningUsdPerMillion: reasoning }),
+        ...(typeof provider === 'string' && provider ? { provider } : {}), ...(sourceUrl ? { sourceUrl } : {}),
+      });
+      if (entry.success) Object.defineProperty(models, modelId.data, { enumerable: true, configurable: true, writable: true, value: entry.data });
+    } catch {
+      // One malformed external tariff does not discard the file's valid models.
+    }
   }
   if (Object.keys(models).length === 0) throw new Error('model_price_file_empty');
   return UsageModelPriceCatalogSchema.parse({ v: 1, models, provenance });
