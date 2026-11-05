@@ -7476,7 +7476,7 @@ class Sync {
         this.sessionListAttentionNextCursor = frontier.attentionNextCursor;
         this.sessionListAttentionHasMore = frontier.attentionHasNext;
         this.sessionListMetadataUpgradeRequiredCount = frontier.metadataUpgradeRequiredCount ?? 0;
-        if (isOrdinarySessionListFrontierExhausted(frontier)) {
+        if (!isAppend && isOrdinarySessionListFrontierExhausted(frontier)) {
             this.publishActiveSessionListObservation('ready', Date.now(), activeServerId ?? undefined);
         }
         // First paint/frontier publication precedes the independent migration
@@ -7615,9 +7615,16 @@ class Sync {
         if (!this.credentials
             || !resolveOrdinarySessionListContinuation(this.readOrdinarySessionListFrontier())) return;
         if (this.fetchMoreSessionsInFlight) return this.fetchMoreSessionsInFlight;
-        const promise = this.fetchSessions({ mode: 'append' }).then(() => undefined).finally(() => {
+        const serverId = this.getAppliedTransportTarget()?.serverId;
+        let currentPageApplied = false;
+        const promise = this.fetchSessions({ mode: 'append' }).then(result => {
+            currentPageApplied = result?.current === true;
+        }).finally(() => {
             if (this.fetchMoreSessionsInFlight === promise) {
                 this.fetchMoreSessionsInFlight = null;
+                // Publish after the incumbent continuation settles, including a
+                // non-final page, so its consumers can advance the next cursor.
+                if (currentPageApplied) this.publishActiveSessionListObservation('ready', Date.now(), serverId);
             }
         });
         this.fetchMoreSessionsInFlight = promise;

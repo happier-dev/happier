@@ -5,7 +5,7 @@ import { buildSessionListFilterQueryHomes, createSessionListViewFilterDefaults }
 import { useActiveServerAccountScope, useSessionListRowsByServerId } from '@/sync/domains/state/storage';
 import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
 import { readSessionListRowsForServerId } from './sessionListRowStateLookup';
-import { useSessionListQuerySourceState } from './useSessionListQuerySourceState';
+import { useSessionListQueryHomeSupportByServerId, useSessionListQuerySourceState } from './useSessionListQuerySourceState';
 import { resolveSessionListQueryPresentation } from './sessionListIndexPresentation';
 import { projectSessionList } from './projectSessionList';
 import { canSessionListOrdinaryPageAnswerQuery } from './sessionListQueryController';
@@ -28,13 +28,25 @@ export function useProjectSessions(project: QualifiedProjectKeyV1 | null, filter
     const viewer = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, activeViewer) ? activeViewer : null;
     const homeIds = React.useMemo(() => project && viewer ? candidateHomes : [], [candidateHomes, viewer]);
     const filters = React.useMemo(() => createSessionListViewFilterDefaults({ ...filter, show: 'sessions', homeServerIds: homeIds }), [filter, homeIds]);
-    const homes = React.useMemo(() => buildSessionListFilterQueryHomes(filters, {
-        storage: 'active', includeInactive: true, mountedHomeServerIds: homeIds,
-    }).map(home => ({ ...home, queryMembership: 'rowOnly' as const,
-        // Project is a local owner-metadata projection of the ordinary admitted Account corpus.
-        ordinaryAdapter: canSessionListOrdinaryPageAnswerQuery(home.query)
-            ? { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' as const } : null,
-    })), [filters, homeIds]);
+    // Published Project identities let the Home narrow candidates before paging.
+    // Unpublished identities still need the roster's local membership matcher.
+    const queryFilters = React.useMemo(() => project ? { ...filters,
+        projects: { include: [{ serverId: project.serverId, projectKey: project.projectKey }], exclude: [] } } : filters,
+    [filters, project?.serverId, project?.projectKey]);
+    const projectHomes = React.useMemo(() => buildSessionListFilterQueryHomes(queryFilters, {
+        storage: 'active', includeInactive: true, mountedHomeServerIds: homeIds, projectFacet: 'query',
+    }), [queryFilters, homeIds]);
+    const projectQueriesByServerId = React.useMemo(() => new Map(projectHomes.map(home => [home.serverId, home.query])), [projectHomes]);
+    const projectSelectionSupport = useSessionListQueryHomeSupportByServerId(homeIds, homeIds.length > 0, projectQueriesByServerId);
+    const homes = React.useMemo(() => projectHomes.map(home => {
+        const query = { ...home.query };
+        // Older strict readers cannot accept the selector. Preserve their existing
+        // candidate path and complete local matching instead of hiding members.
+        if (projectSelectionSupport[home.serverId] === false) delete query.projectKeys;
+        return { ...home, query, queryMembership: 'rowOnly' as const,
+            ordinaryAdapter: canSessionListOrdinaryPageAnswerQuery(query)
+                ? { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' as const } : null };
+    }), [projectHomes, projectSelectionSupport]);
     const query = useSessionListQuerySourceState({ enabled: homeIds.length > 0, homes });
     const rowsByHome = useSessionListRowsByServerId(homeIds);
     const rows = readSessionListRowsForServerId(rowsByHome, project?.serverId) ?? NO_ROWS;
