@@ -153,17 +153,6 @@ export async function fetchAndApplyFeed(params: {
             }
         }
 
-        // If this is initial load (no head), also load older items
-        if (!head && allItems.length < 100) {
-            const response = await fetchFeedApi(credentials, {
-                limit: 100,
-                retry: 'none',
-                request: params.request,
-            });
-            if (!shouldContinue()) return;
-            allItems.push(...response.items);
-        }
-
         // Collect user IDs from friend-related feed items
         const userIds = new Set<string>();
         allItems.forEach((item) => {
