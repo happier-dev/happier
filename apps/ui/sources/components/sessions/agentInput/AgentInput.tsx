@@ -515,9 +515,7 @@ interface AgentInputProps {
     /**
      * `none` mounts no voice affordance or dictation, whatever the account enables (the embedded
      * presentation). `dictation` retains the microphone without mounting conversational Voice (a
-     * Workflow step authors a document, not a live conversation), and places the prompt library and
-     * microphone at the end of the chip row, where a document card keeps its tools (lab `editor-E1`),
-     * rather than in the field's corner. Default `auto`.
+     * Workflow step authors a document, not a live conversation). Default `auto`.
      */
     voiceAffordance?: 'auto' | 'dictation' | 'none';
     /**
@@ -899,6 +897,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     readOnlyInputContent: {
         flexDirection: 'column',
         alignItems: 'stretch',
+    },
+    /** A reading card hugs its text: the field's reserved line is for typing into. */
+    readOnlyDocumentContent: {
+        minHeight: 0,
     },
         readOnlyText: {
             color: theme.colors.text.primary,
@@ -1981,8 +1983,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         />,
         [props.surfacePresented, voiceComposerTarget],
     );
-    // A document-authoring composer keeps its library and mic in the chip row's trailing slot (S-o).
-    const accessoriesInActionRow = props.voiceAffordance === 'dictation';
     const availableFieldAccessory = props.fieldAccessory
         ?? (ownsFieldDictation
             ? <AgentInputDictationButton
@@ -3308,17 +3308,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const showPromptLibraryButton = resolvedControls.accessories.includes('promptLibrary');
     const fieldAccessory = !ownsFieldDictation || resolvedControls.accessories.includes('dictate') ? availableFieldAccessory : null;
     const fieldAccessoryGeometry = resolveAgentInputFieldAccessoryGeometry({
-        library: showPromptLibraryButton && !accessoriesInActionRow,
-        accessory: fieldAccessory != null && !accessoriesInActionRow,
+        library: showPromptLibraryButton,
+        accessory: fieldAccessory != null,
         belowToggle: shouldShowInputExpansionToggle,
     });
-    const actionRowAccessories = accessoriesInActionRow ? (
-        <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
-            accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={false} placement="actionRow" />
-    ) : null;
-    const trailingAccessory = props.trailingAccessory != null && actionRowAccessories
-        ? <>{props.trailingAccessory}{actionRowAccessories}</>
-        : props.trailingAccessory ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : actionRowAccessories);
+    const trailingAccessory = props.trailingAccessory ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : null);
     const fieldInputPaddingRight = Math.max(fieldAccessoryGeometry.paddingRight ?? 0,
         shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : 0) || undefined;
     const accessoryMenuChips = React.useMemo<readonly AgentInputExtraActionChip[]>(() => {
@@ -3885,7 +3879,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, props.panelStyle, styles.readOnlyPanel]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
-                        <View style={[styles.inputContainer, styles.readOnlyInputContent]}>
+                        <View style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null]}>
                             {/* A reading document's card is calm: about three lines, then More (DESIGN-4 M4). */}
                             <AgentInputReadOnlyText value={props.value} accessibilityLabel={props.inputAccessibilityLabel} clamp={documentPanel}
                                 style={[isConversation ? styles.sessionInputText : styles.newSessionInputText, styles.readOnlyText]} />
@@ -4089,8 +4083,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
-                                    {accessoriesInActionRow ? null : <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
-                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />}
+                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
+                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />
                                 </View>
                             </ScrollView>
                             )}
@@ -4268,8 +4262,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
-                                    {accessoriesInActionRow ? null : <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
-                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />}
+                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
+                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />
                                 </View>
                             </View>
                             )}

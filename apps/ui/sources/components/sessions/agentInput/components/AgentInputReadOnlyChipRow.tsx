@@ -34,6 +34,8 @@ const styles = StyleSheet.create(() => ({
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         rowGap: 4,
+        // With no + before it, the first chip's glyph starts on the text's edge (chip inset 10, text inset 8).
+        marginLeft: -2,
     },
     /**
      * Content-sized: a zero basis (`flex: 1`) would make the line never wrap, so the engine group

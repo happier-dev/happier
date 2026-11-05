@@ -412,16 +412,16 @@ function seedComposerSettings(): void {
 }
 
 describe('AgentInput voice accessory slots', () => {
-    it('puts a document composer\'s library and mic at the end of its chip row, not the field corner (voiceAffordance dictation; DESIGN-6 P1)', async () => {
+    it('keeps a Workflow prompt\'s library and mic in the field corner, exactly where a Session composer has them (owner 09.13.20)', async () => {
         platformState.os = 'web';
         const screen = await renderComposer({ voiceAffordance: 'dictation', trailingAccessory: undefined });
         expect(screen.findByTestId('agent-input-prompt-library')).not.toBeNull();
         expect(screen.findByTestId('agent-input-dictation')).not.toBeNull();
         const cluster = screen.findByTestId('agent-input-field-accessories');
-        expect(flattenStyle(cluster?.props.style).position).not.toBe('absolute');
-        // The field no longer reserves a corner for them.
+        expect(flattenStyle(cluster?.props.style).position).toBe('absolute');
+        // The text keeps clear of the corner it shares with them.
         const field = screen.root.findByType(MultiTextInput);
-        expect(field.props.paddingRight ?? 0).toBeLessThan(44);
+        expect(field.props.paddingRight ?? 0).toBeGreaterThanOrEqual(44);
         await screen.unmount();
     });
 

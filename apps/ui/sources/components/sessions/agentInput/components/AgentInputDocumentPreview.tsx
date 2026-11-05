@@ -34,6 +34,7 @@ import {
 } from './agentInputChromeStyles';
 import { AgentInputAttachmentsRow } from './AgentInputAttachmentsRow';
 import { AgentInputDocumentPreviewText } from './AgentInputDocumentPreviewText';
+import { resolveAgentInputFieldAccessoryGeometry } from './AgentInputFieldAccessories';
 import type {
   AgentInputDocumentPreviewReference,
   AgentInputDocumentPreviewSelection,
@@ -65,11 +66,14 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s8,
     minHeight: 40,
   },
-  /** The chip line under the field (`actionButtonsContainer`): chips lead, the accessories end it. */
+  /** The field and its corner tools: positioned like the live `inputContainer`. */
+  fieldFrame: {
+    position: 'relative',
+  },
+  /** The chip line under the field (`actionButtonsContainer`). */
   footer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    justifyContent: 'space-between',
     columnGap: theme.space.s8,
   },
   chips: {
@@ -106,16 +110,15 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
+  /** The field's top-right corner, from the live composer's one geometry owner. */
   accessories: {
+    position: 'absolute',
+    zIndex: 2,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
+  /** Each target hangs its circle 4 below the slot's top, as the live buttons do. */
   accessory: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  /** The dictation target hangs its circle 4 below the slot's top, as the live button does. */
-  dictation: {
     alignItems: 'center',
     justifyContent: 'flex-start',
     paddingTop: 4,
@@ -328,7 +331,7 @@ export const AgentInputDocumentPreview = React.memo(
           accessible
           focusable
           onPress={() => activateControl('dictate')}
-          style={[styles.dictation, { width: accessoryTarget, height: accessoryTarget }]}
+          style={[styles.accessory, { width: accessoryTarget, height: accessoryTarget }]}
         >
           <View style={styles.accessoryCircle}>
             <Icon name="microphone" size={16} color={theme.colors.button.secondary.tint} />
@@ -336,6 +339,13 @@ export const AgentInputDocumentPreview = React.memo(
         </Pressable>
       ) : null,
     );
+
+    // The corner's width follows the tools actually drawn, as the live composer's does.
+    const fieldGeometry = resolveAgentInputFieldAccessoryGeometry({
+      library: accessoryNodes.length > 0,
+      accessory: accessoryNodes.length > 1,
+      belowToggle: false,
+    });
 
     return (
       <View
@@ -359,6 +369,7 @@ export const AgentInputDocumentPreview = React.memo(
               />
             </View>
           ) : null}
+          <View style={styles.fieldFrame}>
           <Pressable
             testID="agent-input-document-preview-field"
             accessibilityRole="button"
@@ -373,7 +384,7 @@ export const AgentInputDocumentPreview = React.memo(
             onPressIn={notePointerDown}
             // DOM pointerdown precedes the focus a press causes; the responder's press-in may not.
             {...({ onPointerDown: notePointerDown } as object)}
-            style={styles.field}
+            style={[styles.field, fieldGeometry.paddingRight === undefined ? null : { paddingRight: theme.space.s8 + fieldGeometry.paddingRight }]}
           >
             <AgentInputDocumentPreviewText
               value={props.value}
@@ -382,7 +393,16 @@ export const AgentInputDocumentPreview = React.memo(
               onPointerSelection={recordPointerSelection}
             />
           </Pressable>
-          <View style={styles.footer}>
+          {accessoryNodes.length > 0 ? (
+            <View
+              testID="agent-input-document-preview-tools"
+              style={[styles.accessories, { width: fieldGeometry.width, height: fieldGeometry.targetSize, top: fieldGeometry.top, right: fieldGeometry.right }]}
+            >
+              {accessoryNodes}
+            </View>
+          ) : null}
+          </View>
+          <View testID="agent-input-document-preview-footer" style={styles.footer}>
             <View
               style={[
                 styles.chips,
@@ -409,13 +429,6 @@ export const AgentInputDocumentPreview = React.memo(
                     )),
               )}
             </View>
-            {accessoryNodes.length > 0 ? (
-              <View
-                style={[styles.accessories, { height: accessoryTarget }]}
-              >
-                {accessoryNodes}
-              </View>
-            ) : null}
           </View>
         </GlassSurface>
       </View>

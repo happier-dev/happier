@@ -53,6 +53,23 @@ function renderPictureHost(): HTMLElement {
     return host;
 }
 
+describe('AgentInputDocumentPreview tools (web)', () => {
+    it('keeps the library and dictation in the field corner, as a Session composer does, never in the chip row', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        act(() => {
+            root!.render(<AgentInputDocumentPreview value="Check the build" references={[]} placeholder="" dictation onActivate={() => {}} />);
+        });
+        const library = container.querySelector('[data-testid="agent-input-document-preview-prompt-library"]');
+        const corner = container.querySelector('[data-testid="agent-input-document-preview-tools"]');
+        const chipRow = container.querySelector('[data-testid="agent-input-document-preview-footer"]');
+        expect(library).not.toBeNull();
+        expect(corner?.contains(library)).toBe(true);
+        expect(chipRow?.contains(library)).toBe(false);
+    });
+});
+
 describe('AgentInputDocumentPreview editor box (web)', () => {
     it('grows to the height the live composer allows, from the one default-max-height owner', () => {
         viewportHeight = 844;

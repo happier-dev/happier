@@ -28,23 +28,20 @@ afterEach(async () => {
 
 const centre = (rect: Readonly<{ top: number; height: number }>) => rect.top + rect.height / 2;
 
-describe('the dictionary and mic in a document composer\'s chip row, as a browser lays them out', () => {
-    it('sit on the chips\' line, not above it (DESIGN-7 P1, lab editor-E1)', async () => {
+describe('the library and mic in a composer\'s field corner, as a browser lays them out', () => {
+    it('share one centre line (owner 09.13.20: off-centre with each other)', async () => {
         const { AgentInputFieldAccessories } = await import('./AgentInputFieldAccessories');
         host = document.createElement('div');
         document.body.appendChild(host);
         root = createRoot(host);
         await act(async () => {
-            root!.render(React.createElement(View, { style: { width: 600, flexDirection: 'row', alignItems: 'center' } },
-                React.createElement(View, { testID: 'chip', style: { width: 160, height: 28 } }),
+            root!.render(React.createElement(View, { style: { width: 600, height: 80, position: 'relative' } },
                 React.createElement(AgentInputFieldAccessories, {
-                    showLibrary: true, onOpenLibrary: () => {}, belowToggle: false, placement: 'actionRow',
+                    showLibrary: true, onOpenLibrary: () => {}, belowToggle: false,
                     accessory: React.createElement(View, { testID: 'mic', style: { width: 24, height: 24 } }),
                 })));
         });
         const layout = await measureWebLayout(host, { viewport: { width: 600, height: 200 }, settle: (replay) => act(replay) });
-        const chip = layout.rect('chip');
-        expect(Math.abs(centre(layout.rect('agent-input-prompt-library-surface')) - centre(chip))).toBeLessThanOrEqual(2);
-        expect(Math.abs(centre(layout.rect('mic')) - centre(chip))).toBeLessThanOrEqual(2);
+        expect(Math.abs(centre(layout.rect('agent-input-prompt-library-surface')) - centre(layout.rect('mic')))).toBeLessThanOrEqual(1);
     });
 });

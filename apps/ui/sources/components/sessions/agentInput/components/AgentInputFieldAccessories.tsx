@@ -36,12 +36,6 @@ export function AgentInputFieldAccessories(props: Readonly<{
     accessory?: React.ReactNode;
     orderedIds?: readonly string[];
     belowToggle: boolean;
-    /**
-     * `field` (default): the field's top-right corner. `actionRow`: inline at the end of the composer's
-     * chip row, after its own chips (lab `editor-E1`: … Step options · attach · mic), for a composer
-     * that authors a document (`voiceAffordance="dictation"`).
-     */
-    placement?: 'field' | 'actionRow';
 }>) {
     const geometry = resolveAgentInputFieldAccessoryGeometry({
         library: props.showLibrary,
@@ -49,9 +43,8 @@ export function AgentInputFieldAccessories(props: Readonly<{
         belowToggle: props.belowToggle,
     });
     if (!geometry.width) return null;
-    const inRow = props.placement === 'actionRow';
     const library = props.showLibrary ? (
-        <View key="promptLibrary" style={[styles.target, inRow ? styles.inRow : null, { width: geometry.targetSize, height: geometry.targetSize }]}>
+        <View key="promptLibrary" style={[styles.target, { width: geometry.targetSize, height: geometry.targetSize }]}>
             <IconButton
                 testID="agent-input-prompt-library"
                 iconName="book-open"
@@ -67,7 +60,7 @@ export function AgentInputFieldAccessories(props: Readonly<{
         </View>
     ) : null;
     const accessory = props.accessory != null ? (
-        <View key="accessory" style={[styles.accessory, inRow ? styles.inRow : null, { width: geometry.targetSize, height: geometry.targetSize }]}>
+        <View key="accessory" style={[styles.accessory, { width: geometry.targetSize, height: geometry.targetSize }]}>
             {props.accessory}
         </View>
     ) : null;
@@ -75,7 +68,7 @@ export function AgentInputFieldAccessories(props: Readonly<{
     const libraryIndex = props.orderedIds?.indexOf('promptLibrary') ?? -1;
     const accessoryFirst = dictateIndex >= 0 && (libraryIndex < 0 || dictateIndex < libraryIndex);
     return (
-        <View testID="agent-input-field-accessories" style={inRow ? [styles.row, { height: geometry.targetSize }] : [styles.cluster, {
+        <View testID="agent-input-field-accessories" style={[styles.cluster, {
             width: geometry.width, height: geometry.targetSize, top: geometry.top, right: geometry.right,
         }]}>
             {accessoryFirst ? [accessory, library] : [library, accessory]}
@@ -85,10 +78,6 @@ export function AgentInputFieldAccessories(props: Readonly<{
 
 const styles = StyleSheet.create({
     cluster: { position: 'absolute', zIndex: 2, flexDirection: 'row', alignItems: 'flex-start' },
-    row: { flexDirection: 'row', alignItems: 'center' },
     target: { alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
     accessory: { position: 'relative', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
-    // In the chip row the icons sit on the chips' line (lab editor-E1), centred in their targets
-    // rather than hung from the field's top corner (DESIGN-7 P1).
-    inRow: { justifyContent: 'center', paddingTop: 0 },
 });
