@@ -540,6 +540,9 @@ jobs:
         with:
           xcode_version: "27.1"
 
+      - name: Reclaim iOS runner disk
+        uses: ./.github/actions/reclaim-ios-runner-disk
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
