@@ -42,6 +42,8 @@ test('incomplete package results show a bounded redacted stderr reason', async t
     process.stderr.write('HSTACK_REFUSED: ' + ${JSON.stringify(signedToken)} + '\\n');
     process.stderr.write('HSTACK_REFUSED: postgresql://user:' + ${JSON.stringify(unboundSecret)} + '@host/db\\n');
     process.stderr.write('fixture.ts(1,1): error TS2322: private-source-prose\\n');
+    process.stderr.write('[typecheck-inputs] ' + JSON.stringify({ capturedAt: '2026-11-05T11:08:00Z',
+      changedPaths: Array(2000).fill('node_modules/phosphor-react-native/src/icons/Inventory.tsx') }) + '\\n');
     process.exitCode = 255;
   `);
   const child = spawn(process.execPath, [fileURLToPath(new URL('./typecheckTouched.mjs', import.meta.url)),
@@ -68,6 +70,7 @@ test('incomplete package results show a bounded redacted stderr reason', async t
   assert.ok(!`${stdout}${stderr}`.includes(unboundSecret), 'unknown credential values are redacted');
   assert.ok(!`${stdout}${stderr}`.includes(signedToken), 'signed tokens are redacted');
   assert.ok(!stderr.includes('private-source-prose'), 'compiler fixture prose stays private');
+  assert.ok(!stderr.includes('Inventory.tsx'), 'input observations must not displace failure reasons');
   assert.ok(!stderr.includes('discarded-start'), 'earlier stderr is omitted');
   assert.ok(stderr.length < 17000, 'failure output reuses the process diagnostic tail budget');
   assert.ok(!stdout.includes('added: 0'), 'missing evidence never becomes a zero delta');
