@@ -1,5 +1,8 @@
+import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema,
+  MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
+import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { isDeploymentActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
@@ -36,7 +39,7 @@ import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } f
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
-import { DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import type {
   ApprovalExecutionV2,
@@ -50,6 +53,24 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (isDeploymentDomainChildActionIdV1(input.request.actionId)) {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    const details = (storedRead ? createStoredReadSchema(DeploymentDomainFailureDetailsV1Schema)
+      : DeploymentDomainFailureDetailsV1Schema).safeParse(input.failure.details);
+    if (details.success) {
+      if (!args.success || details.data.environmentId !== args.data.environmentId
+        || details.data.domainId !== args.data.domainId) return null;
+      const operation = details.data.operation;
+      if (operation) {
+        const origin = input.request.executionOriginV1;
+        const sameHome = operation.serverId === args.data.serverId
+          || args.data.serverId === origin.serverId && operation.serverId === origin.serverIdentityId;
+        if (!sameHome || origin.target?.kind === 'machine' && operation.machineId !== origin.target.machineId) return null;
+      }
+      return { ...input.failure, details: details.data };
+    }
+  }
   if (isDeploymentActionIdV1(input.request.actionId) && input.failure.errorCode === 'deployment_invalid') {
     const details = (storedRead ? createStoredReadSchema(DeploymentInvalidV1Schema) : DeploymentInvalidV1Schema)
       .safeParse(input.failure.details);
@@ -119,6 +140,15 @@ function parseStrictApprovalFailure(input: Readonly<{
       }
       return { ...input.failure, details: details.data };
     }
+  }
+  if (input.request.actionId === 'machines.reachability.configure') {
+    const args = (storedRead ? createStoredReadSchema(MachineReachabilityConfigureInputV1Schema)
+      : MachineReachabilityConfigureInputV1Schema).safeParse(input.request.actionArgs);
+    if (!args.success) return null;
+    const schema = input.failure.errorCode === 'effect_in_progress'
+      ? MachineReachabilityBusyFailureDetailsV1Schema : MachineReachabilityConfigureFailureDetailsV1Schema;
+    const details = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.failure.details);
+    return details.success ? { ...input.failure, details: details.data } : null;
   }
   if (input.failure.errorCode === 'widget_inputs_invalid') {
     const action = WidgetInstanceActionIdV1Schema.safeParse(input.request.actionId);

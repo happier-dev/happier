@@ -12,19 +12,23 @@ type SshEndpoint = NativeAvailable['retainedSshEndpoints'][number];
 /** The one boundary reader for native CHECK's extensible JSON facts. Presence
  * is already emitted from the SAME Snapshot as the SSH policy observation;
  * missing is never interpreted as a fresh firewall. No OS work happens here. */
-export function readMachineFirewallTransitionFactsV1(observation: MachineSetupStepObservationV1): MachineFirewallTransitionFactsV1 {
+export function readMachineFirewallTransitionFactsV1(observation: MachineSetupStepObservationV1 | undefined): MachineFirewallTransitionFactsV1 {
+  const unavailable = (requiredFact: string): MachineFirewallTransitionFactsV1 => ({ status: 'unavailable', requiredFact,
+    remedy: 'Use administrator or provider-console access to inspect /etc/happier/firewall/rules.nft, the effective inet happier table (nft -s list table inet happier), and /etc/systemd/system/happier-firewall.service with its enabled/running state. Make the saved rules and effective table describe the same intended policy, and ensure the owned service loads that saved file with the intended enabled/running state. Use any available prechange recovery evidence and preserve a working management path. Do not blindly delete the table or replay an uncertain change. Then run machines.reachability.inspect again with the intended Network posture; configure only after it returns a fresh reviewed plan.' });
+  if (!observation) return unavailable('nativeFirewall');
   const raw = observation.facts.firewallTransition;
   let candidate: unknown = raw;
   if (raw !== null && typeof raw === 'object' && !Array.isArray(raw) && raw.status === 'available') {
     if (observation.status !== 'drifted' && observation.status !== 'satisfied')
-      return { status: 'unavailable', requiredFact: 'nativeFirewall' };
+      return unavailable('nativeFirewall');
     const digest = observation.facts.ownedTableDigest;
     if (digest !== null && (typeof digest !== 'string' || !digest))
-      return { status: 'unavailable', requiredFact: 'ownedTableDigest' };
+      return unavailable('ownedTableDigest');
     candidate = { ...raw, ownedTable: digest === null ? 'absent' : 'present' };
   }
   const parsed = MachineFirewallTransitionFactsV1Schema.safeParse(candidate);
-  return parsed.success ? parsed.data : { status: 'unavailable', requiredFact: 'firewallTransition' };
+  if (!parsed.success) return unavailable('firewallTransition');
+  return parsed.data.status === 'unavailable' ? unavailable(parsed.data.requiredFact) : parsed.data;
 }
 
 /** CHECK-only declaration to the existing native observer. This is never an
@@ -110,8 +114,10 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
     for (const endpoint of sshEndpoints) for (const source of endpoint.sourceCidrs) {
       const family = isIP(endpoint.hostAddress), ip = family === 4 ? 'ip' : 'ip6';
       const wildcard = endpoint.hostAddress === '0.0.0.0' || endpoint.hostAddress === '::';
-      const destination = wildcard ? `meta nfproto ${family === 4 ? 'ipv4' : 'ipv6'}` : `${ip} daddr ${endpoint.hostAddress}`;
-      host.push(`iifname ${JSON.stringify(endpoint.interfaceName)} ${destination} ${ip} saddr ${source} tcp dport ${endpoint.port} accept`);
+      // The source expression already selects the family. nft removes a
+      // redundant nfproto selector, which would fail exact owned-table proof.
+      const destination = wildcard ? '' : `${ip} daddr ${endpoint.hostAddress} `;
+      host.push(`iifname ${JSON.stringify(endpoint.interfaceName)} ${destination}${ip} saddr ${source} tcp dport ${endpoint.port} accept`);
     }
     // Machine closure is not a list of interfaces believed to be public.
     // Established/loopback/declared permits precede this one INPUT deny.

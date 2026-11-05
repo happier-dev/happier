@@ -2,6 +2,7 @@ import { tmpdir, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MachineRecipeStepV1Schema, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineReachabilityInspectResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan,
     createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
     materializeMachineFirewallTransitionV1 } from './index.js';
@@ -53,7 +54,7 @@ afterEach(async () => {
     os.root = ''; os.owners.clear(); os.interfaces = {};
 });
 
-async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>) {
+async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>, canonicalize = (table: string) => table) {
     const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     os.root = await fs.mkdtemp(join(tmpdir(), 'happier-firewall-')); roots.push(os.root);
     const disk = (path: string) => path.startsWith(os.root + '/') ? path : join(os.root, path);
@@ -87,7 +88,7 @@ async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>
             if (args.includes('-j') && args.includes('tables')) return { code: 0, stdout: JSON.stringify({ nftables: table ? [{ table: { family: 'inet', name: 'happier' } }] : [] }), stderr: '' };
             if (args.includes('-j') && args.includes('table')) return { code: table ? 0 : 1, stdout: JSON.stringify(nativePolicy), stderr: '' };
             if (args.includes('list')) return { code: table ? 0 : 1,
-                stdout: table && listing ? args.includes('-nn') ? listing.numeric : listing.symbolic : table ?? '', stderr: '' };
+                stdout: table && listing ? args.includes('-nn') ? listing.numeric : listing.symbolic : canonicalize(table ?? ''), stderr: '' };
             if (args.includes('-f')) { table = await fs.readFile(disk(args[args.indexOf('-f') + 1]!), 'utf8'); return { code: 0, stdout: '', stderr: '' }; }
             if (args[0] === 'delete') { table = undefined; return { code: 0, stdout: '', stderr: '' }; }
         }
@@ -154,6 +155,86 @@ async function stage(f: Awaited<ReturnType<typeof fixture>>, step = f.step): Pro
 }
 
 describe('native owned firewall', () => {
+    it('closes wildcard SSH after nft elides address-family selectors implied by source addresses', async () => {
+        // Captured from QA-DOMAIN-1104, nft -s, 2026-11-04: nft omits the
+        // redundant meta nfproto before an ip/ip6 source-address expression.
+        const f = await fixture(undefined, table => table.replace(/meta nfproto ipv4 ip saddr/g, 'ip saddr')
+            .replace(/meta nfproto ipv6 ip6 saddr/g, 'ip6 saddr'));
+        await f.listenSsh('LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n',
+            'LISTEN 0 128 [::]:22 [::]:* users:(("sshd",pid=412,fd=4))\n');
+        const intent = boundedTransitionIntent({ kind: 'closed' });
+        const facts = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+        const transition = materializeMachineFirewallTransitionV1(intent, facts);
+        if (transition.status !== 'ready') throw new Error(`Unexpected transition ${transition.reason}`);
+        const plans = await Promise.all(transition.steps.map(async step => ({
+            plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }),
+        })));
+        const verifiedStages: number[] = [];
+        const result = await applyMachineSetupEffectPlans({ plans, backend: f.backend, onStaged: async staged => {
+            expect(await staged.verifyNative()).toBe(true);
+            verifiedStages.push(staged.planIndex);
+            const table = f.readEffectiveTable()!;
+            if (staged.planIndex === 0) expect(table).toContain('tcp dport 22 accept');
+            else expect(table).not.toContain('tcp dport 22 accept');
+            return staged.planIndex === 0 ? 'continue' : 'commit';
+        } });
+        expect(result).toMatchObject({ status: 'applied' });
+        expect(verifiedStages).toEqual([0, 1]);
+        expect(f.readEffectiveTable()).not.toContain('tcp dport 22 accept');
+    });
+
+    it('requires reconciliation of an inconsistent partial table before a newly reviewed closure can converge', async () => {
+        let elideFamily = false;
+        const canonicalize = (value: string) => value.replace(/meta nfproto ipv4 ip saddr/g, 'ip saddr');
+        const f = await fixture(undefined, table => elideFamily ? canonicalize(table) : table);
+        await f.listenSsh('LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n');
+        const partialRules = rules.replace('    ct state new drop',
+            '    iifname "ens18" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 22 accept\n    ct state new drop');
+        await f.backend.apply(MachineRecipeStepV1Schema.parse({ ...f.step, rules: partialRules }));
+        elideFamily = true;
+        const intent = boundedTransitionIntent({ kind: 'closed' });
+        const before = f.calls.length;
+        const refused = await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent));
+        expect(refused).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+        const inspected = MachineReachabilityInspectResultV1Schema.parse({ machineId: 'machine', metadataVersion: 0,
+            posture: null, selections: [], observation: { revision: 0,
+                management: { daemon: 'ready', providers: [], publicSsh: 'unknown' }, privateNetworks: [], ingress: [],
+                nativeFirewall: readMachineFirewallTransitionFactsV1(refused) } });
+        expect(inspected).not.toHaveProperty('plan');
+        expect(inspected.observation.nativeFirewall).toMatchObject({ status: 'unavailable',
+            requiredFact: 'firewallTransition', remedy: expect.stringContaining('/etc/happier/firewall/rules.nft') });
+        const native = inspected.observation.nativeFirewall;
+        if (native?.status !== 'unavailable') throw new Error('Missing native refusal');
+        for (const nextStep of ['inet happier', 'happier-firewall.service', 'administrator', 'machines.reachability.inspect'])
+            expect(native).toHaveProperty('remedy', expect.stringContaining(nextStep));
+        expect(materializeMachineFirewallTransitionV1(intent, readMachineFirewallTransitionFactsV1(refused)))
+            .toMatchObject({ status: 'review_required', reason: 'required_fact_unavailable' });
+        expect(f.calls.slice(before).some(call => call.args.includes('-f')
+            || call.executable === 'systemctl' && call.args[0] !== 'show')).toBe(false);
+        // Administrator reconciliation is external to the reviewed Action. In
+        // this OS fixture it aligns the saved file with the inspected table.
+        await f.rootFile(rulesPath, canonicalize(partialRules), 0o644);
+        const match = (left: unknown, right: unknown) => ({ match: { op: '==', left, right } });
+        f.setNativePolicy({ nftables: [
+            { chain: { family: 'inet', table: 'happier', name: 'input', type: 'filter', hook: 'input', policy: 'drop' } },
+            { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [
+                match({ meta: { key: 'iifname' } }, 'ens18'),
+                match({ payload: { protocol: 'ip', field: 'saddr' } }, { prefix: { addr: '0.0.0.0', len: 0 } }),
+                match({ payload: { protocol: 'tcp', field: 'dport' } }, 22), { accept: null },
+            ] } },
+        ] });
+        const facts = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+        const transition = materializeMachineFirewallTransitionV1(intent, facts);
+        if (transition.status !== 'ready') throw new Error(`Reconciled review refused: ${transition.reason}`);
+        const plans = await Promise.all(transition.steps.map(async step => ({
+            plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }),
+        })));
+        const result = await applyMachineSetupEffectPlans({ plans, backend: f.backend,
+            onStaged: async staged => staged.planIndex === 0 ? 'continue' : 'commit' });
+        expect(result.status).toBe('applied');
+        expect(f.readEffectiveTable()).not.toContain('tcp dport 22 accept');
+    });
+
     it('reconciles retained nft 1.1.6 rules using the same symbolic vocabulary as the owned file', async () => {
         // Captured read-only from Lima #43, 2026-11-03: -nn converts ct,
         // nfproto and l4proto values; -s preserves the saved rules' symbols.
@@ -746,10 +827,10 @@ describe('native firewall bounded transition owner', () => {
       expect(await staged.verifyNative()).toBe(true);
       const table = f.readEffectiveTable()!;
       const keepObserved = staged.planIndex === 0 || desired === 'open';
-      expect(table.includes('iifname "ens18" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept')).toBe(keepObserved);
-      expect(table.includes('iifname "tun42" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept')).toBe(keepObserved);
-      expect(table.includes('iifname "ens18" meta nfproto ipv6 ip6 saddr ::/0 tcp dport 2206 accept')).toBe(keepObserved);
-      expect(table.includes('iifname "ens18" meta nfproto ipv4 ip saddr 198.51.100.0/24 tcp dport 2299 accept')).toBe(staged.planIndex === 1 && desired === 'open');
+      expect(table.includes('iifname "ens18" ip saddr 0.0.0.0/0 tcp dport 2205 accept')).toBe(keepObserved);
+      expect(table.includes('iifname "tun42" ip saddr 0.0.0.0/0 tcp dport 2205 accept')).toBe(keepObserved);
+      expect(table.includes('iifname "ens18" ip6 saddr ::/0 tcp dport 2206 accept')).toBe(keepObserved);
+      expect(table.includes('iifname "ens18" ip saddr 198.51.100.0/24 tcp dport 2299 accept')).toBe(staged.planIndex === 1 && desired === 'open');
       expect(table).not.toContain('ip6 saddr ::/0 tcp dport 2299 accept');
       return staged.planIndex === 0 ? 'continue' : 'commit';
     } });
@@ -850,9 +931,9 @@ describe('native firewall bounded transition owner', () => {
       expect(await staged.verifyNative()).toBe(true);
       const table = f.readEffectiveTable()!;
       for (const permit of [
-        'iifname "ens18" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept',
-        'iifname "tun42" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept',
-        'iifname "ens18" meta nfproto ipv6 ip6 saddr ::/0 tcp dport 2206 accept',
+        'iifname "ens18" ip saddr 0.0.0.0/0 tcp dport 2205 accept',
+        'iifname "tun42" ip saddr 0.0.0.0/0 tcp dport 2205 accept',
+        'iifname "ens18" ip6 saddr ::/0 tcp dport 2206 accept',
       ]) {
         expect(table).toContain(permit);
         expect(table.indexOf(permit)).toBeLessThan(table.indexOf('ct state new drop'));

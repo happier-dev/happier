@@ -296,7 +296,11 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
     observation = { ...observation, nativeFirewall: facts,
       management: { ...observation.management, publicSsh } };
     if (change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
-      if (facts.status === 'unavailable') return refuse('required_fact_unavailable');
+      if (facts.status === 'unavailable') return { ok: false as const,
+        errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', details: {
+          failure: { kind: 'native_check_unavailable', phase: 'check', requiredFact: facts.requiredFact },
+          ...(facts.remedy ? { remedy: facts.remedy } : {}),
+        } };
       const needsTransition = sshChanged || change.posture.management.publicSsh.kind === 'closed'
         && facts.retainedSshEndpoints.some(endpoint => endpoint.sourceCidrs.length > 0);
       if (!state.posture || needsTransition) nativeFirewall = facts;
@@ -693,7 +697,10 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
   'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
   & Readonly<{ caddy: import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput }>) {
   const state = await readMachineReachabilityMetadata(input.port);
-  if (!state.posture) return refuse('required_fact_unavailable');
+  if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
+    requiredFact: 'reachabilityPosture',
+    remedy: 'Review and apply this Machine’s Network posture before retrying the Domain action. Use machines.reachability.inspect to review it, then machines.reachability.configure to apply the reviewed plan. If native firewall facts are unavailable, use administrator or provider-console access to inspect and reconcile the saved rules, effective Happier table and firewall service first. Do not replay an uncertain firewall change.',
+  });
   if (state.posture.defaultServiceIngress.kind !== 'none') return refuse('machine_reachability_closure_unsupported');
   const transitioned = await executeRetainedSshTransition({ ...input,
     expectedMetadataVersion: state.metadataVersion, current: state.posture, desired: state.posture,

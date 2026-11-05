@@ -65,6 +65,7 @@ it.each([
             managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
     });
     const failure = { kind: reasonCode, ...(reason ? { reason } : {}),
+        ...(['failed apply', 'partial native apply'].includes(scenario) ? { stepId: 'prepare', phase: 'apply' } : {}),
         ...(['unavailable', 'unsupported', 'failed apply'].includes(scenario) ? {
             requiredFact: 'prepare', remedy: expect.stringContaining('prepare'),
         } : {}),

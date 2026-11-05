@@ -19,6 +19,5 @@ export async function inspectMachineReachabilityNativeFirewall(input: Readonly<{
       ...('recovery' in result && result.recovery ? { details: { recovery: result.recovery } } : {}) };
   }
   const observation = result.plan.nativeFacts.find(fact => fact.stepId === step.id);
-  return { ok: true as const, facts: observation ? readMachineFirewallTransitionFactsV1(observation)
-    : { status: 'unavailable' as const, requiredFact: 'nativeFirewall' } };
+  return { ok: true as const, facts: readMachineFirewallTransitionFactsV1(observation) };
 }

@@ -59,7 +59,7 @@ export const MachineFirewallTransitionFactsV1Schema = lazyZodSchema(() => {
       privateInterfaces: z.array(z.object({ providerId: name, networkIdentity: name, hostAddress: address, interfaceName: name }).strict()),
       retainedSshEndpoints: z.array(endpoint),
     }).strict(),
-    z.object({ status: z.literal('unavailable'), requiredFact: name }).strict(),
+    z.object({ status: z.literal('unavailable'), requiredFact: name, remedy: name.optional() }).strict(),
   ]);
 });
 export type MachineFirewallTransitionFactsV1 = z.infer<typeof MachineFirewallTransitionFactsV1Schema>;

@@ -1,5 +1,43 @@
 # CLI Architecture
 
+## Unconfirmed SSH transitions (0.3 development)
+
+An unconfirmed SSH transition retains its native failure kind, reason, step and
+phase through the approval result and public read, together with any captured
+recovery or verified restoration. The CLI result says that SSH access is
+unconfirmed and the firewall change may remain installed. The approval UI keeps
+its unknown-outcome status; native diagnostics remain in the structured result.
+A null saved posture is not proof of an absent firewall or closed SSH. Inspect
+and reconcile the owned rules, effective table and boot service through the
+Machine's administrator recovery path before a fresh review; an unknown result
+does not authorize replay. A failure before the staged callback may have no
+returned recovery snapshot. Existing approvals whose details were discarded
+cannot recover those details from storage.
+
+Wildcard SSH rules select the address family through their source expression;
+the renderer omits redundant `meta nfproto` selectors that nft removes from
+its effective listing. The native owner's exact foreign-table refusal remains
+in place.
+
+Domain setup requires a saved Network posture before it starts a firewall
+transition. A clean Machine with no posture also needs its first reviewed
+posture; a previous failed SSH close is not required to produce this refusal.
+The Domain result names `reachabilityPosture` and tells the person to review
+and apply Network posture. If native rules and the effective table disagree,
+review itself refuses: administrator or provider-console reconciliation of
+the inspected rules, table and service must precede a fresh review. Updating
+the renderer prevents recurrence but does not repair an already inconsistent
+table, and an unknown approval must not be replayed.
+
+Inspect's unavailable native facts carry that administrator remedy even when
+there is no plan to configure. It identifies `/etc/happier/firewall/rules.nft`,
+the effective `inet happier` table, and
+`/etc/systemd/system/happier-firewall.service` with its enabled/running state.
+The administrator reconciles them against the intended policy and available
+prechange evidence while preserving management access, then runs
+`machines.reachability.inspect` with the intended posture again. Configure
+requires the resulting fresh reviewed plan; it is not a repair for missing facts.
+
 Domain Caddy reconciliation uses `preserveSsh`: both firewall stages preserve
 the observed SSH addresses, ports, interfaces and accepted source ranges,
 including when stored posture says SSH is closed. Only an explicitly reviewed

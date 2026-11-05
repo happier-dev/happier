@@ -261,14 +261,15 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     type Refusal = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
     const refused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({ outcome: 'not_applied', reasonCode });
     let nativeFailure: Refusal['failure'];
-    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string, requiredFact?: string, remedy?: string) => {
+    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string, requiredFact?: string, remedy?: string,
+        context?: Pick<NonNullable<Refusal['failure']>, 'stepId' | 'phase'>) => {
         const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeReason);
         const missingFact = requiredFact ?? (nativeReason === 'needs_admin_to_check' ? 'administrator'
             : nativeReason === 'required_fact_unavailable' ? 'nativeSetupObservation' : undefined);
         nativeFailure ??= { kind, ...(reason.success ? { reason: reason.data } : {}), ...(missingFact ? {
             requiredFact: missingFact,
             remedy: `Required native fact ${missingFact} is unavailable. Check this Machine's administrator access and the named prerequisite, then retry the operation.`,
-        } : {}), ...(remedy ? { remedy } : {}) };
+        } : {}), ...(remedy ? { remedy } : {}), ...context };
         return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : kind;
     };
     const nativeRefused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({
@@ -594,9 +595,11 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (reboot && result.status === 'unsupported' && result.reason === 'platform_unsupported') return refused('platform_unsupported');
         if (result.status === 'checked') return request.kind === 'check' && settled.code === 0 && 'plan' in result
             ? { outcome: 'checked', plan: result.plan } : { outcome: 'outcome_unknown' };
+        const failureContext = 'stepId' in result && result.stepId
+            ? { stepId: result.stepId, phase: effectStarted ? 'apply' as const : 'check' as const } : undefined;
         if (!nativeFailure && result.failure) {
             const failure = result.failure;
-            rememberNativeFailure(failure.kind, failure.reason, failure.requiredFact, failure.remedy);
+            rememberNativeFailure(failure.kind, failure.reason, failure.requiredFact, failure.remedy, failureContext);
             nativeFailure = { ...(nativeFailure ?? {}), ...failure };
         }
         if (result.status === 'applied') {
@@ -610,7 +613,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             ? result.stepId : undefined);
         if (result.status === 'plan_changed') return refused('plan_stale');
         if (result.status === 'unavailable' && !effectStarted && result.completedStepIds.length === 0) {
-            return nativeRefused(rememberNativeFailure('native_check_unavailable', result.reason, requiredFact));
+            return nativeRefused(rememberNativeFailure('native_check_unavailable', result.reason, requiredFact, undefined, failureContext));
         }
         if (result.status === 'cancelled' && (result.completedStepIds.length === 0 || result.restoration)) {
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
@@ -618,14 +621,14 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         // A missing prerequisite before any completed step is a known refusal.
         // A failed native command may have partly run despite zero completed steps.
         if (result.status === 'failed' && result.reason === 'required_fact_unavailable' && result.completedStepIds.length === 0) {
-            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact));
+            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext));
         }
         if (result.status === 'outcome_unknown' || effectStarted || result.completedStepIds.length > 0) {
-            rememberNativeFailure('native_effect_failed', result.reason, requiredFact);
+            rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext);
             return { outcome: 'outcome_unknown', failure: nativeFailure, ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
         return nativeRefused(rememberNativeFailure(result.reason === 'invalid_request' ? 'native_protocol_invalid' : 'native_effect_failed',
-            result.reason, requiredFact));
+            result.reason, requiredFact, undefined, failureContext));
     } catch {
         await stop(rememberNativeFailure('native_protocol_invalid'));
         return planSent ? { outcome: 'outcome_unknown', failure: nativeFailure } : nativeRefused(stopReason ?? 'native_protocol_invalid');

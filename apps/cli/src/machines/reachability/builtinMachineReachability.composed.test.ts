@@ -49,7 +49,15 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       if (installed) {
         expect(result.ok, JSON.stringify(result)).toBe(true);
         expect(result).toMatchObject({ ok: true, result: { posture: null,
-          observation: { nativeFirewall: { status: 'unavailable', requiredFact: expect.any(String) } } } });
+          observation: { nativeFirewall: { status: 'unavailable', requiredFact: expect.any(String),
+            remedy: expect.stringContaining('machines.reachability.inspect') } } } });
+        const review = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+          change: { kind: 'posture', posture: { revision: 0,
+            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } } });
+        expect(review).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable', details: {
+          failure: { kind: 'native_check_unavailable', phase: 'check', requiredFact: expect.any(String) },
+          remedy: expect.stringContaining('machines.reachability.inspect'),
+        } });
       } else {
         expect(result).toMatchObject({ ok: false, errorCode: 'managed_cli_unavailable',
           details: { recovery: { kind: 'install_managed_cli', executablePath } } });
@@ -57,7 +65,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(await api.inspectOriginalCli({ serverId: 'srv_other-home', machineId }))
         .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
       expect(f.home.approvalRequests()).toEqual([]);
-      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).map(request => request.mode)).toEqual(installed ? ['check'] : []);
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).map(request => request.mode)).toEqual(installed ? ['check', 'check'] : []);
       expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadataVersion: snapshot.metadataVersion + 1, metadata });
     } finally { await api.dispose(); }
   });
