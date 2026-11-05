@@ -455,6 +455,17 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(setParams).toHaveBeenLastCalledWith({ id: 'services' });
     });
 
+    it.each(['running', 'healthy'] as const)('shows running since from native start when a %s service has no health transition clock', async state => {
+        const row = service('Web', { state, accounting: { startedAtMs: Date.UTC(2026, 10, 2, 9, 14) } });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockImplementation(async () => ({ kind: 'service', service: row }));
+        const { screen } = await mount();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-web');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-since')).not.toBeNull());
+        expect(screen.findHostByTestId('machine-service-since')?.props.children).toContain(t('machineServices.state.running'));
+    });
+
     it('shows memory and uptime on the row, health since on the page, and the masking notice outside the log', async () => {
         const startedAtMs = Date.now() - 4 * 3_600_000;
         const row = service('Web', { state: 'healthy', accounting: { memoryBytes: 98 * 1024 * 1024, startedAtMs },

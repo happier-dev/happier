@@ -162,11 +162,13 @@ function MachineServicePresent(props: Readonly<{
   const menuStart = !props.offline && offered.start && visible !== 'start';
   const menuStop = !props.offline && offered.stop;
   const facts = React.useMemo(() => serviceFacts(service, detail), [service, detail]);
-  // "Healthy since 2 Nov, 09:14." (lab `services/detail`): only when the health source reported when it changed.
+  // A process start proves running since; only a health transition proves healthy since.
   const healthSince = service.health?.since;
-  const since = healthSince === undefined ? null : t('machineServices.healthSince', {
-    state: t(`machineServices.state.${service.state}`),
-    since: formatWithCachedDateTimeFormatter(healthSince, undefined, SINCE_FORMAT),
+  const runningSince = service.state === 'running' || service.state === 'healthy' ? service.accounting?.startedAtMs : undefined;
+  const sinceMs = healthSince ?? runningSince;
+  const since = sinceMs === undefined ? null : t('machineServices.healthSince', {
+    state: t(`machineServices.state.${healthSince === undefined ? 'running' : service.state}`),
+    since: formatWithCachedDateTimeFormatter(sinceMs, undefined, SINCE_FORMAT),
   });
   const portOpen = useServicePortOpen(props.offline ? null : service.port ?? null);
   return (
