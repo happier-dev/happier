@@ -1469,7 +1469,9 @@ describe('WorkflowRunScreen', () => {
             finalOutputInvocationId: 'final-null',
         });
 
-        expect(readContentProps()?.resultLabel).toBe('null');
+        // The value stays distinct from no result, but a null output has nothing to read: the outcome
+        // line never prints "null" and the no-output primary leads (FIN-DESIGN-REVIEW H2(c)).
+        expect(readContentProps()?.resultLabel).toBeNull();
         expect(readContentProps()?.result).toBeNull();
         expect(readContentProps()?.finalOutputInvocationId).toBe('final-null');
     });

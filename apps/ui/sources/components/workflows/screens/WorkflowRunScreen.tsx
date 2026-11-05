@@ -995,7 +995,8 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         : EMPTY_PROGRESS_BY_INVOCATION_ID;
     const allInvocations = resolveVisibleWorkflowInvocations(visibleInvocations);
     const visibleResultLabel = React.useMemo(() => {
-        if (visibleResult === undefined) return null;
+        // A null output is a settled result with nothing to read; it never prints as "null".
+        if (visibleResult === undefined || visibleResult === null) return null;
         const raw = typeof visibleResult === 'string' ? visibleResult : JSON.stringify(visibleResult);
         return normalizeResultPreview(raw).display;
     }, [visibleResult]);
