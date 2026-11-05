@@ -41,6 +41,7 @@ export * from './fixtures/sessionWorkflowActivityFixtures';
 export * from './fixtures/themeFixtures';
 export * from './fixtures/transcriptFixtures';
 export * from './harness/browserStorageLockBoundary';
+export * from './harness/browserClipboardBoundary';
 export * from './harness/sidechainTranscriptListHarness';
 export * from './harness/popoverHarness';
 export * from './fixtures/homeGovernanceFixtures';

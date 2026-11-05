@@ -71,7 +71,10 @@ export function installTokenStorageWebPlatformMocks(
  * profile owner, which tests seed through `seedPersistedHomeProfilesForTests` instead of mocking it.
  * A second module instance is still the right tool for cross-tab and reload contracts.
  */
-export function installTokenStorageTestIsolation(scopePrefix: string): void {
+export function installTokenStorageTestIsolation(
+    scopePrefix: string,
+    profileResetOptions?: Parameters<typeof import('@/sync/domains/server/serverProfiles').resetServerProfilesRuntimeForTests>[0],
+): void {
     const previousStorageScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     let sequence = 0;
     // Bind the file's own profile owner before any test opens a second module instance with
@@ -80,7 +83,7 @@ export function installTokenStorageTestIsolation(scopePrefix: string): void {
     beforeEach(async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `${scopePrefix}_${sequence++}`;
         serverProfiles ??= await import('@/sync/domains/server/serverProfiles');
-        serverProfiles.resetServerProfilesRuntimeForTests();
+        serverProfiles.resetServerProfilesRuntimeForTests(profileResetOptions);
     });
     afterEach(() => {
         if (previousStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
