@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentTextV1Schema as text } from './ids.js';
 
 const path = z.string().check(z.startsWith('/'));
@@ -11,8 +12,7 @@ export const DeploymentDomainContentV1Schema = z.strictObject({
     target: z.strictObject({ service: text,
         containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
         path: z.optional(path), redirectTo: z.optional(text) }),
-    healthCheck: z.strictObject({ path,
-        expectStatus: z.number().check(z.int(), z.minimum(100), z.maximum(599)) }),
+    healthCheck: z.optional(DeploymentDomainHealthCheckV1Schema),
     ingress: z.optional(AccessProviderSelectionV1Schema),
     /** Vendor acknowledgements and every captured native target stay in
      * this private Artifact, never the public Domain header or ingress config. */

@@ -1,4 +1,4 @@
-import type { HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentDomainContentV1, HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/deployment-protocol/v1';
 import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isNativeTlsErrorCode } from '@/plugins/runtime/fetch/tlsError';
@@ -15,7 +15,7 @@ export type AdmittedHttpHealthCheckV1 = Readonly<{
     target:
         | Readonly<{ kind: 'domain'; environmentId: string; targetLinkId: string; domainId: string;
             domainRevision: number; targetLinkRevision: number; hostname: string;
-            healthCheck: Readonly<{ path: string; expectStatus: number }> }>
+            healthCheck?: DeploymentDomainContentV1['healthCheck'] }>
         | Readonly<{ kind: 'machineService'; machineId: string; serviceId: string;
             endpoint: string; expectStatus: number }>;
     keyword?: string;
@@ -30,14 +30,24 @@ export type HealthCheckFiniteLeafContextV1 = Readonly<{
     http: Pick<HttpService, 'request'>;
 }>;
 
-function endpoint(check: AdmittedHttpHealthCheckV1): string {
+function endpoint(check: AdmittedHttpHealthCheckV1): Readonly<{ url: string; expectStatus: number }> | null {
+    const target = check.target;
+    let address: string;
+    let expectStatus: number;
+    if (target.kind === 'domain') {
+        if (!target.healthCheck) return null;
+        address = `https://${target.hostname}${target.healthCheck.path}`;
+        expectStatus = target.healthCheck.expectStatus;
+    } else {
+        address = target.endpoint;
+        expectStatus = target.expectStatus;
+    }
     // Concatenation retains the admitted public authority even for a path
     // beginning with //; resolving that path as a URL would change its host.
-    const url = new URL(check.target.kind === 'machineService' ? check.target.endpoint
-        : `https://${check.target.hostname}${check.target.healthCheck.path}`);
+    const url = new URL(address);
     // Fragments are never sent to the peer; compare the actual request URL.
     url.hash = '';
-    return url.href;
+    return { url: url.href, expectStatus };
 }
 
 function nativeFailure(error: unknown, url: string): 'tls' | 'connection' | undefined {
@@ -71,7 +81,11 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     kind: 'http' | 'certificate'): Promise<HealthCheckResultV1> {
     await assertCurrent(context);
     const startedAt = context.now();
-    const url = endpoint(check);
+    const target = endpoint(check);
+    if (!target) return result(check, kind, context, startedAt, 'unknown', {
+        reason: 'not_checked', disclosure: 'No HTTP health probe is configured',
+    });
+    const { url, expectStatus } = target;
     let response: HttpResponse;
     try {
         response = await context.http.request({ url, method: 'GET', redirect: 'manual',
@@ -92,7 +106,6 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     }
     await assertCurrent(context);
     if (kind === 'http') {
-        const expectStatus = check.target.kind === 'domain' ? check.target.healthCheck.expectStatus : check.target.expectStatus;
         const statusMatched = response.status === expectStatus;
         const keywordMatched = check.keyword === undefined || new TextDecoder().decode(response.body).includes(check.keyword);
         return result(check, kind, context, startedAt, statusMatched && keywordMatched ? 'up' : 'down',

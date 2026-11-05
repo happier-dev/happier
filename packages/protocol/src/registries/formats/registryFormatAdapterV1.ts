@@ -1,5 +1,5 @@
 import type { RegistryPackagedSourceDescriptorV1 } from '../registrySourcesV1.js';
-import type { RegistrySourceV1, RegistryFormatV1, RegistryKindV1 } from '../registrySourcesV1.js';
+import type { RegistrySourceV1, RegistryFormatV1, RegistryKindV1, RegistryAppTemplateHintsV1 } from '../registrySourcesV1.js';
 import type { RegistryItemV1, RegistrySkillItemV1, RegistryContentRefV1, RegistryProvenanceV1 } from '../registryItemsV1.js';
 import type { RegistryListPageV1, RegistrySourceStatusV1 } from '../registryListV1.js';
 export type RegistryHttpResultV1<T> = Readonly<{ ok: true; value: T; fetchedAt: number }> | Readonly<{ ok: false; status: Exclude<RegistrySourceStatusV1, {state:'ok'}> }>;
@@ -13,6 +13,8 @@ export type RegistryDetectedSourceV1 = Readonly<{ format: RegistryFormatV1; kind
 export type RegistryFetchContextV1 = Readonly<{
 packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
  http: RegistryHttpV1; signal?: AbortSignal;
+  /** Already resolved by the source owner; normalization consumes authored probes before admission. */
+  appTemplateHints?: RegistryAppTemplateHintsV1;
   /** Node owner retains immutable catalog resources across finite reads; mutable currentness stays with the adapter. */
   withAppCatalog?: <T>(input: Readonly<{ source: RegistrySourceV1; commit: string; current: boolean; http: RegistryHttpV1 }>,
     consume: (http: RegistryHttpV1) => Promise<T>) => Promise<T>;

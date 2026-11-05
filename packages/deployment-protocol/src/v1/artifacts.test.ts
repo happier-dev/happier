@@ -33,7 +33,7 @@ describe('deployment Artifact content boundary', () => {
         const { body: _body, ...header } = artifact;
         expect(readDeploymentEnvironmentArtifactHeaderV1(reference, header)).toEqual({ ok: true, title: 'Staging' });
     });
-    it('opens only the exact private Domain revision without accepting credentials or missing health input', () => {
+    it('opens exact private Domains with optional health without accepting credentials', () => {
         const content = { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000, redirectTo: 'example.test' },
             healthCheck: { path: '/ready', expectStatus: 204 }, tls: { kind: 'custom' },
             basicAuth: { username: 'operator' } };
@@ -42,7 +42,10 @@ describe('deployment Artifact content boundary', () => {
         expect(readDeploymentDomainArtifactV1(reference, domain)).toEqual({ ok: true, content, title: 'Application' });
         expect(readDeploymentDomainArtifactV1(reference, { ...domain, revision: { headerVersion: 1, bodyVersion: 2 } }))
             .toEqual({ ok: false, error: 'deployment_conflict' });
-        for (const body of [{ ...content, healthCheck: undefined }, { ...content, tls: { kind: 'custom', privateKeyPem: 'private' } },
+        const { healthCheck: _healthCheck, ...unchecked } = content;
+        expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(unchecked) }))
+            .toEqual({ ok: true, content: unchecked, title: 'Application' });
+        for (const body of [{ ...content, healthCheck: { path: '/ready' } }, { ...content, tls: { kind: 'custom', privateKeyPem: 'private' } },
             { ...content, basicAuth: { username: 'operator', password: 'private' } },
             { ...content, redirectTo: 'https://example.test' }]) {
             expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(body) }))

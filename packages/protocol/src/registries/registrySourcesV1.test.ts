@@ -10,6 +10,19 @@ const configuredSource = RegistrySourceV1Schema.parse({
 });
 
 describe('registry source write contracts', () => {
+  it('admits app-only template formats through the source and Action contracts', () => {
+    for (const format of ['coolify-templates', 'dokploy-templates']) {
+      const source = { ...configuredSource, format, kinds: ['app'] };
+      expect(RegistrySourceV1Schema.safeParse(source).success).toBe(true);
+      for (const kind of ['skill', 'mcpServer', 'agent', 'plugin', 'unknown']) {
+        expect(RegistrySourceV1Schema.safeParse({ ...source, kinds: [kind] }).success).toBe(false);
+      }
+    }
+    expect(REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.items.list'].parse({ kind: 'app' })).toEqual({ kind: 'app' });
+    expect(REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.items.read'].parse({ kind: 'app', sourceId: 'apps', itemId: 'postgres', version: '1' }))
+      .toEqual({ kind: 'app', sourceId: 'apps', itemId: 'postgres', version: '1' });
+  });
+
   it('preserves large valid configuration and every source beyond the former marketplace count limit', () => {
     const source = { ...configuredSource, id: `registry:${'source'.repeat(100)}`, title: 'title'.repeat(200),
       url: `https://catalog.example/index.json?key=${'x'.repeat(3_000)}` };

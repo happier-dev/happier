@@ -19,7 +19,7 @@ type CaddyProxy = {
     upstreams: readonly { dial: string }[];
     transport: { protocol: 'http' };
     load_balancing: { selection_policy: { policy: 'round_robin' }; retries: number };
-    health_checks: { active: {
+    health_checks?: { active: {
         uri: string;
         expect_status: number;
         headers: Readonly<Record<string, readonly string[]>>;
@@ -226,14 +226,15 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
     const upstreams = input.upstreams.kind === 'replicas'
         ? input.upstreams.containerNames.map((name) => `${name}:${domain.target.containerPort}`)
         : input.upstreams.endpoints;
-    const healthMatcher: CaddyMatcher = {
+    const healthCheck = domain.healthCheck;
+    const healthMatcher: CaddyMatcher | undefined = healthCheck ? {
         method: ['GET'],
         // Path matchers clean traversal segments, but reverse_proxy forwards
         // the original path. Exempt only the exact path sent to the upstream.
-        expression: `{http.request.uri.path} == ${JSON.stringify(domain.healthCheck.path)}`,
+        expression: `{http.request.uri.path} == ${JSON.stringify(healthCheck.path)}`,
         remote_ip: { ranges: input.privateSourceRanges },
-    };
-    const exemptPrivateHealth = listener === 'privateOrigin' && input.privateSourceRanges.length > 0;
+    } : undefined;
+    const exemptPrivateHealth = healthMatcher && listener === 'privateOrigin' && input.privateSourceRanges.length > 0;
 
     function proxy(id: string, addresses: readonly string[], role: 'local' | 'privateOrigin'): CaddyProxy {
         const activeHeaders: Record<string, readonly string[]> = { Host: [domain.hostname] };
@@ -247,11 +248,11 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
                 selection_policy: { policy: 'round_robin' },
                 retries: role === 'local' ? Math.max(0, addresses.length - 1) : 0,
             },
-            health_checks: { active: {
-                uri: domain.healthCheck.path,
-                expect_status: domain.healthCheck.expectStatus,
+            ...(healthCheck ? { health_checks: { active: {
+                uri: healthCheck.path,
+                expect_status: healthCheck.expectStatus,
                 headers: activeHeaders,
-            } },
+            } } } : {}),
             headers: { request: role === 'local'
                 ? { delete: [FALLBACK_HEADER] }
                 : { set: { [FALLBACK_HEADER]: ['1'] } } },
@@ -280,7 +281,8 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
 
     const hostMatch: CaddyMatcher = { host: [domain.hostname] };
     const match = domain.target.path
-        ? [{ ...hostMatch, path: [`${domain.target.path}*`] }, { ...hostMatch, path_regexp: exactPath(domain.healthCheck.path) }]
+        ? [{ ...hostMatch, path: [`${domain.target.path}*`] },
+            ...(healthCheck ? [{ ...hostMatch, path_regexp: exactPath(healthCheck.path) }] : [])]
         : [hostMatch];
     const route: CaddyRoute = {
         '@id': routeId,

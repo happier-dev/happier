@@ -17,7 +17,8 @@ import { createClaudeMarketplaceRegistryAdapterV1 } from './formats/claudeMarket
 import { couldReadWellKnownSkillsV1, readWellKnownSkillsV1 } from './formats/wellKnownSkills.js';
 import { composeCatalogRegistryAdapterV1 } from './formats/composeCatalog.js';
 import type { RegistryDetectedSourceV1,RegistryFetchContextV1,RegistryHttpV1,RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.js';
-import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,type RegistrySourceV1,type RegistrySourceDescriptorV1,type RegistryRemoteSourceDescriptorV1 } from './registrySourcesV1.js';
+import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,readBuiltInRegistryAppTemplateHintsV1,type RegistrySourceV1,type RegistrySourceDescriptorV1,type RegistryRemoteSourceDescriptorV1 } from './registrySourcesV1.js';
+import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
 import { RegistryItemV1Schema,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
 import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../marketplace/marketplaceSourceRegistryV1.js';
@@ -52,6 +53,16 @@ function adapterFor(source:RegistrySourceV1):RegistryFormatAdapterV1 {
   const adapter=(REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<RegistrySourceV1['format'],RegistryFormatAdapterV1>>)[source.format];
   if(!adapter) throw new RegistryFetchErrorV1({state:'newer_format',found:source.format});
   return adapter;
+}
+function applyRegistryAppTemplateHintsV1(item: RegistryItemV1, hints: ReturnType<typeof readBuiltInRegistryAppTemplateHintsV1>): RegistryItemV1 {
+  if (item.payload.kind !== 'app' || item.payload.state !== 'ready') return item;
+  if (!hints) return item;
+  const { domainHealthChecks: _domainHealthChecks, ...descriptorHints } = hints;
+  const parsed = DeploymentTemplateV1Schema.safeParse({ ...item.payload.app, ...descriptorHints });
+  if (parsed.success) return { ...item, payload: { ...item.payload, app: parsed.data } };
+  const diagnostics = parsed.error.issues.map(issue => ({ field: issue.path.map(String).join('.') || 'app', reason: issue.code }));
+  return { ...item, summary: { ...item.summary, problem: { code: 'needs_review', diagnostics } },
+    payload: { kind: 'app', state: 'needs_review', ref: item.payload.ref, diagnostics } };
 }
 export async function detectRegistrySourceV1(ctx:RegistryFetchContextV1,url:string,kind?:'skill'):Promise<RegistryDetectedSourceV1> {
   const normalized=normalizeRegistrySourceUrlV1(url);
@@ -130,11 +141,13 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     if(!source.kinds.includes(request.kind)) throw new RegistryFetchErrorV1({state:'invalid_source'});
     const formatCtx: RegistryFetchContextV1 = { ...operationCtx, readTargetItem: async target => {
       const descriptor: RegistrySourceDescriptorV1 = { ...target.source, origin: { kind: 'built_in' }, removable: false };
+      const appTemplateHints = readBuiltInRegistryAppTemplateHintsV1(descriptor, target.itemId);
       const targetAdapter = adapterFor(descriptor);
       const placements = resolveRegistryFetchPlanV1({ host: deps.host, adapter: targetAdapter, source: descriptor, op: 'read' });
       for (const [index, placement] of placements.entries()) {
         try {
-          if (placement === 'direct') return RegistryItemV1Schema.parse(await targetAdapter.read(operationCtx, target));
+          if (placement === 'direct') return applyRegistryAppTemplateHintsV1(
+            RegistryItemV1Schema.parse(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
           // Browsing a curated pointer never requires a Machine. Its details
           // read fills the reviewed version through the existing daemon owner.
           if (request.op === 'list') return null;
@@ -197,6 +210,8 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       // A list already admitted this exact descriptor from its one Account inventory.
       const source = admittedSource ?? await sourceById(request.sourceId);
       const admittedCtx = await admitSource(source, operationCtx);
+      const appTemplateHints = request.op === 'read' && request.kind === 'app' && !('packageContent' in source)
+        ? readBuiltInRegistryAppTemplateHintsV1(source, request.itemId) : undefined;
       const fetchSelected = async (operationCtx: RegistryFetchContextV1): Promise<RegistryFetchResponseV1> => {
         const placements = resolveRegistryFetchPlanV1({
           host: deps.host, adapter: adapterFor(source), source, op: request.op,
@@ -204,9 +219,10 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         for (const [index, placement] of placements.entries()) {
           try {
             const response = placement === 'direct'
-              ? await direct(request, source, operationCtx)
+              ? await direct(request, source, { ...operationCtx, appTemplateHints })
               : await viaDaemon(request);
-            return RegistryFetchResponseV1Schema.parse(response);
+            const admitted = RegistryFetchResponseV1Schema.parse(response);
+            return admitted.op === 'read' ? { ...admitted, item: applyRegistryAppTemplateHintsV1(admitted.item, appTemplateHints) } : admitted;
           } catch (error) {
             if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) {
               continue;

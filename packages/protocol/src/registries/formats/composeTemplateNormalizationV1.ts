@@ -53,9 +53,47 @@ function evidencedPorts(service: Record<string, unknown>, header: Record<string,
   return [...ports].filter(port => Number.isSafeInteger(port) && port > 0 && port <= 65535);
 }
 
+/** A range-only success check cannot supply the Domain owner's exact status.
+ * Recognize literal GET status assertions; opaque commands remain unprobed. */
+function composeHttpHealthCheck(service: Record<string, unknown>, serviceName: string, port: number): Domain['healthCheck'] {
+  const health = templateRecordV1(service.healthcheck);
+  if (health?.disable === true) return undefined;
+  const test = health?.test;
+  const command = typeof test === 'string' ? test : Array.isArray(test) && test.length === 2
+    && test[0] === 'CMD-SHELL' && typeof test[1] === 'string' ? test[1] : undefined;
+  if (!command) return undefined;
+  const assertion = /^test\s+"\$\((curl\s+.+)\)"\s+(?:=|-eq)\s+([1-5]\d{2})$/.exec(command.trim());
+  if (!assertion) return undefined;
+  const words = assertion[1]!.match(/'[^']*'|"[^"$`\\]*"|[^\s'"$`\\]+/g);
+  if (!words || words.join(' ') !== assertion[1]!.replace(/\s+/g, ' ')) return undefined;
+  const args = words.map(word => /^['"]/.test(word) ? word.slice(1, -1) : word);
+  let statusOutput = false; let discardBody = false; let address: string | undefined;
+  for (let index = 1; index < args.length; index++) {
+    const arg = args[index]!;
+    if (['-s', '-S', '-sS', '--silent', '--show-error'].includes(arg)) continue;
+    if (arg === '-o' || arg === '--output') {
+      if (discardBody || args[++index] !== '/dev/null') return undefined;
+      discardBody = true;
+    } else if (arg === '-w' || arg === '--write-out') {
+      if (statusOutput || !['%{http_code}', '%{response_code}'].includes(args[++index] ?? '')) return undefined;
+      statusOutput = true;
+    } else if (!address && /^https?:\/\//.test(arg)) address = arg;
+    else return undefined;
+  }
+  if (!statusOutput || !discardBody || !address) return undefined;
+  let url: URL;
+  try { url = new URL(address); } catch { return undefined; }
+  if (!['localhost', '127.0.0.1', '[::1]', serviceName].includes(url.hostname)
+    || Number(url.port || (url.protocol === 'https:' ? 443 : 80)) !== port
+    || url.username || url.password || url.hash) return undefined;
+  return { path: url.pathname + url.search, expectStatus: Number(assertion[2]) };
+}
+
 /** Only data translation happens here. The registry owner acquires bytes and
  * Plan 41 admits the resulting standard Compose document. */
-export function normalizeComposeTemplateV1(input: Readonly<{ document: string; title: string; description?: string; category?: string; documentationUrl?: string }>): NormalizedComposeTemplateV1 {
+export function normalizeComposeTemplateV1(input: Readonly<{ document: string; title: string; description?: string; category?: string; documentationUrl?: string;
+  declaredDomains?: readonly Readonly<{ key: string; service: string; containerPort: number; path?: string }>[];
+  domainHealthChecks?: Readonly<Record<string, DeploymentTemplateV1['domains'][number]['healthCheck']>> }>): NormalizedComposeTemplateV1 {
   const diagnostics: TemplateDiagnosticV1[] = [];
   const issue = (field: string, reason: string) => diagnostics.push({ field, reason });
   const header = readComposeTemplateHeaderV1(input.document);
@@ -106,6 +144,8 @@ export function normalizeComposeTemplateV1(input: Readonly<{ document: string; t
       const ports = route.port === undefined ? evidencedPorts(service, header) : [route.port];
       if (ports.length !== 1 || !Number.isSafeInteger(ports[0]) || ports[0]! < 1 || ports[0]! > 65535) { issue(`services.${serviceName}.environment.${key}`, 'ambiguous_domain_port'); continue; }
       const candidate: Domain = { key, service: serviceName, containerPort: ports[0]!, protocol: 'http', required: true };
+      const healthCheck = composeHttpHealthCheck(service, serviceName, ports[0]!) ?? input.domainHealthChecks?.[key];
+      if (healthCheck) candidate.healthCheck = healthCheck;
       const group = declarations.get(route.alias) ?? [];
       group.push(candidate);
       declarations.set(route.alias, group);
@@ -120,6 +160,15 @@ export function normalizeComposeTemplateV1(input: Readonly<{ document: string; t
     const owner = uniquePorts.size === 1 && uniqueServices.size === 1 ? group[0] : undefined;
     if (owner) { routeOwners.set(alias, owner); domains.set(owner.key, owner); }
     else for (const domain of group) issue(`services.${domain.service}.environment.${domain.key}`, 'conflicting_domain_owner');
+  }
+  for (const declaration of input.declaredDomains ?? []) {
+    const service = templateRecordV1(services[declaration.service]);
+    if (!service) { issue(`domains.${declaration.key}`, 'unknown_domain_service'); continue; }
+    if (domains.has(declaration.key)) { issue(`domains.${declaration.key}`, 'conflicting_domain_owner'); continue; }
+    const healthCheck = composeHttpHealthCheck(service, declaration.service, declaration.containerPort)
+      ?? input.domainHealthChecks?.[declaration.key];
+    domains.set(declaration.key, { ...declaration, protocol: 'http', required: true, ...(healthCheck ? { healthCheck } : {}) });
+    ensureVariable(declaration.key).valueFrom = { kind: 'domainHost', domainKey: declaration.key };
   }
   const scan = (value: unknown, service: string, path: string[]): unknown => {
     if (typeof value === 'string') return value.replace(/(?<!\$)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-+?])([^}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))/g,

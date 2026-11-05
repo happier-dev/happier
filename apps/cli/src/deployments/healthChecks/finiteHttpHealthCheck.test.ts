@@ -167,6 +167,30 @@ describe('finite saved HTTP and certificate health', () => {
         expect(result.evidence.items[0]?.text).toContain('checked from the server itself');
     });
 
+    it('reports absent Domain probes as unknown without sending HTTP or certificate requests', async () => {
+        let requests = 0;
+        // The HTTP transport is the external boundary; retain the real finite observer.
+        const observation = context('https://public.example', { http: { request: async () => {
+            requests += 1;
+            throw new Error('Transport observation unavailable');
+        } } });
+        const check: AdmittedHttpHealthCheckV1 = { sourceInstanceId: 'domain-source', checkId: 'domain-http',
+            subject: { kind: 'environment', environmentId: 'environment' },
+            observer: { machineId: 'observer', installationId: 'installation' }, vantage: 'outside',
+            target: { kind: 'domain', environmentId: 'environment', targetLinkId: 'link', domainId: 'domain',
+                domainRevision: 1, targetLinkRevision: 1, hostname: 'public.example' } };
+        for (const read of [readHttpHealthCheckV1, readCertificateHealthCheckV1]) {
+            const observed = await read(check, observation);
+            expect(observed.status).toBe('unknown');
+            expect(observed.evidence.items[0]?.text).toContain('not_checked');
+        }
+        expect(requests).toBe(0);
+        if (check.target.kind !== 'domain') throw new Error('Expected Domain');
+        await readHttpHealthCheckV1({ ...check, target: { ...check.target,
+            healthCheck: { path: '/ready', expectStatus: 204 } } }, observation);
+        expect(requests).toBe(1);
+    });
+
     it('refuses stale and cancelled checks before I/O and suppresses an observation retired during I/O', async () => {
         let requests = 0;
         const url = await endpoint((_request, response) => { requests += 1; response.end('healthy'); });

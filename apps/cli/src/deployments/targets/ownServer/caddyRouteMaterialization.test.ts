@@ -3,6 +3,17 @@ import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/d
 import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
 
 describe('Caddy public TLS materialization', () => {
+    it('routes an unprobed Domain without active checks, extra path matches or authentication exemptions', () => {
+        const material = materializeCaddyDomainRouteV1({ domainId: 'unchecked', listener: 'privateOrigin',
+            domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000, path: '/app' } },
+            upstreams: { kind: 'replicas', containerNames: ['web-1'] }, privateSourceRanges: ['100.64.0.0/10'],
+            basicAuth: [{ username: 'reader', bcryptHash: 'boundary-hash' }] });
+        expect(material.route.match).toEqual([{ host: ['app.example.test'], path: ['/app*'] }]);
+        expect(material.route).toHaveProperty('handle.0.routes.0.handle.0.handler', 'authentication');
+        expect(material.route).not.toHaveProperty('handle.0.routes.0.match');
+        expect(material.replicaProxy?.upstreams).toEqual([{ dial: 'web-1:3000' }]);
+        expect(material.replicaProxy).not.toHaveProperty('health_checks');
+    });
     it('exempts only the exact uncleaned private GET health path and keeps public health authenticated', () => {
         for (const path of ['/healthz', '/', '/health"check']) {
             const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = { domainId: 'health-auth', listener: 'privateOrigin',

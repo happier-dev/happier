@@ -189,10 +189,38 @@ export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[]
   url: 'https://github.com/coollabsio/coolify', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }];
 
-/** Host-owned additions to catalog data, restricted to existing descriptor fields. */
-type RegistryAppTemplateHintsV1 = Pick<DeploymentTemplateV1, 'data' | 'loginFields' | 'firstRunSetup'>;
+/** Host-authored descriptor metadata and probes for existing catalog Domain keys. */
+export type RegistryAppTemplateHintsV1 = Pick<DeploymentTemplateV1, 'data' | 'loginFields' | 'firstRunSetup'> & Readonly<{
+  domainHealthChecks?: Readonly<Record<string, DeploymentTemplateV1['domains'][number]['healthCheck']>>;
+}>;
 const BUILT_IN_APP_TEMPLATE_HINTS_V1: Readonly<Record<string, Readonly<Record<string, RegistryAppTemplateHintsV1>>>> = {
-  'builtin:compose-catalog': { 'uptime-kuma': { firstRunSetup: true } },
+  'builtin:compose-catalog': {
+    linkding: {
+      // linkding bookmarks/views/health.py checks its database and returns 200 on success.
+      // https://github.com/sissbruecker/linkding/blob/master/bookmarks/views/health.py
+      domainHealthChecks: { SERVICE_URL_LINKDING_9090: { path: '/health', expectStatus: 200 } },
+    },
+    '9router': {
+      // decolua/9router:0.5.65 GET returns JSON 200; the Compose wget '/' check is not an exact-status probe.
+      // https://github.com/decolua/9router/blob/v0.5.65/src/app/api/health/route.js
+      domainHealthChecks: { SERVICE_URL_9ROUTER_20128: { path: '/api/health', expectStatus: 200 } },
+    },
+    'uptime-kuma': { firstRunSetup: true,
+    // Uptime Kuma 2.0.0 server/routers/api-router.js: public JSON entry-page endpoint.
+    domainHealthChecks: { SERVICE_URL_UPTIMEKUMA_3001: { path: '/api/entry-page', expectStatus: 200 } },
+  } },
+  'builtin:dokploy-templates': {
+    'uptime-kuma': { firstRunSetup: true,
+      domainHealthChecks: { main_domain: { path: '/api/entry-page', expectStatus: 200 } },
+    },
+    '9router': {
+      domainHealthChecks: { main_domain: { path: '/api/health', expectStatus: 200 } },
+    },
+    'gitea-sqlite': { firstRunSetup: true,
+      // Gitea routers/web/web.go registers this public database-health probe before authentication.
+      domainHealthChecks: { main_domain: { path: '/api/healthz', expectStatus: 200 } },
+    },
+  },
 };
 export function readBuiltInRegistryAppTemplateHintsV1(source: RegistryRemoteSourceDescriptorV1,
   itemId: string): RegistryAppTemplateHintsV1 | undefined {

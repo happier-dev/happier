@@ -114,6 +114,7 @@ export const composeCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const summary = appCatalogSummaryV1(req.source, req.itemId, entry, undefined, location);
     const normalized = normalizeComposeTemplateV1({ document: selected.document,
       title: summary.title,
+      ...(ctx.appTemplateHints?.domainHealthChecks ? { domainHealthChecks: ctx.appTemplateHints.domainHealthChecks } : {}),
       ...(typeof entry.slogan === 'string' ? { description: entry.slogan } : {}),
       ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
       ...(typeof entry.documentation === 'string' ? { documentationUrl: entry.documentation } : {}) });

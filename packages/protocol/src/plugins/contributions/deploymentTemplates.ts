@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { DeploymentDomainHealthCheckV1Schema } from '../../deployments/deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { DeploymentComposeSelectorsV1Schema, DeploymentComposePublicFilesV1Schema } from '../../deployments/storedAppInputV1.js';
 import { PluginLocalizedStringV2Schema } from './publicTypes.js';
@@ -51,7 +52,8 @@ export const DeploymentTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   generatedSecrets: z.array(z.strictObject({ key: key(), purpose: text(), label: PluginLocalizedStringV2Schema,
     profile: DeploymentTemplateSecretProfileV1Schema })),
   domains: z.array(z.strictObject({ key: key(), service: text(), containerPort: port(),
-    protocol: z.enum(['http', 'https', 'tcp']), required: z.boolean(), path: z.optional(text()) })),
+    protocol: z.enum(['http', 'https', 'tcp']), required: z.boolean(), path: z.optional(text()),
+    healthCheck: z.optional(DeploymentDomainHealthCheckV1Schema) })),
   volumes: z.array(z.strictObject({ id: text(), service: text(), target: text(), persistent: z.boolean(), backup: z.boolean(),
     consistency: z.optional(z.enum(['logicalDump', 'stopServiceDuringCopy'])), description: z.optional(PluginLocalizedStringV2Schema) })),
   health: z.optional(z.array(z.strictObject({ service: text(), participates: z.boolean() }))),
