@@ -5,7 +5,7 @@ export function translated(value: typeof en): typeof en { return value; }
 
 
 export const en = {
-    spacesTitle: 'Spaces',
+    spacesTitle: 'Spaces', spacesSelectedTitle: 'Selected space on this device',
     spacesShow: "Show spaces",
     spacesEnabledDescription: "Saved views at the top of each list.",
     spacesDisabledDescription: "Every list uses ordinary filters. Your spaces are kept.",

@@ -11137,7 +11137,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHans: translated({
-        spacesTitle: '空间',
+        spacesTitle: '空间', spacesSelectedTitle: '此设备上选择的空间',
         spacesShow: "显示空间",
         spacesEnabledDescription: "显示在每个列表顶部的已保存视图。",
         spacesDisabledDescription: "所有列表都使用普通筛选。你的空间会保留。",

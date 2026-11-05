@@ -11137,7 +11137,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHant: translated({
-        spacesTitle: '空間',
+        spacesTitle: '空間', spacesSelectedTitle: '此裝置上選取的空間',
         spacesShow: "顯示空間",
         spacesEnabledDescription: "顯示在每個清單頂端的已儲存檢視。",
         spacesDisabledDescription: "所有清單都使用一般篩選。你的空間會保留。",

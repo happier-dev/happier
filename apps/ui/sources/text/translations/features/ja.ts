@@ -11142,7 +11142,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ja: translated({
-        spacesTitle: 'スペース',
+        spacesTitle: 'スペース', spacesSelectedTitle: 'このデバイスで選択したスペース',
         spacesShow: "スペースを表示",
         spacesEnabledDescription: "各リストの上部に表示される保存済みビュー。",
         spacesDisabledDescription: "すべてのリストで通常のフィルターを使います。スペースは保持されます。",

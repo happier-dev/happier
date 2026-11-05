@@ -11153,7 +11153,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { it: translated({
-        spacesTitle: 'Spazi',
+        spacesTitle: 'Spazi', spacesSelectedTitle: 'Spazio selezionato su questo dispositivo',
         spacesShow: "Mostra spazi",
         spacesEnabledDescription: "Viste salvate in cima a ogni elenco.",
         spacesDisabledDescription: "Tutti gli elenchi usano i filtri normali. I tuoi spazi restano salvati.",

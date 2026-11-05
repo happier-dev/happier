@@ -11153,7 +11153,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ca: translated({
-        spacesTitle: 'Espais',
+        spacesTitle: 'Espais', spacesSelectedTitle: 'Espai seleccionat en aquest dispositiu',
         spacesShow: "Mostra els espais",
         spacesEnabledDescription: "Vistes desades a la part superior de cada llista.",
         spacesDisabledDescription: "Totes les llistes fan servir filtres normals. Els teus espais es conserven.",

@@ -11154,7 +11154,7 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { fr: translated({
-        spacesTitle: 'Espaces',
+        spacesTitle: 'Espaces', spacesSelectedTitle: 'Espace sélectionné sur cet appareil',
         spacesShow: "Afficher les espaces",
         spacesEnabledDescription: "Des vues enregistrées en haut de chaque liste.",
         spacesDisabledDescription: "Toutes les listes utilisent les filtres habituels. Vos espaces sont conservés.",
