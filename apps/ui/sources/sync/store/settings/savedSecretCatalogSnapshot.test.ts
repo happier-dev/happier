@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
 
@@ -10,6 +10,8 @@ import {
     applyAcknowledgedSavedSecretCatalogEntry,
     beginSavedSecretCatalogLoad,
     getSavedSecretCatalogSnapshot,
+    readSavedSecretCatalogEntry,
+    readSavedSecretCatalogName,
     getMaterializedSavedSecret,
     getMaterializedSavedSecrets,
     getUsableSavedSecrets,
@@ -43,6 +45,135 @@ function sharedEntry(overrides?: Partial<SavedSecretCatalogEntryV1>): SavedSecre
 
 describe('savedSecretCatalogSnapshot', () => {
     beforeEach(() => resetSavedSecretCatalogSnapshotsForTests());
+
+    it('returns only a typed display name or unavailable reason, including acknowledged withdrawal during refresh', () => {
+        const entry = sharedEntry();
+        applySavedSecretCatalogPage({ scope, entries: [entry], observedAt: 1,
+            materializedSecrets: [{ id: entry.ref, name: 'Team API key', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+                encryptedValue: { _isSecretValue: true, value: 'constructed-not-for-display' } }] });
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toEqual({ status: 'ready', name: entry.name, resolving: false });
+        expect(readSavedSecretCatalogName(scope, 'happier:shared-secret:v1:unknown')).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'reference_unavailable', retryable: false } });
+        removeDeletedSavedSecretCatalogResource(scope, 'resource-a', 1);
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'reference_unavailable', retryable: false } });
+        beginSavedSecretCatalogLoad(scope);
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'reference_unavailable', retryable: false } });
+        const other = sharedEntry({ ref: 'happier:shared-secret:v1:resource-b', revision: 2 });
+        applyAcknowledgedSavedSecretCatalogEntry(scope, other, true);
+        expect(readSavedSecretCatalogName(scope, entry.ref).resolving).toBe(false);
+        const error = { kind: 'forbidden' as const, code: 'home_access_refused', retryable: false };
+        applySavedSecretCatalogFailure({ scope, error });
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toEqual({ status: 'unavailable', name: null, resolving: false, reason: error });
+    });
+
+    it('settles an undisclosed name without inventing a display label and publishes its later availability once', () => {
+        const entry = sharedEntry({ name: null, kind: null, materialStatus: 'preparing_encrypted_access' });
+        applySavedSecretCatalogPage({ scope, entries: [entry], observedAt: 1 });
+        const unavailable = readSavedSecretCatalogName(scope, entry.ref);
+        expect(unavailable).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'reference_unavailable', retryable: false } });
+        expect(readSavedSecretCatalogEntry(scope, entry.ref)).toEqual(entry);
+        const notify = vi.fn();
+        onTestFinished(subscribeSavedSecretCatalogSnapshots(notify, { scope, refs: [entry.ref] }));
+        for (let observedAt = 2; observedAt < 12; observedAt += 1) {
+            applySavedSecretCatalogPage({ scope, entries: [{ ...entry }], observedAt });
+        }
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toBe(unavailable);
+        expect(notify).toHaveBeenCalledTimes(0);
+        applySavedSecretCatalogPage({ scope, entries: [{ ...entry, name: 'Available name', kind: 'token', materialStatus: 'ready' }], observedAt: 12 });
+        expect(readSavedSecretCatalogName(scope, entry.ref)).toEqual({ status: 'ready', name: 'Available name', resolving: false });
+        expect(notify).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps selected references idle across identical publications and unrelated Secrets or Homes at constructed scale', () => {
+        // Constructed stress shape, not an observed Account census.
+        const entries = Array.from({ length: 3007 }, (_, index) => sharedEntry({
+            ref: `happier:shared-secret:v1:resource-${index}`,
+        }));
+        const selected = entries[3006]!;
+        applySavedSecretCatalogPage({ scope, entries, observedAt: 1 });
+        const ready = getSavedSecretCatalogSnapshot(scope);
+        const publications = vi.fn();
+        onTestFinished(subscribeSavedSecretCatalogSnapshots(publications));
+        const notify = vi.fn(() => resolveSavedSecretReference(scope, [], selected.ref, { includeMaterial: false }));
+        onTestFinished(subscribeSavedSecretCatalogSnapshots(notify, { scope, refs: [selected.ref] }));
+        for (let observedAt = 2; observedAt < 12; observedAt += 1) {
+            applySavedSecretCatalogPage({ scope, entries: entries.map(entry => ({ ...entry })), observedAt });
+        }
+        expect(publications).toHaveBeenCalledTimes(0);
+        expect(getSavedSecretCatalogSnapshot(scope)?.data).toBe(ready?.data);
+        expect(getSavedSecretCatalogSnapshot(scope)?.lastObservedAt).toBe(11);
+        applySavedSecretCatalogPage({ scope, entries: entries.map((entry, index) => index === 0
+            ? { ...entry, revision: 2, name: 'Unrelated rename' } : entry), observedAt: 12 });
+        applySavedSecretCatalogPage({ scope: { ...scope, serverId: 'home-b' }, entries, observedAt: 12 });
+        expect(notify).toHaveBeenCalledTimes(0);
+
+        applyAcknowledgedSavedSecretCatalogEntry(scope, { ...selected, revision: 2, name: 'Selected rename' }, true);
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify.mock.results.at(-1)?.value).toMatchObject({ revision: 2, entry: { name: 'Selected rename' } });
+        applyAcknowledgedSavedSecretCatalogEntry(scope, { ...selected, revision: 3, name: 'Selected rename' }, true);
+        expect(notify).toHaveBeenCalledTimes(2);
+        expect(notify.mock.results.at(-1)?.value).toMatchObject({ revision: 3 });
+        removeDeletedSavedSecretCatalogResource(scope, 'resource-3006', 3);
+        expect(notify).toHaveBeenCalledTimes(3);
+        expect(notify.mock.results.at(-1)?.value).toMatchObject({ entry: null, secret: null });
+    });
+
+    it('settles missing references, deduplicates changed selections, and withdraws every indexed fact on refusal', () => {
+        const first = sharedEntry();
+        const second = sharedEntry({ ref: 'happier:shared-secret:v1:resource-b' });
+        const notify = vi.fn();
+        const stop = subscribeSavedSecretCatalogSnapshots(notify, { scope, refs: [first.ref, second.ref] });
+        onTestFinished(stop);
+        expect(readSavedSecretCatalogName(scope, first.ref)).toEqual({ status: 'loading', name: null, resolving: true });
+        beginSavedSecretCatalogLoad(scope);
+        expect(notify).toHaveBeenCalledTimes(0);
+        applySavedSecretCatalogPage({ scope, entries: [], observedAt: 1 });
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(readSavedSecretCatalogName(scope, first.ref)).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'reference_unavailable', retryable: false } });
+        applySavedSecretCatalogPage({ scope, entries: [first, second], observedAt: 2 });
+        expect(notify).toHaveBeenCalledTimes(2);
+        const name = readSavedSecretCatalogName(scope, first.ref);
+        applyAcknowledgedSavedSecretCatalogEntry(scope, { ...first, revision: 2 }, true);
+        expect(notify).toHaveBeenCalledTimes(3);
+        expect(readSavedSecretCatalogName(scope, first.ref)).toBe(name);
+        expect(readSavedSecretCatalogEntry(scope, first.ref)?.revision).toBe(2);
+        applySavedSecretCatalogFailure({ scope, error: { kind: 'unauthorized', retryable: false } });
+        expect(notify).toHaveBeenCalledTimes(4);
+        expect(readSavedSecretCatalogEntry(scope, first.ref)).toBeNull();
+        expect(readSavedSecretCatalogName(scope, first.ref)).toEqual({ status: 'unavailable', name: null, resolving: false,
+            reason: { kind: 'unauthorized', retryable: false } });
+        stop();
+        applySavedSecretCatalogPage({ scope, entries: [first, second], observedAt: 3 });
+        expect(notify).toHaveBeenCalledTimes(4);
+    });
+
+    it('publishes material readiness and currentness while keeping metadata-only references idle', () => {
+        const entry = sharedEntry();
+        applySavedSecretCatalogPage({ scope, entries: [entry], includesMaterial: false, observedAt: 1 });
+        const publications = vi.fn();
+        const metadata = vi.fn();
+        onTestFinished(subscribeSavedSecretCatalogSnapshots(publications));
+        onTestFinished(subscribeSavedSecretCatalogSnapshots(metadata, { scope, refs: [entry.ref] }));
+        const material = { id: entry.ref, name: 'Team API key', kind: 'apiKey' as const,
+            encryptedValue: { _isSecretValue: true as const, value: 'constructed-value' }, createdAt: 1, updatedAt: 1 };
+        applySavedSecretCatalogPage({ scope, entries: [entry], materializedSecrets: [material], observedAt: 2 });
+        expect(publications).toHaveBeenCalledTimes(1);
+        expect(metadata).toHaveBeenCalledTimes(0);
+        expect(getMaterializedSavedSecret(scope, entry.ref)).toBe(material);
+        applySavedSecretCatalogPage({ scope, entries: [entry], materializedSecrets: [{ ...material }], observedAt: 3 });
+        expect(publications).toHaveBeenCalledTimes(1);
+        expect(getMaterializedSavedSecret(scope, entry.ref)).toBe(material);
+        expect(getSavedSecretCatalogSnapshot(scope)?.lastObservedAt).toBe(3);
+        invalidateSavedSecretCatalog(scope);
+        expect(publications).toHaveBeenCalledTimes(2);
+        expect(metadata).toHaveBeenCalledTimes(0);
+        expect(getMaterializedSavedSecret(scope, entry.ref)).toBeNull();
+        expect(resolveSavedSecretReference(scope, [], entry.ref).status).toBe('temporarily_unavailable');
+    });
 
     it('retains equal page and lifecycle snapshots without notifying and publishes real freshness changes', () => {
         const notify = vi.fn();
@@ -345,6 +476,22 @@ describe('savedSecretCatalogSnapshot', () => {
         });
         expect(getSavedSecretCatalogSnapshot(scope)?.data?.[0]).not.toBe(first);
         expect(getSavedSecretCatalogSnapshot(scope)?.data?.[0]?.materialStatus).toBe('access_removed');
+    });
+
+    it('keeps every unchanged content field identical through an invalidated equal reload', () => {
+        const page = (observedAt: number) => ({ scope, entries: [sharedEntry()], observedAt,
+            corruptEntries: [{ materialStatus: 'resource_corrupt' as const, relationship: 'recipient' as const, repair: null }],
+            legacyImport: { status: 'pending' as const, reason: 'source-uncharacterized' as const } });
+        applySavedSecretCatalogPage(page(10));
+        const settled = getSavedSecretCatalogSnapshot(scope)!;
+        invalidateSavedSecretCatalog(scope);
+        beginSavedSecretCatalogLoad(scope);
+        applySavedSecretCatalogPage(page(11));
+        const reloaded = getSavedSecretCatalogSnapshot(scope)!;
+        expect(reloaded).toMatchObject({ status: 'ready', stale: false, lastObservedAt: 11 });
+        expect(reloaded.data).toBe(settled.data);
+        expect(reloaded.corruptEntries).toBe(settled.corruptEntries);
+        expect(reloaded.legacyImport).toBe(settled.legacyImport);
     });
 
     it('withdraws retained metadata when the Home authoritatively refuses access', () => {
