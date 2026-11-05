@@ -18,7 +18,8 @@ import type { ConnectedAccountAttemptTransactionRecord, PendingConnectedAccountA
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import type { PluginConnectedAccountAuthenticationModeV2, QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol';
+import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import type { PluginConnectedAccountAuthenticationModeV2, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 
@@ -495,6 +496,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         settlementPhase: 'notPrepared' | 'prepared' | 'cleanupPending' | 'settled';
     }>): void;
     accounts: Readonly<{
+        findByProviderIdentity?(input: Readonly<{
+            service: PluginContributionRef;
+            providerIdentity: NonNullable<QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity']>;
+        }>): Promise<QualifiedConnectedAccountProfileV4 | null>;
         readExact(account: PluginConnectedAccountRef): Promise<Readonly<{
             account: PluginConnectedAccountRef;
             authenticationModeId: string;
@@ -1987,6 +1992,25 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             attempt.lastResponse = response;
             await destroyAttempt(attempt, response);
             return response;
+        }
+        if (!attempt.account && attempt.admission.descriptor.kind === 'manual'
+            && attempt.admission.descriptor.credentialOrigin === 'native_import'
+            && result.providerIdentity?.accountId && params.accounts.findByProviderIdentity) {
+            const existing = await params.accounts.findByProviderIdentity({
+                service: attempt.admission.service,
+                providerIdentity: result.providerIdentity,
+            });
+            const ownershipFailure = attemptOwnershipFailure(attempt);
+            if (ownershipFailure) return ownershipFailure;
+            if (existing) {
+                if (isQualifiedConnectedAccountProfileActiveV4(existing, params.now())) {
+                    attempt.phase = 'connected';
+                    const response: AttemptResponse = { status: 'connected', attemptId: attempt.id, account: existing.ref };
+                    attempt.lastResponse = response;
+                    await destroyAttempt(attempt, response);
+                    return response;
+                }
+            }
         }
         let accountId: string;
         if (attempt.account) {

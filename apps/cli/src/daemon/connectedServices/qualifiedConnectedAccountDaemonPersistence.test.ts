@@ -12,6 +12,7 @@ import {
   QualifiedConnectedAccountConfigurationPatchV4Schema,
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  QualifiedConnectedAccountProfileV4Schema,
   sealSavedSecretResourceStoredContentV1,
   openQualifiedConnectedAccountContentEnvelope,
   openConnectedServiceCredentialCiphertext,
@@ -104,6 +105,33 @@ const ReleasedCredentialRecordSchema = z.discriminatedUnion('kind', [
 ]);
 
 describe('createQualifiedConnectedAccountDaemonPersistence', () => {
+  it.each(['connected', 'refreshing', 'refresh_failed_retryable', 'needs_reauth', 'different', 'unknown', 'different-organization'] as const)(
+    'finds an existing imported subject within its qualified service (%s)', async scenario => {
+      const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+        ref: account, authenticationModeId: 'native-import',
+        status: scenario === 'refreshing' || scenario === 'refresh_failed_retryable' || scenario === 'needs_reauth' ? scenario : 'connected',
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_1234567890123456789012',
+        configurationReady: false, configurationRevision: null, expiresAt: null, scopes: [],
+        ...(scenario === 'unknown' ? {} : { providerIdentity: {
+          accountId: scenario === 'different' ? '456' : '123',
+          ...(scenario === 'different-organization' ? { organizationId: 'other' } : {}),
+        } }),
+      });
+      const persistence = createQualifiedConnectedAccountDaemonPersistence({
+        credentials: { token: 'fixture-token', encryption: null },
+        getAccountEncryptionMode: async () => 'plain',
+        listProfiles: async ({ service: requested }) => ({ service: requested, accounts: [
+          { ...profile, ref: { service: { ...requested, localId: 'other-host' }, accountId: 'a-foreign' } },
+          { ...profile, ref: { service: requested, accountId: 'z-account' } }, profile,
+        ] }),
+        readCredential: vi.fn(), readConfiguration: vi.fn(), mutateCredential: vi.fn(), mutateConfiguration: vi.fn(),
+        secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+      });
+      await expect(persistence.attempts.accounts.findByProviderIdentity?.({ service, providerIdentity: { accountId: '123' } }))
+        .resolves.toEqual(scenario === 'different' || scenario === 'unknown' || scenario === 'different-organization' ? null : profile);
+    },
+  );
+
   it('keeps independent live attempt configurations and OAuth transactions beyond 64 until their owner closes them', async () => {
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: { token: 'token-1', encryption: { type: 'dataKey', publicKey: new Uint8Array(32), machineKey: new Uint8Array(32) } },

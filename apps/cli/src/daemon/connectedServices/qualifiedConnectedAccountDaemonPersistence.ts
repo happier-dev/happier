@@ -891,6 +891,15 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           });
       },
       accounts: Object.freeze({
+        async findByProviderIdentity({ service, providerIdentity }: Parameters<NonNullable<
+          ConnectedAccountDaemonPersistence['attempts']['accounts']['findByProviderIdentity']
+        >>[0]) {
+          const profiles = await persistence.profiles.list(service);
+          return profiles.filter(profile => sameService(profile.ref.service, service)
+            && profile.providerIdentity?.accountId === providerIdentity.accountId
+            && (profile.providerIdentity?.organizationId ?? null) === (providerIdentity.organizationId ?? null))
+            .sort((left, right) => left.ref.accountId.localeCompare(right.ref.accountId))[0] ?? null;
+        },
         async readExact(account: ExactAccount) {
           const snapshot = await executeNegotiatedOperation({
             service: account.service,

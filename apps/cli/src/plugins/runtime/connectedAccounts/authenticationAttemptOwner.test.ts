@@ -4,6 +4,7 @@ import {
     CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
     PluginConnectedAccountAuthenticationModeV2Schema,
     PluginConnectedAccountConfigurationV2Schema,
+    QualifiedConnectedAccountProfileV4Schema,
     type PluginConnectedAccountConfigurationV2,
 } from '@happier-dev/protocol';
 
@@ -158,6 +159,7 @@ function deviceMode(
 }
 
 function harness(input: Readonly<{
+    findByProviderIdentity?: NonNullable<Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['accounts']['findByProviderIdentity']>;
     configuration?: ConnectedAccountAttemptConfigurationAdmission;
     admitConfiguration?: Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['configuration']['admit'];
     stageAccountConfiguration?: ConnectedAccountConfigurationOwner['stageAccountConfiguration'];
@@ -291,6 +293,7 @@ function harness(input: Readonly<{
             attemptAddresses: input.attemptAddresses ?? transactions.address,
         }),
         accounts: {
+            ...(input.findByProviderIdentity ? { findByProviderIdentity: input.findByProviderIdentity } : {}),
             readExact: vi.fn(input.readAccount ?? (async () =>
                 input.account === undefined
                     ? {
@@ -678,6 +681,30 @@ describe('addressed manual attempts', () => {
 });
 
 describe('ConnectedAccountAuthenticationAttemptOwner', () => {
+    it.each(['connected', 'connected-other-mode', 'refreshing', 'refresh_failed_retryable', 'different'] as const)('reuses a usable imported provider identity without replacing credentials (%s)', async identityCase => {
+        const admitted = manualMode('native-import');
+        const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: accountA, authenticationModeId: identityCase === 'connected-other-mode' ? 'manual-pat' : 'native-import',
+            status: identityCase === 'different' || identityCase === 'connected-other-mode' ? 'connected' : identityCase,
+            revisionSemantics: 'revisioned', credentialRevision: 'csr_1234567890123456789012',
+            configurationReady: true, configurationRevision: null, expiresAt: null, scopes: [],
+            providerIdentity: { accountId: '123' },
+        });
+        const h = harness({ admittedMode: { ...admitted, descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({ ...admitted.descriptor, credentialOrigin: 'native_import' }) },
+            findByProviderIdentity: async ({ service: requested, providerIdentity }) => requested.pluginId === service.pluginId
+                && providerIdentity.accountId === '123' && identityCase !== 'different' ? profile : null,
+            invoke: async () => ({ status: 'connected', providerIdentity: { accountId: '123' }, displayName: 'octocat', scopes: [] }),
+        });
+        try {
+            await h.owner.beginConnect({ service, modeId: 'native-import' });
+            const result = await h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'fixture-token' } });
+            expect(result).toMatchObject({ status: 'connected', account: identityCase !== 'different' ? accountA : { service, accountId: 'host-account-1' } });
+            expect(h.settle).toHaveBeenCalledTimes(identityCase !== 'different' ? 0 : 1);
+            expect(h.invoke).toHaveBeenCalledOnce();
+            expect(h.transactionApi.records.has('attempt-1')).toBe(false);
+        } finally { h.owner.dispose(); }
+    });
+
     it('does not impose a guessed lifetime on a manual attempt', async () => {
         let now = 1_000;
         const h = harness({ now: () => now });
