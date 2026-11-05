@@ -1383,6 +1383,10 @@ requests current model metadata without changing Provider configuration. It uses
 the shared read approval defaults on every surface; explicit approval preferences
 still apply.
 
+Refreshing saved Provider usage (`providers.usage.refresh`) likewise reads current
+spend and credits on the selected Machine using the shared read approval defaults.
+It does not change Provider configuration or credentials.
+
 The canonical model catalog merges sources in this order:
 
 1. user-entered manual model metadata;

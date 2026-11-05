@@ -3,12 +3,17 @@ import { PROVIDER_ACTION_SPECS_V1 } from './providers.js';
 import { isProviderActionMachineRequiredV1 } from '../../providers/providerActionsV1.js';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '../../providers/errors.js';
 import { describeApprovalActionFields } from '../actionApprovalPresentation.js';
+import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 
 describe('Provider Action placement declarations', () => {
-  it('refreshes usage only as an explicit identity-only external Machine Action', () => {
+  it('reads Provider usage on the selected Machine without default approval on any surface', () => {
     const spec = PROVIDER_ACTION_SPECS_V1.find(spec => String(spec.id) === 'providers.usage.refresh');
     expect(spec).toBeDefined();
-    expect(spec).toMatchObject({ executionPlacement: 'machine', safety: 'danger', sideEffectClass: 'external' });
+    expect(spec).toMatchObject({ executionPlacement: 'machine', safety: 'safe', sideEffectClass: 'read' });
+    for (const surface of ['ui', 'cli', 'agent', 'mcp'] as const) {
+      expect(resolveActionApprovalRouting({ actionId: spec!.id, spec: spec!,
+        context: { surface, authority: 'account_automation' } })).toMatchObject({ required: false });
+    }
     expect(spec!.inputSchema.parse({ connectionId: 'gateway', machineId: 'hub' }))
       .toEqual({ connectionId: 'gateway', machineId: 'hub' });
     expect(spec!.inputSchema.safeParse({ connectionId: 'gateway', machineId: 'hub', credentialSlotId: 'billing' }).success).toBe(false);
