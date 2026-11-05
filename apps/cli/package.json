@@ -167,6 +167,7 @@
     "@happier-dev/plugins-machine-lima",
     "@happier-dev/plugins-machine-lume",
     "@happier-dev/plugins-machine-modal",
+    "@happier-dev/plugins-machine-recipes",
     "@happier-dev/plugins-machine-services",
     "@happier-dev/plugins-machine-vercel",
     "@happier-dev/plugins-minimax",

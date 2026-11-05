@@ -69,6 +69,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-machine-lima",
   "@happier-dev/plugins-machine-lume",
   "@happier-dev/plugins-machine-modal",
+  "@happier-dev/plugins-machine-recipes",
   "@happier-dev/plugins-machine-services",
   "@happier-dev/plugins-machine-vercel",
   "@happier-dev/plugins-minimax",
@@ -401,6 +402,13 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA: readonly BundledFirstPartyPlug
     "packageVersion": "0.0.0",
     "pluginId": "happier.machine.modal",
     "pluginPackageId": "machine-modal"
+  },
+  {
+    "manifestPath": "bundled:happier.machine.recipes",
+    "packageName": "@happier-dev/plugins-machine-recipes",
+    "packageVersion": "0.0.0",
+    "pluginId": "happier.machine.recipes",
+    "pluginPackageId": "machine-recipes"
   },
   {
     "manifestPath": "bundled:happier.machine.services",
@@ -1121,6 +1129,19 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly BundledFirstPartyPlug
     sourceSpec: Object.freeze({
       kind: 'bundled',
       locator: "@happier-dev/plugins-machine-modal",
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: "0.0.0",
+    }),
+  }),
+  Object.freeze({
+    pluginId: "happier.machine.recipes",
+    manifestRelativePath: "assets/bundled-plugin-manifests/machine-recipes.json",
+    manifestPath: "bundled:happier.machine.recipes",
+    daemonEntryPath: null,
+    sourceSpec: Object.freeze({
+      kind: 'bundled',
+      locator: "@happier-dev/plugins-machine-recipes",
       trustPolicy: 'local_trusted',
       installPolicy: 'link',
       resolvedVersion: "0.0.0",
