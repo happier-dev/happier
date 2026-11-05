@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import axios from 'axios';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
@@ -359,16 +360,16 @@ describe('current Project setup effect and preparation admission', () => {
         const settings = { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['agent'] } };
         expect(await prepareProjectSetup({ ...input, approvalContext: { surface: 'rpc' as const } }))
             .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
-        const waived = { ...input, approvalContext: { surface: 'agent' as const }, secretEnvironment: {
+        const waived = { ...input, approvalContext: { surface: 'agent' as const }, secretEnvironment: withSavedSecretMaterializer({
             accountSettings: { actionsSettingsV1: settings }, settingsSecretsReadKeys: [],
-        } };
+        }) };
         expect(await prepareProjectSetup(waived)).toMatchObject({ kind: 'prepared', consent: 'thisTime', previousSuccess: false });
         expect(post.mock.calls.some(([url]) => String(url).endsWith('/mutate'))).toBe(false);
         expect(await prepareProjectSetup({ ...waived, approvalContext: { surface: 'mcp' as const } }))
             .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
-        expect(await prepareProjectSetup({ ...waived, secretEnvironment: { ...waived.secretEnvironment, accountSettings: {
+        expect(await prepareProjectSetup({ ...waived, secretEnvironment: withSavedSecretMaterializer({ ...waived.secretEnvironment, savedSecretMaterializer: undefined, accountSettings: {
             actionsSettingsV1: { ...settings, actions: { 'projects.prepare': { approvalRequiredSurfaces: ['agent'] } } },
-        } } })).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+        } }) })).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
         const plan = await reviewed(input);
         expect(await prepareProjectSetup({ ...waived, expectedEffectDigest: 'stale' }))
             .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed' });
@@ -446,12 +447,12 @@ describe('current Project setup effect and preparation admission', () => {
         ], workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const bindingInput = { ...input, environmentBindings: { v: 1 as const, bindings: { TOKEN: { ref: 'token-a' } } },
             configEnvironment: { REGION: 'eu', UNUSED: 'irrelevant' },
-            secretEnvironment: { accountSettings: { secrets: [{ id: 'token-a', name: 'Dev Postgres', encryptedValue: { _isSecretValue: true, value: 'private-secret' } }], unrelated: 1 }, settingsSecretsReadKeys: [] },
+            secretEnvironment: withSavedSecretMaterializer({ accountSettings: { secrets: [{ id: 'token-a', name: 'Dev Postgres', encryptedValue: { _isSecretValue: true, value: 'private-secret' } }], unrelated: 1 }, settingsSecretsReadKeys: [] }),
         };
         const first = await reviewed(bindingInput);
-        const rotated = await reviewed({ ...bindingInput, secretEnvironment: { ...bindingInput.secretEnvironment,
+        const rotated = await reviewed({ ...bindingInput, secretEnvironment: withSavedSecretMaterializer({ ...bindingInput.secretEnvironment, savedSecretMaterializer: undefined,
             accountSettings: { secrets: [{ id: 'token-a', name: 'Renamed Postgres', encryptedValue: { _isSecretValue: true, value: 'rotated-secret' } }], unrelated: 999 },
-        }, configEnvironment: { REGION: 'eu', UNUSED: 'changed' } });
+        }), configEnvironment: { REGION: 'eu', UNUSED: 'changed' } });
         expect(rotated.reviewedEffectDigest).toBe(first.reviewedEffectDigest);
         expect(rotated.executionEnvironmentEffectDigest).toBe(first.executionEnvironmentEffectDigest);
         expect(first.reviewedEffect).toMatchObject({ presentation: { bindings: [
@@ -465,7 +466,7 @@ describe('current Project setup effect and preparation admission', () => {
         expect(JSON.stringify(first)).not.toContain('private-secret');
         expect(first.successBasis.environmentBindingReferences).toEqual(['{"name":"TOKEN","ref":"token-a"}']);
         const changed = await reviewed({ ...bindingInput, environmentBindings: { v: 1, bindings: { TOKEN: { ref: 'token-b' } } },
-            secretEnvironment: { accountSettings: { secrets: [{ id: 'token-b', encryptedValue: { _isSecretValue: true, value: 'private-secret' } }] }, settingsSecretsReadKeys: [] },
+            secretEnvironment: withSavedSecretMaterializer({ accountSettings: { secrets: [{ id: 'token-b', encryptedValue: { _isSecretValue: true, value: 'private-secret' } }] }, settingsSecretsReadKeys: [] }),
         });
         expect(changed.reviewedEffectDigest).not.toBe(first.reviewedEffectDigest);
         expect(changed.executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
@@ -481,25 +482,25 @@ describe('current Project setup effect and preparation admission', () => {
         };
         const sharedInput = { ...shared.input,
             environmentBindings: { v: 1 as const, bindings: { SENTRY_AUTH_TOKEN: { ref: 'happier:shared-secret:v1:sentry', revision: 4 } } },
-            secretEnvironment: { accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: [resource] },
+            secretEnvironment: withSavedSecretMaterializer({ accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: [resource] }),
         };
         const sharedPlan = await reviewed(sharedInput);
         expect(sharedPlan.reviewedEffect).toMatchObject({ presentation: { bindings: [
             { name: 'SENTRY_AUTH_TOKEN', ref: 'happier:shared-secret:v1:sentry', revision: 4, source: 'shared_resource', displayName: 'Sentry' },
         ] } });
         expect(JSON.stringify(sharedPlan)).not.toContain('private-shared-token');
-        const renamedShared = await reviewed({ ...sharedInput, secretEnvironment: { ...sharedInput.secretEnvironment,
+        const renamedShared = await reviewed({ ...sharedInput, secretEnvironment: withSavedSecretMaterializer({ ...sharedInput.secretEnvironment, savedSecretMaterializer: undefined,
             savedSecretResources: [{ ...resource, displayName: 'Sentry production',
                 storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'sentry', mode: 'plain',
                     content: { v: 1, name: 'Sentry production', kind: 'token', value: 'rotated-shared-token' } }),
             }],
-        } });
+        }) });
         expect(renamedShared.reviewedEffectDigest).toBe(sharedPlan.reviewedEffectDigest);
         expect(renamedShared.executionEnvironmentEffectDigest).toBe(sharedPlan.executionEnvironmentEffectDigest);
         expect(renamedShared.reviewedEffect).toMatchObject({ presentation: { bindings: [{ displayName: 'Sentry production' }] } });
-        expect(await reviewProjectSetupEffect({ ...sharedInput, secretEnvironment: { ...sharedInput.secretEnvironment,
+        expect(await reviewProjectSetupEffect({ ...sharedInput, secretEnvironment: withSavedSecretMaterializer({ ...sharedInput.secretEnvironment, savedSecretMaterializer: undefined,
             savedSecretResources: [{ ...resource, displayName: 'unauthenticated-name' }],
-        } })).toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
+        }) })).toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
     });
 
     it('keeps admitted secret material private while reviewing the bound project environment', async () => {
@@ -507,6 +508,7 @@ describe('current Project setup effect and preparation admission', () => {
         // Acquisition belongs to the admitted operation. Project review consumes
         // its real resolver without copying private material into the catalog.
         const savedSecretMaterializer = createSavedSecretMaterializerV1({
+            resources: [], resourceCatalogState: 'ready',
             accountSettings: { secrets: [{ id: 'admitted-token', name: 'Vault token',
                 encryptedValue: { _isSecretValue: true, value: 'private-admitted-value' } }] },
             settingsSecretsReadKeys: [],

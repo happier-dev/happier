@@ -734,18 +734,12 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(snapshot?.savedSecretResources).toHaveLength(1);
             if (!snapshot) throw new Error("expected hydrated Account snapshot");
 
-            const { createSavedSecretMaterializerV1 } = await importCliTestModule<{
-                createSavedSecretMaterializerV1(input: Readonly<{
-                    accountSettings: unknown;
-                    settingsSecretsReadKeys: readonly Uint8Array[];
-                }>): Readonly<{
+            const { createSavedSecretMaterializerFromSnapshotV1 } = await importCliTestModule<{
+                createSavedSecretMaterializerFromSnapshotV1(input: NonNullable<typeof snapshot>): Readonly<{
                     inspect(ref: string): Readonly<{ status: string; fingerprint?: string }>;
                 }>;
             }>("../../../../../../cli/src/settings/secrets/savedSecretCatalog");
-            const materializer = createSavedSecretMaterializerV1({
-                accountSettings: snapshot.settings,
-                settingsSecretsReadKeys: [],
-            });
+            const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot);
             const inspected = materializer.inspect(sharedRef);
             expect(inspected.status).toBe("ready");
             if (!inspected.fingerprint) throw new Error("expected hydrated material fingerprint");
@@ -768,6 +762,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(resolveForegroundProfileSavedSecretEnvironment({
                 profile,
                 accountSettings: snapshot.settings,
+                savedSecretMaterializer: materializer,
                 settingsSecretsReadKeys: [],
                 foregroundSatisfiedSecretRequirementNames: [],
             })).toEqual({ SHARED_API_KEY: "shared-provider-secret" });
@@ -787,6 +782,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(materializeConfiguredAcpEnvironment({
                 backend: { env: { ACP_TOKEN: { t: "savedSecret", secretId: sharedRef } } },
                 accountSettings: snapshot.settings,
+                savedSecretMaterializer: materializer,
                 credentials: { token, encryption: null },
                 processEnv: {},
             })).toEqual({ ACP_TOKEN: "shared-provider-secret" });
@@ -801,6 +797,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
             const providerReference = provider.resolveProviderCredentialReference({
                 providerSettings: snapshot.settings.providerSettingsV1,
                 accountSettings: snapshot.settings,
+                savedSecretMaterializer: materializer,
                 connectionId: "pc_shared",
                 machineId: "machine",
                 credentialSlotId: "apiKey",
@@ -814,6 +811,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(provider.resolveProviderCredentialPlaintext({
                 reference: providerReference.reference,
                 accountSettings: snapshot.settings,
+                savedSecretMaterializer: materializer,
                 settingsSecretsReadKeys: [],
                 connectionId: "connection",
                 machineId: "machine",

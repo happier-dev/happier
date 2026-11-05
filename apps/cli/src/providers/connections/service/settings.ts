@@ -6,10 +6,10 @@ import { applyProviderDefaultModelSelectionV1, type ProviderDefaultModelSelectio
 import type { StoredCredentials } from '@/persistence';
 import { updateAccountSettingsV2OnceAgainstLatest } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import {
-  createSavedSecretMaterializerV1,
-  type SavedSecretCatalogResourceInputV1,
-  type SavedSecretCatalogState,
+  savedSecretOperationAdmissionReason,
+  type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
+import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
 
 import type { ProviderConnectionCreateInput, ProviderConnectionServiceSnapshot } from './types';
 
@@ -77,21 +77,13 @@ export class ProviderConnectionValidationError extends Error {}
  * is deliberately unavailable rather than sufficient authorization.
  */
 export function requireSavedSecretReferenceReady(input: Readonly<{
-  rawAccountSettings: Readonly<Record<string, unknown>>;
   savedSecretId: string;
-  savedSecretResources: readonly SavedSecretCatalogResourceInputV1[] | undefined;
-  savedSecretCatalogState: SavedSecretCatalogState | undefined;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   connectionId: string;
   machineId: string;
   preparedSavedSecret?: ProviderConnectionCreateInput['preparedSavedSecret'];
 }>): void {
-  const materializer = createSavedSecretMaterializerV1({
-    accountSettings: input.rawAccountSettings,
-    settingsSecretsReadKeys: [],
-    resources: input.savedSecretResources,
-    resourceCatalogState: input.savedSecretCatalogState,
-  });
-  const inspected = materializer.inspect(input.savedSecretId);
+  const inspected = input.savedSecretMaterializer.inspect(input.savedSecretId);
   if (input.preparedSavedSecret) {
     const prepared = SavedSecretSchema.parse(input.preparedSavedSecret.record);
     if (prepared.id !== input.preparedSavedSecret.id || prepared.id !== input.savedSecretId
@@ -101,10 +93,8 @@ export function requireSavedSecretReferenceReady(input: Readonly<{
     return;
   }
   if (inspected.status === 'ready') return;
-  throw createProviderErrorV1(
-    inspected.status === 'temporarily_unavailable'
-      ? 'provider_secret_unavailable'
-      : 'provider_secret_missing',
+  throw createLaunchSecretReferenceOverlayProviderErrorV1(
+    savedSecretOperationAdmissionReason(inspected.status),
     { connectionId: input.connectionId, machineId: input.machineId },
   );
 }

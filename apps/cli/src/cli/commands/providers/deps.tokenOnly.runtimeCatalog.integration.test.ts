@@ -42,7 +42,7 @@ describe('resolveProviderCliDependencies token-only settings secrets', () => {
       value: 'sk-token-only-provider',
     });
     const accountSettings = { secrets: [prepared.record] };
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
       accountSettings,
       settingsSecretsReadKeys: [],
     });

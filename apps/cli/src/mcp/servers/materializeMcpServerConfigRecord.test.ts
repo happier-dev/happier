@@ -294,7 +294,7 @@ describe('materializeMcpServerConfigRecord', () => {
       target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 })) });
     const out = await materializeMcpServerConfigRecord({
       resolved: resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo' }), tmpDir: dir,
-      savedSecretMaterializer: createSavedSecretMaterializerV1({
+      savedSecretMaterializer: createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
         accountSettings: { secrets: [{ id: 'personal-key', encryptedValue: {
           _isSecretValue: true, encryptedValue: encryptSecretStringV1(secret, key, deterministicRandomBytesFactory()),
         } }] }, settingsSecretsReadKeys: [key],
@@ -529,7 +529,7 @@ describe('materializeMcpServerConfigRecord', () => {
     const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo' });
     const out = await materializeMcpServerConfigRecord({
       resolved,
-      savedSecretMaterializer: createSavedSecretMaterializerV1({
+      savedSecretMaterializer: createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
         accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
         settingsSecretsReadKeys: [settingsSecretsKey],
       }),
@@ -572,7 +572,7 @@ describe('materializeMcpServerConfigRecord', () => {
     const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo' });
     const out = await materializeMcpServerConfigRecord({
       resolved,
-      savedSecretMaterializer: createSavedSecretMaterializerV1({
+      savedSecretMaterializer: createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
         accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
         settingsSecretsReadKeys: [canonicalSettingsKey, legacySettingsKey],
       }),
@@ -654,7 +654,7 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        savedSecretMaterializer: createSavedSecretMaterializerV1({
+        savedSecretMaterializer: createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
           accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
           settingsSecretsReadKeys: [settingsSecretsKey],
         }),

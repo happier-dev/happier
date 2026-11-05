@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -238,7 +239,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       adapterBindingKey: 'cliproxyapi',
     }));
 
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 2,
@@ -257,7 +258,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       registry,
       dnsEvidenceByEndpointUrl,
       lease: lease({ support, prepare }),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -392,7 +393,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       }],
     });
     const runtimeLease = claudeLease();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 2,
@@ -411,7 +412,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       registry,
       dnsEvidenceByEndpointUrl,
       lease: runtimeLease,
-    });
+    }));
     if (!result.ok || result.authorization.deployment.kind !== 'external') {
       throw new Error('Expected ordinary external Provider authorization');
     }
@@ -437,13 +438,13 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       },
     });
 
-    const credential = resolveProviderCredentialPlaintext({
+    const credential = resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
       reference: result.authorization.credentialReference,
       accountSettings: { providerSettingsV1: settings, secrets },
       settingsSecretsReadKeys: [settingsSecretReadKey],
       connectionId,
       machineId: 'machine-a',
-    });
+    }));
     if (!credential.ok) throw new Error('Expected external Saved Secret resolution');
     const attempt = createProviderSpawnAuthorizationAttempt({
       initial: result.authorization,

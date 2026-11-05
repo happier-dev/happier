@@ -147,6 +147,7 @@ import {
   resolveSecretReferenceOverlayEnvironment,
 } from '@/settings/secrets/secretReferenceOverlay';
 import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
 import { createExecutionRunProjectSetup, createExecutionRunProjectSetupOperationOwner } from './executionRunProjectSetup';
@@ -2240,7 +2241,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                   );
                 }
                 try {
+                  const operationContext = this.resolveAccountSettingsSnapshot?.readOperationContext?.();
                   return resolveSecretReferenceOverlayEnvironment({
+                    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot,
+                      operationContext ? { isCurrent: () => operationContext.readSnapshot() === snapshot } : undefined),
                     accountSettings: snapshot.settings,
                     settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
                     ...(snapshot.savedSecretResources

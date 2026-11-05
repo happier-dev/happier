@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it } from 'vitest';
 import { AIBackendProfileSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
@@ -6,6 +7,7 @@ import {
   ForegroundProfileSecretRecoveryRequiredError,
   resolveEffectiveLaunchProfileSecretBindings,
   resolveForegroundProfileSavedSecretEnvironment,
+  resolveLaunchProfileSavedSecretEnvironment,
 } from './resolveForegroundProfileSavedSecretEnvironment';
 
 const profile = AIBackendProfileSchema.parse({
@@ -15,9 +17,15 @@ const profile = AIBackendProfileSchema.parse({
 });
 
 describe('resolveForegroundProfileSavedSecretEnvironment', () => {
+  it('leaves a reference-free launch empty without acquiring an Account catalog', async () => {
+    await expect(resolveLaunchProfileSavedSecretEnvironment({
+      profile: { ...profile, envVarRequirements: [] }, accountSettings: {}, settingsSecretsReadKeys: [],
+      foregroundSatisfiedSecretRequirementNames: [], expectedScopeKey: 'standalone:no-references',
+    })).resolves.toEqual({});
+  });
   it('consumes the admitted launch materializer for a selected profile binding', () => {
     const secretId = 'happier:shared-secret:v1:admitted-profile';
-    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resourceCatalogState: 'ready', resources: [{
       resourceId: 'admitted-profile', ownerAccountId: 'owner', displayName: 'Profile', kind: 'apiKey',
       encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
       storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'admitted-profile', mode: 'plain',
@@ -59,25 +67,25 @@ describe('resolveForegroundProfileSavedSecretEnvironment', () => {
       }),
     };
 
-    expect(resolveForegroundProfileSavedSecretEnvironment({
+    expect(resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile,
       accountSettings,
       settingsSecretsReadKeys: [],
       foregroundSatisfiedSecretRequirementNames: [],
       savedSecretResources: [resource],
-    })).toEqual({ ANTHROPIC_API_KEY: 'shared-profile-key' });
+    }))).toEqual({ ANTHROPIC_API_KEY: 'shared-profile-key' });
 
-    expect(() => resolveForegroundProfileSavedSecretEnvironment({
+    expect(() => resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile, accountSettings, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [],
       savedSecretResources: [resource], isCurrent: () => false,
-    })).toThrow(ForegroundProfileSecretRecoveryRequiredError);
+    }))).toThrow(ForegroundProfileSecretRecoveryRequiredError);
 
-    expect(() => resolveForegroundProfileSavedSecretEnvironment({
+    expect(() => resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile,
       accountSettings,
       settingsSecretsReadKeys: [],
       foregroundSatisfiedSecretRequirementNames: [],
       savedSecretResources: [{ ...resource, materialStatus: 'access_removed', storedContent: null }],
-    })).toThrow(ForegroundProfileSecretRecoveryRequiredError);
+    }))).toThrow(ForegroundProfileSecretRecoveryRequiredError);
   });
 });

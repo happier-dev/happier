@@ -150,11 +150,10 @@ export type RuntimeProviderOperationScope = ProviderProbeOperationScope & Readon
 
 /** Exact Account settings basis for one bulk presentation pass. */
 export type RuntimeProviderPresentationResolutionBasis = Readonly<{
-  accountSettings: unknown;
+  snapshot: ActiveAccountSettingsSnapshot;
   settingsRead: ReturnType<typeof readProviderSettingsForCli>;
   /** Display facts from the exact registry lease held by this presentation pass. */
   modelNameCatalog?: ReturnType<typeof readProviderModelNameCatalog>;
-  savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
 }>;
 
@@ -505,11 +504,11 @@ export function createRuntimeProviderServices(input: Readonly<{
       return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', identity) };
     }
     const readSnapshot = scope.getAccountSettingsSnapshot ?? getSnapshot;
-    let snapshot = settingsBasis ? null : readSnapshot();
+    let snapshot = settingsBasis?.snapshot ?? readSnapshot();
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    if (!settingsBasis && !snapshot) {
+    if (!snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
     if (!settingsBasis && snapshot?.providerConnectionsCatalog?.status !== 'ready') {
@@ -549,7 +548,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     }
     // Preferences have an independent revision. Reparse a newer observation;
     // the probe ticket, rather than that revision, decides authorization.
-    const accountSettings = settingsBasis?.accountSettings
+    const accountSettings = settingsBasis?.snapshot.settings
       ?? (scopedAccountSettingsBasisIsCurrent
         ? scope.accountSettingsBasis!.accountSettings
         : snapshot!.settings);
@@ -662,10 +661,13 @@ export function createRuntimeProviderServices(input: Readonly<{
         savedSecretOperationContext: scope.savedSecretOperationContext,
         managedRuntimeAccount: scope.managedRuntimeAccount,
         snapshot,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+          isCurrent: () => !scope.lifetime.signal?.aborted,
+        }),
         providerSettings,
         settingsRead,
         accountSettings,
-        savedSecretResources: settingsBasis ? settingsBasis.savedSecretResources : snapshot?.savedSecretResources,
+        savedSecretResources: snapshot?.savedSecretResources,
         resolveManagedPurposeBindingIntent: settingsBasis?.resolveManagedPurposeBindingIntent
           ?? scope.resolveManagedPurposeBindingIntent ?? (scope.getAccountSettingsSnapshot ? undefined : input.resolveManagedPurposeBindingIntent),
         registry,
@@ -686,7 +688,7 @@ export function createRuntimeProviderServices(input: Readonly<{
 
   async function resolveSavedFromConnectionContext(
     identity: Readonly<{ connectionId: string; machineId: string }>,
-    context: Omit<Extract<Awaited<ReturnType<typeof resolveConnectionContext>>, { ok: true }>['value'], 'readSnapshot'>,
+    context: Omit<Extract<Awaited<ReturnType<typeof resolveConnectionContext>>, { ok: true }>['value'], 'readSnapshot' | 'snapshot'>,
     mode: SavedProbeMode,
     savedSecretResources = context.savedSecretResources,
     admitSelectedCredentials?: (additionalCredentials: Parameters<typeof admitRuntimeProviderSavedSecret>[0]['additionalCredentials']) => Promise<
@@ -705,11 +707,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       lifetime,
       resolveManagedPurposeBindingIntent,
     } = context;
-    let savedSecretMaterializer = context.snapshot
-      ? createSavedSecretMaterializerFromSnapshotV1(context.snapshot, {
-          isCurrent: () => !lifetime.signal?.aborted,
-        })
-      : undefined;
+    let savedSecretMaterializer = context.savedSecretMaterializer;
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
@@ -1717,12 +1715,12 @@ export function createRuntimeProviderServices(input: Readonly<{
           const settingsRead = { settings: input.providerSettings, diagnostics: [] };
           return resolveSavedFromConnectionContext(identity, {
             connection: input.resolution.record,
-            // A point-in-time description carries no Account custody; the ordinary settings path applies.
+            // The description owner already admitted this exact material basis.
             accountReadScope: undefined,
             isAccountCurrent: undefined,
             savedSecretOperationContext: undefined,
             managedRuntimeAccount: undefined,
-            snapshot: null,
+            savedSecretMaterializer: input.savedSecretMaterializer,
             providerSettings: settingsRead.settings,
             settingsRead,
             accountSettings: input.accountSettings,

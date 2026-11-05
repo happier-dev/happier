@@ -16,6 +16,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { applyMachineSetup, removeMachineSetup, prepareMachineSetupStages } from './applyMachineSetup';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
@@ -326,6 +327,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             references, operationContext: secretContext, signal: cancellationSignal });
           if (cancellationSignal.aborted) throw Object.assign(new Error('saved_secret_unavailable'), { code: 'saved_secret_unavailable' });
           secretEnvironment = { accountSettings: secrets.settings, settingsSecretsReadKeys: secrets.settingsSecretsReadKeys,
+            savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(secrets,
+              { isCurrent: () => secretContext?.readSnapshot() === secrets }),
             savedSecretResources: secrets.savedSecretResources };
         }
         if (cancellationSignal.aborted) return fail('cancelled');

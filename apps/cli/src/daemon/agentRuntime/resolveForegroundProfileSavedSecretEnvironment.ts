@@ -4,7 +4,6 @@ import type { AIBackendProfile, LaunchProfileV2, AiLaunchProfileSourceV1, Secret
 
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import {
-  createSavedSecretMaterializerV1,
   type SavedSecretCatalogState,
   type SavedSecretCatalogResourceInputV1,
   type SavedSecretMaterializerV1,
@@ -111,7 +110,7 @@ function materializeLaunchProfileSavedSecretEnvironment(
     settingsSecretsReadKeys: readonly Uint8Array[];
     foregroundSatisfiedSecretRequirementNames: readonly string[];
     savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-    savedSecretMaterializer?: SavedSecretMaterializerV1;
+    savedSecretMaterializer: SavedSecretMaterializerV1 | null;
     savedSecretCatalogState?: SavedSecretCatalogState;
     isCurrent?: () => boolean;
     secretReferenceOverlay?: SecretReferenceOverlayV1 | undefined;
@@ -141,15 +140,7 @@ function materializeLaunchProfileSavedSecretEnvironment(
       ? listSecretReferenceOverlayV1BindingNames(params.secretReferenceOverlay)
       : [],
   );
-  const materializer = params.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
-    accountSettings: params.accountSettings,
-    settingsSecretsReadKeys: params.settingsSecretsReadKeys,
-    resourceCatalogState: params.savedSecretCatalogState,
-    ...(params.isCurrent ? { isCurrent: params.isCurrent } : {}),
-    ...(params.savedSecretResources
-      ? { resources: params.savedSecretResources }
-      : {}),
-  });
+  const materializer = params.savedSecretMaterializer;
   const overlay: Record<string, string> = {};
   const recoveryRequirementNames: string[] = [];
 
@@ -165,6 +156,7 @@ function materializeLaunchProfileSavedSecretEnvironment(
       continue;
     }
     const isOverlayBinding = overlayNames.has(requirement.name);
+    if (!materializer) throw new LaunchSecretReferenceOverlayError('reference_unavailable', requirement.name);
     const resolvedValue = materializeSavedSecretReferenceBinding({
       requirementName: requirement.name,
       binding,
@@ -192,7 +184,7 @@ function materializeLaunchProfileSavedSecretEnvironment(
 
 /** Daemon launches reobserve authorization before consuming persisted Profile bindings. */
 export async function resolveLaunchProfileSavedSecretEnvironment(
-  params: Omit<Parameters<typeof materializeLaunchProfileSavedSecretEnvironment>[0], 'requireEveryRequiredBinding'> & Readonly<{
+  params: Omit<Parameters<typeof materializeLaunchProfileSavedSecretEnvironment>[0], 'requireEveryRequiredBinding' | 'savedSecretMaterializer'> & Readonly<{
     expectedScopeKey: string;
     operationContext?: SavedSecretOperationContextV1;
     signal?: AbortSignal;
@@ -205,6 +197,10 @@ export async function resolveLaunchProfileSavedSecretEnvironment(
     ? listSecretReferenceOverlayV1BindingNames(params.secretReferenceOverlay) : []);
   const demanded = Object.entries(bindings).filter(([name]) =>
     !params.foregroundSatisfiedSecretRequirementNames.includes(name));
+  if (demanded.length === 0) {
+    params.signal?.throwIfAborted();
+    return materializeLaunchProfileSavedSecretEnvironment({ ...params, savedSecretMaterializer: null });
+  }
   const { snapshot, materializer } = await readSavedSecretMaterializerForOperation({
     expectedScopeKey: params.expectedScopeKey,
     references: demanded.map(([name, binding]) => ({ ...binding, required: requiredNames.has(name) || exactNames.has(name) })),
@@ -241,7 +237,7 @@ export function resolveForegroundProfileSavedSecretEnvironment(
     settingsSecretsReadKeys: readonly Uint8Array[];
     foregroundSatisfiedSecretRequirementNames: readonly string[];
     savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-    savedSecretMaterializer?: SavedSecretMaterializerV1;
+    savedSecretMaterializer: SavedSecretMaterializerV1 | null;
     isCurrent?: () => boolean;
     secretReferenceOverlay?: SecretReferenceOverlayV1 | undefined;
   }>,

@@ -96,10 +96,8 @@ export function createProviderLocalOperations(context: ProviderConnectionService
     if (input.savedSecretId !== null) {
       try {
         requireSavedSecretReferenceReady({
-          rawAccountSettings: snapshot.rawAccountSettings,
           savedSecretId: input.savedSecretId,
-          savedSecretResources: snapshot.savedSecretResources,
-          savedSecretCatalogState: snapshot.savedSecretCatalogState,
+          savedSecretMaterializer: snapshot.savedSecretMaterializer,
           connectionId: input.connectionId,
           machineId: input.machineId,
         });

@@ -217,6 +217,7 @@ export async function describeProviderConnections(
             accountSettings: snapshot.accountSettings,
             providerSettings: settings,
             savedSecretResources: snapshot.savedSecretResources,
+            savedSecretMaterializer: snapshot.savedSecretMaterializer,
             registry: snapshot.registry,
             dnsEvidence,
             resolution: resolved,

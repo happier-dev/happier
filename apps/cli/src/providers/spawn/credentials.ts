@@ -9,12 +9,13 @@ import {
   type TeamCredentialDirectMaterialUnavailableReason,
 } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import {
-  createSavedSecretMaterializerV1,
+  savedSecretOperationAdmissionReason,
   type SavedSecretCatalogResourceInputV1,
   type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
 import type { ProviderProbeAuthorizationRequest } from '../probe/authorization';
 
 export type ProviderCredentialReference =
@@ -56,7 +57,7 @@ export function resolveProviderCredentialReference(input: Readonly<{
   providerSettings: ProviderSettingsV1;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   connectionId: ProviderConnectionId | string;
   machineId: string;
   credentialSlotId: string;
@@ -75,24 +76,27 @@ export function resolveProviderCredentialReference(input: Readonly<{
       ? { ok: false, error: createProviderErrorV1('provider_secret_missing', context) }
       : { ok: true, reference: { kind: 'none' } };
   }
-  const materializer = input.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
-    accountSettings: input.accountSettings,
-    settingsSecretsReadKeys: [],
-    resources: input.savedSecretResources,
-  });
+  const materializer = input.savedSecretMaterializer;
   const inspected = materializer.inspect(secretId);
-  if (
-    inspected.status !== 'ready'
-    || (inspected.source === 'personal' && inspected.storage !== 'settings_encrypted')
-  ) {
+  if (inspected.status !== 'ready') {
+    return { ok: false, error: createLaunchSecretReferenceOverlayProviderErrorV1(
+      savedSecretOperationAdmissionReason(inspected.status), context) };
+  }
+  if (inspected.source === 'personal' && inspected.storage !== 'settings_encrypted') {
     return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
   }
   const additionalCredentials: Array<{ slotId: string; secretId: string; secretRecordFingerprint: string }> = [];
   for (const { slotId } of input.additionalCredentials ?? []) {
     const additionalId = resolveProviderSecretBindingIdV1(input.providerSettings, input.connectionId, input.machineId, slotId);
     const additional = additionalId === null ? null : materializer.inspect(additionalId);
-    if (!additionalId || !additional || additional.status !== 'ready'
-      || (additional.source === 'personal' && additional.storage !== 'settings_encrypted')) {
+    if (!additionalId || !additional) {
+      return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
+    }
+    if (additional.status !== 'ready') {
+      return { ok: false, error: createLaunchSecretReferenceOverlayProviderErrorV1(
+        savedSecretOperationAdmissionReason(additional.status), context) };
+    }
+    if (additional.source === 'personal' && additional.storage !== 'settings_encrypted') {
       return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
     }
     additionalCredentials.push({ slotId, secretId: additionalId, secretRecordFingerprint: additional.fingerprint });
@@ -145,7 +149,7 @@ export async function resolveProviderCredentialPlaintextAsync(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1 | null;
   isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
@@ -193,26 +197,25 @@ export function resolveProviderCredentialPlaintext(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1 | null;
   isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
 }>): ProviderCredentialPlaintextResultForSpawn {
   if (input.reference.kind === 'none') return { ok: true, credential: { kind: 'none' } };
   const context = { connectionId: input.connectionId, machineId: input.machineId };
-  const materializer = input.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
-    accountSettings: input.accountSettings,
-    settingsSecretsReadKeys: input.settingsSecretsReadKeys.filter((key): key is Uint8Array => key instanceof Uint8Array),
-    resources: input.savedSecretResources,
-    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
-  });
+  const materializer = input.savedSecretMaterializer;
+  if (!materializer) return { ok: false,
+    error: createLaunchSecretReferenceOverlayProviderErrorV1('reference_unavailable', context) };
   const read = (reference: Readonly<{ secretId: string; secretRecordFingerprint: string }>) => {
     const current = materializer.inspect(reference.secretId);
     if (current.status !== 'ready' || current.fingerprint !== reference.secretRecordFingerprint) {
       return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', context) };
     }
     const resolved = materializer.resolve(reference.secretId);
-    return resolved.status !== 'ready' || !resolved.value
+    if (resolved.status !== 'ready') return { ok: false as const,
+      error: createLaunchSecretReferenceOverlayProviderErrorV1(savedSecretOperationAdmissionReason(resolved.status), context) };
+    return !resolved.value
       ? { ok: false as const, error: createProviderErrorV1('provider_secret_missing', context) }
       : { ok: true as const, value: resolved.value };
   };

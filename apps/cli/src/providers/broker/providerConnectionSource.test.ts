@@ -16,6 +16,7 @@ import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/te
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
@@ -163,7 +164,7 @@ function snapshot(settings = accountSettings()): ActiveAccountSettingsSnapshot {
 
 function sourceFacts(settings: ActiveAccountSettingsSnapshot) {
   return { accountSettings: settings.settings, providerSettings: readProviderSettingsForCli(settings).settings,
-    savedSecretResources: settings.savedSecretResources };
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(settings) };
 }
 
 function resourceSource(settings = accountSettings(), activeRegistry = registry) {
@@ -182,6 +183,19 @@ function resourceSource(settings = accountSettings(), activeRegistry = registry)
 }
 
 describe('Provider Connection Team broker source', () => {
+  it.each(['ready', 'temporarily_unavailable'] as const)('honors admitted Saved Secret availability %s despite retained ready resource bytes', (savedSecretCatalogState) => {
+    const settings = accountSettings();
+    const resolved = resolveProviderConnectionBrokerSource({
+      source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses', endpointTemplateId: 'responses',
+      ...sourceFacts(settings),
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1({ ...settings, savedSecretCatalogState }),
+      registry, dnsEvidenceByEndpointUrl,
+    });
+    expect(resolved).toMatchObject(savedSecretCatalogState === 'ready'
+      ? { ok: true }
+      : { ok: false, error: { code: 'provider_secret_unavailable' } });
+  });
+
   it.each([
     { externalSlot: 'primary', relationship: 'owner' }, { externalSlot: 'companion', relationship: 'owner' },
     { externalSlot: 'primary', relationship: 'recipient' }, { externalSlot: 'companion', relationship: 'recipient' },
@@ -665,7 +679,7 @@ describe('Provider Connection Team broker source', () => {
       protocol: 'openai-responses',
       endpointTemplateId: 'responses',
       ...sourceFacts(settings),
-      savedSecretResources: [sharedSecretResource],
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1({ ...settings, savedSecretResources: [sharedSecretResource] }),
       registry,
       dnsEvidenceByEndpointUrl,
     });

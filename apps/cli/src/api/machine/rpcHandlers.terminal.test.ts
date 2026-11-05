@@ -605,7 +605,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
 
   it('does not run setup implicitly when the Account waives its approval', async () => {
     const h = await finiteHarness({ setup: true, waived: true, setupWaived: true });
-    Object.assign(h.runtime, { secretEnvironment: { settingsSecretsReadKeys: [], accountSettings: {
+    Object.assign(h.runtime, { secretEnvironment: { savedSecretMaterializer: null, settingsSecretsReadKeys: [], accountSettings: {
       actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['api'] } },
     } } });
     try {

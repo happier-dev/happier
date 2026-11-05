@@ -390,8 +390,7 @@ function validateCreatedConnectionSecret(
     throw createProviderErrorV1('provider_secret_missing', { connectionId: connection.id, machineId: input.machineId });
   }
   if (input.savedSecretId !== null) requireSavedSecretReferenceReady({
-    rawAccountSettings: snapshot.rawAccountSettings, savedSecretId: input.savedSecretId,
-    savedSecretResources: snapshot.savedSecretResources, savedSecretCatalogState: snapshot.savedSecretCatalogState,
+    savedSecretId: input.savedSecretId, savedSecretMaterializer: snapshot.savedSecretMaterializer,
     connectionId: connection.id, machineId: input.machineId, preparedSavedSecret: input.preparedSavedSecret,
   });
 }

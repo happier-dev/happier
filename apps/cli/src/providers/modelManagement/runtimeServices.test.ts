@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { logger } from '@/ui/logger';
@@ -784,7 +785,7 @@ describe('runtime provider model-management composition', () => {
       kind: 'apiKey' as const, encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
       storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
         content: { v: 1, name: 'Gateway key', kind: 'apiKey', value: 'gateway-secret' } }) };
-    const secretInspection = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
+    const secretInspection = createSavedSecretMaterializerV1({ resourceCatalogState: undefined, accountSettings: {}, settingsSecretsReadKeys: [],
       resources: [savedSecretResource] }).inspect(formatSharedSavedSecretRefV1(resourceId));
     if (secretInspection.status !== 'ready') throw new Error('Expected captured Provider resource');
     const observationAuthorizationFingerprint = createProviderObservationAuthorizationFingerprintV1({
@@ -1171,11 +1172,11 @@ describe('runtime provider model-management composition', () => {
       v: 1 as const, updatedAt: 1,
       ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'same-id' },
     };
-    const authorization = resolveProviderSpawnAuthorization({
+    const authorization = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection, machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: accountSettings.settings, savedSecretResources: accountSettings.savedSecretResources, providerSettings: settings,
       registry, dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]), lease,
-    });
+    }));
     if (!authorization.ok) throw new Error('Expected provider authorization');
     if (custody === 'ambient') {
       // Binding status shares the explicit read/probe budget, including Home
@@ -1220,7 +1221,7 @@ describe('runtime provider model-management composition', () => {
       updatedAt: 1,
       ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId },
     });
-    const authorizePreviouslyCurrentProbe = (modelId: string) => resolveProviderSpawnAuthorization({
+    const authorizePreviouslyCurrentProbe = (modelId: string) => resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: probeSelection(modelId),
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
@@ -1231,8 +1232,8 @@ describe('runtime provider model-management composition', () => {
       dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
       lease,
       runtimeModelDescriptor: { id: modelId, name: modelId },
-    });
-    const currentProbeAuthorization = resolveProviderProbeAuthorization({
+    }));
+    const currentProbeAuthorization = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
       request: {
         connectionId,
         machineId: 'machine-a',
@@ -1247,7 +1248,7 @@ describe('runtime provider model-management composition', () => {
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
-    });
+    }));
     if (!currentProbeAuthorization.ok) {
       throw new Error('Expected current probe authorization');
     }

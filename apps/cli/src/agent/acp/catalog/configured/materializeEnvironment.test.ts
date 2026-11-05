@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it } from 'vitest';
 import {
   formatSharedSavedSecretRefV1,
@@ -45,7 +46,7 @@ function savedSecret(encryptedValue: SavedSecret['encryptedValue']): SavedSecret
 describe('materializeConfiguredAcpEnvironment', () => {
   it('uses admitted material for a template without rebuilding a catalog', () => {
     const secretId = formatSharedSavedSecretRefV1('admitted-acp');
-    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resourceCatalogState: 'ready', resources: [{
       resourceId: 'admitted-acp', ownerAccountId: 'owner', displayName: 'ACP', kind: 'token',
       relationship: 'owner', capabilities: { use: true },
       encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
@@ -61,7 +62,7 @@ describe('materializeConfiguredAcpEnvironment', () => {
     ['secret-acp', 'repair_required'], ['happier:shared-secret:v1:resource_1', 'deleted'],
   ] as const)('keeps ACP template secret authority and typed failure for %s', (secretId, status) => {
     const definition = backend(secretId);
-    expect(() => materializeConfiguredAcpEnvironment({
+    expect(() => materializeConfiguredAcpEnvironment(withSavedSecretMaterializer({
       backend: { ...definition, env: { ACP_TOKEN: { t: 'template', template: 'Bearer {key}',
         vars: { key: { t: 'savedSecret', secretId } },
       } } },
@@ -69,7 +70,7 @@ describe('materializeConfiguredAcpEnvironment', () => {
       credentials: { token: 'plain-account', encryption: null }, processEnv: {},
       savedSecretResources: [{ resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'key', kind: 'token',
         encryptionMode: 'plain', revision: 1, materialStatus: 'deleted', storedContent: null }],
-    })).toThrow(expect.objectContaining({ code: 'saved_secret_resolution_failed', status, reference: secretId,
+    }))).toThrow(expect.objectContaining({ code: 'saved_secret_resolution_failed', status, reference: secretId,
       consumer: 'acp', field: 'env:ACP_TOKEN' }));
   });
   it.each([
@@ -100,13 +101,13 @@ describe('materializeConfiguredAcpEnvironment', () => {
     }];
 
     try {
-      materializeConfiguredAcpEnvironment({
+      materializeConfiguredAcpEnvironment(withSavedSecretMaterializer({
         backend: backend(secretId),
         accountSettings: {},
         credentials: { token: 'plain-account', encryption: null },
         processEnv: {},
         savedSecretResources,
-      });
+      }));
       throw new Error('expected configured ACP materialization to fail');
     } catch (error) {
       expect(error).toMatchObject({
@@ -124,21 +125,21 @@ describe('materializeConfiguredAcpEnvironment', () => {
       encryption: null,
     };
 
-    expect(() => materializeConfiguredAcpEnvironment({
+    expect(() => materializeConfiguredAcpEnvironment(withSavedSecretMaterializer({
       backend: backend('secret-acp'),
       accountSettings: {
         secrets: [savedSecret({ _isSecretValue: true, value: 'plain-account-secret' })],
       },
       credentials,
       processEnv: {},
-    })).toThrow(expect.objectContaining({ code: 'saved_secret_resolution_failed', status: 'repair_required', consumer: 'acp' }));
+    }))).toThrow(expect.objectContaining({ code: 'saved_secret_resolution_failed', status: 'repair_required', consumer: 'acp' }));
   });
 
   it('materializes a private personal resource through the configured ACP launch owner', () => {
     const resourceId = 'private-acp-resource';
     const secretId = formatSharedSavedSecretRefV1(resourceId);
 
-    expect(materializeConfiguredAcpEnvironment({
+    expect(materializeConfiguredAcpEnvironment(withSavedSecretMaterializer({
       backend: backend(secretId),
       accountSettings: {},
       credentials: { token: 'plain-account', encryption: null },
@@ -159,6 +160,6 @@ describe('materializeConfiguredAcpEnvironment', () => {
           content: { v: 1, name: 'Shared ACP token', kind: 'token', value: 'shared-acp-token' },
         }),
       }],
-    })).toEqual({ ACP_TOKEN: 'shared-acp-token' });
+    }))).toEqual({ ACP_TOKEN: 'shared-acp-token' });
   });
 });

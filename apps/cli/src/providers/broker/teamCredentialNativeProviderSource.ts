@@ -3,6 +3,7 @@ import type { ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV
 import type { TeamCredentialDeliveryPolicyV1, TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { isExternalProviderSpawnAuthorization, resolveProviderSpawnAuthorization, type ResolveProviderSpawnAuthorizationInput } from '@/providers/spawn/resolve';
 import { projectProviderBindingAuthorizationTicketReference } from '@/providers/spawn/ticket';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
@@ -110,8 +111,11 @@ export async function prepareTeamCredentialNativeProviderSource(
     if (closed || input.signal.aborted || !snapshot || snapshot.scopeKey !== input.accountScopeKey
       || snapshot.providerConnectionsCatalog?.status !== 'ready') return fail();
     const providerSettings = readProviderSettingsForCli(snapshot).settings;
+    const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+      isCurrent: () => !closed && !input.signal.aborted,
+    });
     const authorized = resolveProviderSpawnAuthorization({ ...input.binding, machineId: input.controllerMachineId,
-      accountSettings: snapshot.settings, savedSecretResources: snapshot.savedSecretResources, providerSettings,
+      accountSettings: snapshot.settings, savedSecretMaterializer, providerSettings,
       teamCredentialResource: { resourceId: resource.resourceId, resourceRevision: resource.resourceRevision },
       registry, dnsEvidenceByEndpointUrl });
     if (!authorized.ok) return authorized;
@@ -128,7 +132,7 @@ export async function prepareTeamCredentialNativeProviderSource(
     if (endpoint.endpointTemplateId !== input.application.endpointTemplateId || endpoint.protocol !== input.application.protocol) return fail();
     const resolved = resolveProviderConnectionBrokerSource({ source: resource.source, machineId: input.controllerMachineId,
       endpointTemplateId: endpoint.endpointTemplateId, protocol: endpoint.protocol, expectedCredentialTransport: transport,
-      accountSettings: snapshot.settings, savedSecretResources: snapshot.savedSecretResources, providerSettings,
+      accountSettings: snapshot.settings, savedSecretMaterializer, providerSettings,
       registry, dnsEvidenceByEndpointUrl });
     if (!resolved.ok) return resolved;
     if (resolved.snapshot.provider.identity.pluginId !== input.application.implementationIdentity.pluginId

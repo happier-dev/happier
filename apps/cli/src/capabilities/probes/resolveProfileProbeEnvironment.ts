@@ -70,7 +70,7 @@ export async function resolveProfileProbeEnvironment(params: Readonly<{
     settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(params.credentials),
     foregroundSatisfiedSecretRequirementNames: overlay.foregroundSatisfiedSecretRequirementNames,
     secretReferenceOverlay: params.secretReferenceOverlay,
-    ...(admitted ? { savedSecretMaterializer: admitted.materializer } : {}),
+    savedSecretMaterializer: admitted?.materializer ?? null,
   });
   const expandedOverlay = expandProfileEnvOverlay({
     profile,

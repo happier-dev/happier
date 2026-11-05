@@ -113,7 +113,7 @@ type ResolveProviderRuntimeCatalogModelInput = Readonly<{
   machineId: string;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;

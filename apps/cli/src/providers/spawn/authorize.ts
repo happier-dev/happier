@@ -1043,7 +1043,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         : admissionLifetime),
       resolveCredential: () => {
         const snapshot = getAccountSettingsSnapshot();
-        if (!snapshot) {
+        if (!snapshot || !savedSecretMaterializer) {
           return {
             ok: false,
             error: createProviderErrorV1('provider_authorization_changed', {

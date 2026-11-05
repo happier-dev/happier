@@ -5,7 +5,6 @@ import {
   resolveValueRefPlaintext,
 } from '@/settings/valueRefs/resolveValueRefPlaintext';
 import {
-  createSavedSecretMaterializerV1,
   SavedSecretResolutionError,
   type SavedSecretCatalogResourceInputV1,
   type SavedSecretMaterializerV1,
@@ -19,14 +18,10 @@ export function materializeConfiguredAcpEnvironment(params: Readonly<{
   credentials?: StoredCredentials;
   processEnv?: NodeJS.ProcessEnv;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
 }>): Record<string, string> {
   const processEnv = params.processEnv ?? process.env;
-  const savedSecretMaterializer = params.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
-    accountSettings: params.accountSettings,
-    settingsSecretsReadKeys: [],
-    resources: params.savedSecretResources,
-  });
+  const savedSecretMaterializer = params.savedSecretMaterializer;
 
   const env: Record<string, string> = {};
   for (const [envKey, valueRef] of Object.entries(params.backend.env)) {

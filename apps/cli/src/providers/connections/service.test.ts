@@ -42,9 +42,10 @@ import type {
   ProviderConnectionServiceDeps,
   ProviderConnectionServiceSnapshot,
 } from './service/types';
-import type {
-  SavedSecretCatalogResourceInputV1,
-  SavedSecretCatalogState,
+import {
+  createSavedSecretMaterializerV1,
+  type SavedSecretCatalogResourceInputV1,
+  type SavedSecretCatalogState,
 } from '@/settings/secrets/savedSecretCatalog';
 
 const contributionKey = 'acme.gateway/gateway';
@@ -315,6 +316,10 @@ function harness(options: Readonly<{
     const snapshot = {
       accountSettings: AccountSettingsSchema.parse(raw),
       rawAccountSettings: raw,
+      savedSecretMaterializer: createSavedSecretMaterializerV1({
+        accountSettings: raw, settingsSecretsReadKeys: [],
+        resources: options.savedSecretResources ?? [], resourceCatalogState: options.savedSecretCatalogState,
+      }),
       providerSettings: options.rowBacked ? rowProviderSettings : readRetainedProviderSettingsFixture(raw).settings,
       providerSettingsDiagnostics: options.rowBacked ? [] : readRetainedProviderSettingsFixture(raw).diagnostics,
       registry: registryProjection?.registry ?? currentRegistry,

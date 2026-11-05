@@ -17,6 +17,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import {
@@ -226,7 +227,8 @@ it.each([2, 3])('preserves a transient Home failure at explicit Start purpose re
     let settings = fixture.providerSettings;
     const unavailableOperation = async (): Promise<never> => { throw new Error('Unexpected configuration mutation or inspection'); };
     const service = createProviderConnectionService({ machineId: fixture.machineId, featureGate: { isEnabled: () => true },
-      loadSnapshot: async () => ({ accountSettings: fixture.snapshot.settings, rawAccountSettings: {}, providerSettings: settings, registry: fixture.contributes }),
+      loadSnapshot: async () => ({ accountSettings: fixture.snapshot.settings, rawAccountSettings: {}, providerSettings: settings, registry: fixture.contributes,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(fixture.snapshot) }),
       updateProviderSettings: unavailableOperation, collectDnsEvidence: unavailableOperation, runtimeSummary: unavailableOperation, now: () => 1,
       resolveConnection: input => resolveProviderConnectionForMachine({ ...input, dnsEvidenceByEndpointUrl: input.dnsEvidence }),
       resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
@@ -287,7 +289,8 @@ it('G1 releases only the deleted connection explicit Start claim through retaine
       accountProviderActionExecute: request => accountExecute(request, { surface: 'cli' }),
       loadSnapshot: async () => {
         if (!catalogAvailable) throw new Error('Account catalog temporarily unavailable');
-        return { accountSettings: fixture.snapshot.settings, rawAccountSettings: {}, providerSettings, registry: fixture.contributes };
+        return { accountSettings: fixture.snapshot.settings, rawAccountSettings: {}, providerSettings, registry: fixture.contributes,
+          savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(fixture.snapshot) };
       }, updateProviderSettings: unavailable, collectDnsEvidence: unavailable, runtimeSummary: unavailable, now: () => 2,
       resolveConnection: input => resolveProviderConnectionForMachine({ ...input, dnsEvidenceByEndpointUrl: input.dnsEvidence }),
       resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
@@ -358,7 +361,8 @@ it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained 
     const unavailable = async (): Promise<never> => { throw new Error('Unexpected configuration mutation or runtime inspection'); };
     const service = createProviderConnectionService({ machineId: fixture.machineId, featureGate: { isEnabled: () => true },
       loadSnapshot: async () => ({ accountSettings: fixture.snapshot.settings, rawAccountSettings: {},
-        providerSettings: fixture.providerSettings, registry: fixture.contributes }),
+        providerSettings: fixture.providerSettings, registry: fixture.contributes,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(fixture.snapshot) }),
       updateProviderSettings: unavailable, collectDnsEvidence: unavailable, runtimeSummary: unavailable, now: () => 1,
       resolveConnection: input => resolveProviderConnectionForMachine({ ...input, dnsEvidenceByEndpointUrl: input.dnsEvidence }),
       resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,

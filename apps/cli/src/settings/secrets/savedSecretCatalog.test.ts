@@ -15,6 +15,23 @@ const randomBytes = (length: number) => new Uint8Array(length).fill(3);
 describe('Saved Secret catalog materializer', () => {
   afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
+  it('never borrows ambient catalog readiness or resources for an explicit material basis', () => {
+    const ref = 'happier:shared-secret:v1:ambient-only';
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'home:ambient', savedSecretCatalogState: 'ready',
+      savedSecretResources: [{ resourceId: 'ambient-only', ownerAccountId: 'owner', displayName: 'Ambient', kind: 'token',
+        encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'ambient-only', mode: 'plain',
+          content: { v: 1, name: 'Ambient', kind: 'token', value: 'synthetic-ambient-material' } }) }] });
+    const accountSettings = getActiveAccountSettingsSnapshot()!.settings;
+    const unavailable = createSavedSecretMaterializerV1({ accountSettings, settingsSecretsReadKeys: [],
+      resources: [], resourceCatalogState: undefined });
+    expect(unavailable.inspect(ref)).toEqual({ status: 'temporarily_unavailable' });
+    const empty = createSavedSecretMaterializerV1({ accountSettings, settingsSecretsReadKeys: [],
+      resources: undefined, resourceCatalogState: 'ready' });
+    expect(empty.inspect(ref)).toEqual({ status: 'forbidden' });
+  });
+
   it('opens passkeys through the same resource owner and refuses flattening them into string consumers', () => {
     const content = { v: 2 as const, name: 'Example passkey', kind: 'other' as const,
       source: { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG', privateKey: 'BwgJ',
@@ -222,7 +239,7 @@ describe('Saved Secret catalog materializer', () => {
       resourceId: 'resource_1', mode: 'plain',
       content: { v: 1, name: 'shared', kind: 'token', value: 'shared-value' },
     });
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {
         secrets: [{
           id: 'personal_1', name: 'personal', kind: 'token',
@@ -252,7 +269,7 @@ describe('Saved Secret catalog materializer', () => {
   });
 
   it('keeps preparing and stale-resource states typed and fails closed', () => {
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'shared', kind: 'token',
         encryptionMode: 'e2ee', revision: 2,
@@ -266,7 +283,7 @@ describe('Saved Secret catalog materializer', () => {
   });
 
   it('distinguishes an unhydrated shared catalog from a missing personal record', () => {
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resources: [],
       accountSettings: {},
       settingsSecretsReadKeys: [],
       resourceCatalogState: 'temporarily_unavailable',
@@ -285,7 +302,7 @@ describe('Saved Secret catalog materializer', () => {
       resources: [],
       resourceCatalogState: 'ready',
     });
-    const retryable = createSavedSecretMaterializerV1({
+    const retryable = createSavedSecretMaterializerV1({ resources: [],
       accountSettings: {},
       settingsSecretsReadKeys: [],
       resourceCatalogState: 'temporarily_unavailable',
@@ -300,7 +317,7 @@ describe('Saved Secret catalog materializer', () => {
       resourceId: 'resource_1', mode: 'plain',
       content: { v: 1, name: 'shared', kind: 'token', value: 'v1' },
     });
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'shared', kind: 'token',
         encryptionMode: 'plain', revision: 1, storedContent: first, materialStatus: 'ready',
@@ -318,7 +335,7 @@ describe('Saved Secret catalog materializer', () => {
       resourceDataKey: key,
       randomBytes,
     });
-    const withoutKey = createSavedSecretMaterializerV1({
+    const withoutKey = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'encrypted', kind: 'apiKey',
         encryptionMode: 'e2ee', revision: 1, storedContent, materialStatus: 'ready',
@@ -328,7 +345,7 @@ describe('Saved Secret catalog materializer', () => {
     expect(withoutKey.resolve('happier:shared-secret:v1:resource_1')).toEqual({ status: 'temporarily_unavailable' });
     expect(withoutKey.describe('happier:shared-secret:v1:resource_1')).toEqual({ status: 'temporarily_unavailable' });
     expect(withoutKey.inspect('happier:shared-secret:v1:resource_1')).toEqual({ status: 'temporarily_unavailable' });
-    const withKey = createSavedSecretMaterializerV1({
+    const withKey = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'encrypted', kind: 'apiKey',
         encryptionMode: 'e2ee', revision: 1, storedContent, materialStatus: 'ready', resourceDataKey: key,
@@ -343,7 +360,7 @@ describe('Saved Secret catalog materializer', () => {
       resourceId: 'resource_1', mode: 'plain',
       content: { v: 1, name: 'source-name', kind: 'token', value: 'secret' },
     });
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'stale-name', kind: 'token',
         encryptionMode: 'plain', revision: 1, storedContent, materialStatus: 'ready',
@@ -362,7 +379,7 @@ describe('Saved Secret catalog materializer', () => {
       resourceId: 'resource_1', mode: 'plain',
       content: { v: 1, name: 'source-name', kind: 'token', value: 'secret' },
     });
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: null, kind: 'token',
         encryptionMode: 'plain', revision: 1, storedContent, materialStatus: 'ready',
@@ -378,7 +395,7 @@ describe('Saved Secret catalog materializer', () => {
     ['update_required', 'repair_required'],
     ['deleted', 'deleted'],
   ] as const)('normalizes catalog status %s to %s', (materialStatus, expected) => {
-    const materializer = createSavedSecretMaterializerV1({
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined,
       accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
         resourceId: 'resource_1', ownerAccountId: 'owner', displayName: 'shared', kind: 'token',
         encryptionMode: 'e2ee', revision: 2,

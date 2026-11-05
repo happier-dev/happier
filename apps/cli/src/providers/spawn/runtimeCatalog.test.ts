@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -594,7 +595,7 @@ describe('provider spawn runtime catalog bridge', () => {
       });
     };
 
-    await expect(resolveProviderRuntimeCatalogModel({
+    await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -614,28 +615,28 @@ describe('provider spawn runtime catalog bridge', () => {
         read: readRuntimeState,
       },
       ...(placement === 'remote' ? { readModelProjection, signal: new AbortController().signal } : {}),
-    })).resolves.toEqual({
+    }))).resolves.toEqual({
       id: 'managed-model',
       name: 'Managed model',
     });
     if (placement === 'remote') {
       expect(readRuntimeState).not.toHaveBeenCalled();
       projectionCold = true;
-      await expect(resolveProviderRuntimeCatalogModel({
+      await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
         selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'managed-model' } },
         machineId: 'machine-a', accountSettings: { providerSettingsV1: providerSettings }, providerSettings, registry,
         dnsEvidenceByEndpointUrl: new Map(), resolveManagedPurposeBindingIntent,
         runtimeStateStore: { read: readRuntimeState }, readModelProjection, signal: new AbortController().signal,
-      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      }))).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       expect(upstreamCatalogReads).toBe(0);
       projectionCold = false;
       projectionStale = true;
-      await expect(resolveProviderRuntimeCatalogModel({
+      await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
         selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'managed-model' } },
         machineId: 'machine-a', accountSettings: { providerSettingsV1: providerSettings }, providerSettings, registry,
         dnsEvidenceByEndpointUrl: new Map(), resolveManagedPurposeBindingIntent,
         runtimeStateStore: { read: readRuntimeState }, readModelProjection, signal: new AbortController().signal,
-      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      }))).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       return;
     }
     expect(resolveManagedPurposeBindingIntent).toHaveBeenCalledWith({
@@ -649,7 +650,7 @@ describe('provider spawn runtime catalog bridge', () => {
       new Error('connected account binding unavailable'),
     );
     readRuntimeState.mockClear();
-    await expect(resolveProviderRuntimeCatalogModel({
+    await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -668,7 +669,7 @@ describe('provider spawn runtime catalog bridge', () => {
       runtimeStateStore: {
         read: readRuntimeState,
       },
-    })).resolves.toBeNull();
+    }))).resolves.toBeNull();
     expect(readRuntimeState).not.toHaveBeenCalled();
   });
 });

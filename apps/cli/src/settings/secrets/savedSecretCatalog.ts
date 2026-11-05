@@ -210,8 +210,8 @@ function readPersonalSecrets(settingsLike: unknown): ReadonlyMap<string, Persona
 export function createSavedSecretMaterializerV1(input: Readonly<{
   accountSettings: unknown;
   settingsSecretsReadKeys: readonly Uint8Array[];
-  resources?: readonly SavedSecretCatalogResourceInputV1[];
-  resourceCatalogState?: SavedSecretCatalogState;
+  resources: readonly SavedSecretCatalogResourceInputV1[] | undefined;
+  resourceCatalogState: SavedSecretCatalogState | undefined;
   /** Captured invocation publication; async grant checks happen at its effect owner. */
   isCurrent?: () => boolean;
   /** Host-private, already authenticated installation contents for this exact admitted catalog. */
@@ -219,19 +219,8 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
   externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
 }>): SavedSecretMaterializerV1 {
   const personal = readPersonalSecrets(input.accountSettings);
-  const activeSnapshot = input.isCurrent ? null : getActiveAccountSettingsSnapshot();
-  const activeSnapshotForSettings = activeSnapshot !== null
-    && activeSnapshot.settings === input.accountSettings
-    ? activeSnapshot
-    : null;
-  const activeLifetimeToken = activeSnapshotForSettings ? getActiveAccountSettingsSnapshotLifetimeToken() : null;
-  const isCapturedActiveSnapshotRetired = () => activeSnapshotForSettings !== null
-    && (getActiveAccountSettingsSnapshot() !== activeSnapshotForSettings
-      || getActiveAccountSettingsSnapshotLifetimeToken() !== activeLifetimeToken);
-  const activeResources = activeSnapshotForSettings?.savedSecretResources;
-  const resources = new Map((input.resources ?? activeResources)?.map((resource) => [resource.resourceId, resource]) ?? []);
-  const resourceCatalogState = input.resourceCatalogState
-    ?? activeSnapshotForSettings?.savedSecretCatalogState;
+  const resources = new Map(input.resources?.map((resource) => [resource.resourceId, resource]) ?? []);
+  const resourceCatalogState = input.resourceCatalogState;
   const collisionState = projectSavedSecretCatalogCollisionStateV1(
     isRecord(input.accountSettings) && Array.isArray(input.accountSettings.secrets)
       ? input.accountSettings.secrets
@@ -243,7 +232,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
     // A process-local materializer cannot retain private material after its
     // admitted Account/catalog snapshot is withdrawn, replaced or retired.
     // The caller reopens the current snapshot through this same owner.
-    if (isCapturedActiveSnapshotRetired() || input.isCurrent?.() === false) return { status: 'temporarily_unavailable' };
+    if (input.isCurrent?.() === false) return { status: 'temporarily_unavailable' };
     const personalMaterial = personal.get(ref);
     if (personalMaterial) {
       return {
@@ -399,7 +388,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
       return { status: 'ready', source: resolved.source, displayName };
     },
     matchesSharedResourceRevision: (ref, revision) => {
-      if (isCapturedActiveSnapshotRetired() || input.isCurrent?.() === false) return false;
+      if (input.isCurrent?.() === false) return false;
       if (collidingPersonalRefs.has(ref)) return false;
       const parsed = parseSavedSecretCatalogReferenceV1(ref);
       return parsed?.kind === 'shared_resource'
@@ -419,12 +408,17 @@ export function createSavedSecretMaterializerFromSnapshotV1(
   input?: Readonly<{ isCurrent?: () => boolean; externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
     openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1> }>,
 ): SavedSecretMaterializerV1 {
+  const capturedActiveSnapshot = getActiveAccountSettingsSnapshot() === snapshot ? snapshot : null;
+  const activeLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const isCurrent = input?.isCurrent ?? (() => capturedActiveSnapshot === null
+    || (getActiveAccountSettingsSnapshot() === capturedActiveSnapshot
+      && getActiveAccountSettingsSnapshotLifetimeToken() === activeLifetimeToken));
   return createSavedSecretMaterializerV1({
     accountSettings: snapshot.settings,
     settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
     resources: snapshot.savedSecretResources ?? [],
     resourceCatalogState: snapshot.savedSecretCatalogState,
-    ...(input?.isCurrent ? { isCurrent: input.isCurrent } : {}),
+    isCurrent,
     ...(input?.externalAcquisitions ? { externalAcquisitions: input.externalAcquisitions } : {}),
     ...(input?.openedInstallationContents ? { openedInstallationContents: input.openedInstallationContents } : {}),
   });

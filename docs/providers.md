@@ -25,6 +25,13 @@ The normal flow is:
 
 Provider setup is intentionally separate from session launch. Once configured, users choose a model rather than repeatedly choosing or re-entering a provider.
 
+In 0.3 development, Saved Secret readiness is decided by the materializer for
+the admitted Account snapshot. Connection descriptions, model picker projections,
+probes and Session launches consume that materializer; they do not infer readiness
+from a matching Settings object in the daemon. An unavailable catalog retains its
+typed retry recovery. A missing binding retains the add-secret recovery, and one
+connection's credential failure remains local to its inventory row.
+
 Local providers are machine-aware. A detected Ollama or LM Studio service appears for the machine on which it is running; using its models requires that target machine to be authorized and available. Account-only browsing can show declared static and manually entered models without asserting that a local service is running. A local/private endpoint must be enabled per machine before Happier resolves its secret or sends it network traffic.
 
 The CLI mirrors the same ownership:

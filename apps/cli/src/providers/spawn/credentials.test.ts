@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -63,14 +64,14 @@ const accountSettings = {
 
 describe('provider spawn credential resolution', () => {
   it('selects the machine binding before account binding and fingerprints ciphertext without decrypting', () => {
-    const result = resolveProviderCredentialReference({
+    const result = resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: settings(),
       accountSettings,
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
       credentialSlotId: 'apiKey',
       required: true,
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -83,27 +84,27 @@ describe('provider spawn credential resolution', () => {
   });
 
   it('returns explicit no-auth for an optional unbound credential', () => {
-    expect(resolveProviderCredentialReference({
+    expect(resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: { ...settings(), secretBindingsByConnectionId: {} },
       accountSettings,
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
       credentialSlotId: 'apiKey',
       required: false,
-    })).toEqual({ ok: true, reference: { kind: 'none' } });
+    }))).toEqual({ ok: true, reference: { kind: 'none' } });
   });
 
   it('fails before decryption when a required binding or persisted ciphertext is missing', () => {
-    expect(resolveProviderCredentialReference({
+    expect(resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: { ...settings(), secretBindingsByConnectionId: {} },
       accountSettings,
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
       credentialSlotId: 'apiKey',
       required: true,
-    })).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    }))).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
 
-    expect(resolveProviderCredentialReference({
+    expect(resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: settings(),
       accountSettings: {
         secrets: [{ id: 'secret-machine', encryptedValue: { _isSecretValue: true, value: 'plaintext-only' } }],
@@ -112,36 +113,36 @@ describe('provider spawn credential resolution', () => {
       machineId: 'machine-a',
       credentialSlotId: 'apiKey',
       required: true,
-    })).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    }))).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
   });
 
   it('decrypts only the exact previously fingerprinted record and rejects rotation races', () => {
-    const referenceResult = resolveProviderCredentialReference({
+    const referenceResult = resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: settings(), accountSettings, connectionId: 'pc_gateway', machineId: 'machine-a',
       credentialSlotId: 'apiKey', required: true,
-    });
+    }));
     if (!referenceResult.ok) throw new Error('Expected reference');
 
-    expect(resolveProviderCredentialPlaintext({
+    expect(resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
       reference: referenceResult.reference,
       accountSettings,
       settingsSecretsReadKeys: [key],
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
-    })).toEqual({ ok: true, credential: { kind: 'apiKey', value: 'secret-value' } });
+    }))).toEqual({ ok: true, credential: { kind: 'apiKey', value: 'secret-value' } });
 
-    expect(resolveProviderCredentialPlaintext({ reference: referenceResult.reference, accountSettings,
+    expect(resolveProviderCredentialPlaintext(withSavedSecretMaterializer({ reference: referenceResult.reference, accountSettings,
       settingsSecretsReadKeys: [key], connectionId: 'pc_gateway', machineId: 'machine-a', isCurrent: () => false,
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    }))).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
 
     const rotated = encryptSecretStringV1('rotated', key, (length) => new Uint8Array(length).fill(4));
-    expect(resolveProviderCredentialPlaintext({
+    expect(resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
       reference: referenceResult.reference,
       accountSettings: { secrets: [{ id: 'secret-machine', encryptedValue: { _isSecretValue: true, encryptedValue: rotated } }] },
       settingsSecretsReadKeys: [key],
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    }))).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
   });
 
   it('captures and materializes a shared Saved Secret through the canonical catalog', () => {
@@ -151,7 +152,7 @@ describe('provider spawn credential resolution', () => {
         pc_gateway: { account: { apiKey: sharedSecretRef }, byMachineId: {} },
       },
     };
-    const referenceResult = resolveProviderCredentialReference({
+    const referenceResult = resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings,
       accountSettings: { secrets: [] },
       savedSecretResources: [sharedSecretResource],
@@ -159,29 +160,29 @@ describe('provider spawn credential resolution', () => {
       machineId: 'machine-a',
       credentialSlotId: 'apiKey',
       required: true,
-    });
+    }));
     expect(referenceResult).toMatchObject({
       ok: true,
       reference: { kind: 'apiKey', secretId: sharedSecretRef },
     });
     if (!referenceResult.ok) throw new Error('Expected shared Saved Secret reference');
 
-    expect(resolveProviderCredentialPlaintext({
+    expect(resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
       reference: referenceResult.reference,
       accountSettings: { secrets: [] },
       savedSecretResources: [sharedSecretResource],
       settingsSecretsReadKeys: [],
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
-    })).toEqual({ ok: true, credential: { kind: 'apiKey', value: 'shared-provider-value' } });
+    }))).toEqual({ ok: true, credential: { kind: 'apiKey', value: 'shared-provider-value' } });
 
-    expect(resolveProviderCredentialPlaintext({
+    expect(resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
       reference: referenceResult.reference,
       accountSettings: { secrets: [] },
       savedSecretResources: [{ ...sharedSecretResource, revision: 2 }],
       settingsSecretsReadKeys: [],
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    }))).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
   });
 });

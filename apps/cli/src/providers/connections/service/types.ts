@@ -29,6 +29,7 @@ import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/man
 import type {
   SavedSecretCatalogResourceInputV1,
   SavedSecretCatalogState,
+  SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
 
 type DescribeSuccess = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
@@ -84,6 +85,7 @@ export type ProviderConnectionServiceSnapshot = Readonly<{
   accountSettings: AccountSettings;
   /** Genuine Account preference/material bytes; never a Provider catalog overlay. */
   rawAccountSettings: Readonly<Record<string, unknown>>;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   providerSettingsDiagnostics?: readonly Readonly<{ path: string; reason: string }>[];
   /**
@@ -113,6 +115,7 @@ export type ProviderConnectionRuntimeSummaryInput = Readonly<{
   accountSettings: ProviderConnectionServiceSnapshot['accountSettings'];
   providerSettings: ProviderSettingsV1;
   savedSecretResources?: ProviderConnectionServiceSnapshot['savedSecretResources'];
+  savedSecretMaterializer: ProviderConnectionServiceSnapshot['savedSecretMaterializer'];
   registry: ProviderConnectionServiceSnapshot['registry'];
   dnsEvidence: ProviderEndpointDnsEvidence;
   resolution: Extract<ProviderConnectionResolution, { status: 'resolved' }>;

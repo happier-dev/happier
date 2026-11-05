@@ -13,6 +13,7 @@ import { readRetainedProviderConnectionsCatalogV1 } from '@happier-dev/protocol/
 import { DaemonProviderConnectionViewV1Schema, DaemonProviderConnectionMutationRequestV1Schema, DaemonProviderConnectionsDescribeRequestV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema } from '@happier-dev/protocol/rpc';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
@@ -113,7 +114,7 @@ function harness(overrides: Partial<ProviderCliDependencies> = {}, initialSecret
   };
   let nextId = 1;
   const persistence: Pick<ProviderConnectionServiceDeps, 'loadSnapshot' | 'updateProviderSettings' | 'now'> = {
-    loadSnapshot: async () => ({
+    loadSnapshot: async () => withSavedSecretMaterializer({
       accountSettings: AccountSettingsSchema.parse(raw),
       rawAccountSettings: raw,
       providerSettings: settings(raw),
@@ -361,7 +362,7 @@ describe('happier providers command domain', () => {
         rpc: async ({ request }) => createProviderConnectionRpcAdapter(h.connectionService)
           .describeConnections(DaemonProviderConnectionsDescribeRequestV1Schema.parse(request.input)),
         account: accountActionHost({
-          loadSnapshot: async () => ({ accountSettings: AccountSettingsSchema.parse(h.getRaw()),
+          loadSnapshot: async () => withSavedSecretMaterializer({ accountSettings: AccountSettingsSchema.parse(h.getRaw()),
             rawAccountSettings: h.getRaw(), providerSettings: settings(h.getRaw()), registry: h.registry }),
           updateProviderSettings: async () => { throw new Error('Approval must precede persistence'); },
           now: () => 100,

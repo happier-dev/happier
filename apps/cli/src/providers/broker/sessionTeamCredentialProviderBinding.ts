@@ -476,6 +476,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       },
       accountSettings: {},
       settingsSecretsReadKeys: [],
+      savedSecretMaterializer: null,
       connectionId: row.selection.resourceId,
       machineId: input.machineId,
       openTeamDirect: async (request) => {

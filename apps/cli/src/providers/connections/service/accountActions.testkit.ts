@@ -27,8 +27,7 @@ export function createInMemoryAccountProviderActions(input: Pick<ProviderConnect
           }
           for (const [connectionId, bindings] of Object.entries(value.catalog.secretBindingsByConnectionId)) {
             for (const savedSecretId of Object.values(bindings.account ?? {})) requireSavedSecretReferenceReady({
-              rawAccountSettings: captured.rawAccountSettings, savedSecretId, connectionId, machineId: 'machine-a',
-              savedSecretResources: captured.savedSecretResources, savedSecretCatalogState: captured.savedSecretCatalogState,
+              savedSecretId, connectionId, machineId: 'machine-a', savedSecretMaterializer: captured.savedSecretMaterializer,
               preparedSavedSecret,
             });
           }

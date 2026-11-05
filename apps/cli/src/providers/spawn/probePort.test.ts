@@ -483,7 +483,7 @@ describe('provider probe authorization port', () => {
     const settings = AccountSettingsSchema.parse({ secrets: [{
       id: 'secret-a', name: 'Probe key', kind: 'apiKey', encryptedValue, createdAt: 1, updatedAt: 1,
     }] });
-    const inspected = createSavedSecretMaterializerV1({
+    const inspected = createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
       accountSettings: settings,
       settingsSecretsReadKeys: [key],
     }).inspect('secret-a');
@@ -536,7 +536,7 @@ describe('provider probe authorization port', () => {
     const accountBSettings = AccountSettingsSchema.parse({ secrets: [{
       id: 'secret-a', name: 'Account B key', kind: 'apiKey', encryptedValue, createdAt: 1, updatedAt: 1,
     }] });
-    const inspected = createSavedSecretMaterializerV1({
+    const inspected = createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
       accountSettings: accountBSettings,
       settingsSecretsReadKeys: [key],
     }).inspect('secret-a');
@@ -747,7 +747,7 @@ describe('provider model-load authorization port', () => {
     const accountBSettings = AccountSettingsSchema.parse({ secrets: [{
       id: 'secret-a', name: 'Account B key', kind: 'apiKey', encryptedValue, createdAt: 1, updatedAt: 1,
     }] });
-    const inspected = createSavedSecretMaterializerV1({
+    const inspected = createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
       accountSettings: accountBSettings,
       settingsSecretsReadKeys: [key],
     }).inspect('secret-a');

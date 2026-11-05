@@ -90,7 +90,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       ...(gateway ? {} : { providers: [{ v: 1, id: 'gateway', name: 'Gateway', kind: input.modelLoad ? 'local' : 'aggregator',
         ...(input.modelLoad ? { modelLoad: input.modelLoad } : {}),
         credential: { kind: 'apiKey', required: false, slotId: 'apiKey', transports: [{ id: 'bearer',
-          protocols: ['openai-responses'], uses: input.modelLoad ? ['runtime', 'management'] : ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
+          protocols: ['openai-responses'], uses: input.modelLoad ? ['runtime', 'management'] : input.probeCatalog ? ['runtime', 'probe'] : ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
         endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://example.test/v1',
           capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
         catalog: input.probeCatalog

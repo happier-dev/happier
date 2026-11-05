@@ -167,10 +167,8 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
         }
         if (input.savedSecretId !== null) {
           requireSavedSecretReferenceReady({
-            rawAccountSettings: snapshot.rawAccountSettings,
             savedSecretId: input.savedSecretId,
-            savedSecretResources: snapshot.savedSecretResources,
-            savedSecretCatalogState: snapshot.savedSecretCatalogState,
+            savedSecretMaterializer: snapshot.savedSecretMaterializer,
             connectionId: input.connectionId,
             machineId: input.machineId,
             preparedSavedSecret: input.preparedSavedSecret,

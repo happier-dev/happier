@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
 import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -90,7 +91,7 @@ describe('admitted configured ACP launch on first use', () => {
         { status: 'ready', revision: 1, record });
       if (!backend) throw new Error('Missing configured backend');
       const resolved = await resolveAcpRuntimeLaunch({ cwd: root, definition: normalizeConfiguredAcpDefinition({
-        backend, launch, launchEnv: materializeConfiguredAcpEnvironment({ backend, accountSettings: {}, processEnv: params.env }),
+        backend, launch, launchEnv: materializeConfiguredAcpEnvironment(withSavedSecretMaterializer({ backend, accountSettings: {}, processEnv: params.env })),
       }) });
       const result = await promisify(execFile)(resolved.command, [...resolved.args], { env: { ...params.env, ...resolved.env } });
       expect(result.stdout).toBe('archive-ready:--acp:0:1');

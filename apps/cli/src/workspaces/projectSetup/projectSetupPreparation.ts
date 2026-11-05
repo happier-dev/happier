@@ -15,7 +15,6 @@ import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev
 import { SecretReferenceOverlayV1Schema, listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 
 import { LaunchSecretReferenceOverlayError, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
-import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ScmStatusSnapshotResponse } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
@@ -310,16 +309,13 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         if ((overlay || secretRequirements.some(requirement => requirement.required)) && !input.secretEnvironment) return refuse('project_environment_binding_unavailable');
         // Validate real binding availability; only the final launch owner retains materialized values.
         if (overlay || secretRequirements.length) resolveProjectSecretReferenceEnvironment({
-            ...(input.secretEnvironment ?? { accountSettings: {}, settingsSecretsReadKeys: [] }), requirements, ...(overlay ? { secretReferenceOverlay: overlay } : {}),
+            ...(input.secretEnvironment ?? { accountSettings: {}, settingsSecretsReadKeys: [], savedSecretMaterializer: null }), requirements, ...(overlay ? { secretReferenceOverlay: overlay } : {}),
         });
         const bindings = overlay ? listSecretReferenceOverlayV1BindingNames(overlay).map(name => ({ name, ...readSecretReferenceOverlayV1Reference(overlay, name)! })) : [];
         const displayBindings: ProjectSetupReviewPresentation['bindings'][number][] = [];
         if (bindings.length > 0 && input.secretEnvironment) {
-            const materializer = input.secretEnvironment.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
-                accountSettings: input.secretEnvironment.accountSettings,
-                settingsSecretsReadKeys: input.secretEnvironment.settingsSecretsReadKeys,
-                resources: input.secretEnvironment.savedSecretResources,
-            });
+            // The exact-reference owner above admitted every binding before presentation.
+            const materializer = input.secretEnvironment.savedSecretMaterializer!;
             for (const binding of bindings) {
                 const description = materializer.describe(binding.ref);
                 if (description.status !== 'ready') return refuse('project_environment_binding_unavailable');

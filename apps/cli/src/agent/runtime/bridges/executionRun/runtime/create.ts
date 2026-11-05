@@ -30,6 +30,7 @@ import { resolveBackendIsolationBundle } from '@/packagedRuntime/isolation/resol
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import {
     LaunchSecretReferenceOverlayError,
     readLaunchSecretReferenceOverlayProviderErrorCodeV1,
@@ -390,7 +391,10 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     if (!snapshot) {
                         throw new LaunchSecretReferenceOverlayError('reference_unavailable', 'launch');
                     }
+                    const operationContext = opts.resolveAccountSettingsSnapshot?.readOperationContext?.();
                     secretReferenceEnvironment = resolveSecretReferenceOverlayEnvironment({
+                        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot,
+                            operationContext ? { isCurrent: () => operationContext.readSnapshot() === snapshot } : undefined),
                         accountSettings: snapshot.settings,
                         settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
                         ...(snapshot.savedSecretResources

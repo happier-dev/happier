@@ -642,8 +642,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       // queued scheduler work still re-derives current settings at its own
       // admitted operation boundary.
       const presentationSettingsBasis: RuntimeProviderPresentationResolutionBasis = Object.freeze({
-        accountSettings: snapshot.settings,
-        savedSecretResources: snapshot.savedSecretResources,
+        snapshot,
         settingsRead,
         modelNameCatalog,
         ...(accountContext ? { resolveManagedPurposeBindingIntent: accountContext.resolveManagedPurposeBindingIntent } : {}),

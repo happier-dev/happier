@@ -181,7 +181,7 @@ export async function resolveRuntimeProviderCredential(
       settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
       connectionId: input.credentialRef.connectionId,
       machineId: input.credentialRef.machineId,
-      savedSecretMaterializer,
+      savedSecretMaterializer: savedSecretMaterializer ?? null,
     };
     const resolved = input.credentialRef.reference.kind === 'team_direct'
       ? await resolveProviderCredentialPlaintextAsync({

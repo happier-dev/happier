@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { getAgentStaticModels } from '@happier-dev/agents';
@@ -1021,10 +1022,10 @@ describe('provider spawn authorization resolver', () => {
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: accountSettings(settings), providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns,
     };
-    expect(resolveProviderSpawnAuthorization({ ...input, lease: runtimeLease })).toMatchObject({
+    expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer({ ...input, lease: runtimeLease }))).toMatchObject({
       ok: false, error: { code: 'provider_incompatible_with_agent' },
     });
-    const resolved = resolveProviderSpawnAuthorization({ ...input, lease: nativeLease });
+    const resolved = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({ ...input, lease: nativeLease }));
     if (!resolved.ok || resolved.authorization.deployment.kind !== 'external') throw new Error('expected native binding authorization');
     const { binding, prepared } = resolved.authorization;
     const endpoint = binding.endpoint;
@@ -1044,7 +1045,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('keeps a same-id static descriptor authoritative over a runtime probe descriptor', () => {
     const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1070,7 +1071,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -1112,7 +1113,7 @@ describe('provider spawn authorization resolver', () => {
       agentDefinitionsById: new Map(source === 'agent' ? [[agentBase.id, agentBase]] : []),
     }, 1);
     const settings = grantedSettings(nameRegistry);
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: {
         agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: routedId,
       } },
@@ -1120,7 +1121,7 @@ describe('provider spawn authorization resolver', () => {
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: accountSettings(settings), providerSettings: settings, registry: nameRegistry,
       dnsEvidenceByEndpointUrl: dns, lease: lease(),
-    });
+    }));
     if (!result.ok) throw new Error(result.error.code);
     expect(result.authorization.binding.selection.model).toEqual({
       id: routedId, name: model.name, capabilities: { toolRoundTrips: 'supported' },
@@ -1129,7 +1130,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('does not resurrect static metadata after an authoritative snapshot omits the model', () => {
     const settings = grantedSettings(authoritativeRegistry);
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1148,7 +1149,7 @@ describe('provider spawn authorization resolver', () => {
       registry: authoritativeRegistry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -1160,7 +1161,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('uses authoritative probe capabilities for a same-id static model at spawn', () => {
     const settings = grantedSettings(authoritativeRegistry);
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1186,7 +1187,7 @@ describe('provider spawn authorization resolver', () => {
       registry: authoritativeRegistry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -1205,7 +1206,7 @@ describe('provider spawn authorization resolver', () => {
         }],
       },
     });
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1231,7 +1232,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -1436,7 +1437,7 @@ describe('provider spawn authorization resolver', () => {
   it('classifies live model changes from exact current and next authorized binding dimensions', () => {
     const settings = grantedSettings();
     const runtimeLease = lease(undefined, true, 'live');
-    const authorize = (modelId: string) => resolveProviderSpawnAuthorization({
+    const authorize = (modelId: string) => resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1459,7 +1460,7 @@ describe('provider spawn authorization resolver', () => {
         name: modelId,
         capabilities: { toolRoundTrips: 'supported' },
       },
-    });
+    }));
     const current = authorize('model-a');
     const next = authorize('model-b');
     if (!current.ok || !next.ok) throw new Error('Expected exact Provider authorizations');
@@ -1475,7 +1476,7 @@ describe('provider spawn authorization resolver', () => {
   ])('admits managed helper models with the existing model catalog: %j', ({ claudeHelperModels, accepted, consumesHelpers }) => {
     const settings = managedGrantedSettings();
     settings.connections[0] = { ...settings.connections[0]!, claudeHelperModels };
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1516,7 +1517,7 @@ describe('provider spawn authorization resolver', () => {
           },
         }],
       },
-    });
+    } satisfies Omit<Parameters<typeof resolveProviderSpawnAuthorization>[0], 'savedSecretMaterializer'>));
 
     if (!accepted) {
       expect(result).toMatchObject({ ok: false, error: { code: 'provider_model_not_found' } });
@@ -1696,7 +1697,7 @@ describe('provider spawn authorization resolver', () => {
       providersByContributionKey: new Map([[canonicalContributionKey, credentialFreeContribution]]),
     };
     const settings = managedGrantedSettings(credentialFreeRegistry);
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1740,7 +1741,7 @@ describe('provider spawn authorization resolver', () => {
           },
         }],
       },
-    });
+    } satisfies Omit<Parameters<typeof resolveProviderSpawnAuthorization>[0], 'savedSecretMaterializer'>));
 
     expect(result).toMatchObject({
       ok: true,
@@ -1772,7 +1773,7 @@ describe('provider spawn authorization resolver', () => {
       providersByContributionKey: new Map([[canonicalContributionKey, headerManagedContribution]]),
     };
     const settings = managedGrantedSettings(headerManagedRegistry);
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1810,7 +1811,7 @@ describe('provider spawn authorization resolver', () => {
           },
         }],
       },
-    });
+    } satisfies Omit<Parameters<typeof resolveProviderSpawnAuthorization>[0], 'savedSecretMaterializer'>));
 
     expect(result).toMatchObject({
       ok: true,
@@ -2332,11 +2333,11 @@ describe('provider spawn authorization resolver', () => {
   it('resolves one exact connection/model/endpoint/transport and mints a non-secret ticket', () => {
     const settings = grantedSettings();
     const prepare = vi.fn(() => ({ v: 1 as const, materialization: 'engineConfig' as const, adapterBindingKey: 'gateway' }));
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', accountSettings: accountSettings(settings),
       providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns, lease: lease(prepare),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -2395,7 +2396,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('keeps a tools-capable non-reasoning model launchable and carries only the reasoning fact to materialization', () => {
     const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -2421,7 +2422,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -2441,7 +2442,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('refuses a selected model that explicitly lacks the Agent-required tool capability', () => {
     const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -2467,7 +2468,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -2478,11 +2479,11 @@ describe('provider spawn authorization resolver', () => {
   it('refuses stale grants before adapter preparation or secret decryption', () => {
     const prepare = vi.fn(() => ({ v: 1 as const, materialization: 'engineConfig' as const }));
     const settings = providerSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', accountSettings: accountSettings(settings),
       providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns, lease: lease(prepare),
-    });
+    }));
 
     expect(result).toMatchObject({ ok: false, error: { code: 'provider_connection_disabled' } });
     expect(prepare).not.toHaveBeenCalled();
@@ -2520,23 +2521,23 @@ describe('provider spawn authorization resolver', () => {
     executableRegistries.push(runtimeRegistry);
     const agentTargetKey = 'agent:happier.agent.opencode/opencode';
     for (const modelId of [legacyChat.chatModel, legacyChat.commitModel]) {
-      expect(resolveProviderSpawnAuthorization({
+      expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
         selection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: id, modelId } },
         machineId: 'machine-a', agentTargetKey, agentId: 'opencode', accountSettings: {}, providerSettings,
         registry: { providersByContributionKey: runtimeRegistry.contributes.providersByContributionKey ?? new Map() },
         dnsEvidenceByEndpointUrl: new Map([[legacyChat.chatBaseUrl, ['1.1.1.1']]]),
         lease: { registry: runtimeRegistry, source: 'active', durableRevision: -1, release: async () => {} },
-      })).toMatchObject({ ok: false, error: { code: 'provider_connection_disabled' } });
+      }))).toMatchObject({ ok: false, error: { code: 'provider_connection_disabled' } });
     }
   });
 
   it('uses the canonical account grant fingerprint in the ticket', () => {
     const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', accountSettings: accountSettings(settings),
       providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns, lease: lease(),
-    });
+    }));
     if (!result.ok) throw new Error('Expected authorization');
     expect(result.authorization.ticket.grantFingerprint)
       .toBe(createProviderAccountGrantFingerprintV1(settings.accountGrants[0]!));
@@ -2566,7 +2567,7 @@ describe('provider spawn authorization resolver', () => {
       lease: nonFreeformLease,
     } as const;
 
-    const active = resolveProviderSpawnAuthorization({
+    const active = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       ...base,
       selection: {
         v: 1,
@@ -2578,7 +2579,7 @@ describe('provider spawn authorization resolver', () => {
         name: 'Probe only',
         capabilities: { toolRoundTrips: 'supported' },
       },
-    });
+    }));
     if (!active.ok) throw new Error(`Expected current probe authorization, received ${active.error.code}`);
     expect(active).toMatchObject({
       ok: true,
@@ -2592,14 +2593,14 @@ describe('provider spawn authorization resolver', () => {
       },
     });
 
-    const missing = resolveProviderSpawnAuthorization({
+    const missing = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       ...base,
       selection: {
         v: 1,
         updatedAt: 1,
         ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'disappeared' },
       },
-    });
+    }));
     expect(missing).toMatchObject({
       ok: false,
       error: { code: 'provider_model_not_found', action: 'choose_model' },
@@ -2613,11 +2614,11 @@ describe('provider spawn authorization resolver', () => {
         pc_gateway: [{ id: 'manual-model', name: 'Manual model', addedAt: 1 }],
       },
     });
-    const authorize = (modelId: string) => resolveProviderSpawnAuthorization({
+    const authorize = (modelId: string) => resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', accountSettings: accountSettings(settings),
       providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns, lease: lease(),
-    });
+    }));
 
     expect(authorize('manual-model')).toMatchObject({
       ok: false,
@@ -2633,7 +2634,7 @@ describe('provider spawn authorization resolver', () => {
     const inheritedNameConnectionId = ProviderConnectionIdSchema.parse('toString');
     const settings = grantedSettingsForConnection(inheritedNameConnectionId);
 
-    expect(() => resolveProviderSpawnAuthorization({
+    expect(() => resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -2651,12 +2652,12 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    })).not.toThrow();
+    }))).not.toThrow();
   });
 
   it('refuses an exact configured target mismatch even when both targets share one runtime agent adapter', () => {
     const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization({
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -2674,7 +2675,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    });
+    }));
 
     expect(result).toMatchObject({ ok: false, error: { code: 'provider_incompatible_with_agent' } });
   });
@@ -2731,14 +2732,14 @@ describe('shared provider probe authorization resolver', () => {
         publicHeaders: {},
       }),
     };
-    const result = resolveProviderProbeAuthorization({
+    const result = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
       request,
       accountSettings: { providerSettingsV1: settings },
       providerSettings: settings,
       registry: managedRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
       managedPurposeBindingSnapshot: purposeBindings,
-    });
+    }));
 
     if (gatewayMachineId !== request.machineId) {
       expect(result).toMatchObject({ ok: false, error: { code: 'provider_not_enabled_on_machine' } });
@@ -2830,14 +2831,14 @@ describe('shared provider probe authorization resolver', () => {
       }),
     });
     const authorize = (publicHeaders: Readonly<Record<string, string>>) =>
-      resolveProviderProbeAuthorization({
+      resolveProviderProbeAuthorization(withSavedSecretMaterializer({
         request: request(publicHeaders),
         accountSettings: { providerSettingsV1: settings },
         providerSettings: settings,
         registry: headerManagedRegistry,
         dnsEvidenceByEndpointUrl: new Map(),
         managedPurposeBindingSnapshot: purposeBindings,
-      });
+      }));
 
     expect(authorize(declaredHeaders)).toMatchObject({ ok: true });
     expect(authorize({})).toMatchObject({
@@ -2848,7 +2849,7 @@ describe('shared provider probe authorization resolver', () => {
 
   it('uses the same connection grant and SavedSecret identity without requiring an agent', () => {
     const settings = grantedSettings();
-    const result = resolveProviderProbeAuthorization({
+    const result = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
       request: {
         connectionId,
         machineId: 'machine-a',
@@ -2866,7 +2867,7 @@ describe('shared provider probe authorization resolver', () => {
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: dns,
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -2899,7 +2900,7 @@ describe('shared provider probe authorization resolver', () => {
     },
   ])('refuses $label before returning a credential reference', ({ path, parser, fingerprintPath, fingerprintParser }) => {
     const settings = grantedSettings();
-    const result = resolveProviderProbeAuthorization({
+    const result = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
       request: {
         connectionId,
         machineId: 'machine-a',
@@ -2920,7 +2921,7 @@ describe('shared provider probe authorization resolver', () => {
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: dns,
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -2967,7 +2968,7 @@ describe('shared provider probe authorization resolver', () => {
       }],
       secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: 'secret-a' } } },
     });
-    const result = resolveProviderProbeAuthorization({
+    const result = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
       request: {
         connectionId,
         machineId: 'machine-a',
@@ -2985,7 +2986,7 @@ describe('shared provider probe authorization resolver', () => {
       providerSettings: settings,
       registry: ambiguousRegistry,
       dnsEvidenceByEndpointUrl: dns,
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: false,
@@ -3082,13 +3083,13 @@ describe('provider model-load authorization resolver', () => {
 
   it('authorizes only a trusted local contribution descriptor and exact management transport', () => {
     const settings = localGrantedSettings();
-    const result = resolveProviderModelLoadAuthorization({
+    const result = resolveProviderModelLoadAuthorization(withSavedSecretMaterializer({
       request: { connectionId: 'pc_local', machineId: 'machine-a', modelId: 'model-a' },
       accountSettings: { providerSettingsV1: settings },
       providerSettings: settings,
       registry: localRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
-    });
+    }));
 
     expect(result).toMatchObject({
       status: 'authorized',
@@ -3105,12 +3106,12 @@ describe('provider model-load authorization resolver', () => {
 
   it('returns unavailable without minting a fake trusted-local authorization for non-local sources', () => {
     const settings = grantedSettings();
-    expect(resolveProviderModelLoadAuthorization({
+    expect(resolveProviderModelLoadAuthorization(withSavedSecretMaterializer({
       request: { connectionId, machineId: 'machine-a', modelId: 'model-a' },
       accountSettings: accountSettings(settings),
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: dns,
-    })).toEqual({ status: 'unavailable' });
+    }))).toEqual({ status: 'unavailable' });
   });
 });

@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import axios from 'axios';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { join } from 'node:path';
@@ -75,13 +76,13 @@ it.each(['deadline', 'cancelled'] as const)('settles Gateway binding status duri
         ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: 'run-gateway', modelId: 'example' } });
       if (fixture.record.deployment.kind !== 'managedLocal') throw new Error('Expected managed Gateway');
       const managedProviderRuntime = await fixture.lease.registry.acquireManagedProviderRuntime?.(fixture.record.deployment.implementationIdentity);
-      const authorization = resolveProviderSpawnAuthorization({ selection, machineId: fixture.machineId,
+      const authorization = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({ selection, machineId: fixture.machineId,
         agentTargetKey: fixture.agentTargetKey, agentId: fixture.agentId,
         accountSettings: fixture.snapshot.settings, providerSettings: fixture.providerSettings,
         registry: fixture.contributes, dnsEvidenceByEndpointUrl: new Map(), lease: fixture.lease,
         managedPurposeBindingSnapshot: gateway.purposeBindings,
         ...(managedProviderRuntime ? { managedProviderRuntime } : {}),
-      });
+      }));
       if (!authorization.ok) throw new Error(`Expected launch binding: ${JSON.stringify(authorization)}`);
       const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, happyHomeDir: homeDir,
         featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => fixture.snapshot,

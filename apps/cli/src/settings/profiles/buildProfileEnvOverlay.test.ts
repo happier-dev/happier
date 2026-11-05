@@ -1,3 +1,4 @@
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
@@ -226,7 +227,7 @@ describe('buildProfileEnvOverlay', () => {
       (length) => new Uint8Array(length).fill(3),
     );
 
-    const result = resolveForegroundProfileSavedSecretEnvironment({
+    const result = resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile,
       accountSettings: {
         secrets: [
@@ -243,7 +244,7 @@ describe('buildProfileEnvOverlay', () => {
       },
       settingsSecretsReadKeys: [canonicalKey],
       foregroundSatisfiedSecretRequirementNames: [],
-    });
+    }));
 
     expect(result.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-canonical-saved');
   });
@@ -258,7 +259,7 @@ describe('buildProfileEnvOverlay', () => {
     const profile = makeDeepSeekProfile();
     let thrown: unknown = null;
     try {
-      resolveForegroundProfileSavedSecretEnvironment({
+      resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
         profile,
         accountSettings: {
           secrets: [{
@@ -278,7 +279,7 @@ describe('buildProfileEnvOverlay', () => {
         },
         settingsSecretsReadKeys: [new Uint8Array(32).fill(1)],
         foregroundSatisfiedSecretRequirementNames: [],
-      });
+      }));
     } catch (error) {
       thrown = error;
     }
@@ -303,7 +304,7 @@ describe('buildProfileEnvOverlay', () => {
         required: false,
       }],
     });
-    expect(resolveForegroundProfileSavedSecretEnvironment({
+    expect(resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile,
       accountSettings: {
         secrets: [{
@@ -323,7 +324,7 @@ describe('buildProfileEnvOverlay', () => {
       },
       settingsSecretsReadKeys: [new Uint8Array(32).fill(1)],
       foregroundSatisfiedSecretRequirementNames: [],
-    })).toEqual({});
+    }))).toEqual({});
   });
 
   it('rejects noncanonical foreground secret requirement names', async () => {
@@ -331,14 +332,14 @@ describe('buildProfileEnvOverlay', () => {
       await import(
         '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
       );
-    expect(() => resolveForegroundProfileSavedSecretEnvironment({
+    expect(() => resolveForegroundProfileSavedSecretEnvironment(withSavedSecretMaterializer({
       profile: makeDeepSeekProfile(),
       accountSettings: {},
       settingsSecretsReadKeys: [],
       foregroundSatisfiedSecretRequirementNames: [
         'deepseek_auth_token',
       ],
-    })).toThrow(/canonical requirement names/);
+    }))).toThrow(/canonical requirement names/);
   });
 
   it('fails fast when a required secret is missing in non-interactive mode', async () => {

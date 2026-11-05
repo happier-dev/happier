@@ -10,7 +10,7 @@ import type {
 } from '@happier-dev/protocol/teams';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createSavedSecretMaterializerV1, type SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
@@ -65,7 +65,7 @@ export type ResolveProviderConnectionBrokerSourceInput = Readonly<{
   expectedCredentialTransport?: AgentProviderCredentialTransport;
   accountSettings: unknown;
   providerSettings: ProviderSettingsV1;
-  savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: Parameters<typeof resolveProviderConnectionForMachine>[0]['localCandidateUrlsByConnectionId'];
@@ -193,18 +193,11 @@ export function resolveProviderConnectionBrokerSource(
   if (!credential || credential.slotId !== input.source.credentialSlotId) {
     return fail('provider_credential_transport_unavailable', input.source, input.machineId);
   }
-  const materializer = createSavedSecretMaterializerV1({
-    accountSettings: input.accountSettings,
-    settingsSecretsReadKeys: [],
-    resources: input.savedSecretResources,
-  });
+  const materializer = input.savedSecretMaterializer;
   const reference = resolveProviderCredentialReference({
     providerSettings: input.providerSettings,
     accountSettings: input.accountSettings,
     savedSecretMaterializer: materializer,
-    ...(input.savedSecretResources
-      ? { savedSecretResources: input.savedSecretResources }
-      : {}),
     connectionId: record.connectionId,
     machineId: input.machineId,
     credentialSlotId: credential.slotId,
@@ -271,7 +264,7 @@ export function resolveProviderConnectionDirectSourceSnapshot(input: Readonly<{
   machineId: string;
   accountSettings: unknown;
   providerSettings: ProviderSettingsV1;
-  savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
 }>): ResolveResult {
@@ -348,14 +341,18 @@ export async function resolveAdmittedProviderConnectionSourceSnapshot(input: Rea
         source: input.source, machineId: input.machineId, endpointTemplateId: input.endpoint.endpointTemplateId,
         protocol: input.endpoint.protocol, expectedCredentialTransport: input.endpoint.credentialTransport,
         accountSettings: snapshot.settings, providerSettings: readProviderSettingsForCli(snapshot).settings,
-        savedSecretResources: snapshot.savedSecretResources, registry: input.registry,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+          isCurrent: () => !input.signal?.aborted,
+        }), registry: input.registry,
         dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
       }) : resolveProviderConnectionDirectSourceSnapshot({
     source: input.source,
     machineId: input.machineId,
     accountSettings: snapshot.settings,
     providerSettings: readProviderSettingsForCli(snapshot).settings,
-    ...(snapshot.savedSecretResources ? { savedSecretResources: snapshot.savedSecretResources } : {}),
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+      isCurrent: () => !input.signal?.aborted,
+    }),
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
   }));
@@ -418,9 +415,7 @@ export async function isProviderConnectionBrokerSourceCurrent(input: Readonly<{
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
     providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-    ...(accountSnapshot.savedSecretResources
-      ? { savedSecretResources: accountSnapshot.savedSecretResources }
-      : {}),
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -452,9 +447,7 @@ export async function isProviderConnectionDirectSourceCurrent(input: Readonly<{
       expectedCredentialTransport: input.expected.credentialRef.transport,
       accountSettings: accountSnapshot.settings,
       providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-      ...(accountSnapshot.savedSecretResources
-        ? { savedSecretResources: accountSnapshot.savedSecretResources }
-        : {}),
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
       registry: input.registry,
       dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
       ...(input.localCandidateUrlsByConnectionId
@@ -503,9 +496,7 @@ export async function materializeProviderConnectionDirectCredential(input: Reado
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
     providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-    ...(accountSnapshot.savedSecretResources
-      ? { savedSecretResources: accountSnapshot.savedSecretResources }
-      : {}),
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -535,9 +526,7 @@ export async function materializeProviderConnectionDirectCredential(input: Reado
   return resolveProviderCredentialPlaintext({
     reference,
     accountSettings: accountSnapshot.settings,
-    ...(accountSnapshot.savedSecretResources
-      ? { savedSecretResources: accountSnapshot.savedSecretResources }
-      : {}),
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
     settingsSecretsReadKeys: accountSnapshot.settingsSecretsReadKeys,
     connectionId: current.snapshot.credentialRef.connectionId,
     machineId: current.snapshot.credentialRef.machineId,
@@ -579,9 +568,7 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
     providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-    ...(accountSnapshot.savedSecretResources
-      ? { savedSecretResources: accountSnapshot.savedSecretResources }
-      : {}),
+    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -764,9 +751,9 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           : {}),
         accountSettings: accountSnapshot.settings,
         providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-        ...(accountSnapshot.savedSecretResources
-          ? { savedSecretResources: accountSnapshot.savedSecretResources }
-          : {}),
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot, {
+          isCurrent: () => !request.signal.aborted,
+        }),
         registry,
         dnsEvidenceByEndpointUrl,
         ...(input.localCandidateUrlsByConnectionId

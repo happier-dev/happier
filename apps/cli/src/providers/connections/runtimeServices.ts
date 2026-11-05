@@ -21,6 +21,7 @@ import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSetti
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { promoteSavedSecretWithProviderConnectionsCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { readSavedSecretCatalogForOperation, SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
@@ -200,6 +201,9 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         providerSettings: providerRead.settings,
         providerSettingsDiagnostics: providerRead.diagnostics,
         rawAccountSettings: active.rawSettings ?? active.settings,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(active, {
+          isCurrent: () => !signal?.aborted,
+        }),
         registry: projection.registry,
         ...(projection.generation ? { registryGeneration: projection.generation } : {}),
         ...(active.savedSecretResources ? { savedSecretResources: active.savedSecretResources } : {}),

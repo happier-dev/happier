@@ -229,7 +229,7 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   agentId: string;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   /** Current Team source identity supplied by its owning resource admission. */
   teamCredentialResource?: Parameters<typeof resolveProviderModelCompatibility>[0]['teamCredentialResource'];
@@ -298,7 +298,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
   request: ProviderProbeAuthorizationRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   /** A caller-owned point-in-time parse for one bulk Provider projection. */
   settingsRead?: ProviderSettingsReadResultV1;
@@ -574,7 +574,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
   request: ProviderModelLoadHostRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  savedSecretMaterializer: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;

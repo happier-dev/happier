@@ -46,9 +46,9 @@ export async function readProviderConnectionSourceCatalog(input: SourceInput) {
       accountSettings: input.snapshot.settings, settingsRead } } : {}),
   };
   let context = await awaitWithinProviderOperation(input.runtime.resolvePresentationCatalogContext(identity,
-    await input.runtime.runtimeStore.read(), scope, { accountSettings: input.snapshot.settings, settingsRead,
+    await input.runtime.runtimeStore.read(), scope, { snapshot: input.snapshot, settingsRead,
       resolveManagedPurposeBindingIntent: input.accountScope?.resolveManagedPurposeBindingIntent,
-      savedSecretResources: input.snapshot.savedSecretResources, modelNameCatalog: readProviderModelNameCatalog(input.registry) }), input.lifetime);
+      modelNameCatalog: readProviderModelNameCatalog(input.registry) }), input.lifetime);
   if (context.status === 'error') return context;
   if (context.connection.connectionSecurityFingerprint !== input.source.expectedConnectionSecurityFingerprint) {
     return { status: 'error' as const, error: createProviderErrorV1('provider_connection_changed', identity) };
