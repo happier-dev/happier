@@ -1329,7 +1329,7 @@ export type ActionExecutorDeps = Readonly<{
     creationReview?: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreationReviewV1,
   ) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   resolveEnvironmentApprovalScope?: (args: Readonly<{
-    actionId: ActionId;
+    actionId: ActionId | QualifiedPluginActionId;
     input: unknown;
     context: ActionExecutorContext;
     phase: 'prepare' | 'dispatch' | 'replay';

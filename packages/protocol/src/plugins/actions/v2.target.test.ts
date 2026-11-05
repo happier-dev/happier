@@ -23,6 +23,24 @@ const localized = { key: 'plugin.title', fallback: 'Title' };
 const daemonExecution = { target: 'daemon' } as const;
 
 describe('plugin executable contribution target grammar', () => {
+  it('declares Environment approval independently of contextual placement scopes', () => {
+    const action = {
+      id: 'preview-status', title: localized, scopes: ['global'], surfaces: ['agent'],
+      execution: daemonExecution, dangerLevel: 'writesRemote', approvalScope: 'environment',
+      confirmation: { title: localized, body: localized },
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
+        required: ['serverId', 'environmentId'],
+      },
+    };
+    expect(PluginActionContributionV2Schema.parse(action)).toMatchObject({
+      approvalScope: 'environment', scopes: ['global'], dangerLevel: 'writesRemote',
+    });
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, approvalScope: 'account' }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, scopes: ['environment'] }).success).toBe(false);
+  });
+
   it('admits a conditional Session target only in union arms declaring a string operand', () => {
     const account = { type: 'object', properties: { kind: { const: 'account', type: 'string' } }, additionalProperties: false };
     const session = { type: 'object', properties: { kind: { const: 'session', type: 'string' }, sessionId: { type: 'string' } }, additionalProperties: false };

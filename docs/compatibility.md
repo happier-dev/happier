@@ -4212,6 +4212,15 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.
+This optional field is a closed executable-authority declaration, retained in
+the daemon and Account Action projections. Matching development Protocol, SDK
+and UI/CLI/daemon readers refresh together; older strict readers reject the
+field, and ignoring it would incorrectly spend global approval policy. An
+external plugin emitting it must target supporting hosts. The existing runtime
+ABI and wire epochs remain unchanged, and no development-to-0.2 author-contract
+rollback adapter is provided.
+
 Unreleased 0.3 `providers.binding.status` accepts an additional
 `{machineId, sessionId}` Action operand. Updated UI and CLI Action hosts derive
 the existing daemon request through authenticated owner-only Session readers;

@@ -1357,6 +1357,7 @@ export const PluginProjectedActionV2Schema = lazyZodSchema(() => (<T extends z.Z
   description: zMini.optional(zMini.nullable(PluginLocalizedStringV2Schema)),
   icon: zMini.optional(PluginActionIconV2Schema),
   scopes: z.array(PluginActionScopeV2Schema).check(z.minLength(1)),
+  approvalScope: PluginActionContributionV2Schema.shape.approvalScope,
   surfaces: z.array(PluginActionSurfaceV2Schema).check(z.minLength(1)),
   toolExposure: zMini.optional(ActionToolExposureSchema),
   execution: PluginActionExecutionV2Schema,

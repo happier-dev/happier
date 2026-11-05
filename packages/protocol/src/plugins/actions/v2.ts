@@ -533,6 +533,8 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   description: z.optional(PluginLocalizedStringV2Schema),
   icon: z.optional(PluginActionIconV2Schema),
   scopes: z.array(PluginActionScopeV2Schema).check(z.minLength(1)),
+  /** Resolve per-Action approval against the input Environment (a preview uses its template). */
+  approvalScope: z.optional(z.literal('environment')),
   surfaces: z.array(PluginActionSurfaceV2Schema).check(z.minLength(1)),
   execution: PluginActionDeclaredExecutionV2Schema,
   operation: z.optional(ActionOperationDeclarationV1Schema),

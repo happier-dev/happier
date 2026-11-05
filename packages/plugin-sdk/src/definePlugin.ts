@@ -231,6 +231,7 @@ type ActionContribution = Readonly<{
         | 'machine'
     )[];
     surfaces: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice')[];
+    approvalScope?: PublicActionContribution['approvalScope'];
     execution: PluginActionExecutionV2;
     operation?: ActionOperationDeclarationV1;
     placementBindings?: readonly PluginActionPlacement[];
@@ -285,6 +286,7 @@ export type PluginActionAuthorDefaults = Readonly<{
  * accepted and redundant); a client Action names its exact client artifact.
  */
 export type PluginActionDeclaration = Readonly<{
+    approvalScope?: PublicActionContribution['approvalScope'];
     title: PluginLocalizedStringV2;
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;

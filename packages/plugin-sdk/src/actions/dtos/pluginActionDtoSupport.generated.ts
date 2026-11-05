@@ -8500,6 +8500,7 @@ export type PluginActionContributionV2 = {
         params?: Record<string, string | number> | undefined;
     };
     scopes: ('message' | 'agent' | 'workspace' | 'session' | 'settings' | 'machine' | 'global' | 'transcript' | 'executionRun' | 'toolResult')[];
+    approvalScope?: 'environment' | undefined;
     surfaces: ('agent' | 'mcp' | 'plugin' | 'cli' | 'ui' | 'voice')[];
     execution: {
         target: 'daemon';
