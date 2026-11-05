@@ -13,7 +13,7 @@ import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedSer
 import { resolveVoiceIdleTarget, useVoiceTargetStore, type VoiceStartIntent, type VoiceIdleTarget } from '@/voice/runtime/voiceTargetStore';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
-import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
+import { getVoiceAdapterRegistry, canVoiceAdapterStartNewConversation, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { canDismissVoiceSessionFailedAttempt, dismissVoiceSessionEndedAttempt, getVoiceSessionEndedAttempt,
@@ -42,6 +42,9 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { hasVoiceTranscriptPresentation, revealVoiceCompanionSection, setVoiceGlanceOpen, setVoiceSetupOpen, setVoicePresencePosition } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { setVoiceActivityFeedExpanded } from '@/components/voice/surface/voiceActivityFeedExpansionStore';
+
+import { createUiSessionSpawnUserAttemptId } from '@/sync/domains/session/spawn/spawnSessionNonce';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 
 const registry = createDefaultVoiceProviderRegistry();
 
@@ -221,12 +224,19 @@ export async function executeVoiceConversationAction(
     // Preparation can await feature availability. A start admitted at rest must never become
     // toggle's End command for an attempt another surface started while this caller was waiting.
     if (!voiceSessionManager.matchesAttempt(current.voice.attemptId)) return unavailable('stale_voice_attempt');
+    let conversationSelection: VoiceConversationSelection | undefined;
     let startFailureCode: string | null = null;
-    if (actionId === 'ui.voice_global.start') {
+    if (actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.new_conversation') {
         const latest = voiceSessionManager.getSnapshot();
         if (!current.voice.canStart || latest.status !== 'disconnected' || latest.canStop) return unavailable('voice_start_unavailable');
+        if (actionId === 'ui.voice_global.new_conversation') {
+            if (!canVoiceAdapterStartNewConversation(current.capabilities, current.idleTarget.kind)) {
+                return unavailable('voice_new_conversation_unavailable');
+            }
+            conversationSelection = { kind: 'new', creationKey: createUiSessionSpawnUserAttemptId() };
+        }
         try {
-            await voiceSessionManager.toggle(current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null);
+            await voiceSessionManager.toggle(current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null, conversationSelection);
         } catch (error) {
             startFailureCode = readSafeVoiceRuntimeFailureCode(error);
             if (!startFailureCode) throw error;

@@ -816,6 +816,34 @@ describe('useVoiceAttemptControl recovery routing', () => {
         return await renderBothOwners();
     }
 
+  it('agrees with the New Action that exact Agent Voice continues a Session rather than replacing it', async () => {
+    installCodexConnectedService();
+    const controller = await installLifecycle(getActivatedAdapter(CODEX_PROVIDER_ID));
+    seedVoiceSettings(SELECTED_PROFILE_VOICE_SETTINGS);
+    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+    const global = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+    expect(global.getCurrent().canStart).toBe(true);
+    expect(typeof global.getCurrent().onNewConversation).toBe('function');
+    await global.unmount();
+    const target = {
+      kind: 'session' as const,
+      sessionAddress: { serverId: recoveryRuntime.serverId, sessionId: 'session-42' },
+    };
+    const hook = await renderHook(() => useVoiceAttemptControl(target));
+    expect(hook.getCurrent().canStart).toBe(true);
+    expect.soft(hook.getCurrent().onNewConversation).toBeUndefined();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const result = await createDefaultActionExecutor().executeConfirmed('ui.voice_global.new_conversation', {
+      target, expectedAttempt: null,
+    }, { surface: 'ui', serverId: recoveryRuntime.serverId });
+    expect(result).toMatchObject({ ok: true, result: {
+      status: 'unavailable', code: 'voice_new_conversation_unavailable',
+      voice: { attemptId: null, canDismissFailedAttempt: false },
+    } });
+    expect(controller.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+    await hook.unmount();
+  });
+
     it('sends the same selected-profile Connect recovery from Horizon and placement-free consumers', async () => {
         installCodexConnectedService();
         const hook = await renderBothRecoveryOwners('connect_agent');

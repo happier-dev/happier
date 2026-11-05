@@ -2,13 +2,14 @@ import type { VoiceSessionSnapshot } from './types';
 import { getVoiceSessionSnapshot, getVoiceSessionPresentedAttemptId } from './voiceSessionStore';
 import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 
 export type VoiceSessionManager = Readonly<{
   bargeIn: (sessionId: string) => Promise<void>;
   retry: (sessionId: string) => Promise<void>;
   dismissFailedAttempt: (sessionId: string | null) => Promise<void>;
-  toggle: (targetSessionAddress: SessionAddress | null) => Promise<void>;
+  toggle: (targetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<void>;
   commitInput: (sessionId: string) => Promise<void>;
@@ -26,10 +27,10 @@ export function createVoiceSessionManager(deps: Readonly<{
 }>): VoiceSessionManager {
   const resolveLifecycleController = (): VoiceSessionLifecycleController | null => deps.getLifecycleController?.() ?? null;
 
-  const toggle = async (targetSessionAddress: SessionAddress | null) => {
+  const toggle = async (targetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection) => {
     const lifecycleController = resolveLifecycleController();
     if (!lifecycleController) return;
-    await lifecycleController.toggle(targetSessionAddress);
+    await lifecycleController.toggle(targetSessionAddress, conversationSelection);
   };
 
   const bargeIn = async (sessionId: string) => {

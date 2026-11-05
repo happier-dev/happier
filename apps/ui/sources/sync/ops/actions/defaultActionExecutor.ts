@@ -1886,6 +1886,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         }, isCurrent);
       }
       const opensMicrophone = actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.recover'
+        || actionId === 'ui.voice_global.new_conversation'
         || (actionId === 'ui.voice_global.set_muted' && input && typeof input === 'object' && 'muted' in input && input.muted === false)
         || actionId === 'ui.voice_global.hold_begin' || actionId === 'ui.voice_global.brief.request'
         || actionId === 'ui.voice_global.brief.retry' || actionId === 'ui.voice_global.dictation.start';

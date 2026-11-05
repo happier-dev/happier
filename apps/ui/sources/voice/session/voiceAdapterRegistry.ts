@@ -6,6 +6,7 @@ import type {
   VoiceAdapterRuntimeActionResult,
 } from './types';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { canAgentRealtimeVoiceStartNewConversation } from '@/voice/registry/resolveAgentRealtimeVoiceConversationBinding';
 import {
   listExternalVoiceProviderRegistrations,
   subscribeExternalVoiceProviderRegistrations,
@@ -107,6 +108,19 @@ export function resolveVoiceAdapterSurfaceCapabilities(
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the adapter's conversation is an executable Voice conversation that a deliberate New can
+ * replace at this target. Exact Agent runtimes consume their binding owner's capability;
+ * Local Voice agents own a separate carrier. Direct media has no conversation of its own.
+ */
+export function canVoiceAdapterStartNewConversation(
+  capabilities: VoiceAdapterSurfaceCapabilities | null,
+  scope: 'global' | 'session',
+): boolean {
+  if (capabilities?.requiresVoiceAgentFeature === true) return true;
+  return capabilities?.agentRuntime !== undefined && canAgentRealtimeVoiceStartNewConversation(scope);
 }
 
 /** Sole fail-closed projection for adapter-owned context delivery semantics. */

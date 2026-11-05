@@ -21,7 +21,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { storage, useActiveServerAccountScope, useSession, useSetting } from '@/sync/domains/state/storage';
-import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { readLocalConversationVoiceSettings, readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 import {
     canDismissVoiceSessionFailedAttempt,
@@ -53,7 +53,7 @@ import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoicePr
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { resolveVoiceMicCaptureActive } from '@/voice/session/resolveVoiceMicCaptureActive';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
-import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
+import { canVoiceAdapterStartNewConversation, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getFocusedDesktopAppWindowSurface, subscribeFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
@@ -158,6 +158,12 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     /** Render Speaks from only for this admitted carrier fact, using its exact Session's display name. */
     preparedInstructionsFor?: SessionAddress | null;
     onPrimaryAction: () => void | Promise<boolean>;
+    /**
+     * Starts a fresh conversation at the caller's idle target. Present only while Start is admitted,
+     * the conversation is executable, and Start would otherwise continue the last one. Omitted by
+     * static previews.
+     */
+    onNewConversation?: () => Promise<boolean>;
     /** Starts the caller's idle target when idle; ends the running attempt otherwise. Never re-targets. */
     onToggle: () => void | Promise<boolean>;
     onToggleMute: () => void;
@@ -659,6 +665,15 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         return await executeControl('ui.voice_global.start', { target: resolvedIdleTarget, expectedAttempt: null }, 'VoiceAttemptControl.toggle');
     }, [canStart, canStop, executeControl, expectedAttempt, resolvedIdleTarget, snapSessionId]);
 
+    // New differs from Start only for an executable conversation whose Start continues the last one.
+    const newConversationOffered = canStart && canVoiceAdapterStartNewConversation(capabilities, resolvedIdleTarget.kind)
+        && readLocalConversationVoiceSettings(canonicalVoice).agent.rootSessionPolicy !== 'new';
+    const onNewConversation = React.useCallback(async () => {
+        if (!voiceSessionManager.matchesAttempt(expectedAttempt) || !canStart) return false;
+        voiceSurfaceHaptics.notify('start_stop');
+        return await executeControl('ui.voice_global.new_conversation', { target: resolvedIdleTarget, expectedAttempt: null }, 'VoiceAttemptControl.newConversation');
+    }, [canStart, executeControl, expectedAttempt, resolvedIdleTarget]);
+
     const onToggleMute = React.useCallback(() => {
         const sessionId = snapSessionId?.trim() ?? '';
         if (!canMute || !sessionId || !voiceSessionManager.matchesAttempt(expectedAttempt)) return;
@@ -793,6 +808,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             captionLabel,
             failureMessage,
             onPrimaryAction,
+            ...(newConversationOffered ? { onNewConversation } : {}),
             serviceTitle,
             inUseVoice: snap.status === 'connected' ? snap.inUseVoice ?? null : null,
             preparedInstructionsFor: snap.status === 'connected' ? snap.preparedInstructionsFor ?? null : null,
@@ -826,6 +842,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             commitInputLabel,
             onOpenConversation,
             onPrimaryAction,
+            newConversationOffered,
+            onNewConversation,
             onRecover,
             onToggle,
             onToggleMute,

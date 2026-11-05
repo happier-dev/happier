@@ -78,6 +78,13 @@ the ordinary configurable approval policy, and microphone consent still requires
 the device's permission flow. A headless caller without an answering client
 cannot start client-local audio.
 
+In 0.3 development, **New conversation** is offered only when the selected mode
+can create a separate executable Voice conversation. Codex Live attached to a
+Session continues that Session; use Global Voice to start a new Codex Live
+conversation. Local Voice in Agent mode can create a new Voice conversation for
+either a Session target or Global Voice. Direct media modes have no executable
+Voice conversation to replace.
+
 Development source also adds a private per-session voice preference. Leaving it
 unset follows the account's selected voice provider. Selecting a voice overrides
 only that provider's declared voice field: it does not change credentials, model

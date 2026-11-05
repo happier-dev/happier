@@ -58,6 +58,11 @@ function agentRealtimeVoiceBindingDeclined(
   return Object.assign(new Error(code), { code });
 }
 
+/** Exact Session Voice continues that Session; only Global Voice creates another Agent Session. */
+export function canAgentRealtimeVoiceStartNewConversation(scope: 'global' | 'session'): boolean {
+  return scope === 'global';
+}
+
 export async function resolveAgentRealtimeVoiceConversationBinding(input: Readonly<{
   conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
   onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
@@ -87,8 +92,11 @@ export async function resolveAgentRealtimeVoiceConversationBinding(input: Readon
     return null;
   };
 
-  if (input.controlSessionId !== input.globalSessionId) {
-    if (input.conversationSelection?.kind === 'new') throw agentRealtimeVoiceBindingDeclined('unsupported_runtime');
+  const scope = input.controlSessionId === input.globalSessionId ? 'global' : 'session';
+  if (input.conversationSelection?.kind === 'new' && !canAgentRealtimeVoiceStartNewConversation(scope)) {
+    throw agentRealtimeVoiceBindingDeclined('unsupported_runtime');
+  }
+  if (scope === 'session') {
     const conversationSessionAddress = input.requestedTargetSessionAddress;
     if (!conversationSessionAddress || conversationSessionAddress.sessionId !== input.controlSessionId) {
       throw agentRealtimeVoiceBindingDeclined('session_unavailable');
