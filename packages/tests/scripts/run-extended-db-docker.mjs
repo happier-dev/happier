@@ -237,7 +237,7 @@ export async function main(argv = process.argv) {
     const { host, port } = parseDockerPortLine(portLine);
     const databaseUrl = buildDatabaseUrlForContainer({ db, host, port });
 
-    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'] });
+    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'], containerId });
     for (const step of steps) {
       const invocation = resolveExtendedDbPnpmInvocation(step.args);
       const env = { ...process.env, ...step.env };

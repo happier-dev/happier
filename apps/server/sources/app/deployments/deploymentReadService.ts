@@ -13,6 +13,7 @@ import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPag
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import type { Prisma } from '@prisma/client';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentDomainEnvironmentIdsForMachineInTx, projectDeploymentDomainMachineReferences } from './deploymentDomainService';
@@ -130,25 +131,49 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     }
     // Deployment content uses the incumbent Artifact-backed structural page budget.
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
-    const rows = await tx.deploymentEnvironment.findMany({ where: {
-        ...(input.includeDeleted ? {} : { deletedAt: null }),
-        ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
-        ...(input.previewRepositoryId === undefined ? {} : { purpose: 'preview', previewRepositoryId: input.previewRepositoryId,
-            previewPullRequestId: { in: input.previewPullRequestIds } }),
-        ...(input.previewTemplateEnvironmentId === undefined ? {} : { purpose: 'preview',
-            previewTemplateEnvironmentId: input.previewTemplateEnvironmentId }),
-        ...(cursor || input.environmentIds !== undefined ? { id: {
-            ...(input.environmentIds === undefined ? {} : { in: input.environmentIds }),
-            ...(cursor ? { gt: cursor } : {}),
-        } } : {}),
-        ...(input.machineId ? deploymentMachineReferenceWhere(input.machineId) : {}),
-    }, orderBy: { id: 'asc' }, take: limit + 1,
-    include: { deployers: { select: { principalKind: true, principalId: true } },
-        // Exact visible groups consume Environment headers, not latest-attempt
-        // history. Ordinary inventory retains its incumbent receipt projection.
-        deployments: input.environmentIds === undefined
-            ? { orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: 1 } : false,
-        runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } } } } } });
+    const readRows = (where: Prisma.DeploymentEnvironmentWhereInput) => tx.deploymentEnvironment.findMany({
+        where, orderBy: { id: 'asc' }, take: limit + 1,
+        include: { deployers: { select: { principalKind: true, principalId: true } },
+            // Exact visible groups consume Environment headers, not latest-attempt
+            // history. Ordinary inventory retains its incumbent receipt projection.
+            deployments: input.environmentIds === undefined
+                ? { orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: 1 } : false,
+            runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } } } } } });
+    // Carry only the existing page window into the next query. The database
+    // merges it with that selection chunk in its native collation, preserving
+    // the ordinary list/cursor contract without a JavaScript ordering copy.
+    const fixedBindings = limit + 1 // Retained page candidates.
+        + 2 // List take/offset.
+        + (input.environmentIds === undefined ? 1 : 0) // Latest receipt take.
+        + (input.projectSourceId ? 1 : 0)
+        + (input.previewRepositoryId === undefined ? 0 : 2) // Repository and purpose.
+        + (input.previewTemplateEnvironmentId === undefined ? 0 : 1 + (input.previewRepositoryId === undefined ? 1 : 0))
+        + (cursor ? 1 : 0)
+        + (input.machineId ? 7 + deploymentInProgressStates().length : 0);
+    const bindingsPerValue = input.environmentIds !== undefined && input.previewPullRequestIds !== undefined ? 2 : 1;
+    const environmentChunks = input.environmentIds === undefined ? [undefined]
+        : portableQueryChunks({ values: [...new Set(input.environmentIds)], bindingsPerValue, fixedBindings });
+    const previewChunks = input.previewPullRequestIds === undefined ? [undefined]
+        : portableQueryChunks({ values: [...new Set(input.previewPullRequestIds)], bindingsPerValue, fixedBindings });
+    let rows: Awaited<ReturnType<typeof readRows>> = [];
+    for (const environmentIds of environmentChunks) {
+        for (const previewPullRequestIds of previewChunks) {
+            const where: Prisma.DeploymentEnvironmentWhereInput = {
+                ...(input.includeDeleted ? {} : { deletedAt: null }),
+                ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
+                ...(input.previewRepositoryId === undefined ? {} : { purpose: 'preview', previewRepositoryId: input.previewRepositoryId,
+                    previewPullRequestId: { in: previewPullRequestIds ? [...previewPullRequestIds] : undefined } }),
+                ...(input.previewTemplateEnvironmentId === undefined ? {} : { purpose: 'preview',
+                    previewTemplateEnvironmentId: input.previewTemplateEnvironmentId }),
+                ...(cursor || environmentIds !== undefined ? { id: {
+                    ...(environmentIds === undefined ? {} : { in: [...environmentIds] }),
+                    ...(cursor ? { gt: cursor } : {}),
+                } } : {}),
+                ...(input.machineId ? deploymentMachineReferenceWhere(input.machineId) : {}),
+            };
+            rows = await readRows(rows.length ? { OR: [where, { id: { in: rows.map(row => row.id) } }] } : where);
+        }
+    }
     const hasNext = rows.length > limit;
     const selected = rows.slice(0, limit);
     const items: ReturnType<typeof projectDeploymentEnvironmentHeader>[] = [];

@@ -103,7 +103,7 @@ export function buildDatabaseUrlForContainer({ db, host, port }) {
   throw new Error(`Unsupported db: ${String(db)}`);
 }
 
-export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined }) {
+export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined, containerId = undefined }) {
   if (db !== 'postgres' && db !== 'mysql') {
     throw new Error(`Unsupported db: ${String(db)}`);
   }
@@ -179,7 +179,13 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     kind: 'contract',
     command: 'pnpm',
     args: ['--filter', resolveServerAppWorkspaceName(), 'run', 'test:db-contract', ...(contractFile === undefined ? [] : [contractFile])],
-    env: providerEnv,
+    env: {
+      ...providerEnv,
+      ...(containerId === undefined ? {} : {
+        HAPPIER_DB_CONTRACT_CONTAINER_ID: containerId,
+        HAPPIER_DB_CONTRACT_TEMPLATE_URL: databaseUrl,
+      }),
+    },
   };
 
   const mysqlVoiceIdentityUpgradeContractStep = {
