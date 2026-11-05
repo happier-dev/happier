@@ -3225,11 +3225,12 @@ publication; source availability does not attest a loaded-platform pass.
 For collection-based plugin pages, the public Plugin UI `Collection` composes one headless model, item anatomy and detail renderer across presentations and containers. `Step`, controlled `Tabs` (including host-rendered strips) and `HappierDisclosure` belong to that public UI/presentation boundary, rather than feature-local replacements. See [Collection presentation](collection-presentation.md) and the [public author composition](../apps/docs/content/docs/plugins/ui/react-native.mdx).
 
 In 0.3 development source, `CollectionToolbar.refine` supplies a wide `render()`
-and a compact `sheet` (`groups`, optional controlled `radioGroups`, `onSelect`,
-optional `clear`, and `showResultsLabel`) from the same filter/order model.
-Choices apply immediately; the primary sheet footer closes it. Public
-`SheetMenu` shares the menu owner and adds a sheet title/footer and optional
-trigger count. `Item.titleEllipsizeMode="middle"` preserves a long title's suffix
+and a folded `sheet.render` that draw the same narrowing form (Triage: the shared
+`CollectionConditionEditor`), so a page has one filter UI at every width; the
+folded form applies its edits and closes the sheet itself. Pickers beside Filters
+(Order) fold into ⋯ through `foldedChoices`. Public `SheetMenu` shares the menu
+owner and adds a sheet title/footer (`header: 'none'` for self-titled content),
+an optional trigger count, and a `content` slot in place of menu rows. `Item.titleEllipsizeMode="middle"` preserves a long title's suffix
 and full accessible name. See the [author example](../packages/plugin-ui/README.md#collection-filters-and-long-titles-03-development-source)
 and generated [public declarations](../packages/plugin-ui/api-declarations.md).
 

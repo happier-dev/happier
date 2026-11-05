@@ -438,6 +438,21 @@ describe('Triage surface reducer — the five filter facets compose', () => {
     expect(reduceTriageSurfaceV1(cleared, { kind: 'filtersCleared' })).toBe(cleared);
   });
 
+  it('clears one facet whole and leaves the other facets narrowed', () => {
+    const filtered = [
+      { facet: 'states', value: 'open' },
+      { facet: 'states', value: 'done' },
+      { facet: 'sources', value: { source: SOURCE } },
+    ].reduce((state, value) => reduceTriageSurfaceV1(state, { kind: 'filterValueToggled', ...value } as never),
+      TRIAGE_SURFACE_INITIAL_STATE_V1);
+
+    const cleared = reduceTriageSurfaceV1(filtered, { kind: 'filterFacetCleared', facet: 'states' });
+
+    expect(cleared.filters.states).toEqual([]);
+    expect(cleared.filters.sources).toEqual(filtered.filters.sources);
+    expect(reduceTriageSurfaceV1(cleared, { kind: 'filterFacetCleared', facet: 'states' })).toBe(cleared);
+  });
+
   it('retains the Smart precedence across an order change so a preference is not silently reset', () => {
     const policy = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
       kind: 'smartPolicyChanged',

@@ -443,7 +443,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         presentation?: 'popover' | 'menu' | 'dropdown' | 'context';
         width?: 'anchor' | 'content';
         autoFocusOnOpen?: boolean;
-        sheet?: Readonly<{ title: string; footer?: React.ReactNode }>;
+        sheet?: Readonly<{ title: string; footer?: React.ReactNode; header?: 'none' }>;
         onRequestClose(): void;
         content(controls: Readonly<{
             requestClose(reason: 'selection' | 'escape'): void;
@@ -472,6 +472,8 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
                     phonePresentation: 'sheet' as const,
                     accessibilityLabel: input.sheet.title,
                     sheetFooter: input.sheet.footer,
+                    // Content that leads with its own title (a condition editor) draws no band over it.
+                    ...(input.sheet.header === 'none' ? { sheetHeader: 'none' as const } : {}),
                 })}
             >
                 {(render) => input.content({

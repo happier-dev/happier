@@ -77,7 +77,10 @@ import {
   resolveTriageSourceTaskOperationV1,
   readTriageSourceDescriptorV1,
 } from '../detail/sourceSurface.js';
-import { readTriageFilterSheetV1, readTriageOrderOptionsV1, TriageFilterRail } from '../filters/rail.js';
+import {
+  readTriageFilterDoneLabelV1, readTriageOrderChoicesV1, readTriageOrderOptionsV1, TriageFilterRail, TriageFilterSheet,
+  TriageOrderPlacement,
+} from '../filters/rail.js';
 import { planTriageFilterFacetsV1 } from '../filters/plan.js';
 import {
   TRIAGE_LIST_GROUPS_V1,
@@ -883,6 +886,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [applyLensEdit]);
   const clearFilters = React.useCallback(() => {
     applyLensEdit({ kind: 'filtersCleared' }, 'lens');
+  }, [applyLensEdit]);
+  const clearFilterFacet = React.useCallback((facet: TriageFilterFacetValueV1['facet']) => {
+    applyLensEdit({ kind: 'filterFacetCleared', facet }, 'lens');
   }, [applyLensEdit]);
   const changeOrder = React.useCallback((order: TriageSurfaceStateV1['order']) => {
     applyLensEdit({ kind: 'orderChanged', order }, 'lens');
@@ -2011,7 +2017,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * retires the host's separate machine band. Outside a Collection (the page could not be read) it is the same toolbar
    * without them.
    */
-  const renderListToolbar = (slots?: CollectionHeaderSlots) => (
+  const renderListToolbar = (slots?: CollectionHeaderSlots, orderedByTable = false) => {
+    // Coverage is the window owner's fact: a loaded subset is never said as an authoritative total.
+    const filterResult = { matchedCount: rowCount, coverage: state.kind !== 'window' ? 'unavailable' as const
+      : state.window.coverage === 'complete' ? 'complete' as const : 'partial' as const };
+    return (
     <CollectionToolbar
       {...(slots === undefined ? {} : { slots })}
       // On Tasks the lens leads with whose tasks (Mine · Agents · Everyone), three short options as one segmented
@@ -2036,27 +2046,38 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             facets={facets}
             order={surface.order}
             smartPolicy={surface.smartPolicy}
-            filtered={narrowing.facets}
             text={text}
             onToggleFilterValue={toggleFilterValue}
             onClearFilters={clearFilters}
+            onClearFacet={clearFilterFacet}
+            result={filterResult}
             onChangeOrder={changeOrder}
             onChangeSmartPolicy={changeSmartPolicy}
           />
         ),
-        sheet: readTriageFilterSheetV1({
-          facets,
+        // Folded (a phone, or a row that no longer fits): the SAME editor in the shared sheet, and Order in ⋯.
+        sheet: {
+          header: 'none',
+          render: (controls) => (
+            <TriageFilterSheet
+              controls={controls}
+              facets={facets}
+              text={text}
+              onToggleFilterValue={toggleFilterValue}
+              onClearFacet={clearFilterFacet}
+              onClearFilters={clearFilters}
+              result={filterResult}
+              doneLabel={readTriageFilterDoneLabelV1({ text, resultCount: rowCount, windowState: state })}
+            />
+          ),
+        },
+        ...(orderedByTable ? {} : { foldedChoices: readTriageOrderChoicesV1({
           order: surface.order,
           smartPolicy: surface.smartPolicy,
-          filtered: narrowing.facets,
           text,
-          resultCount: rowCount,
-          windowState: state,
-          onToggleFilterValue: toggleFilterValue,
-          onClearFilters: clearFilters,
           onChangeOrder: changeOrder,
           onChangeSmartPolicy: changeSmartPolicy,
-        }),
+        }) }),
       }}
       accessory={organizing ? (
         <Button
@@ -2110,7 +2131,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         },
       } })}
     />
-  );
+    );
+  };
 
   /**
    * The assembled window, when there is one. The chrome below serves both it
@@ -2379,7 +2401,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           loading={state.kind === 'initial'}
           header={(slots) => (
             <Stack gap="small">
-          {renderListToolbar(slots)}
+          <TriageOrderPlacement>{(orderedByTable) => renderListToolbar(slots, orderedByTable)}</TriageOrderPlacement>
               {/* A partial read of linked Session activity is a note under the toolbar: the page's name leads. */}
               {listedEntryRefs.length === 0 || (!sessionActivity.incomplete && !sessionActivityUnavailable) ? null : (
                 <Status

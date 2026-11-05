@@ -224,18 +224,17 @@ export function CollectionPreviewSample(): React.ReactElement {
                                     onChange={(value) => { if (typeof value === 'string') setOrder(value); }}
                                 />
                             ),
+                            // Folded, the same Order picker opens in the shared sheet.
                             sheet: {
-                                groups: [{
-                                    id: 'order',
-                                    accessibilityLabel: 'Order',
-                                    items: [
-                                        { id: 'newest', label: 'Newest', kind: 'radio', radioGroupId: 'order' },
-                                        { id: 'oldest', label: 'Oldest', kind: 'radio', radioGroupId: 'order' },
-                                    ],
-                                }],
-                                radioGroups: [{ id: 'order', accessibilityLabel: 'Order', selectedId: order }],
-                                onSelect: setOrder,
-                                showResultsLabel: 'Show results',
+                                render: () => (
+                                    <Select
+                                        label="Order"
+                                        presentation="segmented"
+                                        value={order}
+                                        options={[{ value: 'newest', label: 'Newest' }, { value: 'oldest', label: 'Oldest' }]}
+                                        onChange={(value) => { if (typeof value === 'string') setOrder(value); }}
+                                    />
+                                ),
                             },
                         }}
                         freshness={stale

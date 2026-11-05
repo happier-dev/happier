@@ -101,8 +101,12 @@ export type PopoverProps = Readonly<{
    * opened content carry the meaning.
    */
   triggerMarks?: readonly HappierTone[];
-  /** On a phone, the host's bottom sheet titled `title` (with `footer` pinned under the content) instead of an anchored popover. */
-  sheet?: Readonly<{ title: string; footer?: ReactNode }>;
+  /**
+   * On a phone, the host's bottom sheet titled `title` (with `footer` pinned under the content) instead of an anchored
+   * popover. `header: 'none'` is for content that leads with its own title (a filter editor's "Filter · Clear"): the
+   * sheet then draws no title band and `title` only names it.
+   */
+  sheet?: PopoverSheet;
   /** Accessible name for the non-menu dialog surface; defaults to the trigger label. */
   contentAccessibilityLabel?: string;
   /**
@@ -710,9 +714,12 @@ function MenuRows({
   );
 }
 
+/** A phone bottom sheet's title (said in a band unless `header` is `none`) and its pinned footer. */
+export type PopoverSheet = Readonly<{ title: string; footer?: ReactNode; header?: 'none' }>;
+
 type MenuSheetProps = Readonly<{
   /** The phone sheet's title and its pinned footer; choices then apply in place and never close it. */
-  sheet?: Readonly<{ title: string; footer?: ReactNode }>;
+  sheet?: PopoverSheet;
   /** How many choices are in force, drawn on a `well` trigger. */
   triggerCount?: number;
 }>;
@@ -880,20 +887,48 @@ export function Menu(props: MenuProps): ReactElement {
   return <MenuPresentation {...props} kind="menu" />;
 }
 
-export type SheetMenuProps = MenuProps & Readonly<{
+/** What a sheet's own content is told: how to close it, the height it has, and whether it is the phone sheet. */
+export type SheetMenuContentControls = Readonly<{ close: () => void; maxHeight: number; sheet: boolean }>;
+
+type SheetMenuShared = Readonly<{
   /** The phone sheet's title and the controls pinned under its rows (a quiet Clear, one primary that closes). */
-  sheet: Readonly<{ title: string; footer?: ReactNode }>;
+  sheet: PopoverSheet;
   /** How many choices are in force, drawn as a count on a `well` trigger. */
   triggerCount?: number;
 }>;
 
+export type SheetMenuProps =
+  | (MenuProps & SheetMenuShared & Readonly<{ content?: never }>)
+  | (Omit<PopoverProps, 'children' | 'floatingRole' | 'sheet'> & SheetMenuShared & Readonly<{
+      /**
+       * The content slot: a form drawn in place of menu rows (`CollectionToolbar`'s folded Filters opens a page's
+       * condition editor here). It applies its own edits and closes the sheet itself through `close`.
+       */
+      content: (controls: SheetMenuContentControls) => ReactNode;
+    }>);
+
 /**
- * A menu of several choices (checkbox and radio groups) that a phone presents as the host's bottom sheet —
- * titled, the rows applying as they are touched, the footer pinned under them — and a wider viewport anchors
- * like any menu, the footer ending its surface. `CollectionToolbar`'s folded Filters is one.
+ * A menu of several choices (checkbox and radio groups), or one form in its content slot, that a phone presents as
+ * the host's bottom sheet — titled, the rows applying as they are touched, the footer pinned under them — and a
+ * wider viewport anchors like any menu, the footer ending its surface. `CollectionToolbar`'s folded Filters is one.
  */
 export function SheetMenu(props: SheetMenuProps): ReactElement {
-  return <MenuPresentation {...props} kind="menu" />;
+  if (props.content === undefined) return <MenuPresentation {...props} kind="menu" />;
+  const { content, onOpenChange, ...popover } = props;
+  return (
+    <PopoverPresentation
+      {...popover}
+      onOpenChange={onOpenChange}
+      floatingRole="panel"
+      // Anchored (a wide viewport), a form hangs below its trigger, as a dropdown does, never over it.
+      placement={popover.placement ?? 'bottom'}
+      renderContent={(controls) => content({
+        close: () => onOpenChange(false),
+        maxHeight: controls.maxHeight,
+        sheet: controls.presentation === 'sheet',
+      })}
+    />
+  );
 }
 
 /** Dropdowns use the same selection owner but prefer a below-trigger presentation. */

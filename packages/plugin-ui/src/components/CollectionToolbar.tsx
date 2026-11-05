@@ -17,7 +17,9 @@ import type { CollectionHeaderSlots } from './Collection.js';
 import { Select, type SelectOption } from './Form.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
-import { Menu, SheetMenu, type MenuGroup, type MenuItem, type MenuRadioGroup } from './Overlay.js';
+import {
+  Menu, SheetMenu, type MenuGroup, type MenuItem, type MenuRadioGroup, type SheetMenuContentControls,
+} from './Overlay.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { Status } from './Status.js';
@@ -69,10 +71,10 @@ export type CollectionToolbarProps = Readonly<{
   /** Which lens the reader looks through (a saved-view picker). It leads the controls at every width. */
   lens?: ReactNode;
   /**
-   * What narrows and orders the list. On a wide page `render()` stands in the row (a Filters menu, an Order
-   * picker). On a phone they fold behind one round Filters button, counted, that opens `sheet` as the shared bottom
-   * sheet: the same grouped rows the wide Filters menu offers (checkbox groups; Order as a radio group), applying
-   * as they are touched, with a quiet Clear and one primary "Show N results" pinned under them.
+   * What narrows and orders the list. On a wide page `render()` stands in the row (a Filters control opening the
+   * shared condition editor, an Order picker). When the toolbar folds (a phone, or a row that no longer fits) they
+   * fold behind one round Filters button, counted, that opens `sheet` — the SAME narrowing form the wide row opens,
+   * drawn in the shared bottom sheet's content slot — and the wide row's pickers (Order) join ⋯ as `foldedChoices`.
    */
   refine?: Readonly<{
     label: string;
@@ -80,15 +82,16 @@ export type CollectionToolbarProps = Readonly<{
     activeCount?: number;
     render: () => ReactNode;
     sheet: Readonly<{
-      /** Named groups of `checkbox` and `radio` rows, drawn with their names, as the wide menu draws them. */
+      /** The narrowing form (a condition editor). It applies its own edits and closes the sheet through `close`. */
+      render: (controls: SheetMenuContentControls) => ReactNode;
+      /** `none` when the form leads with its own title and Clear, so the sheet draws no title band over it. */
+      header?: 'none';
+    }>;
+    /** The wide row's pickers beside Filters (Order), as named radio groups that end the folded ⋯. */
+    foldedChoices?: Readonly<{
       groups: readonly MenuGroup[];
-      /** The controlled choice of each radio group (Order). */
-      radioGroups?: readonly MenuRadioGroup[];
+      radioGroups: readonly MenuRadioGroup[];
       onSelect: (id: string) => void;
-      /** Offered only while something is narrowed. */
-      clear?: Readonly<{ label: string; onPress: () => void }>;
-      /** The one primary control ("Show 12 results"); it only closes the sheet, since every choice already applied. */
-      showResultsLabel: string;
     }>;
   }>;
   /** A transient page control beside the lens ("Done" while organizing). */
@@ -277,21 +280,8 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
             ? `${refine.label}: ${refine.activeCount}`
             : refine.label
         }
-        groups={refine.sheet.groups}
-        radioGroups={refine.sheet.radioGroups ?? []}
-        showGroupLabels
-        onSelect={refine.sheet.onSelect}
-        sheet={{
-          title: refine.label,
-          footer: (
-            <Row gap="small" align="center" justify="flex-end" style={sheetFooterStyle}>
-              {refine.sheet.clear === undefined ? null : (
-                <Button title={refine.sheet.clear.label} variant="plain" onPress={refine.sheet.clear.onPress} />
-              )}
-              <Button title={refine.sheet.showResultsLabel} variant="primary" onPress={() => setFiltersOpen(false)} />
-            </Row>
-          ),
-        }}
+        sheet={{ title: refine.label, ...(refine.sheet.header === undefined ? {} : { header: refine.sheet.header }) }}
+        content={refine.sheet.render}
       />
     );
   const buttons = (
@@ -384,7 +374,10 @@ function MoreMenu(
     ...(refreshItem === null ? [] : [refreshItem]),
     ...(more?.items ?? []),
   ];
-  if (items.length === 0) return null;
+  // Folded, the wide row's pickers (Order) end the menu as named radio groups.
+  const choices = folded ? props.refine?.foldedChoices : undefined;
+  if (items.length === 0 && choices === undefined) return null;
+
   const label = more?.label ?? refresh?.label ?? '';
   return (
     <Menu
@@ -395,8 +388,10 @@ function MoreMenu(
       {...(folded ? { triggerAppearance: 'well' as const } : {})}
       triggerAccessibilityLabel={label}
       items={items}
+      {...(choices === undefined ? {} : { groups: choices.groups, radioGroups: choices.radioGroups, showGroupLabels: true })}
       onSelect={(id) => {
         if (id === REFRESH_ITEM_ID) refresh?.onPress();
+        else if (choices?.groups.some((group) => group.items.some((item) => item.id === id))) choices.onSelect(id);
         else more?.onSelect(id);
       }}
     />
@@ -442,8 +437,6 @@ const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** A control's words never break inside the folded toolbar; search gives way. */
 const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
 const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
-/** The sheet's quiet Clear and its one primary end the footer together. */
-const sheetFooterStyle: HappierPortableStyle = { flexGrow: 1 };
 /** The space between the lens and the switch; a freshness that needs saying ends there, truncating first. */
 const compactFreshnessStyle: HappierPortableStyle = {
   flex: 1,

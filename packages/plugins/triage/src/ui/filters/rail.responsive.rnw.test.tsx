@@ -26,7 +26,7 @@ import { refreshTriageListWindow } from '../window/mountedWindow.js';
 import { filterFacetOption, openToolbarMenu, toolbarMenuItem } from '../shell/toolbarMenus.test-support.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
-import { readTriageFilterSheetV1 } from './rail.js';
+import { readTriageFilterDoneLabelV1 } from './rail.js';
 import type { TriageListShellStateV1 } from '../shell/windowState.js';
 
 /**
@@ -227,14 +227,8 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         [{ kind: 'sourcesUnreachable', message: 'Offline', retryable: true }, 'Show results · Unavailable'],
         [{ kind: 'unavailable', message: 'Offline', retryable: true }, 'Show results · Unavailable'],
     ] satisfies readonly (readonly [TriageListShellStateV1, string])[])('carries %j into the completion label without a zero-result claim', (windowState, expected) => {
-        const input = {
-            facets: [], order: 'newest' as const, smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1, filtered: false,
-            text: (_key: string, fallback = '') => fallback, resultCount: 0,
-            windowState,
-            onToggleFilterValue() {}, onClearFilters() {}, onChangeOrder() {}, onChangeSmartPolicy() {},
-        };
-        const sheet = readTriageFilterSheetV1(input);
-        expect(sheet?.showResultsLabel).toBe(expected);
+        expect(readTriageFilterDoneLabelV1({ text: (_key: string, fallback = '') => fallback, resultCount: 0, windowState }))
+            .toBe(expected);
     });
 
     it.each([0, 1])('keeps partial coverage in the phone completion control with %s matches', async (count) => {
@@ -251,7 +245,6 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await measureFillRegion(COMPACT_WIDTH);
         await openToolbarMenu(shell, 'Filters');
         await expect(shell.getByRole('button', { name: count === 0 ? 'Show 0 results so far' : 'Show 1 result so far' })).resolves.toBeDefined();
-        await expect(shell.getByRole('menuitemradio', { name: 'Newest', state: { checked: true } })).resolves.toBeDefined();
     });
 
     it('orders through the table title header and retains the toolbar order for list and board', async () => {
@@ -262,11 +255,9 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await act(async () => { await shell.press(oldest); });
         await expect(toolbarMenuItem(shell, 'Entry', 'menuitemradio', { name: 'Oldest', state: { checked: true } })).resolves.toBeDefined();
         await measureFillRegion(COMPACT_WIDTH);
-        // A phone keeps the order inside the one Filters sheet (the shared Collection toolbar folds it there).
-        await openToolbarMenu(shell, 'Filters');
-        await expect(shell.getByRole('menuitemradio', { name: 'Oldest', state: { checked: true } })).resolves.toBeDefined();
-        // Finish the modal filter sheet before reaching the toolbar behind it.
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Show 1 result' })); });
+        // Folded, the order joins ⋯ (the shared Collection toolbar), carrying the current choice.
+        const oldestFolded = await toolbarMenuItem(shell, 'More', 'menuitemradio', { name: 'Oldest', state: { checked: true } });
+        await act(async () => { await shell.press(oldestFolded); });
         await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'Board' })); });
         await expect(shell.getByRole('radio', { name: 'Board', state: { checked: true } })).resolves.toBeDefined();
         await measureFillRegion(WIDE_WIDTH);
@@ -297,23 +288,25 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await expect(shell.queryByRole('checkbox', { name: 'Example account' })).resolves.toBeUndefined();
     });
 
-    it('on a phone keeps Views in the toolbar and folds Order into the Filters form', async () => {
+    it('on a phone opens the same condition editor from Filters and folds Order into ⋯', async () => {
         const shell = await mountShell();
         await measureFillRegion(COMPACT_WIDTH);
 
-        // Views names which saved lens this is and stays a toolbar control at every width. Order joins the facets
-        // in the round Filters button's form (lab `merged-list-phone`), so the phone toolbar is one search row and
-        // one lens row; no separate Order picker is left in the row.
+        // Views names which saved lens this is and stays a toolbar control at every width; no separate Order
+        // picker is left in the row (lab `merged-list-phone`: one search row, one lens row).
         await expect(toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: 'No saved view' })).resolves.toBeDefined();
         const triggers = await shell.getAllByRole('button');
         expect(triggers.some((trigger) => trigger.name?.startsWith('Order') === true)).toBe(false);
+        await expect(toolbarMenuItem(shell, 'More', 'menuitemradio', { name: 'Newest', state: { checked: true } }))
+            .resolves.toBeDefined();
         await openToolbarMenu(shell, 'Filters');
-        // The sheet holds the wide menu's grouped facet rows, Order as one radio group, and one way back to the
-        // list that says what it shows.
-        await expect(shell.getByRole('menuitemcheckbox', { name: 'Open' })).resolves.toBeDefined();
-        await expect(shell.getByRole('menuitemradio', { name: 'Newest', state: { checked: true } })).resolves.toBeDefined();
+        // One filter UI at every width: the sheet holds the condition editor the wide row opens (Add filter, then a
+        // facet's values as checkboxes), never a second set of checkbox menu groups, and one way back to the list
+        // that says what it shows.
+        await expect(shell.queryByRole('menuitemcheckbox', { name: 'Open' })).resolves.toBeUndefined();
+        await expect(shell.getByRole('button', { name: 'Add filter' })).resolves.toBeDefined();
         await expect(shell.getByRole('button', { name: 'Show 1 result' })).resolves.toBeDefined();
-        await expect(shell.queryByRole('radio', { name: 'Newest' })).resolves.toBeUndefined();
+        await expect(filterFacetOption(shell, 'State', { name: 'Open' })).resolves.toBeDefined();
     });
 
     it('keeps every selected constraint visible and removable as a token in the search field, in both arms', async () => {

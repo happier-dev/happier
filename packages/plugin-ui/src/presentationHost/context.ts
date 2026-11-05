@@ -408,7 +408,12 @@ export type PluginUiPresentationHost = Readonly<{
      * scrolling rows (the content then receives `presentation: 'sheet'`). Wider viewports, and hosts without a
      * sheet, keep the anchored popover.
      */
-    sheet?: Readonly<{ title: string; footer?: ReactNode }>;
+    sheet?: Readonly<{
+      title: string;
+      footer?: ReactNode;
+      /** `none`: the content leads with its own title, so the sheet draws no title band; `title` only names it. */
+      header?: 'none';
+    }>;
     onRequestClose(): void;
     content(controls: PluginUiPopoverContentControls): ReactNode;
   }>): ReactNode;

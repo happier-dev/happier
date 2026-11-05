@@ -46,17 +46,33 @@ export async function toolbarMenuItem(
 }
 
 /**
- * The lens facets (Source, Type, Scope, State, Attention) live in the one **Filters** menu of labelled checkbox groups: open
- * it the way a reader does, then find the option as the checkbox row the menu draws. `facet` names the group a test
- * means; option names are unique across the facets these fixtures plan.
+ * The lens facets (Source, Type, Scope, State, Attention) live behind the one **Filters** trigger. On a wide page it
+ * opens the shared condition editor: reach a facet's values the way a reader does — its row's values when the facet
+ * already narrows the list, else Add filter and the facet — and find the option as the checkbox the editor draws. A
+ * phone's folded Filters opens the same editor in the shared sheet. Option names are unique across the facets these
+ * fixtures plan.
  */
 export async function filterFacetOption(
   shell: PluginUiTestkit,
-  _facet: string,
+  facet: string,
   options: Parameters<PluginUiTestkit['getByRole']>[1],
 ): Promise<Awaited<ReturnType<PluginUiTestkit['getByRole']>>> {
   await openToolbarMenu(shell, 'Filters');
-  return await shell.getByRole('menuitemcheckbox', options);
+  const name = options?.name;
+  const buttons = async () => await shell.getAllByRole('button');
+  const values = await shell.queryByRole('checkbox', name === undefined ? {} : { name });
+  if (values === undefined) {
+    const back = (await buttons()).find((candidate) => candidate.name === 'Back');
+    if (back !== undefined) await act(async () => { await shell.press(back); });
+    const row = (await buttons()).find((candidate) => candidate.name?.startsWith(`${facet}: `) === true);
+    if (row !== undefined) {
+      await act(async () => { await shell.press(row); });
+    } else {
+      await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Add filter' })); });
+      await act(async () => { await shell.press(await shell.getByRole('button', { name: facet })); });
+    }
+  }
+  return await shell.getByRole('checkbox', options);
 }
 
 /** Open the Filters form and press one facet option. */

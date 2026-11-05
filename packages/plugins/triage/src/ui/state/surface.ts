@@ -192,6 +192,8 @@ export type TriageSurfaceActionV1 =
   /** One facet value in or out; every other facet is untouched. */
   | Readonly<{ kind: 'filterValueToggled' } & TriageFilterFacetValueV1>
   | Readonly<{ kind: 'filtersCleared' }>
+  /** One facet emptied whole (the filter editor's row remove); the other facets keep their values. */
+  | Readonly<{ kind: 'filterFacetCleared'; facet: TriageFilterFacetValueV1['facet'] }>
   | Readonly<{ kind: 'smartPolicyChanged'; smartPolicy: CorpusSmartPolicyV1 }>
   /**
    * One saved view's stored lens, applied whole (`core/SURFACE.md` §6.5).
@@ -392,6 +394,10 @@ export function reduceTriageSurfaceV1(
         ? { ...state, filters: state.filters.tasks === undefined ? TRIAGE_LIST_NO_FILTERS_V1
           : { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: state.filters.tasks } }
         : state;
+
+    case 'filterFacetCleared':
+      return state.filters[action.facet].length === 0 ? state
+        : { ...state, filters: { ...state.filters, [action.facet]: [] } };
 
     case 'smartPolicyChanged':
       return action.smartPolicy.precedence[0] === state.smartPolicy.precedence[0]

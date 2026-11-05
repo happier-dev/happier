@@ -439,35 +439,38 @@ contract intentionally excludes required private props/styles.
 
 ### Collection filters and long titles (0.3 development source)
 
-`CollectionToolbar.refine` supplies both `render()` for wide layouts and `sheet`
-for the compact Filters control. Build both from the same controlled filter and
-order state. `sheet.groups` contains the shared checkbox/radio menu rows;
-`radioGroups` supplies each radio group's value, and `onSelect(id)` applies a
-choice immediately. Optional `clear` resets the narrowing. `showResultsLabel`
-labels the primary footer button, which closes the sheet after choices apply.
-`render` takes no placement argument.
+`CollectionToolbar.refine` supplies `render()` for the wide row and `sheet.render`
+for the folded Filters control (a phone, or a row that no longer fits). Both draw
+the same narrowing form, so a page has one filter UI at every width: the folded
+button opens `sheet.render({ close, maxHeight, sheet })` in `SheetMenu`'s content
+slot, and the form applies its own edits and closes itself. `sheet.header: 'none'`
+is for a form that leads with its own title (the shared `CollectionConditionEditor`),
+so the sheet draws no band over it. Pickers the wide row draws beside Filters
+(Order) go in `foldedChoices` as named radio groups; folded, they end the ⋯ menu.
 
 ```tsx
-import { CollectionToolbar, Item, Menu } from '@happier-dev/plugin-ui/components';
+import { CollectionConditionEditor, CollectionToolbar, Item, Popover } from '@happier-dev/plugin-ui/components';
 
-// groups, radioGroups and onSelect come from the page's one filter model.
+const editor = (done?: { label: string; onPress: () => void }) => (
+  <CollectionConditionEditor model={model} labels={labels} onChange={applyEdit} result={result}
+    {...(done ? { onDone: done.onPress, doneLabel: done.label } : {})} />
+);
 <CollectionToolbar refine={{
   label: 'Filters', activeCount,
-  render: () => <Menu open={open} onOpenChange={setOpen}
-    trigger="Filters" triggerAccessibilityLabel="Filter entries"
-    groups={groups} radioGroups={radioGroups} onSelect={onSelect} />,
-  sheet: { groups, radioGroups, onSelect,
-    clear: { label: 'Clear', onPress: clearFilters },
-    showResultsLabel: `Show ${resultCount} results` },
+  render: () => <Popover open={open} onOpenChange={setOpen} trigger="Filters"
+    triggerAccessibilityLabel="Filters" floatingRole="panel">{editor()}</Popover>,
+  sheet: { header: 'none',
+    render: ({ close }) => editor({ label: `Show ${resultCount} results`, onPress: close }) },
+  foldedChoices: { groups: orderGroups, radioGroups: orderRadioGroups, onSelect: chooseOrder },
 }} />;
 <Item title={filePath} titleEllipsizeMode="middle" />;
 ```
 
 Use `SheetMenu` directly for a controlled menu that needs a phone sheet:
-it takes the same semantic menu props plus `sheet: { title, footer? }` and
-optional `triggerCount`. The shared host owns sheet presentation, focus and
-dismissal. `Item.titleEllipsizeMode="middle"` keeps a long title on one line
-with its suffix visible and its full accessible name intact.
+it takes the same semantic menu props plus `sheet: { title, footer?, header? }` and
+optional `triggerCount`, or a `content` render in place of menu rows. The shared
+host owns sheet presentation, focus and dismissal. `Item.titleEllipsizeMode="middle"`
+keeps a long title on one line with its suffix visible and its full accessible name intact.
 See the generated [API declarations](api-declarations.md) for exact types.
 
 Spinner presentation belongs to `presentation/feedback/Spinner.tsx`:

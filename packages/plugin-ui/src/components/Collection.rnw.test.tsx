@@ -5098,7 +5098,7 @@ describe('the Collection toolbar', () => {
         requestClose: () => input.onRequestClose(),
       })
     ) : (
-      <View testID="sheet" aria-label={input.sheet.title}>
+      <View testID="sheet" aria-label={input.sheet.title} {...{ dataSet: { sheetHeader: input.sheet.header ?? 'band' } }}>
         {input.content({
           maxHeight: 600,
           requestClose: () => input.onRequestClose(),
@@ -5129,58 +5129,28 @@ describe('the Collection toolbar', () => {
           label: 'Filters',
           activeCount: 2,
           render: () => <Text testID="refine:toolbar">Refine</Text>,
+          // Folded, the same narrowing form opens in the sheet (a page's condition editor); it closes itself.
           sheet: {
-            groups: [
-              {
-                id: 'state',
-                accessibilityLabel: 'State',
-                items: [
-                  {
-                    id: 'open',
-                    label: 'Open',
-                    kind: 'checkbox',
-                    checked: true,
-                  },
-                  {
-                    id: 'merged',
-                    label: 'Merged',
-                    kind: 'checkbox',
-                    checked: false,
-                  },
-                ],
-              },
-              {
-                id: 'order',
-                accessibilityLabel: 'Order',
-                items: [
-                  {
-                    id: 'order:newest',
-                    label: 'Newest',
-                    kind: 'radio',
-                    radioGroupId: 'order',
-                  },
-                  {
-                    id: 'order:oldest',
-                    label: 'Oldest',
-                    kind: 'radio',
-                    radioGroupId: 'order',
-                  },
-                ],
-              },
-            ],
-            radioGroups: [
-              {
-                id: 'order',
-                accessibilityLabel: 'Order',
-                selectedId: 'order:newest',
-              },
-            ],
+            header: 'none',
+            render: ({ close }) => (
+              <View testID="refine:form">
+                <Text>State is Open</Text>
+                <Button title="Show 3 results" onPress={() => { calls.push('done'); close(); }} />
+              </View>
+            ),
+          },
+          // The wide row's Order picker joins ⋯ when the toolbar folds.
+          foldedChoices: {
+            groups: [{
+              id: 'order',
+              accessibilityLabel: 'Order',
+              items: [
+                { id: 'order:newest', label: 'Newest', kind: 'radio', radioGroupId: 'order' },
+                { id: 'order:oldest', label: 'Oldest', kind: 'radio', radioGroupId: 'order' },
+              ],
+            }],
+            radioGroups: [{ id: 'order', accessibilityLabel: 'Order', selectedId: 'order:newest' }],
             onSelect: (id) => calls.push(`select:${id}`),
-            clear: {
-              label: 'Clear filters',
-              onPress: () => calls.push('clear'),
-            },
-            showResultsLabel: 'Show 3 results',
           },
         }}
         freshness={freshness}
@@ -5459,7 +5429,8 @@ describe('the Collection toolbar', () => {
     // On a phone the primary action is a round "+" beside Filters and ⋯, still named by its words.
     expect(button(toolbar, 'New task')!.textContent).toBe('');
 
-    // The folded Filters: a named, counted button that opens the shared bottom sheet of the wide menu's rows.
+    // The folded Filters: a named, counted button that opens the page's own narrowing form as the bottom sheet —
+    // the same form the wide row opens, never a second set of checkbox groups.
     const filters = button(toolbar, 'Filters: 2')!;
     expect(filters).not.toBeNull();
     expect(filters.textContent).toBe('2');
@@ -5468,39 +5439,14 @@ describe('the Collection toolbar', () => {
     });
     const sheet = view.query('sheet')!;
     expect(sheet.getAttribute('aria-label')).toBe('Filters');
-    const row = (label: string) =>
-      [
-        ...sheet.querySelectorAll<HTMLElement>(
-          '[role="menuitemcheckbox"], [role="menuitemradio"]',
-        ),
-      ].find((node) => node.getAttribute('aria-label') === label)!;
-    // Grouped checkbox rows under their names, and Order as one radio group.
-    expect(sheet.textContent).toContain('State');
-    expect(row('Open').getAttribute('aria-checked')).toBe('true');
-    expect(row('Merged').getAttribute('aria-checked')).toBe('false');
-    expect(row('Newest').getAttribute('aria-checked')).toBe('true');
-    expect(
-      row('Newest').closest('[role="group"]')?.getAttribute('aria-label'),
-    ).toBe('Order');
-    // Every choice applies where it is touched, and the sheet stays for the next.
+    expect(sheet.getAttribute('data-sheet-header')).toBe('none');
+    expect(sheet.contains(view.query('refine:form'))).toBe(true);
+    expect(sheet.querySelector('[role="menuitemcheckbox"], [role="menuitemradio"]')).toBeNull();
+    // The form closes the sheet itself.
     act(() => {
-      row('Merged').click();
+      button(sheet, 'Show 3 results')!.click();
     });
-    act(() => {
-      row('Oldest').click();
-    });
-    expect(calls).toEqual(['select:merged', 'select:order:oldest']);
-    expect(view.query('sheet')).not.toBeNull();
-    // The pinned footer: a quiet Clear, and one primary that only closes the sheet.
-    const footer = view.query('sheet:footer')!;
-    act(() => {
-      button(footer, 'Clear filters')!.click();
-    });
-    expect(calls).toEqual(['select:merged', 'select:order:oldest', 'clear']);
-    expect(view.query('sheet')).not.toBeNull();
-    act(() => {
-      button(footer, 'Show 3 results')!.click();
-    });
+    expect(calls).toEqual(['done']);
     expect(view.query('sheet')).toBeNull();
     calls.length = 0;
 
@@ -5517,8 +5463,23 @@ describe('the Collection toolbar', () => {
       'RefreshUp to date',
       'Manage sources',
     ]);
+    // The wide row's Order picker follows them, as a named radio group carrying the current choice.
+    const order = [...view.container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(order.map((item) => [item.getAttribute('aria-label'), item.getAttribute('aria-checked')])).toEqual([
+      ['Newest', 'true'],
+      ['Oldest', 'false'],
+    ]);
+    expect(order[0]!.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Order');
     act(() => {
-      items[0]!.click();
+      order[1]!.click();
+    });
+    expect(calls).toEqual(['select:order:oldest']);
+    calls.length = 0;
+    act(() => {
+      more.click();
+    });
+    act(() => {
+      [...view.container.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!.click();
     });
     expect(calls).toEqual(['refresh']);
     view.unmount();

@@ -4,6 +4,7 @@ import { ReplyQuoteExample } from './replyQuoteSurface.js';
 import { ReturnedAnswerQuoteExample } from './returnedAnswerQuoteSurface.js';
 import { ExecutableParticipantPickerExample } from './executableParticipantPickerSurface.js';
 import {
+  Button,
   Card,
   CollectionToolbar,
   ContextMenu,
@@ -173,8 +174,7 @@ function ExternalAuthoringOverlays() {
       <CollectionToolbar refine={{ label: 'Filters', activeCount: openOnly ? 1 : 0,
         render: () => <Menu open={filtersOpen} onOpenChange={setFiltersOpen}
           trigger="Filters" triggerAccessibilityLabel="Filter entries" groups={groups} onSelect={selectFilter} />,
-        sheet: { groups, onSelect: selectFilter, clear: { label: 'Clear', onPress: () => setOpenOnly(false) },
-          showResultsLabel: 'Show results' },
+        sheet: { render: ({ close }) => <Button title="Show results" onPress={close} /> },
       }} />
       <SheetMenu open={sheetOpen} onOpenChange={setSheetOpen} trigger="Filters"
         triggerAccessibilityLabel="Filter entries" groups={groups} onSelect={selectFilter}

@@ -1221,6 +1221,7 @@ Declaration: `dist/index.d.ts`
 - type `PluginUiWidgetAreaPortV1` from `dist/index.d.ts`
 - value `Popover` from `dist/index.d.ts`
 - type `PopoverProps` from `dist/index.d.ts`
+- type `PopoverSheet` from `dist/index.d.ts`
 - value `PresenceCapsule` from `dist/index.d.ts`
 - type `PresenceCapsuleProps` from `dist/index.d.ts`
 - value `Progress` from `dist/index.d.ts`
@@ -1302,6 +1303,7 @@ Declaration: `dist/index.d.ts`
 - value `SetupSteps` from `dist/index.d.ts`
 - type `SetupStepsProps` from `dist/index.d.ts`
 - value `SheetMenu` from `dist/index.d.ts`
+- type `SheetMenuContentControls` from `dist/index.d.ts`
 - type `SheetMenuProps` from `dist/index.d.ts`
 - value `Spinner` from `dist/index.d.ts`
 - type `SpinnerProps` from `dist/index.d.ts`
@@ -3010,6 +3012,7 @@ Declaration: `dist/components/index.d.ts`
 - type `PluginUiFocusTarget` from `dist/components/index.d.ts`
 - value `Popover` from `dist/components/index.d.ts`
 - type `PopoverProps` from `dist/components/index.d.ts`
+- type `PopoverSheet` from `dist/components/index.d.ts`
 - value `PresenceCapsule` from `dist/components/index.d.ts`
 - type `PresenceCapsuleProps` from `dist/components/index.d.ts`
 - value `Progress` from `dist/components/index.d.ts`
@@ -3086,6 +3089,7 @@ Declaration: `dist/components/index.d.ts`
 - value `SetupSteps` from `dist/components/index.d.ts`
 - type `SetupStepsProps` from `dist/components/index.d.ts`
 - value `SheetMenu` from `dist/components/index.d.ts`
+- type `SheetMenuContentControls` from `dist/components/index.d.ts`
 - type `SheetMenuProps` from `dist/components/index.d.ts`
 - value `Spinner` from `dist/components/index.d.ts`
 - type `SpinnerProps` from `dist/components/index.d.ts`
