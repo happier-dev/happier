@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The focused connectivity harness avoids loading unrelated screen fixtures from the barrel.
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { getPersistenceStorage, getPersistenceStorageId } from '@/sync/domains/state/persistenceStorage';
 import * as profiles from '@/sync/domains/server/serverProfiles';
 import { useLaptopHomeNudgeFacts } from '@/components/homes/journeys/nudge/useLaptopHomeNudgeFacts';
@@ -10,7 +11,8 @@ import { useLaptopHomeNudgeFacts } from '@/components/homes/journeys/nudge/useLa
 import { dismissHomeReachNudge, recordFailedHomeReach, useHomeReachNudge } from './homeReachFailures';
 
 describe('device-local Home reach nudge subscription', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await selectActiveTestHomeForTests();
         getPersistenceStorage().delete('home-reach-failures-v2');
         getPersistenceStorage().delete('home-reach-nudge-dismissed-v1');
     });

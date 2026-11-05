@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { renderScreen, standardCleanup, flushHookEffects, createRootLayoutFeaturesResponse } from '@/dev/testkit';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerId, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -43,10 +44,12 @@ vi.mock('@/hooks/server/useFeatureDecision', async (importOriginal) => {
 });
 
 const initialStorageState = storage.getState();
-const initialServerId = getActiveServerId();
+let initialServerId: string;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let caseNumber = 0;
 beforeEach(async () => {
+    await selectActiveTestHomeForTests();
+    initialServerId = getActiveServerId();
     await loadSyncSingletonForTests();
     vi.stubEnv('EXPO_PUBLIC_DEBUG', '1');
     state.width = 390;

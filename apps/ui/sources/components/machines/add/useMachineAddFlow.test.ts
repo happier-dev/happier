@@ -7,6 +7,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createDeferred } from '@/dev/testkit';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { withHomeMutationAuthority } from '@/sync/domains/server/homeMutationLock';
 
 const harness = createHomeGovernanceHarness();
@@ -52,7 +53,7 @@ async function admitSsh(serverId: string, accountId: string) {
         settings: { ...storage.getState().settings, actionsSettingsV1: sshPolicy }, machineListByServerId: { [serverId]: [] } });
 }
 
-beforeEach(async () => { await harness.reset(); });
+beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTests(); });
 afterEach(async () => { await act(async () => discardMachineAdd()); publishAppliedActiveServerRuntimeAvailability(false); vi.useRealTimers(); standardCleanup(); });
 describe('machine add flow lifetime', () => {
     it.each([

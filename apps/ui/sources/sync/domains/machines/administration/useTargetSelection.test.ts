@@ -3,6 +3,7 @@ import { adoptHomeProfile, removeServerProfile, setActiveServerId, upsertServerP
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 type TestMachine = ReturnType<typeof createMachineFixture>;
 
@@ -11,6 +12,7 @@ let profileB: ServerProfile;
 let previousState: ReturnType<typeof storage.getState>;
 let previousServerId: string;
 beforeEach(async () => {
+    await selectActiveTestHomeForTests();
     previousState = storage.getState();
     previousServerId = getActiveServerSnapshot().serverId;
     profileA = await upsertServerProfile({ serverUrl: 'https://administration-inventory-other.example.test' });

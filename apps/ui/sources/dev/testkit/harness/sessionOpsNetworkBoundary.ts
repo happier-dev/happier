@@ -137,11 +137,11 @@ export async function installSessionOpsNetworkBoundary() {
     };
     // Observation only: the real credential owner admits every served and unserved Home.
     let credentialObserver = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(observeCredentialRead);
-    const httpRequests: Array<{ url: string; token: string | null }> = [];
+    const httpRequests: Array<{ url: string; token: string | null; method: string }> = [];
     const runtimeFetchBoundary: RuntimeFetch = createSessionReadBatchFetchBoundary(async (input, init) => {
         const url = new URL(String(input));
         const token = new Headers(init?.headers).get('authorization');
-        httpRequests.push({ url: url.href, token });
+        httpRequests.push({ url: url.href, token, method: (init?.method ?? 'GET').toUpperCase() });
         if (!homes.has(url.origin)) throw new Error(`Unexpected test Home: ${url.origin}`);
         const response = httpResponder ? await httpResponder(input, init) : null;
         if (response !== null) return response;

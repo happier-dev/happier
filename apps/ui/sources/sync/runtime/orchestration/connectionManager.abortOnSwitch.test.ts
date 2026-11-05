@@ -4,6 +4,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { seedPersistedHomeProfilesForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import tweetnacl from 'tweetnacl';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -97,6 +98,29 @@ describe('switchConnectionToActiveServer', () => {
         await selectHome(home);
         await connection.restoreConnectionToActiveServer(home.credentials);
     }
+
+    it('settles without Account authority or Home requests before Home setup and after removing a signed-out Home', async () => {
+        await seedPersistedHomeProfilesForTests({ profiles: [], activeServerId: '' });
+        expect(runtime.getActiveServerSnapshot()).toMatchObject({ serverId: '', serverUrl: '' });
+        expect(await connection.switchConnectionToActiveServer()).toBeNull();
+        expect(scope.getActiveServerAccountScope()).toBeNull();
+        expect(homes.requests).toHaveLength(0);
+
+        const signedOut = await addHome('signed-out-first-run', null);
+        await selectHome(signedOut);
+        expect(await connection.switchConnectionToActiveServer()).toBeNull();
+        expect(connection.getAppliedActiveServerId()).toBe(signedOut.serverId);
+        expect(scope.getActiveServerAccountScope()).toBeNull();
+        expect(homes.requests).toHaveLength(0);
+
+        const { removeServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        await removeServerProfile(signedOut.serverId);
+        expect(runtime.getActiveServerSnapshot()).toMatchObject({ serverId: '', serverUrl: '' });
+        expect(await connection.switchConnectionToActiveServer()).toBeNull();
+        expect(connection.getAppliedActiveServerId()).toBe('');
+        expect(scope.getActiveServerAccountScope()).toBeNull();
+        expect(homes.requests).toHaveLength(0);
+    });
 
     async function holdDeviceRead(matches: (key: string) => boolean) {
         const deviceStorage = await import('@/auth/storage/deviceLocalStorage');

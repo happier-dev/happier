@@ -1,10 +1,12 @@
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { HubSetupSection } from './HubSetupSection';
 import { AddPhoneSettingsView } from '@/components/settings/account/AddPhoneSettingsView';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -123,6 +125,8 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
 vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
     useScannedAuthUrlProcessor: () => ({ processAuthUrl: vi.fn() }),
 }));
+
+beforeEach(async () => { await selectActiveTestHomeForTests(); });
 
 afterEach(async () => {
     standardCleanup();
@@ -249,7 +253,9 @@ describe('HubSetupSection on Home (tiles)', () => {
         const saved: unknown[] = [];
         state.request.mockImplementation(async (path, init) => {
             if (path !== '/v1/account/profile') throw new Error(`Unexpected request: ${path}`);
-            if (init?.method !== 'POST') return Response.json({ ...storage.getState().profile });
+            // Cold Sync reads before renderSection publishes its view fixture. The HTTP
+            // boundary must serve the Account, not echo that not-yet-hydrated store.
+            if (init?.method !== 'POST') return Response.json(AccountProfileSchema.parse({ id: 'account-setup', name: state.profileName }));
             const body = JSON.parse(String(init?.body)) as { name: string };
             saved.push(body);
             return Response.json({ name: body.name, firstName: body.name, lastName: null, timestamp: Date.now() });

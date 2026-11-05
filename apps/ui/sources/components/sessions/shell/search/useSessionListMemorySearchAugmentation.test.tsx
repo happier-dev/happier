@@ -105,14 +105,16 @@ function daemonRequests() {
 }
 
 function sessionReadPaths() {
-    return network.httpRequests.map(request => new URL(request.url).pathname).filter(path => /^\/v2\/sessions\/[^/]+$/.test(path)
+    return network.httpRequests.filter(request => request.method === 'GET')
+        .map(request => new URL(request.url).pathname).filter(path => /^\/v2\/sessions\/[^/]+$/.test(path)
         && ![
-            '/v2/sessions/query', '/v2/sessions/active', '/v2/sessions/metadata-upgrades'
+            '/v2/sessions/query', '/v2/sessions/active', '/v2/sessions/metadata-upgrades', '/v2/sessions/read-batch'
         ].includes(path));
 }
 
 function sessionReadScopes() {
-    return network.httpRequests.filter(request => sessionReadPaths().includes(new URL(request.url).pathname)).map(request => ({
+    return network.httpRequests.filter(request => request.method === 'GET'
+        && sessionReadPaths().includes(new URL(request.url).pathname)).map(request => ({
         path: new URL(request.url).pathname,
         serverId: requestHome(request.url).serverId,
         accountId: parseToken(request.token!.replace(/^Bearer /, '')),
@@ -143,12 +145,18 @@ function cancelledRequestIds() {
 }
 
 function setMachines(machineIds: readonly string[], serverId: string = SERVER_A) {
-    const machines = machineIds.map(id => createMachineFixture({
-        id,
-        kind: 'persistent',
-        active: true,
-        activeAt: Date.now(),
-    }));
+    const home = homes.find(home => home.serverId === serverId)!;
+    const machines = machineIds.map(id => {
+        const row = createPlainMachineRowFixture({ id, accountId: home.accountId });
+        return createMachineFixture({
+            id,
+            kind: 'persistent',
+            active: true,
+            activeAt: Date.now(),
+            dataEncryptionKey: row.dataEncryptionKey,
+            access: row.access,
+        });
+    });
     inventory.set(serverId, machines);
     storage.setState(state => ({
         machineListByServerId: { ...state.machineListByServerId, [serverId]: machines },
@@ -312,8 +320,8 @@ beforeEach(async () => {
             return Response.json((inventory.get(home.serverId) ?? []).map(machine => ({ ...createPlainMachineRowFixture({ id: machine.id, accountId: home.accountId }), activeAt: machine.activeAt })));
         }
         const match = url.pathname.match(/^\/v2\/sessions\/([^/]+)$/);
-        if (match && ![
-            'query', 'active', 'metadata-upgrades'
+        if (match && (init?.method ?? 'GET') === 'GET' && ![
+            'query', 'active', 'metadata-upgrades', 'read-batch'
         ].includes(match[1]!)) {
             const id = decodeURIComponent(match[1]!);
             if (unavailableSessionIds.has(id)) {

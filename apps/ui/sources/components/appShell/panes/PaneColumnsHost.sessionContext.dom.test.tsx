@@ -21,7 +21,7 @@ vi.mock('react-native-gesture-handler', async () => ({
 // Keep account logic real rather than masking its import-order dependency with mocks.
 await import('@/sync/syncEngine');
 const { PaneColumnsHost } = await import('./PaneColumnsHost');
-const { getRightSidebarBuiltinTab, resolveRightSidebarTabPlacement } = await import('../rightSidebar/rightSidebarTabRegistry');
+const { resolveRightSidebarTabs, resolveRightSidebarTabPlacement } = await import('../rightSidebar/rightSidebarTabRegistry');
 const { SessionViewLayout } = await import('@/components/sessions/shell/view/SessionViewLayout');
 const { ChatHeaderView } = await import('@/components/sessions/transcript/ChatHeaderView');
 const { PaneMainComposerAnchor } = await import('@/components/ui/panels/paneMainComposerAnchor');
@@ -49,11 +49,16 @@ it('withdraws the covered session body while retaining its composer and the cata
             input={<PaneMainComposerAnchor><Control name="composer" /></PaneMainComposerAnchor>}
             shouldShowCliWarning onDismissCliWarning={() => {}} isLandscape deviceType="tablet" onBackPress={() => {}} />
     </>;
-    const render = async (contextOpen: boolean, arrangement: 'editor' | 'session' = 'editor') => act(async () => root.render(
-        <PaneColumnsHost main={main} arrangement={arrangement} emptyEditorPane={<input data-testid="editor" />}
-            rightPane={contextOpen ? <Control name="people" /> : null} rightOpen={contextOpen}
-            rightPlacement={resolveRightSidebarTabPlacement(getRightSidebarBuiltinTab('agents'), { scope: 'session', arrangement })} />,
-    ));
+    const render = async (contextOpen: boolean, arrangement: 'editor' | 'session' = 'editor') => {
+        const context = { scope: 'session', arrangement } as const;
+        const agents = resolveRightSidebarTabs(context).find(tab => tab.id === 'agents');
+        expect(agents).toBeDefined();
+        await act(async () => root.render(
+            <PaneColumnsHost main={main} arrangement={arrangement} emptyEditorPane={<input data-testid="editor" />}
+                rightPane={contextOpen ? <Control name="people" /> : null} rightOpen={contextOpen}
+                rightPlacement={resolveRightSidebarTabPlacement(agents!, context)} />,
+        ));
+    };
     await render(false);
     const transcript = container.querySelector<HTMLInputElement>('[data-testid="transcript"]')!;
     expect(transcript).not.toBeNull();
