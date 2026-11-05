@@ -1,5 +1,5 @@
 import { act } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Chart, DataTable, Metric } from '../../components/Data.js';
 import { WidgetPresentationProvider } from '../../components/WidgetPresentation.js';
@@ -10,6 +10,7 @@ import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierDataChart } from './Chart.js';
 import { HappierDataRows } from './DataRows.js';
 import { HappierDataMetric } from './Metric.js';
+import { ChartInteractionProvider } from './ChartDatum.js';
 
 const query = (root: HTMLElement, testID: string) => root.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 
@@ -19,6 +20,70 @@ function layout(element: Element | null, width: number) {
 }
 
 describe('public data nodes through React Native Web', () => {
+  it('keeps a string amount datum beside its row action so inspecting its precision never navigates', () => {
+    const navigate = vi.fn();
+    const reveal = vi.fn();
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <button data-testid={testID} title={datum.value} onClick={reveal}>{visual}</button>}>
+      <HappierDataRows theme={createSurfaceContext().theme} testID="work" showProportionShares={false}
+        columns={[{ label: 'Session' }, { label: 'Cost', proportion: true }]} rows={[[ 'Review', '$1.23 reported' ]]}
+        rowDatums={[{ label: 'Review', value: 'USD 1.23456', subtitle: 'Reported' }]}
+        renderIdentity={(_row, visual) => <button data-testid="open-session" onClick={navigate}>{visual}</button>} />
+    </ChartInteractionProvider>);
+    try {
+      const amount = query(mount.container, 'work-datum-0');
+      expect(amount?.title).toBe('USD 1.23456');
+      expect(mount.container.querySelector('button button')).toBeNull();
+      act(() => amount!.click());
+      expect(reveal).toHaveBeenCalledOnce();
+      expect(navigate).not.toHaveBeenCalled();
+      act(() => query(mount.container, 'open-session')!.click());
+      expect(navigate).toHaveBeenCalledOnce();
+      expect(reveal).toHaveBeenCalledOnce();
+    } finally { mount.unmount(); }
+  });
+  it.each(['en', 'fr'])('reveals missing share precision without targeting exact whole percentages in %s', locale => {
+    const context = createSurfaceContext({ locale });
+    const theme = context.theme;
+    const mount = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}><ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}`}>{visual}</span>}>
+      <HappierDataRows theme={theme} testID="shares" columns={[{ label: 'Project' }, { label: 'Tokens', proportion: true }]}
+        rows={[[ 'Glass', 100 ], [ 'Docs', 50 ]]} rowShares={[0.123456, 0.5]} showProportionShares={false} />
+    </ChartInteractionProvider></PluginUiProvider>);
+    try {
+      expect(query(mount.container, 'shares-share-datum-0')?.title).toContain(locale === 'fr' ? '12,35%' : '12.35%');
+      expect(query(mount.container, 'shares-share-datum-1')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+  it('offers exact metric precision only when the inline formatter hides it', () => {
+    const theme = createSurfaceContext().theme;
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}; ${datum.subtitle ?? ''}`}>{visual}</span>}>
+      <HappierDataMetric theme={theme} testID="compact" label="Tokens" value={4186010} unit="tokens" valueFormatter={() => '4.2M'} />
+      <HappierDataMetric theme={theme} testID="complete" label="Sessions" value={48} />
+      <HappierDataMetric theme={theme} testID="money" label="Cost" value={0} valueFormatter={() => '$0.00'} />
+    </ChartInteractionProvider>);
+    try {
+      expect(query(mount.container, 'compact-datum')!.title).toContain('Tokens: 4,186,010 tokens');
+      expect(query(mount.container, 'compact-value')!.textContent).toContain('4.2M');
+      expect(query(mount.container, 'complete-datum')).toBeNull();
+      expect(query(mount.container, 'money-datum')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+
+  it('offers exact row precision without adding a redundant target for complete inline counts', () => {
+    const theme = createSurfaceContext().theme;
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}; ${datum.subtitle ?? ''}`}>{visual}</span>}>
+      <HappierDataRows theme={theme} testID="precise" showProportionShares={false} columns={[{ label: 'Project' }, { label: 'Tokens', proportion: true }]}
+        valueFormatter={value => value > 1000 ? '4.2M' : String(value)} rows={[[ 'Glass', 4186010 ], ['Small', 48]]} />
+    </ChartInteractionProvider>);
+    try {
+      expect(query(mount.container, 'precise-datum-0')!.title).toContain('Glass: 4,186,010');
+      expect(query(mount.container, 'precise-datum-1')).toBeNull();
+      expect(query(mount.container, 'precise-row-0')!.textContent).toContain('4.2M');
+    } finally { mount.unmount(); }
+  });
   it('recomposes the same chart for compact and tall measured widget viewports without dropping or hiding points', async () => {
     const context = createSurfaceContext();
     const points = [{ x: 'Mon', y: 214 }, { x: 'Tue', y: 236 }, { x: 'Wed', y: 183 }];

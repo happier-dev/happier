@@ -8,6 +8,7 @@ import { HappierText } from '../text/Text.js';
 import { HappierProgress } from '../content/Foundation.js';
 import {
   formatHappierDataShare,
+  formatHappierDataExactShare,
   formatHappierDataValue,
   resolveHappierDataShares,
   estimateHappierDataColumnWidths,
@@ -16,6 +17,7 @@ import {
   type HappierDataValue,
 } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles, type HappierDataTextStyles } from './dataText.js';
+import { ChartDatum, useChartInteractionAvailable, type HappierChartDatum } from './ChartDatum.js';
 
 export type HappierDataRowsProps = Readonly<{
   /** The collection's name, for assistive technology; the frame's title names it on screen. */
@@ -39,6 +41,10 @@ export type HappierDataRowsProps = Readonly<{
   rowShares?: readonly (number | null)[];
   density?: 'compact' | 'comfortable';
   renderRow?: (row: readonly HappierDataValue[], visual: ReactNode, index: number) => ReactNode;
+  /** An admitted exact amount for domain units; explicit null means its inline value is already exact. */
+  rowDatums?: readonly (HappierChartDatum | null)[];
+  /** A row's identity action stays beside its independently inspectable amount, never around it. */
+  renderIdentity?: (row: readonly HappierDataValue[], visual: ReactNode, index: number) => ReactNode;
   /** One admitted boolean status per row; its label carries the meaning beyond color. */
   marks?: readonly Readonly<{ passed: boolean; label: string; meaning: 'good' | 'bad' | 'neutral' }>[];
   /**
@@ -80,6 +86,7 @@ function IncompleteLine(props: Readonly<{ text: string; styles: HappierDataTextS
  */
 export function HappierDataRows(props: HappierDataRowsProps) {
   const text = useHappierDataTextStyles(props.theme);
+  const interactive = useChartInteractionAvailable();
   const proportionIndex = props.columns.findIndex((column) => column.proportion === true);
   const shares = proportionIndex < 0 ? [] : resolveHappierDataShares(props.rows.map((row) => {
     const value = row[proportionIndex];
@@ -102,11 +109,33 @@ export function HappierDataRows(props: HappierDataRowsProps) {
         const trail = props.rowTrails?.[rowIndex];
         const amount = proportionIndex < 0 ? null : row[proportionIndex];
         const share = proportionIndex < 0 || typeof amount !== 'number' || !Number.isFinite(amount) ? null : shares[rowIndex] ?? 0;
+        const amountInk = amount === null || amount === undefined ? null : <HappierText style={text.strong} tabularNumbers>
+          {visibleValue(amount)}
+          {props.showProportionShares === false || share === null ? null : <HappierText style={text.caption} tabularNumbers>{` ${formatHappierDataShare(share, text.locale)}`}</HappierText>}
+        </HappierText>;
+        const exactAmount = typeof amount === 'number' && Number.isFinite(amount) ? formatHappierDataValue(amount, text.locale) : null;
+        const shownShare = rowShare ?? (props.showProportionShares === false ? null : share);
+        const exactShare = shownShare === null ? null : formatHappierDataExactShare(shownShare, text.locale);
+        const hiddenShare = shownShare !== null && exactShare !== `${formatHappierDataValue(Math.round(shownShare * 100), text.locale)}%`;
+        const hiddenAmount = props.rowDatums?.[rowIndex] !== null && exactAmount !== null
+          && amount !== null && amount !== undefined && !visibleValue(amount).includes(exactAmount);
+        const admittedDatum = props.rowDatums?.[rowIndex];
+        const hiddenPrecision = Boolean(admittedDatum) || hiddenAmount || hiddenShare;
+        const amountTarget = admittedDatum || exactAmount !== null && amount !== null && amount !== undefined && (hiddenAmount || rowShare === null && hiddenShare)
+          ? <ChartDatum testID={props.testID ? `${props.testID}-datum-${rowIndex}` : undefined}
+            datum={admittedDatum ?? { label: title, value: exactAmount!, color: props.proportionColors?.[rowIndex],
+              subtitle: [props.columns[proportionIndex]?.label, amount === null || amount === undefined ? null : visibleValue(amount), exactShare, line].filter(Boolean).join(' · ') }}>
+            {amountInk}
+          </ChartDatum> : amountInk;
+        const shareInk = rowShare === null ? null : <View style={{ alignSelf: 'center', borderRadius: props.theme.radii.small, paddingHorizontal: props.theme.spacing.xsmall,
+          backgroundColor: props.theme.colors.control }}>
+          <HappierText style={text.captionStrong} tabularNumbers>{formatHappierDataShare(rowShare, text.locale)}</HappierText>
+        </View>;
         const visual = (
           <View
             key={props.rowIds?.[rowIndex] ?? rowIndex}
             role="listitem"
-            accessible
+            accessible={!(props.renderIdentity || interactive && hiddenPrecision)}
             accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)),
               ...(rowShare !== null ? [formatHappierDataShare(rowShare, text.locale)] : share === null ? [] : [formatHappierDataShare(share, text.locale)])].join(', ')}
             testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
@@ -114,19 +143,16 @@ export function HappierDataRows(props: HappierDataRowsProps) {
             <View style={{ flexDirection: 'row', alignItems: 'baseline', columnGap: HAPPIER_DATA_METRICS.columnGapPx }}>
               {mark ? <RowMark mark={mark} theme={props.theme} styles={text} testID={props.testID ? `${props.testID}-mark-${rowIndex}` : undefined} /> : null}
               {lead ? <View style={{ alignSelf: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{lead}</View> : null}
-              <HappierText style={{ ...text.body, flexShrink: 1, flexGrow: trail ? 0 : 1 }} numberOfLines={1}>{title}</HappierText>
+              {props.renderIdentity ? <View style={{ flexShrink: 1, flexGrow: trail ? 0 : 1 }}>
+                {props.renderIdentity(row, <HappierText style={text.body} numberOfLines={1}>{title}</HappierText>, rowIndex)}
+              </View> : <HappierText style={{ ...text.body, flexShrink: 1, flexGrow: trail ? 0 : 1 }} numberOfLines={1}>{title}</HappierText>}
               {trail ? <View style={{ alignSelf: 'center', flexGrow: 1, flexDirection: 'row' }} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants">{trail}</View> : null}
-              {amount === null || amount === undefined ? null : (
-                <HappierText style={text.strong} tabularNumbers>
-                  {visibleValue(amount)}
-                  {props.showProportionShares === false || share === null ? null : <HappierText style={text.caption} tabularNumbers>{` ${formatHappierDataShare(share, text.locale)}`}</HappierText>}
-                </HappierText>
-              )}
-              {rowShare === null ? null : <View style={{ alignSelf: 'center', borderRadius: props.theme.radii.small, paddingHorizontal: props.theme.spacing.xsmall,
-                backgroundColor: props.theme.colors.control }}>
-                <HappierText style={text.captionStrong} tabularNumbers>{formatHappierDataShare(rowShare, text.locale)}</HappierText>
-              </View>}
+              {amountTarget}
+              {rowShare !== null && hiddenShare && exactShare !== null ? <ChartDatum
+                testID={props.testID ? `${props.testID}-share-datum-${rowIndex}` : undefined}
+                datum={{ label: title, value: exactShare, subtitle: [props.columns[proportionIndex]?.label,
+                  amount === null || amount === undefined ? null : visibleValue(amount)].filter(Boolean).join(' · ') }}>{shareInk}</ChartDatum> : shareInk}
             </View>
             {/* The facts under a title wrap to a second line rather than losing the last ones to an ellipsis. */}
             {line ? <HappierText style={text.caption} numberOfLines={2}>{line}</HappierText> : null}

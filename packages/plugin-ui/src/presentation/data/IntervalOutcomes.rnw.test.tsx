@@ -6,10 +6,60 @@ import { SURFACE_CONTEXT_THEME_FIXTURE } from '../../../../plugin-sdk/src/ui/sur
 import { HappierUiPlatformProvider } from '../../environment/context.js';
 import { IntervalTimeline, selectIntervalTrackRun, stepIntervalTrackRun } from './IntervalTimeline.js';
 import { OutcomeScatter } from './OutcomeScatter.js';
+import { ChartInteractionProvider } from './ChartDatum.js';
 
 const query = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
 describe('neutral intervals and outcomes', () => {
+  it.each(['full', 'tile'] as const)('uses admitted domain precision without changing visible date wording at %s', size => {
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID, renderTrigger) =>
+      <span data-testid={testID} title={datum.value}>{renderTrigger ? renderTrigger({ onHoverChange() {}, onFocusChange() {}, onPress() {} }) : visual}</span>}>
+      <IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="dated" label="Resets" size={size} domain={{ start: 0, end: 24 }}
+        geometry={{ width: 500, height: 160 }} formatValue={() => 'Tomorrow, 12:00'}
+        intervals={[{ id: 'reset', kind: 'point', label: 'Weekly', start: 12, end: 12,
+          datum: { label: 'Weekly', value: '2026-11-01T12:00:30.125Z · 69.875%' } }]} />
+    </ChartInteractionProvider>);
+    try {
+      expect(query(mount.container, size === 'full' ? 'dated-datum-reset' : 'dated-values-datum-reset')?.title).toBe('2026-11-01T12:00:30.125Z · 69.875%');
+      if (size === 'full') {
+        act(() => query(mount.container, 'dated-select-reset')!.click());
+        expect(query(mount.container, 'dated-readout')?.textContent).toContain('Tomorrow, 12:00');
+      }
+      expect(mount.container.textContent).not.toContain('2026-11-01T12:00:30.125Z');
+    } finally { mount.unmount(); }
+  });
+  it('keeps dense scatter marks inspectable by pointer without overlapping native selection controls', () => {
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}`}>{visual}</span>}>
+      <OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="dense-scatter" label="Samples" xLabel="Cost" yLabel="Merged"
+        geometry={{ width: 390, height: 180 }} points={[{ id: 'a', label: 'Audit', x: 1, y: 0 }, { id: 'b', label: 'Docs', x: 1, y: 0 }]} />
+    </ChartInteractionProvider>);
+    try {
+      expect(query(mount.container, 'dense-scatter-mark-a')?.title).toContain('Audit: Cost: 1');
+      expect(query(mount.container, 'dense-scatter-mark-b')?.title).toContain('Docs: Cost: 1');
+      expect(query(mount.container, 'dense-scatter-select-a')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+  it('binds scatter marks and timeline controls to the host datum without replacing their selection', () => {
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID, renderTrigger) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}`}>{renderTrigger ? renderTrigger({
+        onHoverChange() {}, onFocusChange() {}, onPress() {},
+      }) : visual}</span>}>
+      <OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="hover-scatter" label="Runs" xLabel="Tokens" yLabel="Merged"
+        formatX={value => value > 1000 ? '4.2M' : String(value)}
+        geometry={{ width: 500, height: 320 }} points={[{ id: 'a', label: 'Audit', x: 4186010, y: 2 }, { id: 'b', label: 'Docs', x: 1, y: 0 }]} />
+      <IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="hover-time" label="Resets" domain={{ start: 0, end: 24 }}
+        geometry={{ width: 500, height: 160 }} intervals={[{ id: 'reset', kind: 'point', label: 'Weekly', start: 12, end: 12 }]} />
+    </ChartInteractionProvider>);
+    try {
+      expect(query(mount.container, 'hover-scatter-datum-a')?.title).toContain('4,186,010');
+      expect(query(mount.container, 'hover-time-datum-reset')?.title).toContain('12');
+      act(() => query(mount.container, 'hover-scatter-select-a')!.click());
+      act(() => query(mount.container, 'hover-time-select-reset')!.click());
+      expect(query(mount.container, 'hover-scatter-readout')?.textContent).toContain('4.2M');
+      expect(query(mount.container, 'hover-time-readout')?.textContent).toContain('Weekly');
+    } finally { mount.unmount(); }
+  });
   it('names a caller-chosen scatter point beside its mark and draws a supplied reference value at its exact position', () => {
     const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="scatter" label="Runs"
       xLabel="Cost" yLabel="Merged" geometry={{ width: 500, height: 320 }}

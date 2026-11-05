@@ -6,6 +6,7 @@ import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
 import { formatHappierDataValue, type HappierDataValue } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
+import { ChartDatum } from './ChartDatum.js';
 
 /** One comparison under a metric ("+18% vs the week before"), coloured only by what it means. */
 export type HappierDataMetricComparison = Readonly<{
@@ -131,7 +132,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       </View>
     )
   ) : null;
-  return (
+  const visual = (
     <View
       testID={props.testID}
       accessible
@@ -207,4 +208,13 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       ) : null}
     </View>
   );
+  // Currency/percent affixes already state the complete value. Only abbreviated or rounded ink
+  // needs another target; the datum uses the same admitted precision as the accessible figure.
+  return typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact)
+    ? <ChartDatum testID={props.testID ? `${props.testID}-datum` : undefined}
+      datum={{ label: props.label, value: props.unit ? `${exact} ${props.unit}` : exact,
+        subtitle: [value, props.caption, props.comparison ? `${props.comparison.value} ${props.comparison.label}` : null].filter(Boolean).join(' · ') }}>
+      {visual}
+    </ChartDatum>
+    : visual;
 }

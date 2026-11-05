@@ -11,6 +11,7 @@ import { HappierDataRows } from './DataRows.js';
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
+import { ChartDatum, type HappierChartDatum } from './ChartDatum.js';
 
 export type IntervalTimelineInterval = Readonly<{
   id: string;
@@ -27,6 +28,8 @@ export type IntervalTimelineInterval = Readonly<{
   /** A source-provided texture; any meaning belongs in the consumer's label or annotation. */
   pattern?: 'solid' | 'hatched';
   annotation?: string;
+  /** Exact domain wording for interaction only; axis, rows and selection readout retain their formatter. */
+  datum?: HappierChartDatum;
   /** `layout="lanes"`: the lane this interval is drawn in (a machine, an agent). */
   lane?: string;
   /** `layout="lanes"`: intervals sharing a track id (one run's busy spans and waits) stay on one line. */
@@ -294,12 +297,16 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                   {interval.pattern === 'hatched' ? <HappierDataHatch theme={props.theme} /> : null}
                 </View>
                 {/* Pointer: the target covers the whole track over the ink, one per run. */}
-                {touchTrack ? null : <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
+                {touchTrack ? null : <View style={{ ...place, top: 0, height: trackHeight }}>
+                  <ChartDatum testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}
+                    datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
+                    renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
                   accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
                   hitSlop={{ top: trackGap / 2, bottom: trackGap / 2 }}
                   hitReach={{ top: trackGap / 2, bottom: trackGap / 2, left: 0, right: 0 }}
-                  onPress={() => setSelectedId(interval.id)} onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); }}
-                  style={{ ...place, top: 0, bottom: 0 }} />}
+                  onPress={() => { setSelectedId(interval.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
+                  onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); interaction.onFocusChange(focused); }}
+                  style={{ height: trackHeight }} />}><View /></ChartDatum></View>}
               </Fragment>;
             })}
           </View>;
@@ -308,12 +315,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       </View>) : props.intervals.map((interval) => {
         const { start, end, span } = marksOf(interval);
         const color = interval.color ?? props.theme.colors.info;
-        return <HappierPressable key={interval.id} testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
-          accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
-          onPress={() => setSelectedId(interval.id)} onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); }}
-          hitReach={{ top: 0, bottom: 0 }}
-          style={{ minHeight: rowHeight, justifyContent: 'center' }}>
-          <View aria-hidden importantForAccessibility="no-hide-descendants">
+        const visual = <View aria-hidden importantForAccessibility="no-hide-descendants">
             <HappierText style={text.caption}>{interval.label}</HappierText>
             <View style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, marginTop: HAPPIER_DATA_METRICS.axisGapPx }}>
               <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
@@ -332,8 +334,17 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                 style={{ position: 'absolute', left: `${end * 100}%`, width: HAPPIER_DATA_METRICS.lineStrokePx,
                   height: HAPPIER_DATA_METRICS.proportionHeightPx, backgroundColor: color }} /> : null}
             </View>
-          </View>
-        </HappierPressable>;
+          </View>;
+        return <ChartDatum key={interval.id} testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}
+          datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
+          renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
+          accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
+          onPress={() => { setSelectedId(interval.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
+          onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); interaction.onFocusChange(focused); }}
+          hitReach={{ top: 0, bottom: 0 }}
+          style={{ minHeight: rowHeight, justifyContent: 'center' }}>
+          {visual}
+        </HappierPressable>}>{visual}</ChartDatum>;
       })}
       <View aria-hidden importantForAccessibility="no-hide-descendants" testID={props.testID ? `${props.testID}-axis` : undefined}
         style={{ flexDirection: 'row', justifyContent: 'space-between',
@@ -359,6 +370,11 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
     {showPlot && !valuesExpanded ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.intervals.map((interval) => interval.id)}
+      renderRow={(_row, visual, index) => {
+        const interval = props.intervals[index]!;
+        return interval.datum ? <ChartDatum datum={interval.datum}
+          testID={props.testID ? `${props.testID}-values-datum-${interval.id}` : undefined}>{visual}</ChartDatum> : visual;
+      }}
       columns={[...(lanesLayout ? [{ label: props.laneLabel ?? '' }] : []), { label: props.label }, { label: startLabel }, ...(hasIntervals ? [{ label: endLabel }] : []), { label: 'Annotation' }]}
       rows={props.intervals.map(rowValues)} />}
   </View>;

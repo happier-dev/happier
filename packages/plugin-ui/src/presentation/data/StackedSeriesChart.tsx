@@ -13,6 +13,8 @@ import { readHappierVisibleLayoutWidth } from '../layout/pageMetrics.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { HappierDataTable } from './DataRows.js';
+import { ChartDatum, useChartInteractionAvailable, type HappierChartDatumInteraction } from './ChartDatum.js';
+import { SeriesHistoryDatum } from './SeriesHistoryDatum.js';
 import { buildHappierSeriesPath, describeHappierSeriesBucket, describeHappierSeriesCoordinate, formatHappierDataValue, resolveHappierSeriesGeometry, resolveHappierSeriesRampColor, resolveHappierSeriesRampStep, type HappierSeries, type HappierSeriesBucket } from './dataModel.js';
 
 /** A line-chart fill between caller-produced bounds; it adds no values or forecast semantics. */
@@ -238,6 +240,8 @@ const AXIS_TICK_REACH_PX = 40;
 const MIN_AREA_RUN_SAMPLES = 4;
 
 export function StackedSeriesChart(props: StackedSeriesChartProps) {
+  const interactive = useChartInteractionAvailable();
+  const defaultDatum = interactive && !props.renderBucket && !props.renderPlotOverlay;
   const patternId = `chart-hatch-${useId().replace(/:/gu, '')}`;
   const thresholdId = `chart-threshold-${useId().replace(/:/gu, '')}`;
   const text = useHappierDataTextStyles(props.theme);
@@ -396,30 +400,55 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   };
   // A bucket's hit area never reaches a neighbouring bucket: bar columns split their gap, stacked
   // exact-value rows stay on their own row.
-  const bucketControl = (bucket: HappierSeriesBucket, index: number, visual: ReactNode, style: HappierPortableStyle | undefined, hitReach: HappierHitReach, key: string | number = bucket.id) => <HappierPressable key={key}
+  const datumOf = (bucket: HappierSeriesBucket) => ({
+    label: describeHappierSeriesCoordinate(bucket, reading),
+    value: bucket.values.map(entry => {
+      if (entry.value === null) return `${entry.label}: ${unknown}`;
+      const exact = formatHappierDataValue(magnitude(entry.value), text.locale);
+      const visible = format(entry.value);
+      return `${entry.label}: ${visible.includes(exact) ? visible : `${visible} (${exact})`}`;
+    }).join(' · '),
+    subtitle: [bucket.annotation, props.summary].filter(Boolean).join(' · ') || undefined,
+    color: bucket.values[0]?.color ?? color(0),
+  });
+  const bucketControl = (bucket: HappierSeriesBucket, index: number, visual: ReactNode, style: HappierPortableStyle | undefined,
+    hitReach: HappierHitReach, key: string | number = bucket.id, withDatum = false) => {
+    const datum = defaultDatum && withDatum;
+    const control = (interaction?: HappierChartDatumInteraction) => <HappierPressable
     hitReach={hitReach}
     testID={props.testID ? `${props.testID}-bucket-${bucket.id}` : undefined}
     controlRef={(control) => { if (control) controls.current.set(bucket.id, control); else controls.current.delete(bucket.id); }}
     accessibilityLabel={describe(bucket)} selected={selectedId === bucket.id}
-    onPress={() => select(bucket.id)} onFocusChange={(focused) => { plotHasFocus.current = focused; if (focused) setSelectedId(bucket.id); }}
+    onPress={() => { select(bucket.id); interaction?.onPress(); }}
+    onHoverChange={interaction?.onHoverChange}
+    onFocusChange={(focused) => { plotHasFocus.current = focused; if (focused) setSelectedId(bucket.id); interaction?.onFocusChange(focused); }}
     onKeyDown={(key) => {
       const id = selectByKey(index, key);
       if (id === null) return false;
       controls.current.get(id)?.focus(); return true;
-    }} style={style}>{visual}</HappierPressable>;
+    }} style={datum ? { height: '100%' } : style}>{visual}</HappierPressable>;
+    return datum ? <View key={key} style={style}><ChartDatum datum={datumOf(bucket)}
+      testID={props.testID ? `${props.testID}-bucket-${bucket.id}-datum` : undefined} renderTrigger={control}>{visual}</ChartDatum></View>
+      : <Fragment key={key}>{control()}</Fragment>;
+  };
   const activeIndex = Math.max(0, geometry.buckets.findIndex(bucket => bucket.id === selectedId));
   const activeBucket = geometry.buckets[activeIndex];
   const historyCanInteract = denseLine && !nativeInline && (nativeTarget === undefined || height >= nativeTarget);
-  const historyControl = historyCanInteract && activeBucket ? <HappierPressable
+  const historyControl = historyCanInteract && activeBucket ? <SeriesHistoryDatum enabled={defaultDatum}
+    buckets={geometry.buckets} selectedIndex={activeIndex} indexAt={geometry.indexAt} datumOf={datumOf} width={plotWidth} height={height}
+    testID={props.testID ? `${props.testID}-history-datum` : undefined}
+    renderControl={(interaction, onKeyboardUse) => <HappierPressable
     testID={props.testID ? `${props.testID}-history-control` : undefined}
     controlRef={control => { historyControlRef.current = control; }}
     accessibilityLabel={describe(activeBucket)} accessibilityPositionInSet={activeIndex + 1} accessibilitySetSize={geometry.buckets.length}
     accessibilityActions={nativeTarget === undefined ? undefined : [{ name: 'increment' }, { name: 'decrement' }]}
     onAccessibilityAction={nativeTarget === undefined ? undefined : ({ nativeEvent }) => {
+      onKeyboardUse?.();
       if (nativeEvent.actionName === 'increment' || nativeEvent.actionName === 'decrement')
         selectByKey(activeIndex, nativeEvent.actionName === 'increment' ? 'ArrowRight' : 'ArrowLeft');
     }}
-    onFocusChange={focused => { plotHasFocus.current = focused; if (focused && selectedId === null) setSelectedId(activeBucket.id); }}
+    onHoverChange={interaction?.onHoverChange}
+    onFocusChange={focused => { plotHasFocus.current = focused; if (focused && selectedId === null) setSelectedId(activeBucket.id); interaction?.onFocusChange(focused); }}
     onPress={event => {
       const native = event?.nativeEvent;
       // RN supplies locationX; RNW's click boundary supplies a MouseEvent. Keyboard clicks (detail=0)
@@ -430,15 +459,13 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
             ? native.offsetX : null
         : null;
       if (x !== null && Number.isFinite(x)) {
-        let nearest = activeIndex;
-        for (let index = 0; index < geometry.buckets.length; index += 1) {
-          if (Math.abs(geometry.xAt(index) - x) < Math.abs(geometry.xAt(nearest) - x)) nearest = index;
-        }
-        select(geometry.buckets[nearest]!.id);
+        const nearest = geometry.indexAt(x);
+        if (nearest !== null) select(geometry.buckets[nearest]!.id);
       } else select(activeBucket.id);
+      interaction?.onPress();
     }}
-    onKeyDown={key => selectByKey(activeIndex, key) !== null}
-    style={{ position: 'absolute', left: 0, top: 0, width: plotWidth, height }}><View /></HappierPressable> : null;
+    onKeyDown={key => { onKeyboardUse?.(); return selectByKey(activeIndex, key) !== null; }}
+    style={{ width: plotWidth, height }}><View /></HappierPressable>} /> : null;
 
   const bandPaths = props.variant !== 'line' || plotWidth <= 0 ? [] : (props.bands ?? []).flatMap((band) => {
     const lowerIndex = props.series.findIndex((entry) => entry.id === band.lowerSeriesId);
@@ -616,7 +643,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
             tabularNumbers>{format(peakTotal)}</HappierText> : null;
         if (props.renderBucket) return <View key={columnKey} style={columnStyle}>{peakLabel}{props.renderBucket(bucket, visual, () => select(bucket.id))}</View>;
         if (nativeInline || nativeDense) return <View key={columnKey} style={columnStyle} aria-hidden importantForAccessibility="no-hide-descendants">{peakLabel}{visual}</View>;
-        return bucketControl(bucket, index, <>{peakLabel}{visual}</>, columnStyle, { left: barGap / 2, right: barGap / 2 }, columnKey);
+        return bucketControl(bucket, index, <>{peakLabel}{visual}</>, columnStyle, { left: barGap / 2, right: barGap / 2 }, columnKey, true);
       })}
     </View>
     {props.renderPlotOverlay && plotWidth > 0 && geometry.buckets.length ? <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width: plotWidth, height }}>
@@ -639,8 +666,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         </View>;
         return <View key={bucket.id} testID={axisId(index)} style={{ ...slot, height: text.caption.lineHeight }}>
           {tick ? <HappierText style={{ ...text.caption, position: 'absolute',
-            // An edge bar's tick reads inward from the plot's edge, which would otherwise cut half of it off.
-            ...(index === 0 ? { left: 0, right: -AXIS_TICK_REACH_PX, textAlign: 'left' } : index === geometry.buckets.length - 1 ? { left: -AXIS_TICK_REACH_PX, right: 0, textAlign: 'right' }
+            // A slot wide enough for a centred label keeps it under its bar (a two-bar chart). In a narrow slot an edge
+            // bar's tick reads inward from the plot's edge, which would otherwise cut half of it off.
+            ...(barSlotWidth >= AXIS_TICK_REACH_PX * 2 ? { left: 0, right: 0, textAlign: 'center' }
+              : index === 0 ? { left: 0, right: -AXIS_TICK_REACH_PX, textAlign: 'left' } : index === geometry.buckets.length - 1 ? { left: -AXIS_TICK_REACH_PX, right: 0, textAlign: 'right' }
               : { left: -AXIS_TICK_REACH_PX / 2, right: -AXIS_TICK_REACH_PX / 2, textAlign: 'center' }) }}>{tick.label}</HappierText> : null}
         </View>;
       })}

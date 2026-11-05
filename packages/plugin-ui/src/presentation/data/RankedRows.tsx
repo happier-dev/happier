@@ -11,6 +11,8 @@ export type RankedRowsProps = Readonly<{
   basis?: string; unknownLabel?: string; size?: 'inline' | 'tile' | 'full'; testID?: string;
   barAppearance?: HappierDataRowsProps['proportionAppearance'];
   renderRow?: (row: RankedRowsProps['rows'][number], visual: ReactNode) => ReactNode;
+  renderIdentity?: (row: RankedRowsProps['rows'][number], visual: ReactNode) => ReactNode;
+  rowDatums?: HappierDataRowsProps['rowDatums'];
   /** Visible amount ink ("317M"); exact values stay in each row's accessible label. */
   valueFormatter?: (value: number) => string;
   /** The supplied whole; each known row then shows its share of it. Never inferred from the rows. */
@@ -35,6 +37,8 @@ export function RankedRows(props: RankedRowsProps) {
         ? props.rows.map(row => row.value !== null && Number.isFinite(row.value) && row.value >= 0 ? row.value / props.total! : null) : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       renderRow={props.renderRow ? (_row, visual, index) => props.renderRow!(props.rows[index]!, visual) : undefined}
+      renderIdentity={props.renderIdentity ? (_row, visual, index) => props.renderIdentity!(props.rows[index]!, visual) : undefined}
+      rowDatums={props.rowDatums}
       columns={[{ label: props.label }, { label: props.basis ?? props.label, proportion: true }, { label: 'Annotation' }]}
       rows={props.rows.map(row => [row.label, row.value !== null && Number.isFinite(row.value) ? row.value : props.unknownLabel ?? 'Unknown',
         row.annotation ?? ''])} />

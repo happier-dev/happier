@@ -10,6 +10,7 @@ import { Path, Svg } from 'react-native-svg';
 import { BurnUpChart } from '@happier-dev/plugin-ui/presentation';
 import { HappierDataChart } from './Chart.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
+import { ChartInteractionProvider } from './ChartDatum.js';
 
 // RNW selects its instant AnimatedMock in NODE_ENV=test. Exercise its actual JS animation driver.
 vi.hoisted(() => { process.env.NODE_ENV = 'development'; });
@@ -27,6 +28,65 @@ function animates(element: Element): boolean {
 }
 
 describe('neutral series dataset', () => {
+  it('uses the pointer position for dense history datum precision instead of the first sample', () => {
+    const drawInk = vi.fn((visual: ReactNode) => visual);
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID, renderTrigger) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}`}>{renderTrigger ? renderTrigger({
+        onHoverChange() {}, onFocusChange() {}, onPress() {},
+      }) : visual}</span>}>
+      <StackedSeriesChart theme={theme} label="Observed" testID="dense-hover" width={2} viewportHeight={24} variant="line" size="inline"
+        renderInk={drawInk}
+        series={[{ id: 'used', label: 'Used', points: [{ id: 'a', x: 'A', y: 10 }, { id: 'b', x: 'B', y: 20 }, { id: 'c', x: 'C', y: 30 }] }]} />
+    </ChartInteractionProvider>);
+    try {
+      const control = find(mount.container, 'dense-hover-history-control');
+      drawInk.mockClear();
+      act(() => control.dispatchEvent(new MouseEvent('pointermove', { clientX: 1, bubbles: true })));
+      expect(find(mount.container, 'dense-hover-history-datum')?.title).toContain('B: Used: 20');
+      expect(mount.container.querySelectorAll('[data-testid="dense-hover-history-control"]')).toHaveLength(1);
+      expect(drawInk).not.toHaveBeenCalled();
+      act(() => control.focus());
+      expect(find(mount.container, 'dense-hover-history-datum')?.title).toContain('A: Used: 10');
+      act(() => control.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+      act(() => control.dispatchEvent(new MouseEvent('pointermove', { clientX: 1, bubbles: true })));
+      expect(find(mount.container, 'dense-hover-history-datum')?.title).toContain('B: Used: 20');
+      act(() => control.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })));
+      expect(find(mount.container, 'dense-hover-history-datum')?.title).toContain('A: Used: 10');
+    } finally { mount.unmount(); }
+  });
+  it.each([320, 2])('keeps an incumbent plot overlay authoritative at width %s', width => {
+    const selected = vi.fn();
+    const datums = vi.fn((_datum, visual) => visual);
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={datums}>
+      <StackedSeriesChart theme={theme} label="Observed" testID="adapted" width={width} viewportHeight={24} variant="line" size="inline"
+        renderPlotOverlay={() => <View testID="incumbent-lens" />} onSelect={selected}
+        series={[{ id: 'used', label: 'Used', points: [{ id: 'a', x: 'A', y: 10 }, { id: 'b', x: 'B', y: 20 }, { id: 'c', x: 'C', y: 30 }] }]} />
+    </ChartInteractionProvider>);
+    try {
+      expect(find(mount.container, 'incumbent-lens')).toBeTruthy();
+      expect(datums).not.toHaveBeenCalled();
+      act(() => find(mount.container, width === 2 ? 'adapted-history-control' : 'adapted-bucket-a').click());
+      expect(selected).toHaveBeenCalledExactlyOnceWith('a');
+      expect(datums).not.toHaveBeenCalled();
+    } finally { mount.unmount(); }
+  });
+  it('binds an unadapted series bucket to the host datum while retaining its selection control', () => {
+    const selected = vi.fn();
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID, renderTrigger) =>
+      <span data-testid={testID} title={`${datum.label}: ${datum.value}`}>{renderTrigger ? renderTrigger({
+        onHoverChange() {}, onFocusChange() {}, onPress() {},
+      }) : visual}</span>}>
+      <BurnUpChart theme={theme} label="Allowance" testID="hover-burn" width={320} size="full" onSelect={selected}
+        series={[{ id: 'used', label: 'Used', points: [{ id: 'mon', x: 'Mon', y: 12.345 }, { id: 'tue', x: 'Tue', y: 25 }] }]}
+        valueFormatter={value => `${Math.round(value)}%`} />
+    </ChartInteractionProvider>);
+    try {
+      expect(find(mount.container, 'hover-burn-bucket-mon-datum')?.title).toContain('12.345');
+      act(() => find(mount.container, 'hover-burn-bucket-mon').click());
+      expect(selected).toHaveBeenCalledExactlyOnceWith('mon');
+      expect(find(mount.container, 'hover-burn-readout').textContent).toContain('12%');
+    } finally { mount.unmount(); }
+  });
   it.each(['web', 'android'] as const)('lets the caller control exact-value Details on %s without a competing disclosure state', async platform => {
     const onValuesExpandedChange = vi.fn();
     const render = (valuesExpanded: boolean) => <HappierUiPlatformProvider platform={{ platform, colorScheme: 'light' }}>
@@ -797,6 +857,18 @@ describe('few-bucket bar columns', () => {
       expect(axis(12).textContent).toBe('12P');
       expect(axis(7).textContent).toBe('');
       expect(axis(6).parentElement!.children).toHaveLength(24);
+    } finally { mount.unmount(); }
+  });
+  it('centres an edge bar tick under its bar when the slot is wide, so a two-bar chart names each bar', () => {
+    const input = [{ id: 'a', label: 'QA A', points: [{ id: 'q1', x: 0, y: 3, label: 'QA 1' }, { id: 'q2', x: 1, y: 2, label: 'QA 2' }] }];
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Two" series={input}
+      width={480} viewportHeight={60} variant="bar" size="tile" testID="two" />);
+    try {
+      const label = (index: number) => find(mount.container, `two-axis-${index}`).firstElementChild as HTMLElement;
+      expect(label(0).textContent).toBe('QA 1');
+      expect(label(1).textContent).toBe('QA 2');
+      expect([label(0).style.textAlign, label(1).style.textAlign]).toEqual(['center', 'center']);
+      expect([label(0).style.left, label(0).style.right]).toEqual(['0px', '0px']);
     } finally { mount.unmount(); }
   });
   it('places plain string ticks on buckets (first on the first, last on the last), never between bars', () => {

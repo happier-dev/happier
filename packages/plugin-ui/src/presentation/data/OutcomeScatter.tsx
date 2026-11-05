@@ -9,6 +9,7 @@ import { HappierText } from '../text/Text.js';
 import { HappierDataRows } from './DataRows.js';
 import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
+import { ChartDatum, ChartMark } from './ChartDatum.js';
 
 function finiteDomain(values: readonly (number | null)[]): readonly [number, number] | null {
   let min = Infinity;
@@ -63,6 +64,14 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   const unknown = props.unknownLabel ?? 'Unknown';
   const format = (value: number | null) => value !== null && Number.isFinite(value) ? formatHappierDataValue(value, text.locale) : unknown;
   const formatX = (value: number | null) => value !== null && Number.isFinite(value) && props.formatX ? props.formatX(value) : format(value);
+  const exactX = (value: number | null) => {
+    const visible = formatX(value);
+    const exact = format(value);
+    return visible.includes(exact) ? visible : `${visible} (${exact})`;
+  };
+  const datumOf = (point: OutcomeScatterPoint) => ({ label: point.label,
+    value: `${props.xLabel}: ${exactX(point.x)} · ${props.yLabel}: ${format(point.y)}`,
+    subtitle: [point.annotation, props.basis].filter(Boolean).join(' · '), color: point.color });
   const describe = (point: OutcomeScatterPoint) => [point.label, `${props.xLabel}: ${formatX(point.x)}`, `${props.yLabel}: ${format(point.y)}`,
     point.annotation, props.basis].filter(Boolean).join(', ');
   const complete = props.points.filter((point) => point.x !== null && point.y !== null && Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -126,12 +135,19 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
             <View aria-hidden importantForAccessibility="no-hide-descendants" style={{ width: radius * 2, height: radius * 2,
               borderRadius: radius, backgroundColor: vertex.point.color ?? props.theme.colors.info,
               transform: [{ translateX: -radius }, { translateY: -radius }] }} />
-            {isolated ? <HappierPressable testID={props.testID ? `${props.testID}-select-${vertex.point.id}` : undefined}
+            {isolated ? <View style={{ position: 'absolute', width: ring, height: ring, top: -ring / 2, left: -ring / 2 }}>
+              <ChartDatum testID={props.testID ? `${props.testID}-datum-${vertex.point.id}` : undefined}
+                datum={datumOf(vertex.point)}
+                renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${vertex.point.id}` : undefined}
               accessibilityRole="button" accessibilityLabel={describe(vertex.point)} selected={selectedId === vertex.point.id}
-              onPress={() => setSelectedId(vertex.point.id)} onFocusChange={(focused) => { if (focused) setSelectedId(vertex.point.id); }}
+              onPress={() => { setSelectedId(vertex.point.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
+              onFocusChange={(focused) => { if (focused) setSelectedId(vertex.point.id); interaction.onFocusChange(focused); }}
               hitTarget={target}
-              style={{ position: 'absolute', width: ring, height: ring, top: -ring / 2, left: -ring / 2,
-                borderRadius: ring / 2, borderWidth: selectedId === vertex.point.id ? 1 : 0, borderColor: props.theme.colors.text }} /> : null}
+              style={{ width: ring, height: ring, borderRadius: ring / 2, borderWidth: selectedId === vertex.point.id ? 1 : 0, borderColor: props.theme.colors.text }} />}>
+                <View />
+              </ChartDatum></View> : nativeTarget === undefined ? <ChartMark datum={{ ...datumOf(vertex.point), keyboard: false }}
+                testID={props.testID ? `${props.testID}-mark-${vertex.point.id}` : undefined}
+                bounds={{ x: -radius, y: -radius, width: radius * 2, height: radius * 2 }} /> : null}
           </View>;
         })}
       </View>
@@ -157,6 +173,11 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.points.map((point) => point.id)}
       columns={[{ label: props.label }, { label: props.xLabel }, { label: props.yLabel }, { label: 'Annotation' }]}
+      renderRow={(_row, visual, index) => {
+        const point = props.points[index]!;
+        return formatX(point.x).includes(format(point.x)) ? visual
+          : <ChartDatum datum={datumOf(point)} testID={props.testID ? `${props.testID}-row-datum-${point.id}` : undefined}>{visual}</ChartDatum>;
+      }}
       rows={props.points.map((point) => [point.label, formatX(point.x), format(point.y), ...(point.annotation ? [point.annotation] : [])])} />
   </View>;
 }

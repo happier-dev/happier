@@ -48,17 +48,23 @@ export function CompositionStrip(props: CompositionStripProps) {
   const columnCount = 10;
   const rows = Array.from({ length: rowCount }, (_, index) => ({ id: String(index), label: '' }));
   const columns = Array.from({ length: columnCount }, (_, index) => ({ id: String(index), label: '' }));
+  const cellSegments = new Map<string, number>();
   const cells = props.variant === 'waffle' && disjoint ? rows.flatMap((row, rowIndex) => columns.map((column, columnIndex) => {
     const fraction = (rowIndex * columnCount + columnIndex + 0.5) / (rowCount * columnCount);
     let cumulative = 0;
     const segmentIndex = shares.findIndex(share => { cumulative += share ?? 0; return fraction < cumulative; });
     const segment = props.segments[segmentIndex];
+    if (segment) cellSegments.set(`${row.id}:${column.id}`, segmentIndex);
     return { id: `${row.id}:${column.id}`, row: row.id, column: column.id, label: '', value: 1,
       color: segment ? segment.color ?? props.theme.colors.accent : props.theme.colors.surface };
   })) : [];
   return <View testID={props.testID} accessibilityLabel={`${props.label}: ${totalLabel}`} style={{ gap: props.theme.spacing.small }}>
     {props.variant === 'legend' ? null : props.variant === 'waffle' && disjoint ? <Heatmap theme={props.theme} label={props.label} rows={rows} columns={columns}
-      cells={cells} decorative size={props.size} testID={props.testID ? `${props.testID}-grid` : undefined} />
+      cells={cells} decorative={!props.renderBarSegment} showReadout={false} size={props.size} testID={props.testID ? `${props.testID}-grid` : undefined}
+      renderCell={props.renderBarSegment ? (cell, visual) => {
+        const index = cellSegments.get(cell.id);
+        return index === undefined ? visual : props.renderBarSegment!(props.segments[index]!, visual, shares[index] ?? null);
+      } : undefined} />
     : disjoint ? <HappierProgress theme={props.theme} label={props.label} semantics="none" height={props.appearance?.height ?? 12}
       minimumVisibleFraction={props.minimumVisibleFraction} minimumFillWidth={props.minimumFillWidth} segmentGap={props.segmentGap}
       renderSegment={(_segment, solid, index) => {
