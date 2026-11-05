@@ -48,6 +48,7 @@ export class AccountEncryptionCurrentnessReadinessError extends HappyError {
 }
 
 const accountEncryptionModeReads = createScopedResolutionSingleFlight<AccountEncryptionModeResult>();
+const accountEncryptionIdentityReads = createScopedResolutionSingleFlight<AccountEncryptionIdentity>();
 type AccountEncryptionInvalidation = Readonly<{ reason?: 'scope-reset' | 'transport-withdrawal'; serverId?: string | null }>;
 type AccountEncryptionHomeBinding = Readonly<{ profileId: string; portableIdentity: string | null }>;
 type AccountEncryptionInvalidationEvent = AccountEncryptionInvalidation & Readonly<{
@@ -299,6 +300,14 @@ export async function fetchAccountEncryptionIdentity(
         ? readAccountEncryptionObservationBinding(options.request, credentials)
         : sync?.getAccountEncryptionObservationBinding(credentials) ?? null : null;
     if (binding) return await binding.read(options.signal);
+    if (options.usage === 'identity' && options.request) {
+        const request = options.request;
+        return await accountEncryptionIdentityReads.run(
+            `${resolveAuthCredentialsScopeKey(credentials)}\u0000${accountEncryptionModeCacheRevision}`,
+            async signal => projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentness(credentials, { request, signal })),
+            { scope: request, signal: options.signal },
+        );
+    }
     return projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentness(credentials, options));
 }
 

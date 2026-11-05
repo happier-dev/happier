@@ -114,19 +114,19 @@ describe('Account storage currentness failure fidelity', () => {
         }, 'plain');
     });
 
-    it('freshly admits each E2EE caller cipher independently', async () => {
+    it('shares pending identity while admitting each E2EE caller cipher independently', async () => {
         const response = createDeferred<void>();
         const cipher = await Encryption.create(secret);
         await withCurrentnessHome({ body: currentness(), respondAfter: response.promise }, async request => {
-            const readable = resolveAccountStorageContext(credentials, { encryption: cipher, request });
-            const locked = resolveAccountStorageContext(credentials, { encryption: null, request });
+            const readable = resolveAccountStorageContext(credentials, { encryption: cipher, request, usage: 'identity' });
+            const locked = resolveAccountStorageContext(credentials, { encryption: null, request, usage: 'identity' });
             const outcomes = Promise.allSettled([readable, locked]);
             response.resolve();
             expect(await outcomes).toEqual([
                 { status: 'fulfilled', value: { mode: 'e2ee', encryption: cipher } },
                 { status: 'rejected', reason: expect.objectContaining({ reason: 'encryption-material-unavailable' }) },
             ]);
-            expect(home.requestsFor('/v1/account/encryption/currentness')).toHaveLength(2);
+            expect(home.requestsFor('/v1/account/encryption/currentness')).toHaveLength(1);
         });
     });
 

@@ -168,6 +168,36 @@ describe('Account authoring memory owner', () => {
 });
 
 describe('legacy Account authoring import', () => {
+    it('reads one unchanged Settings census for absent aliases and reads a later invocation afresh', async () => {
+        const h = harness();
+        let reads = 0;
+        let removals = 0;
+        let raw: Record<string, unknown> = { unrelated: { keep: true } };
+        let version = 0;
+        const settings = {
+            read: async () => { reads += 1; return { raw, version }; },
+            remove: async (key: string, expectedVersion: number) => {
+                expect(expectedVersion).toBe(version);
+                const next = { ...raw };
+                delete next[key];
+                raw = next;
+                version += 1;
+                removals += 1;
+                return 'applied' as const;
+            },
+        };
+        await importLegacyAuthoringMemory({ owner: h.owner, settings });
+        expect(reads).toBe(1);
+        expect(removals).toBe(0);
+        expect(h.rows.size).toBe(0);
+        raw = { ...raw, lastUsedProfile: 'later-profile' };
+        version += 1;
+        await importLegacyAuthoringMemory({ owner: h.owner, settings });
+        expect(h.rows.get('lastUsedProfile')?.content).toEqual({ t: 'plain', v: 'later-profile' });
+        expect(removals).toBe(1);
+        expect(raw).toEqual({ unrelated: { keep: true } });
+    });
+
     it('preserves the original carrier when the destination commit fails', async () => {
         const h = harness({ rejectMutation: true });
         const original = { lastUsedProfile: 'old', unrelated: { keep: true } };

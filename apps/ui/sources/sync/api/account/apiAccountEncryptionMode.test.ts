@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 // Prepare the real dependency graph during collection. Cache invalidation owns
 // per-case isolation; cold module transformation is not part of an HTTP test.
@@ -17,6 +19,80 @@ afterEach(async () => {
 });
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
+
+it('shares pending identity reads without retaining authority or coupling reader cancellation', async () => {
+  const pending = createDeferred<Response>();
+  const firstIssued = createDeferred<void>();
+  let updatedAt = 0;
+  const request = vi.fn(async (_path: string, init?: RequestInit) => {
+    firstIssued.resolve();
+    if (updatedAt === 0) return await new Promise<Response>((resolve, reject) => {
+      const signal = init?.signal;
+      const abort = () => reject(signal?.reason);
+      signal?.addEventListener('abort', abort, { once: true });
+      void pending.promise.then(response => {
+        signal?.removeEventListener('abort', abort);
+        resolve(response.clone());
+      });
+      if (signal?.aborted) abort();
+    });
+    return Response.json({ ...createPlainAccountEncryptionCurrentnessFixture(), updatedAt });
+  });
+  const cancelled = new AbortController();
+  const abandoned = accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, {
+    request, usage: 'identity', signal: cancelled.signal,
+  });
+  const abandonedResult = expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+  const readers = Array.from({ length: 19 }, () => accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, {
+    request, usage: 'identity',
+  }));
+  await firstIssued.promise;
+  cancelled.abort();
+  await abandonedResult;
+  pending.resolve(Response.json(createPlainAccountEncryptionCurrentnessFixture()));
+  expect((await Promise.all(readers)).every(identity => identity.mode === 'plain')).toBe(true);
+  expect(request).toHaveBeenCalledTimes(1);
+
+  updatedAt = 2;
+  accountEncryptionMode.invalidateAccountEncryptionModeCache();
+  const next = await accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+  expect(next.updatedAt).toBe(2);
+  expect(request).toHaveBeenCalledTimes(2);
+  await Promise.all(Array.from({ length: 2 }, () => accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, {
+    request, usage: 'fresh-authority',
+  })));
+  expect(request).toHaveBeenCalledTimes(4);
+  // Even without an invalidation, no settled fallback identity is cached.
+  await accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+  expect(request).toHaveBeenCalledTimes(5);
+});
+
+it('separates pending identity reads after invalidation and across captured requests or credential material', async () => {
+  const issued = createDeferred<void>();
+  const responses: Array<ReturnType<typeof createDeferred<Response>>> = [];
+  const request = vi.fn(async () => {
+    const response = createDeferred<Response>();
+    responses.push(response);
+    issued.resolve();
+    return await response.promise;
+  });
+  const first = accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+  await issued.promise;
+  accountEncryptionMode.invalidateAccountEncryptionModeCache();
+  const next = accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+  const otherMaterial = accountEncryptionMode.fetchAccountEncryptionIdentity({ ...credentials, secret: 'other' }, {
+    request, usage: 'identity',
+  });
+  const otherRequest = accountEncryptionMode.fetchAccountEncryptionIdentity(credentials, {
+    request: async () => Response.json({ ...createPlainAccountEncryptionCurrentnessFixture(), updatedAt: 4 }),
+    usage: 'identity',
+  });
+  await vi.waitFor(() => expect(responses).toHaveLength(3));
+  responses.forEach((response, index) => response.resolve(Response.json({
+    ...createPlainAccountEncryptionCurrentnessFixture(), updatedAt: index + 1,
+  })));
+  expect((await Promise.all([first, next, otherMaterial, otherRequest])).map(identity => identity.updatedAt)).toEqual([1, 2, 3, 4]);
+});
 
 beforeEach(async () => {
   const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');

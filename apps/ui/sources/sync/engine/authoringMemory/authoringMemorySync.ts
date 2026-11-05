@@ -237,10 +237,20 @@ export async function importLegacyAuthoringMemory(options: Readonly<{
     owner: ReturnType<typeof createAuthoringMemorySync>;
     settings: LegacyAuthoringMemorySettingsPort;
 }>): Promise<void> {
+    let baseline: Awaited<ReturnType<LegacyAuthoringMemorySettingsPort['read']>> | undefined;
     for (const key of ['recentMachinePaths', 'lastUsedProfile', 'lastEngineSelectionsByScopeV1'] as const) {
         await importLegacyAuthoringMemorySetting({
             key, assertCurrent: options.owner.assertCurrent,
-            read: options.settings.read, remove: options.settings.remove,
+            read: async () => {
+                baseline ??= await options.settings.read();
+                return baseline;
+            },
+            remove: async (key, expectedVersion) => {
+                // Absent aliases share this import's census. Retirement changes
+                // its version; the next alias and any CAS retry read afresh.
+                baseline = undefined;
+                return await options.settings.remove(key, expectedVersion);
+            },
             transfer: async (legacyValue) => {
                 if (key === 'lastEngineSelectionsByScopeV1') {
                     const raw = LegacyRememberedEngineSelectionsByScopeV1Schema.parse(legacyValue);
