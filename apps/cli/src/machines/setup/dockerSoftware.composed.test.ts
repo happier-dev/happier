@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { createActionExecutor, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { applyMachineSetupEffectPlan, createMachineSetupNativeBackend,
+import { applyMachineSetupEffectPlan, createMachineSetupEffectPlan, createMachineSetupNativeBackend,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -17,6 +17,7 @@ import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import { groupMachineSetupChanges } from '../../../../../apps/ui/sources/components/settings/machines/managed/machineSetupReviewChanges';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
+import { prepareDedicatedDaemonBootstrap, MachineEffectInternalRequestSchema } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
@@ -38,6 +39,7 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
     if (command.executable === 'id') return ok(member ? '1000 109\n' : '1000\n');
     if (command.executable === 'usermod') { member = true; effects.push(['usermod']); return ok(); }
     if (command.executable === 'systemctl') {
+      if (command.args.includes('docker.service')) return ok('LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n');
       if (command.args[0] === 'show') return ok('MainPID=27\nActiveState=active\n');
       effects.push([...command.args]);
       if (refreshFails) return { code: 1, stdout: '', stderr: 'User manager restart failed' };
@@ -132,17 +134,57 @@ it.each(['ubuntu', 'debian'] as const)('plans read-only and applies %s distro pa
   } finally { await f.runtime.dispose(); }
 });
 
-it('keeps reachable Docker drifted until its distro packages and daemon membership hold', async () => {
+it('repairs daemon membership without replacing an existing Docker engine with distro packages', async () => {
   const f = await fixture('ubuntu', 'ready');
   try {
     expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'drifted' }] } });
-    for (const name of ['docker.io', 'docker-buildx', 'docker-compose-v2']) f.installed.add(name);
-    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'drifted' }] } });
+    const result = await f.plan();
+    if (!result.ok) throw new Error('Docker Plan unavailable');
+    const plan = MachineSetupPlanResultV1Schema.parse(result.result).recipePlans?.[0]?.plan;
+    if (!plan) throw new Error('Docker Plan missing');
+    expect(plan.steps.some(step => step.kind === 'package')).toBe(false);
+    expect(plan.steps.some(step => step.kind === 'serviceUnit')).toBe(false);
+    expect(await applyMachineSetupEffectPlan({ plan, backend: createMachineSetupNativeBackend({ run: command => f.run(command, true) }) }))
+      .toMatchObject({ status: 'applied' });
+    expect(f.effects).toEqual([['usermod']]);
     f.grant();
     f.groups.push(109);
     expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
-    expect(f.effects).toEqual([]);
+    expect([...f.installed]).toEqual([]);
   } finally { await f.runtime.dispose(); }
+});
+
+it.each(['ubuntu', 'debian'] as const)('bootstrap and Software use identical %s Docker steps for fresh and existing engines', async family => {
+  for (const engine of ['absent', 'ready'] as const) {
+    const f = await fixture(family, engine);
+    try {
+      const result = await f.plan();
+      if (!result.ok) throw new Error('Docker Plan unavailable');
+      const plan = MachineSetupPlanResultV1Schema.parse(result.result).recipePlans?.[0]?.plan;
+      if (!plan) throw new Error('Docker Plan missing');
+      let bootstrapSteps: typeof plan.steps | undefined;
+      await prepareDedicatedDaemonBootstrap({ task: { taskId: 'docker-owner-parity',
+        enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'none' },
+        sshTarget: 'root@machine', relayUrl: 'https://home.example' },
+        binaryPath: '/opt/happier/cli/current/happier', channel: 'stable', createPromptId: () => 'unused', emit: () => {},
+        prompt: async () => { throw new Error('No administrator establishment expected'); },
+        exec: async request => {
+          if (request.command.includes('/etc/os-release')) return { status: 0, stdout: `${family}\n`, stderr: '' };
+          if (request.command === 'id -u happier') return { status: 0, stdout: '1000\n', stderr: '' };
+          if (request.command === 'which docker') return { status: engine === 'ready' ? 0 : 1, stdout: engine === 'ready' ? '/usr/bin/docker\n' : '', stderr: '' };
+          const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(request.input!.trim()));
+          if (frame.mode === 'check' && 'steps' in frame) {
+            bootstrapSteps = frame.steps.filter(step => step.id.startsWith('docker-'));
+            const checked = createMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps,
+              nativeFacts: frame.steps.map(step => ({ stepId: step.id, status: 'satisfied', facts: {} })) });
+            return { status: 0, stdout: JSON.stringify({ type: 'result', result: { status: 'checked', plan: checked } }) + '\n', stderr: '' };
+          }
+          return { status: 0, stdout: JSON.stringify({ type: 'result', result: { status: 'applied', completedStepIds: [], daemonRestartRequired: false } }) + '\n', stderr: '' };
+        },
+      });
+      expect(bootstrapSteps).toEqual(plan.steps);
+    } finally { await f.runtime.dispose(); }
+  }
 });
 
 it.each([['other', 'absent']] as const)('refuses unsupported native facts (%s, %s)', async (family, engine) => {
@@ -174,7 +216,7 @@ it.each([{ configured: false, installed: false, refreshFails: false }, { configu
         definition: PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === ref.recipeId)! }],
       readAdminAccessObservation: async () => f.observation, runNative: f.run, groupRefreshNative });
     if ('errorCode' in reviewed) throw new Error(reviewed.errorCode);
-    expect(reviewed).toMatchObject({ support: [{ status: 'drifted' }], review: { administratorRequired: true,
+    expect(reviewed).toMatchObject({ support: [{ status: configured ? 'satisfied' : 'drifted' }], review: { administratorRequired: true,
       requiresSessionRefresh: { scope: 'userServices' } } });
     if (!configured) expect(groupMachineSetupChanges([{ homeId: 'home', machineId: 'machine',
       desiredRevision: reviewed.desiredRevision, sources: reviewed.sources, recipePlans: reviewed.recipePlans ?? [] }])
@@ -219,7 +261,8 @@ it.each([{ configured: false, installed: false, refreshFails: false }, { configu
       operation });
     } });
     expect(await execution).toMatchObject({ ok: true, result: { operationId } });
-    expect(await operations.handlers.getV2({ operationId, waitForTerminal: true })).toMatchObject({
+    const terminal = await operations.handlers.getV2({ operationId, waitForTerminal: true });
+    expect(terminal, JSON.stringify(terminal)).toMatchObject({
       kind: 'found', operation: { operationId, state: 'succeeded' } });
     expect(f.effects).not.toContainEqual(['restart', '--', 'user@1000.service']);
     expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 1 });
@@ -234,7 +277,7 @@ it.each([{ configured: false, installed: false, refreshFails: false }, { configu
         if (result.code === null) throw new Error('Docker probe process did not settle');
         return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
       } } })).rejects.toMatchObject({ code: 'native_tool_unavailable', details: { prerequisite: { cause: 'permission_denied' } } });
-    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: refreshFails ? 'drifted' : 'satisfied' }] } });
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
     expect(reviewed.recipePlans?.[0]?.plan.steps.find(step => step.kind === 'group')).toMatchObject({
       name: 'docker', members: ['happier'], review: { description: expect.stringMatching(/root.equivalent.*administrator/i) } });
     expect(f.effects).toContainEqual(['restart', '--', 'user@1000.service']);

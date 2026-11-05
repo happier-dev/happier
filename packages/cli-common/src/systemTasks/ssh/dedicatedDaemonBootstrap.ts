@@ -10,7 +10,7 @@ export { ManagedMachineControllerError } from '../../machines/managed/controller
 import { buildBootstrapRootCommand, buildDedicatedDaemonInvocationCommand, buildRemoteHappierInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { InteractiveSystemTaskContext } from '../interactiveTaskKinds.js';
-import { createDockerEngineSetupSteps } from '../../machineSetup/dockerEngine.js';
+import { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from '../../machineSetup/dockerEngine.js';
 import { buildManagedSudoersSteps } from '../../machineSetup/managedSudoers.js';
 import { buildAgentIsolationBootstrapSteps } from '../../machineSetup/agentIsolationBootstrap.js';
 import { buildUserManagerGroupRefreshStep } from '../../machineSetup/userManagerGroups.js';
@@ -45,10 +45,9 @@ export async function prepareDedicatedDaemonBootstrap(input: DedicatedDaemonBoot
   // retry must not replay immutable creation intent over current admin policy.
   if (identity?.kind !== 'dedicatedDaemonUser' || ('row' in input && input.row.enrolledMachineId)) return;
   const operationId = 'row' in input ? input.correlation.requestId : input.task.taskId;
-  const facts = await input.exec({ command: '. /etc/os-release; printf "%s\\n%s\\n%s\\n" "$ID" "$VERSION_CODENAME" "$(dpkg --print-architecture)"', signal: input.signal });
-  const [distribution, codename, architecture] = facts.stdout.trim().split(/\r?\n/u);
-  if (facts.status !== 0 || (distribution !== 'ubuntu' && distribution !== 'debian') || !codename || !architecture
-    || !/^[a-z0-9][a-z0-9.-]*$/u.test(codename) || !/^[a-z0-9-]+$/u.test(architecture)) {
+  const facts = await input.exec({ command: '. /etc/os-release; printf "%s\\n" "$ID"', signal: input.signal });
+  const [distribution] = facts.stdout.trim().split(/\r?\n/u);
+  if (facts.status !== 0 || (distribution !== 'ubuntu' && distribution !== 'debian')) {
     throw new SystemTaskExecutionError('dedicated_identity_unsupported', 'Dedicated bootstrap requires the supported Linux package and service managers.');
   }
   const account = await input.exec({ command: 'id -u happier', signal: input.signal });
@@ -58,13 +57,21 @@ export async function prepareDedicatedDaemonBootstrap(input: DedicatedDaemonBoot
   }
   const administrator = identity.adminAccessAtCreation === 'ask' ? identity.administrator : undefined;
   const policy = resolveManagedMachineEnrollmentAdminAccessV1(identity)!;
+  let dockerSteps: MachineRecipeStepV1[] = [];
+  if (identity.role === 'deployTarget') {
+    const presence = await input.exec({ command: [dockerEnginePresenceCheck.executable, ...dockerEnginePresenceCheck.args].join(' '), signal: input.signal });
+    if (presence.status !== 0 && !dockerEnginePresenceCheck.check.unsatisfiedExitCodes.includes(presence.status)) {
+      throw new SystemTaskExecutionError('dedicated_identity_unsupported', 'Dedicated bootstrap requires the supported Linux package and service managers.');
+    }
+    dockerSteps = createDockerEngineSetupSteps({ distribution, daemonUsername: 'happier', enginePresent: presence.status === 0 });
+  }
   const steps: MachineRecipeStepV1[] = [
     { id: 'bootstrap-isolation-packages', kind: 'package', manager: 'apt', packages: ['sudo', 'acl', 'git'].map(name => ({ name })) },
     ...(administrator ? [{ id: 'bootstrap-administrator', kind: 'user' as const, username: administrator.username }] : []),
     ...buildManagedSudoersSteps({ daemonUsername: identity.username, previousPolicy: { version: 1, mode: 'none' }, policy }),
     ...buildAgentIsolationBootstrapSteps({ daemonUsername: 'happier', daemonPrimaryGroup: 'happier', binaryPath: input.binaryPath,
       toolsRoot: `${DEDICATED_DAEMON_INSTALL_HOME}/${FIRST_PARTY_MANAGED_TOOLS_DIR_NAME}` }),
-    ...(identity.role === 'deployTarget' ? createDockerEngineSetupSteps({ distribution, codename, architecture, daemonUsername: 'happier' }) : []),
+    ...dockerSteps,
     { id: 'daemon-user-linger', kind: 'command', executable: 'loginctl', args: ['enable-linger', 'happier'],
       check: { executable: 'test', args: ['-f', '/var/lib/systemd/linger/happier'], unsatisfiedExitCodes: [1] } },
     buildUserManagerGroupRefreshStep({ uid: Number(uid), username: 'happier' }),

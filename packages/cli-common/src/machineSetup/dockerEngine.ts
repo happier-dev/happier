@@ -1,18 +1,26 @@
-import type { MachineRecipeStepV1 } from './index.js';
+import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import { createDockerMembershipStep } from './dockerMembership.js';
 
-export type DockerEngineSetupFacts = Readonly<{ distribution: 'ubuntu' | 'debian'; codename: string; architecture: string; daemonUsername: 'happier' }>;
-export function createDockerEngineSetupSteps(input: DockerEngineSetupFacts): MachineRecipeStepV1[] {
+type DaemonUsername = string | { kind: 'targetFact'; fact: 'daemon.username' };
+export type DockerEngineSetupFacts<T extends DaemonUsername = string> = Readonly<{
+    distribution: 'ubuntu' | 'debian'; daemonUsername: T; enginePresent: boolean;
+}>;
+type DockerEngineSetupStep<T extends DaemonUsername> =
+    | Extract<MachineRecipeStepV1, { kind: 'package' | 'serviceUnit' }>
+    | ReturnType<typeof createDockerMembershipStep<T>>;
+
+/** Presence is separate from daemon membership: an existing CE install is retained. */
+export const dockerEnginePresenceCheck = {
+    id: 'docker-engine-present', kind: 'command' as const, executable: 'which', args: ['docker'],
+    check: { executable: 'which', args: ['docker'], unsatisfiedExitCodes: [1] },
+};
+
+export function createDockerEngineSetupSteps<T extends DaemonUsername>(input: DockerEngineSetupFacts<T>): DockerEngineSetupStep<T>[] {
     return [
-        { id: 'docker-source-prerequisites', kind: 'package', manager: 'apt', packages: [{ name: 'ca-certificates' }, { name: 'gnupg' }, { name: 'curl' }] },
-        { id: 'docker-keyrings-directory', kind: 'directory', path: '/etc/apt/keyrings', owner: 'root', group: 'root', mode: 0o755 },
-        { id: 'docker-source', kind: 'packageSource', manager: 'apt', path: '/etc/apt/sources.list.d/docker.sources',
-            keyPath: '/etc/apt/keyrings/docker.asc', url: `https://download.docker.com/linux/${input.distribution}`,
-            suite: input.codename, architectures: [input.architecture], components: ['stable'],
-            keyUrl: `https://download.docker.com/linux/${input.distribution}/gpg`, keyFingerprint: '9DC858229FC7DD38854AE2D88D81803C0EBFCD88' },
-        { id: 'docker-packages', kind: 'package', manager: 'apt', packages: ['docker-ce', 'docker-ce-cli', 'containerd.io', 'docker-buildx-plugin', 'docker-compose-plugin'].map(name => ({ name })) },
+        ...(input.enginePresent ? [] : [{ id: `docker-packages-${input.distribution}`, kind: 'package' as const, manager: 'apt',
+            packages: ['docker.io', 'docker-buildx', input.distribution === 'ubuntu' ? 'docker-compose-v2' : 'docker-compose'].map(name => ({ name })) }]),
         createDockerMembershipStep(input.daemonUsername),
-        { id: 'docker-service', kind: 'serviceUnit', unit: 'docker.service', enabled: true, running: true },
+        ...(input.enginePresent ? [] : [{ id: 'docker-service', kind: 'serviceUnit' as const, unit: 'docker.service', enabled: true, running: true }]),
     ];
 }

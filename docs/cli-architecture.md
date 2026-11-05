@@ -1509,12 +1509,13 @@ the next Docker use reports the existing typed inaccessible-Docker prerequisite.
 This visible, recoverable glitch is accepted; review and reapply Software after
 reconnect to retry the refresh.
 
-The Docker Software recipe checks its Ubuntu/Debian distro packages and grants
-the target daemon user Docker membership through the same declaration used by
-dedicated bootstrap. Its review discloses root-equivalent administrator power.
+The Docker Software recipe and dedicated bootstrap consume one shared Docker
+setup declaration. On Ubuntu and Debian, a missing Docker executable selects
+the distro packages and service startup; an existing engine keeps its package
+source and only needs the target daemon user's Docker membership. Its review
+discloses root-equivalent administrator power.
 Installed lists recorded Software copies only; there is no native Software census.
-Shared Docker state has no automatic Remove. Dedicated bootstrap retains its
-separate official-repository package installation.
+Shared Docker state has no automatic Remove.
 
 ### Devcontainer native roles (0.3 development)
 
