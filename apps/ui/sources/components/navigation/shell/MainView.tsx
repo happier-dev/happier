@@ -40,6 +40,8 @@ import { ActionOperationActivityButton } from '@/components/inbox/actionOperatio
 import { PhoneTabNavRowProvider } from '@/components/navigation/shell/phoneTabNavRow';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useScreenSafeAreaBackdrop } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
+import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 
 
 interface MainViewProps {
@@ -313,7 +315,12 @@ const PhoneMainView = React.memo((props: Readonly<{
     const router = useRouter();
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
-    const { activeTab, setActiveTab } = useMainAppTabState();
+    const { activeTab, setActiveTab, isLoading } = useMainAppTabState();
+    const filtersRequested = useSettingRevealRequested([collectionSpaceSettingRefs('sessionWork').filters]);
+
+    React.useEffect(() => {
+        if (filtersRequested && !isLoading) void setActiveTab('sessions');
+    }, [filtersRequested, isLoading, setActiveTab]);
 
     React.useEffect(() => {
         if (!inboxEnabled && activeTab === 'inbox') {

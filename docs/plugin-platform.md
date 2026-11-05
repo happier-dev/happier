@@ -70,6 +70,14 @@ to manifest arrays. Existing `activate(api)` registers ordinary declared Actions
 and Resources only. See [collection presentation](collection-presentation.md)
 for the held-fact evaluator and deferred host-row loading boundary.
 
+The prepublication `@happier-dev/plugin-ui/components` filter adapter and shared
+condition model are usable by plugin-owned pages with admitted held facts.
+Registry-declared `list`/`daemonRule` support controls editor choices and write
+admission; the plugin-field adapter is list-only. Sharing these controls does
+not authorize list-only fields in Follow or matching-session routing rules.
+These are 0.3 development-source contracts, not a published-package availability
+claim; the installed public inventory remains the authoring basis.
+
 Files & Editor's development hunk actions, review-unit table, selection Ask and
 Track caret remain host-private. The public `HappierDiffViewer` stays a read-only
 presentation; it gains no review actions, editor controls or contribution family.

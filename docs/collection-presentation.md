@@ -16,6 +16,14 @@ Compilation and matching own no loading, polling, plugin activation or Resource
 demand. A stored unknown condition remains unavailable until its evaluator is
 restored or the person explicitly removes it. Current writes use closed schemas.
 
+The editor's `CollectionConditionBindings.evaluator` defaults to `list`; stored
+Follow and matching-session routing editors bind `daemonRule`. Field support
+comes from the registry in both editor choices and write admission. Branch,
+Needs-you and plugin fields are list-only in the current Session registry;
+sharing the editor does not make them executable by a source daemon. Existing
+unsupported stored conditions remain visible as unavailable rather than being
+discarded or treated as matches.
+
 Plugin pages reach the same pure evaluator, typed field factory and held-value
 adapter through `@happier-dev/plugin-ui/components` (`CollectionFilter`). Custom
 fields use admitted scalar, set, boolean or time values, rather than executable

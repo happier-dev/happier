@@ -7,6 +7,7 @@ import {
 
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
 import { t } from '@/text';
+import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import type { WorkflowLibraryViewController } from './useWorkflowLibraryView';
 import { workflowLibraryRowFilterFacts } from './useWorkflowLibraryView';
@@ -43,6 +44,7 @@ export function useWorkflowLibrarySpaceHeader(
   testIDPrefix: string,
   titleScale?: 'page' | 'section',
 ) {
+  const focusEligible = usePluginSurfaceFocusEligibility();
   const bindings = React.useMemo(buildWorkflowConditionBindings, []);
   const { rows, summaries } = libraryView;
   const readHeldFacts = React.useCallback(function* () {
@@ -60,6 +62,7 @@ export function useWorkflowLibrarySpaceHeader(
   );
   return useCollectionSpaceHeader({
     entityKind: 'workflow',
+    keyboardEnabled: focusEligible && libraryView.focused,
     testIDPrefix,
     defaultName: t('sessionsList.spacesAllWorkflows'),
     view: {

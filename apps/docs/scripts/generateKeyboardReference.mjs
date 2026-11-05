@@ -225,6 +225,13 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 
 ` : ''}## Shortcuts
 
+In unreleased 0.3 development source, Open list filters and Select space follow
+the focused Sessions, Workflows or Discussions list. Space numbers follow that
+list's displayed space order. Turning spaces off suspends space selection
+shortcuts while leaving the filter command available. The default space-number
+bindings do not apply in Windows or Linux browsers; the title menu remains
+available there. Space selection leaves the workspace tab shortcuts unchanged.
+
 ${grouped.join('\n\n')}
 ${extras}
 ${commands.has('workspace.tab.new') ? `The development-only 0.3 workspace adds tab shortcuts for the focused pane.

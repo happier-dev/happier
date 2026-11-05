@@ -44,15 +44,26 @@ to obtain nonrecursive section removal.
 
 ## Saved spaces in 0.3 development
 
-The unreleased 0.3 list work uses a **space** for a saved filter and a **section**
-for filing sessions. Switching a space does not move sessions, start work, change
-access or change who you follow. Find text remains temporary and is not saved
+The unreleased 0.3 list work uses a **space** for a saved view and a **section**
+for filing sessions. A Session space includes sessions that match its saved
+filter or were added by hand; a manual-only space includes only hand-added
+sessions. **Add to space** adds membership without changing the session's
+section. Move and Remove change only hand-added membership, so a session that
+still matches the saved filter can remain visible.
+
+Switching a space does not move sessions, start work, change access or change
+who you follow. Temporary filter changes narrow the displayed membership;
+Reset returns to the saved filter. Find text remains temporary and is not saved
 with the filter; Updated conditions use absolute dates, not a moving time window.
 
 Space definitions belong to your Account. The selected space belongs to this
 device and Account, so another device can receive a definition without being
 switched away from its current list. Sessions and their Runs share spaces;
 Workflow definitions and Discussions keep their own selections.
+
+Spaces have an Account-wide master switch and a switch for each list. Turning
+them off retains definitions, hand-added membership and this device's selection,
+so turning them back on restores the saved view.
 
 Local conditions use already-held rows. Changing a structural scope, such as
 the selected Homes or a positive Section selection, uses the ordinary list

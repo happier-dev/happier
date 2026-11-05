@@ -10,7 +10,8 @@ import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessio
 import { CollectionSessionRequestPeekData } from '@/components/ui/lists/collection/CollectionSessionRequestPeekData';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { MainAppTabStateProvider, useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { MainView } from '@/components/navigation/shell/MainView';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -23,11 +24,11 @@ import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } fro
 import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommands } from './CurrentUiContextCommands';
 import { t } from '@/text';
 
-const routeState = vi.hoisted(() => ({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'] }));
+const routeState = vi.hoisted(() => ({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'], params: {} as Record<string, string> }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: () => routeState.pathname, segments: () => routeState.segments }).module;
+    return createExpoRouterMock({ pathname: () => routeState.pathname, segments: () => routeState.segments, params: () => routeState.params }).module;
 });
 
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
@@ -73,10 +74,33 @@ afterEach(async () => {
     standardCleanup(); unregister?.(); unregister = undefined; reader = null;
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
     intents.clear(); changes.length = 0;
-    routeState.pathname = '/settings/usage'; routeState.segments = ['(app)', 'settings', 'usage'];
+    routeState.pathname = '/settings/usage'; routeState.segments = ['(app)', 'settings', 'usage']; routeState.params = {};
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('reveals the Session filter search anchor after the root route retained the Projects tab', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://filter-search.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] })
+                : request.path === '/v1/kv' && request.method === 'POST' ? Response.json({ success: true, results: [{ key: 'ui:active-tab', version: 1 }] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        routeState.pathname = '/'; routeState.segments = ['(app)'];
+        let tabs: ReturnType<typeof useMainAppTabState> | undefined;
+        function ObserveTabs() { tabs = useMainAppTabState(); return null; }
+        const tree = () => <InjectedAuthProvider credentials={credentials}><MainAppTabStateProvider>
+            <AppPaneProvider><ObserveTabs /><MainView key={routeState.params.setting ?? 'home'} variant="phone" /></AppPaneProvider>
+        </MainAppTabStateProvider></InjectedAuthProvider>;
+        const screen = await renderScreen(tree());
+        await act(async () => { await tabs!.setActiveTab('projects'); });
+        expect(tabs!.activeTab).toBe('projects');
+        routeState.params = { setting: 'session.list.filters' };
+        await screen.update(tree());
+        expect(tabs!.activeTab).toBe('sessions');
+        await act(async () => { await tabs!.setActiveTab('projects'); });
+        expect(tabs!.activeTab).toBe('projects');
+    });
     it('retries an opened request through its mounted hydration command and retires it on close', async () => {
         let servedSession: ReturnType<typeof createSessionFixture> | null = null;
         const boundary = createSessionMetadataHttpBoundary(() => servedSession ? { [servedSession.id]: servedSession } : {});

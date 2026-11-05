@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -141,6 +141,18 @@ afterEach(async () => {
 });
 
 describe('WorkflowsColumn', () => {
+    it.each([false, true])('reveals the Workflow filter search anchor from retained Runs (page=%s)', async page => {
+        const content = page ? <View testID="workflow-definitions-content" /> : undefined;
+        const screen = await renderScreen(<WorkflowsColumn surface="plane" definitionsContent={content} />, { wrapper: TestAuth });
+        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        expect(screen.findHostByTestId('workflows-column:view:runs')?.props.accessibilityState).toMatchObject({ selected: true });
+        routeState.params = { setting: 'workflow.list.filters' };
+        await screen.update(<WorkflowsColumn surface="page" definitionsContent={content} />);
+        expect(screen.findHostByTestId('workflows-column:view:definitions')?.props.accessibilityState).toMatchObject({ selected: true });
+        // The request reveals once; a deliberate subsequent choice still belongs to the tab owner.
+        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        expect(screen.findHostByTestId('workflows-column:view:runs')?.props.accessibilityState).toMatchObject({ selected: true });
+    });
     it('answers Library view Actions from the visible column and rejects hidden or retired scopes', async () => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');

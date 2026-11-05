@@ -104,7 +104,7 @@ export function createSessionFixture(
 
 /** A Home's current plaintext owner row, projected through the real metadata/access owners. */
 export function createPlainV2SessionRecordFixture(overrides: Partial<Pick<V2SessionRecord,
-    'id' | 'seq' | 'createdAt' | 'updatedAt' | 'active' | 'activeAt' | 'archivedAt' | 'metadataVersion' | 'agentStateVersion' | 'manager' | 'managedSessions'
+    'id' | 'seq' | 'createdAt' | 'updatedAt' | 'active' | 'activeAt' | 'archivedAt' | 'metadataVersion' | 'agentStateVersion' | 'manager' | 'managedSessions' | 'projectKey'
 >> & { metadata?: Session['metadata'] } = {}): V2SessionRecord {
     const base = createSessionFixture({ id: overrides.id ?? 'session-1' });
     const { metadata = base.metadata, ...facts } = overrides;

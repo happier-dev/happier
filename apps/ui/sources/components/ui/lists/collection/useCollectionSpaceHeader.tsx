@@ -18,6 +18,11 @@ import {
 
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { t } from '@/text';
+import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpaces';
+import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
+import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
 import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 import {
@@ -67,11 +72,14 @@ export function useCollectionSpaceHeader<
     result?: EntityListFilterResultV1;
     readHeldFacts?: () => Iterable<Facts>;
     defaultIcon: CollectionSpaceIconV1;
+    /** The existing layout/route owner decides which mounted header receives commands. */
+    keyboardEnabled?: boolean;
     /** `section` keeps the title a heading under a page's own title on a phone. */
     titleScale?: 'page' | 'section';
   }>,
 ) {
   const { view, registry, bindings, testIDPrefix } = input;
+  const destinationKey = useDestinationInstanceKey();
   const phone = useViewportClass() === 'compact';
   const anchorRef = React.useRef<View | null>(null);
   const savedFilter = view.activeSpace?.filter ?? null;
@@ -137,6 +145,26 @@ export function useCollectionSpaceHeader<
     },
     [savedFilter, selectSpace, setFilters, view.selectedSpaceId, view.spacesEnabled],
   );
+  const selectOrdinal = React.useCallback((ordinal: number) => {
+    if (!view.spacesEnabled || !view.spacesReady) return false;
+    const space = view.spaces[ordinal - 1];
+    if (!space) return false;
+    select(space.id);
+    return true;
+  }, [select, view.spaces, view.spacesEnabled, view.spacesReady]);
+  useSessionListSpaceKeyboardCommands({
+    enabled: input.keyboardEnabled === true,
+    selectOrdinal,
+    openFilter: conditions.openEditor,
+  });
+  useCollectionFilterSettingsCommand({
+    entityKind: input.entityKind,
+    accountScope: view.spaceSettingsScope,
+    enabled: input.keyboardEnabled === true,
+    contextKey: JSON.stringify([view.spaceSettingsScope ? accountSettingsScopeKeySuffix(view.spaceSettingsScope) : null, destinationKey, testIDPrefix]),
+    openFilter: conditions.openEditor,
+  });
+
   // Phone title/strip swipe (lab `clspaces:swipe`): pages through this entity's spaces in their order.
   const swipeTarget = (direction: -1 | 1) =>
     view.spacesEnabled
@@ -229,7 +257,7 @@ export function useCollectionSpaceHeader<
   return {
     titleControl,
     strip,
-    filterButton: conditions.filterButton,
+    filterButton: <SettingAnchor setting={collectionSpaceSettingRefs(input.entityKind).filters}>{conditions.filterButton}</SettingAnchor>,
     overlays,
     reorder: editing.reorder,
   };

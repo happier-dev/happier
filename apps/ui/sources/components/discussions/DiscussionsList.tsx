@@ -9,6 +9,7 @@ import { getUnsupportedEntityFilterFieldsV1 } from '@happier-dev/protocol/collec
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import { useCollectionSpaceFilter } from '@/components/ui/lists/collection/useCollectionSpaceFilter';
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
+import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { registerDiscussionListScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
@@ -233,6 +234,7 @@ function DiscussionsListReady(props: Readonly<{
     const statusWords = useSetting('sessionListStatusWords');
     const presented = useLayoutPresentationActive();
     const focused = useIsFocused();
+    const focusEligible = usePluginSurfaceFocusEligibility();
     const view = useCollectionSpaceFilter('discussion', { lifetime: props.accountLifetime,
         defaultName: t('sessionsList.spacesAllDiscussions'), defaultFilter: DEFAULT_DISCUSSION_LIST_FILTER_V1 });
     const filters = column ? view.filters : DEFAULT_DISCUSSION_LIST_FILTER_V1;
@@ -323,6 +325,7 @@ function DiscussionsListReady(props: Readonly<{
     const setFilters = React.useCallback((next: DiscussionListFilterV1) => update({ filters: next }), [update]);
     const spaceHeader = useCollectionSpaceHeader({
         entityKind: 'discussion',
+        keyboardEnabled: column && !anchorSessionId && focused && focusEligible,
         testIDPrefix: 'discussions-column-space',
         defaultName: t('sessionsList.spacesAllDiscussions'),
         view: { spaces: view.spaces, selectedSpaceId: view.selectedSpaceId, selectedSpace: view.selectedSpace,

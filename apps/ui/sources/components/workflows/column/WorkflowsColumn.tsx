@@ -40,6 +40,8 @@ import { WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } f
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
+import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 
 type WorkflowsColumnView = 'definitions' | 'runs';
 
@@ -68,6 +70,10 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
+    const filtersRequested = useSettingRevealRequested([collectionSpaceSettingRefs('workflow').filters]);
+    React.useEffect(() => {
+        if (filtersRequested) setView('definitions');
+    }, [filtersRequested]);
     React.useEffect(() => {
         if (params.trigger) setView('definitions');
         else if (isRunPath(pathname)) setView('runs');

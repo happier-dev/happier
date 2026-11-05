@@ -233,6 +233,15 @@ unavailable; they never silently turn a saved selection into a match-all view.
 Evaluation does not activate a plugin, invoke Actions, read Resources or start
 watches. Your existing source owns acquisition and retirement.
 
+The same public import exposes `conditionModelFromFilter` and
+`applyCollectionConditionEdit` for the shared condition editor. Its
+`CollectionConditionBindings.evaluator` defaults to `list`; use `daemonRule`
+only with fields whose registry declares that support. Unsupported fields are
+not offered for new conditions, and stored unsupported conditions remain
+unavailable. The current plugin-field adapter declares list support only.
+Host Follow and matching-session routing editors use `daemonRule`, so list-only
+Branch, Needs-you and plugin conditions cannot be saved as executable rules.
+
 `useCollectionSavedViewsControl` supplies controlled select/create/rename/update/
 delete presentation without owning storage. Give it admitted items, localized
 labels, the selected identity, mutation callbacks and the captured authority's
