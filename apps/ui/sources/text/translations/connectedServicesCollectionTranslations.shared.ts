@@ -71,6 +71,12 @@ export const en = {
     renameTitle: 'Name this account',
     renameBody: ({ service }: { service: string }) => `Only the name in Happier changes. ${service} keeps its own name for the account.`,
     identityHidden: 'Email or ID hidden',
+    composerGroup: 'In the composer',
+    composerDescription: 'How much is left, beside the prompt.',
+    composerUsageGauges: 'Usage gauges',
+    composerGaugesShown: 'Shown',
+    composerGaugesHidden: 'Hidden',
+    composerRoutingHintsOn: 'Routing hints on',
 };
 
 

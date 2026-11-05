@@ -30,7 +30,6 @@ const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/se
 const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
 const { UsageCapacityAlertsSettingsGroup } = await import('../session/UsageCapacityAlertsSettingsGroup');
 const { ProviderUsageGaugeSettingsGroup } = await import('../connectedServices/ProviderUsageGaugeSettingsGroup');
-const { CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } = await import('../connectedServices/connectedServicesSettings');
 const { UsageNightShiftWidget } = await import('./widgets/UsageNightShiftWidget');
 const { UsageCoachWidget } = await import('./widgets/UsageCoachWidget');
 const { UsageModelPricesEditor } = await import('./widgets/UsageModelPrices');
@@ -397,7 +396,7 @@ describe('Usage settings UI Action admission', () => {
     it('applies routing hint, notification and pacing edits directly by default through the settings owner', async () => {
         raw.actionsSettingsV1 = { v: 1, actions: {} };
         storage.getState().applySettings(settingsParse(raw), ++version);
-        const screen = await renderScreen(<ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />);
+        const screen = await renderScreen(<ProviderUsageGaugeSettingsGroup />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-session-providerUsageGauge-routingHints')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-session-providerUsageGauge-routingHints');
         await waitForHomeGovernance(() => expect(raw.usageRoutingHintsEnabled).toBe(false));

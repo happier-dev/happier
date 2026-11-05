@@ -71,8 +71,8 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     gateways?: React.ReactNode;
     /** Team-shared accounts, after the pools. */
     sharedWithYou?: React.ReactNode;
-    /** Shared composer gauge preferences for all Connected accounts. */
-    preferences?: React.ReactNode;
+    /** The last section, "In the composer": where the usage gauges beside the prompt are set. */
+    composer?: React.ReactNode;
     /** An open set-up panel holds the page's primary: row fixes step down. */
     fixProminence: 'primary' | 'secondary';
     /** A just-connected account settles into its row with the next step under it (A5). */
@@ -483,7 +483,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             {props.gateways ?? null}
             {renderSheets(toolSheets, t('connectedServicesSettings.codeAndToolsTitle'))}
             {props.sharedWithYou ?? null}
-            {props.preferences ?? null}
+            {props.composer ?? null}
         </ItemList>
     );
 });

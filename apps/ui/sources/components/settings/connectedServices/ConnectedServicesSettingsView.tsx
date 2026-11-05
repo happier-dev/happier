@@ -1,5 +1,3 @@
-import { ProviderUsageGaugeSettingsGroup } from './ProviderUsageGaugeSettingsGroup';
-import { CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } from './connectedServicesSettings';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -44,6 +42,7 @@ import { buildAgentDefaultChoices } from './defaults/agentDefaultChoices';
 import { ConnectedAccountIndexLiveFacts } from './index/ConnectedAccountIndexRow';
 import { ConnectedServicePoolIndexItem } from './index/ConnectedServicePoolIndexItem';
 import { ConnectedServicesGatewaysGroup, useConnectedServicesGatewaysUnavailable } from './index/ConnectedServicesGatewaysGroup';
+import { CredentialsComposerGaugesGroup } from './index/CredentialsComposerGaugesGroup';
 import { ConnectedServicesIndexView, type ConnectedServicesIndexPresentation } from './index/ConnectedServicesIndexView';
 import { NewPoolMenu, selectNewPoolServices } from './collection/NewPoolMenu';
 import { presentConnectedServiceRegistryReadFailure } from './model/presentConnectedServiceIndexDiagnostics';
@@ -224,7 +223,6 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
             />
           </View>
         ) : null}
-        <ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />
       </ItemList>
     );
   }
@@ -286,7 +284,8 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           ) : null}
         />
       ) : null}
-      preferences={<ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />}
+      // Composer gauge preferences live once, with the other usage-limit settings; Credentials leads there.
+      composer={<CredentialsComposerGaugesGroup onOpen={() => navigate('/(app)/settings/session/provider-limits' as never, 'ConnectedServices.openUsageGauges')} />}
       sharedWithYou={(
         <TeamCredentialCatalogSettingsGroup
           title={t('teams.credentials.sharedWithYou')}

@@ -2007,6 +2007,12 @@ const ru: ConnectedServicesCollectionCopy = {
     renameTitle: 'Назовите этот аккаунт',
     renameBody: ({ service }) => `Меняется только имя в Happier. ${service} сохраняет собственное имя аккаунта.`,
     identityHidden: 'Почта или ID скрыты',
+    composerGroup: 'В поле ввода',
+    composerDescription: 'Сколько осталось — рядом с запросом.',
+    composerUsageGauges: 'Индикаторы использования',
+    composerGaugesShown: 'Показаны',
+    composerGaugesHidden: 'Скрыты',
+    composerRoutingHintsOn: 'Подсказки маршрутизации включены',
 };
 
 const connectedServicesCollectionTranslations = { ru };

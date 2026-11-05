@@ -11,6 +11,18 @@ import { useSettingActionFeedback } from '@/components/settings/shell/useSetting
 import { isQuotaGaugeWindowMode, resolveQuotaGaugeWindowModes } from '@/sync/domains/connectedServices/quotaGaugeWindows';
 import { t } from '@/text';
 
+/** The composer gauge windows a person can choose, in menu order: one owner for this group and its summaries. */
+export function buildGaugeWindowCandidates() {
+    return [
+        { id: 'most_constrained', title: t('settingsSession.providerUsageGauge.windowMostConstrainedTitle'), subtitle: t('settingsSession.providerUsageGauge.windowMostConstrainedSubtitle') },
+        { id: 'daily', title: t('settingsSession.providerUsageGauge.windowDailyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowDailySubtitle') },
+        { id: 'weekly', title: t('settingsSession.providerUsageGauge.windowWeeklyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowWeeklySubtitle') },
+        { id: 'session', title: t('settingsSession.providerUsageGauge.windowSessionTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSessionSubtitle') },
+        { id: 'primary', title: t('settingsSession.providerUsageGauge.windowPrimaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowPrimarySubtitle') },
+        { id: 'secondary', title: t('settingsSession.providerUsageGauge.windowSecondaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSecondarySubtitle') },
+    ] as const;
+}
+
 export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsageGaugeSettingsGroup(props: Readonly<{
     settings?: Readonly<{ gaugeVisible: SettingRef; gaugeWindow: SettingRef; gaugeLabels: SettingRef; routingHints: SettingRef }>;
 }>) {
@@ -24,14 +36,7 @@ export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsage
     const { setSetting } = useSettingActionFeedback();
     const selectedIds = resolveQuotaGaugeWindowModes(windows, legacyWindow);
     const visible = visibility !== 'hidden';
-    const candidates = [
-        { id: 'most_constrained', title: t('settingsSession.providerUsageGauge.windowMostConstrainedTitle'), subtitle: t('settingsSession.providerUsageGauge.windowMostConstrainedSubtitle') },
-        { id: 'daily', title: t('settingsSession.providerUsageGauge.windowDailyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowDailySubtitle') },
-        { id: 'weekly', title: t('settingsSession.providerUsageGauge.windowWeeklyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowWeeklySubtitle') },
-        { id: 'session', title: t('settingsSession.providerUsageGauge.windowSessionTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSessionSubtitle') },
-        { id: 'primary', title: t('settingsSession.providerUsageGauge.windowPrimaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowPrimarySubtitle') },
-        { id: 'secondary', title: t('settingsSession.providerUsageGauge.windowSecondaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSecondarySubtitle') },
-    ] as const;
+    const candidates = buildGaugeWindowCandidates();
     if (!enabled) return null;
     return <ItemGroup title={t('settingsSession.providerUsageGauge.title')} description={t('settingsSession.providerUsageGauge.footer')}>
         <SettingRow

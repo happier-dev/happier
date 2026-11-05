@@ -1980,6 +1980,12 @@ const zhHant: ConnectedServicesCollectionCopy = {
     renameTitle: '為此帳號命名',
     renameBody: ({ service }) => `只會變更 Happier 中的名稱。${service} 仍保留該帳號自己的名稱。`,
     identityHidden: '電子郵件或 ID 已隱藏',
+    composerGroup: '在輸入框中',
+    composerDescription: '在提示詞旁顯示剩餘額度。',
+    composerUsageGauges: '用量指示',
+    composerGaugesShown: '顯示',
+    composerGaugesHidden: '隱藏',
+    composerRoutingHintsOn: '路由提示已開啟',
 };
 
 const connectedServicesCollectionTranslations = { zhHant };

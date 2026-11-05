@@ -1980,6 +1980,12 @@ const zhHans: ConnectedServicesCollectionCopy = {
     renameTitle: '为此账户命名',
     renameBody: ({ service }) => `只会更改 Happier 中的名称。${service} 仍保留该账户自己的名称。`,
     identityHidden: '邮箱或 ID 已隐藏',
+    composerGroup: '在输入框中',
+    composerDescription: '在提示词旁显示剩余额度。',
+    composerUsageGauges: '用量指示',
+    composerGaugesShown: '显示',
+    composerGaugesHidden: '隐藏',
+    composerRoutingHintsOn: '路由提示已开启',
 };
 
 const connectedServicesCollectionTranslations = { zhHans };

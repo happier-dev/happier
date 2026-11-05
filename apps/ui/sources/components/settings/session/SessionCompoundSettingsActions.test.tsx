@@ -29,7 +29,6 @@ const { SessionHandoffSettingsView } = await import('./SessionHandoffSettingsVie
 const { ToolRenderingSettingsView } = await import('./ToolRenderingSettingsView');
 const { SessionProviderLimitsSettingsView } = await import('./SessionProviderLimitsSettingsView');
 const { ProviderUsageGaugeSettingsGroup } = await import('@/components/settings/connectedServices/ProviderUsageGaugeSettingsGroup');
-const { CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } = await import('@/components/settings/connectedServices/connectedServicesSettings');
 
 const originalState = storage.getState();
 let previousAuth: ReturnType<typeof getCurrentAuth>;
@@ -48,7 +47,7 @@ function expectPreferences(actual: Settings, expected: Readonly<Record<string, u
 }
 
 function ConnectedServicesGauge() {
-    return <ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />;
+    return <ProviderUsageGaugeSettingsGroup />;
 }
 
 const handoffDefaults = {

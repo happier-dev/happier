@@ -1985,6 +1985,12 @@ const ja: ConnectedServicesCollectionCopy = {
     renameTitle: 'このアカウントに名前を付ける',
     renameBody: ({ service }) => `変わるのは Happier での名前だけです。${service} 側の名前はそのままです。`,
     identityHidden: 'メールまたはIDは非表示',
+    composerGroup: '入力欄',
+    composerDescription: 'プロンプトの横に残量を表示します。',
+    composerUsageGauges: '使用量ゲージ',
+    composerGaugesShown: '表示',
+    composerGaugesHidden: '非表示',
+    composerRoutingHintsOn: 'ルーティングのヒント: オン',
 };
 
 const connectedServicesCollectionTranslations = { ja };

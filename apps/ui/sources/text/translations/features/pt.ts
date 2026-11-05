@@ -1985,6 +1985,12 @@ const pt: ConnectedServicesCollectionCopy = {
     renameTitle: 'Dar nome a esta conta',
     renameBody: ({ service }) => `Só muda o nome no Happier. ${service} mantém o seu próprio nome para a conta.`,
     identityHidden: 'E-mail ou ID ocultos',
+    composerGroup: 'No compositor',
+    composerDescription: 'Quanto resta, ao lado do prompt.',
+    composerUsageGauges: 'Indicadores de uso',
+    composerGaugesShown: 'Visíveis',
+    composerGaugesHidden: 'Ocultos',
+    composerRoutingHintsOn: 'Sugestões de rota ativadas',
 };
 
 const connectedServicesCollectionTranslations = { pt };

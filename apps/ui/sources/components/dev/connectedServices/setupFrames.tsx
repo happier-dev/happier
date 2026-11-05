@@ -6,8 +6,6 @@ import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { ConnectedAccountDeviceForm } from '@/components/settings/connectedServices/account/ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from '@/components/settings/connectedServices/account/ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from '@/components/settings/connectedServices/account/ConnectedAccountOAuthForm';
-import { ProviderUsageGaugeSettingsGroup } from '@/components/settings/connectedServices/ProviderUsageGaugeSettingsGroup';
-import { CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } from '@/components/settings/connectedServices/connectedServicesSettings';
 import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectServicesSetupItem } from '@/components/settings/connectedServices/home/useConnectServicesSetupItem';
 import { selectHomeConnectInvitations } from '@/components/settings/connectedServices/home/selectHomeConnectInvitations';
@@ -209,7 +207,6 @@ function FirstRunFrame() {
                     targetSelection={FIXTURE_SELECTION}
                 />
             </ItemGroup>
-            <ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />
         </ItemList>
     );
 }
