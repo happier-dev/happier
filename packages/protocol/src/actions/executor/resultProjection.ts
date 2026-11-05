@@ -35,7 +35,7 @@ import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } f
 
 const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: false }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
   const failure = classifyActionExecutorThrownError(error);
   let carriedCause: unknown;
   try { carriedCause = isPluginError(error) ? error.data.failureCause : readRecord(error).failureCause; }
@@ -45,7 +45,7 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     failureCause: forwarded.success ? forwarded.data : projectActionFailureCauseV1(error, phase) };
 }
 
-function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: false }> {
+function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
   if (error instanceof PublicProfileAccountScopeError) return { errorCode: error.code, error: error.code };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
