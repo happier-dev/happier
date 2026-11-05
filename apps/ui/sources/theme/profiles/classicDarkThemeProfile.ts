@@ -78,7 +78,7 @@ export const classicDarkProfile = createBuiltInProfile('classicDark', 'Classic D
         'control.permissionButton.selected.background': '#1C1C1E',
         'control.permissionButton.selected.border': '#38383A',
         'control.permissionButton.selected.foreground': '#FFFFFF',
-        'message.user.background': '#2C2C2C',
+        'message.user.background': '#303030',
         'message.user.foreground': '#FFFFFF',
         'message.agent.foreground': '#FFFFFF',
         'message.event.foreground': '#8E8E93',

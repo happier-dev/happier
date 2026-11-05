@@ -124,7 +124,7 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'control.permissionButton.selected.background': '#141620',
                 'control.permissionButton.selected.border': 'rgba(255,255,255,0.095)',
                 'control.permissionButton.selected.foreground': '#E4E3E8',
-                'message.user.background': '#141620',
+                'message.user.background': '#1E2130',
                 'message.user.foreground': '#E4E3E8',
                 'message.agent.foreground': '#E4E3E8',
                 'message.event.foreground': '#898892',

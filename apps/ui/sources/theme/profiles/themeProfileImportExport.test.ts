@@ -147,6 +147,31 @@ describe('theme profile import/export', () => {
         }
     });
 
+    it('paints imported messages with the theme neutral surface and text, not its accent button', () => {
+        const json = JSON.stringify({
+            name: 'Harbor Light',
+            type: 'light',
+            colors: {
+                'editor.background': '#FFFFFF',
+                'editor.foreground': '#24292F',
+                'editorWidget.background': '#EEF1F4',
+                'button.background': '#1F6FEB',
+                'button.foreground': '#FFFFFF',
+            },
+        });
+
+        const result = importThemeProfileFromJson(json, { now: '2026-11-05T00:00:00.000Z' });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            const light = result.profile.overrides.light;
+            expect(light['message.user.background']).toBe(light['surface.elevated']);
+            expect(light['message.user.foreground']).toBe(light['text.primary']);
+            expect(light['message.agent.foreground']).toBe(light['text.primary']);
+            expect(light['control.button.primary.background']).toBe('#1F6FEB');
+        }
+    });
+
     it('exposes the supported import formats used by the import screen', () => {
         expect(getSupportedThemeProfileImportFormats().map((format) => format.id)).toEqual([
             'happier-theme-profile-json',

@@ -594,7 +594,7 @@ export const darkTheme = {
         // Message View colors
         message: {
             user: {
-                background: '#221C1C',
+                background: '#292423',
                 foreground: '#EFEFEF',
             },
             agent: {

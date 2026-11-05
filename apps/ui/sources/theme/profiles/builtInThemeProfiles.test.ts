@@ -67,7 +67,7 @@ const sunsetDarkSeed = {
     'control.permissionButton.inactive.foreground': '#8A817C',
     'control.permissionButton.selected.background': '#2A2222',
     'control.permissionButton.selected.border': 'rgba(255,255,255,0.090)',
-    'message.user.background': '#221C1C',
+    'message.user.background': '#292423',
     'message.event.foreground': '#8A817C',
     'syntax.keyword': '#D06A49',
     'syntax.string': '#66DC7E',
@@ -95,7 +95,7 @@ const classicDarkSeed = {
     'control.segmentedControl.trackBackground': '#292929',
     'control.button.primary.background': '#1b1b1b',
     'control.input.background': '#303030',
-    'message.user.background': '#2C2C2C',
+    'message.user.background': '#303030',
     'syntax.keyword': '#569CD6',
     'versionControl.added.foreground': '#34C759',
     'permission.acceptEdits': '#0A84FF',
@@ -180,7 +180,7 @@ const paperLightSeed = {
     'control.permissionButton.inactive.foreground': '#555555',
     'control.permissionButton.selected.background': '#E6E6DF',
     'control.permissionButton.selected.border': 'rgba(68,68,68,0.20)',
-    'message.user.background': '#F0F0EA',
+    'message.user.background': '#E8E8E1',
     'message.event.foreground': '#555555',
     'syntax.keyword': '#7A54B6',
     'syntax.string': '#4E8B66',
@@ -244,7 +244,7 @@ const graphiteDarkSeed = {
     'control.permissionButton.inactive.foreground': '#A0A0A0',
     'control.permissionButton.selected.background': '#2A2A2A',
     'control.permissionButton.selected.border': 'rgba(255,255,255,0.085)',
-    'message.user.background': '#222222',
+    'message.user.background': '#2A2A2A',
     'message.event.foreground': '#A0A0A0',
     'syntax.keyword': '#A8A8A8',
     'syntax.string': '#B7B7B7',
@@ -381,7 +381,7 @@ const pitchDarkSeed = {
     'control.permissionButton.inactive.foreground': '#939393',
     'control.permissionButton.selected.background': '#1A1A1A',
     'control.permissionButton.selected.border': 'rgba(255,255,255,0.075)',
-    'message.user.background': '#1A1A1A',
+    'message.user.background': '#262626',
     'message.event.foreground': '#939393',
     'syntax.keyword': '#70CFF8',
     'syntax.string': '#B9F18D',
@@ -521,6 +521,15 @@ describe('built-in theme profiles', () => {
 
             expect(effective.colors.feed.card.background).toBe(effective.colors.surface.elevated);
         }
+    });
+
+    it('keeps the prompt bubble a visible step off the transcript page in every built-in theme', () => {
+        const samePlane = BUILT_IN_THEME_PROFILES.flatMap(({ presetId, preferredMode, profile }) => {
+            const { colors } = resolveThemeProfile({ mode: preferredMode, profile });
+            return colors.message.user.background === colors.surface.base ? [presetId] : [];
+        });
+
+        expect(samePlane).toEqual([]);
     });
 
     it('keeps secondary text a readable step below primary in every built-in theme', () => {
