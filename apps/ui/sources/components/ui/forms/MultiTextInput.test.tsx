@@ -1898,7 +1898,7 @@ describe('MultiTextInput', () => {
                 onChangeText: () => {},
             };
             return tree
-                ? tree.update(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, props))
+                ? (tree.update(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, props)), tree)
                 : renderer.create(
                     React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, props),
                     {
