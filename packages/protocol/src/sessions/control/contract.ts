@@ -567,6 +567,7 @@ export type V2SessionListResponse = z.infer<typeof V2SessionListResponseSchema>;
 
 export const V2SessionByIdResponseSchema = lazyZodSchema(() => z.looseObject({
     session: V2SessionRecordSchema,
+    observationCursor: z.optional(z.number().check(z.int(), z.nonnegative())),
     created: z.optional(z.boolean()),
     organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
   }));
