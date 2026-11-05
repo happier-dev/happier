@@ -2,9 +2,8 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { PluginError, type LoggerService } from '@happier-dev/plugin-sdk';
+import type { LoggerService } from '@happier-dev/plugin-sdk';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
@@ -19,6 +18,7 @@ import {
 } from './client.js';
 import { readCodexAppServerStartupRpcTimeoutMs } from './client/timeout.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
+import { readCodexAppServerProbeFailureCode } from './startupFailure.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
@@ -326,7 +326,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
     params.processEnv,
     params.signal,
   ).catch(error => {
-    if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
+    if (params.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
     return '';
   });
   if (!supportsSharedControl(versionOutput, params.platform ?? process.platform)) return null;
@@ -433,7 +433,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
     try {
       return await startPromise;
     } catch (error) {
-      await dependencies.removeRuntimeDirectory(runtimeDirectory);
+      await dependencies.removeRuntimeDirectory(runtimeDirectory).catch(() => undefined);
       throw error;
     }
   };
@@ -460,7 +460,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
           return await verifyCodexNativeAppServerClient({ ...request, exec: params.exec, signal: params.signal,
             transport: { ...transport, realtimeConversationAdvertised } }, client, executable);
         } catch (error) {
-          await dispose();
+          await dispose().catch(() => undefined);
           throw error;
         }
       }

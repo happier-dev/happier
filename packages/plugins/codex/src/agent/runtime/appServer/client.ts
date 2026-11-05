@@ -1,5 +1,4 @@
 import { PluginError, type JsonValue, type LoggerService } from '@happier-dev/plugin-sdk';
-import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
     ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type {
@@ -24,6 +23,8 @@ import {
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
 import { readCodexMcpServerKeysFromConfigToml } from '../../mcp/configServers.js';
 import { readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
+import { createCodexRealtimeEnabledAppServerLaunchUnavailableError, readCodexAppServerProbeFailureCode } from './startupFailure.js';
+export { isCodexRealtimeEnabledAppServerLaunchUnavailableError } from './startupFailure.js';
 export { resolveCodexHome } from '../../mcp/configServers.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
@@ -93,31 +94,9 @@ export function isCodexAppServerOversizedJsonFrameError(error: unknown): boolean
         && record.message.includes('JSON-RPC frame exceeded the configured size limit');
 }
 
-const CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE =
-    'CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE';
 // A resume response can carry the complete Codex thread. Preserve the established
 // 0.2 app-server boundary instead of introducing a lower plugin-only rejection cap.
 const DEFAULT_JSON_LINE_MAX_CHARS = 128 * 1024 * 1024;
-
-export function isCodexRealtimeEnabledAppServerLaunchUnavailableError(
-    error: unknown,
-): boolean {
-    return Boolean(
-        error
-        && typeof error === 'object'
-        && (error as Readonly<{ code?: unknown }>).code
-            === CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE,
-    );
-}
-
-function createCodexRealtimeEnabledAppServerLaunchUnavailableError(): Error {
-    const error = new Error('The realtime-enabled Codex app-server launch was unavailable.');
-    Object.defineProperty(error, 'code', {
-        value: CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE,
-        enumerable: true,
-    });
-    return error;
-}
 
 const CODEX_APP_SERVER_BINARY_OVERRIDE_ENV_KEYS = [
     'HAPPIER_CODEX_APP_SERVER_BIN',
@@ -238,7 +217,7 @@ export async function probeCodexRealtimeConversationFeature(params: Readonly<{
             : await params.exec.run(request);
         return advertisesRealtimeConversation(result);
     } catch (error) {
-        if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
+        if (params.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
         return false;
     }
 }
@@ -438,7 +417,7 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         codexProcessExitedSuccessfully(result) && !result.stdoutTruncated
             ? new TextDecoder().decode(result.stdout) : '',
     ).catch(error => {
-        if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
+        if (params.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
         return '';
     });
     // Feature discovery does not initialize native SQLite. A pending probe
@@ -477,7 +456,7 @@ export async function verifyCodexNativeAppServerClient(
     } catch (error) {
         await client.dispose().catch(() => undefined);
         if (error instanceof PluginError || params.signal?.aborted || isCodexProxyTransport(params.transport) || !client.launchFeatures.realtimeConversationAdvertised) throw error;
-        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
+        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError(error);
     }
 }
 
@@ -523,7 +502,7 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
         annotateUnixSocketStartupFailure(error, params.transport);
         if (error instanceof PluginError) throw error;
         if (params.signal?.aborted || !enableRealtimeConversation) throw error;
-        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
+        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError(error);
     }
     const launchFeatures: { realtimeConversationAdvertised: boolean; nativeVersion?: string } = {
         realtimeConversationAdvertised,
@@ -551,6 +530,6 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
         await client.dispose().catch(() => undefined);
         if (error instanceof PluginError) throw error;
         if (params.signal?.aborted || !enableRealtimeConversation) throw error;
-        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
+        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError(error);
     }
 }

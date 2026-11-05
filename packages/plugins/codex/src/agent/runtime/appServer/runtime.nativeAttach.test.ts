@@ -20,6 +20,26 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it.each(['session', 'run'] as const)('retains %s startup rejection when native cleanup also fails', async surface => {
+    await withFixture(async ({ openConfiguredSession, openConfiguredRun, failResume, nativeProcessExits }) => {
+      failResume('Native startup refused: Bearer private-provider-token');
+      const failure: unknown = await (surface === 'session' ? openConfiguredSession() : openConfiguredRun('existing-thread'))
+        .catch(error => error);
+      const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+      }));
+      expect(retained).toMatchObject({ code: 'agent_startup_rpc_rejected', details: { failureCause: {
+        phase: 'thread_open', providerErrorCode: -32000,
+      } } });
+      expect(issue).toMatchObject({ code: 'agent_startup_rpc_rejected', failureCause: { providerErrorCode: -32000 } });
+      expect(nativeProcessExits.length).toBeGreaterThan(0);
+      expect(JSON.stringify(issue)).not.toContain('private-provider-token');
+      expect(JSON.stringify(issue)).not.toContain('PRIVATE_CLEANUP_PATH');
+    }, { threadStartFailure: { code: -32000, message: 'Native startup refused: Bearer private-provider-token' },
+      nativeCleanupFailure: Object.assign(new Error('PRIVATE_CLEANUP_PATH'), { code: 'EACCES' }) });
+  });
+
   it.each([
     { variant: 'httpConnectionFailed', status: 401, providerCode: 'provider_endpoint_unauthorized' },
     { variant: 'responseStreamConnectionFailed', status: 401, providerCode: 'provider_endpoint_unauthorized' },

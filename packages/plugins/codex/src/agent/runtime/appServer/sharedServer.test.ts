@@ -35,10 +35,52 @@ vi.mock('node:os', async importOriginal => {
 describe('createCodexSharedAppServer', () => {
   beforeEach(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-startup-home-')); });
   afterEach(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
-  it.skipIf(process.platform !== 'linux').each(['shared-version', 'stdio-feature', 'stdio-version'] as const)(
-    'preserves isolation refusal from the %s probe instead of falling back to an unknown startup failure', async stage => {
-      const refusal = new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
-        message: 'PRIVATE_MACHINE_DETAILS', details: { reason: 'member_setup_required' } });
+  it.skipIf(process.platform === 'win32').each(['spawn', 'verification'] as const)(
+    'retains %s startup failure when runtime-directory cleanup also fails', async stage => {
+      const refusal = new PluginError({ code: 'agent_isolation_unavailable', message: 'PRIVATE_MEMBER' });
+      let peer: Awaited<ReturnType<typeof createCodexControlSocketFixture>> | undefined;
+      const result = (stdout = ''): PluginProcessResult => ({
+        termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+        stdout: new TextEncoder().encode(stdout), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      });
+      const exec = { withSpawnAdmission: admitTestExecSpawn,
+        systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+        run: async (request: Parameters<ExecService['run']>[0]) => result(request.args.includes('--version') ? 'codex-cli 0.162.1' : ''),
+        clients: { connectJsonRpc: connectFixtureClient },
+        spawn: async (request: Parameters<ExecService['spawn']>[0]) => {
+          if (stage === 'spawn') throw refusal;
+          peer = await createCodexControlSocketFixture(request.args[request.args.indexOf('--listen') + 1]!.slice('unix://'.length), message => {
+            if (message.method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
+            return message.id === undefined ? undefined : {};
+          });
+          return { wait: async () => await new Promise<PluginProcessResult>(() => undefined), dispose: async () => { await peer?.close(); } };
+        },
+      } as unknown as ExecService;
+      const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux', dependencies: {
+        createRuntimeDirectory: async () => await mkdtemp('/tmp/c-'),
+        removeRuntimeDirectory: async directory => {
+          await rm(directory, { recursive: true, force: true });
+          throw Object.assign(new Error('PRIVATE_DIRECTORY'), { code: 'EACCES' });
+        },
+      } });
+      if (!server) throw new Error('Expected shared server');
+      try {
+        const error: unknown = await server.createClient({ cwd: osBoundary.home, processEnv: {}, configOverrides: [],
+          disableUserMcpServers: false, toolRestrictionRequired: stage === 'verification' }).catch(error => error);
+        const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: error });
+        expect(failure).toMatchObject({ code: stage === 'spawn' ? 'agent_isolation_unavailable' : 'codex_tool_restriction_unsupported_runtime' });
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+      } finally { await server.dispose().catch(() => undefined); }
+    });
+  it.skipIf(process.platform !== 'linux').each(
+    (['shared-version', 'stdio-feature', 'stdio-version'] as const).flatMap(stage =>
+      (['plugin', 'reconstructed', 'aggregate'] as const).map(shape => ({ stage, shape }))),
+  )('preserves isolation refusal from the $stage probe in $shape form', async ({ stage, shape }) => {
+      const original = shape === 'plugin'
+        ? new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
+          message: 'PRIVATE_MACHINE_DETAILS', details: { reason: 'member_setup_required' } })
+        : Object.assign(new Error('PRIVATE_MACHINE_DETAILS'), { code: 'agent_isolation_unavailable' });
+      const refusal = shape === 'aggregate' ? new AggregateError([original, new Error('PRIVATE_CLEANUP')]) : original;
       const probes: string[] = [];
       // Exec is the external process/daemon boundary; the probes, fallback,
       // startup lock and failure projection run their real implementations.
@@ -64,7 +106,6 @@ describe('createCodexSharedAppServer', () => {
           processEnv: { CODEX_HOME: join(osBoundary.home, 'auth-home'), CODEX_SQLITE_HOME: osBoundary.home } });
       const result: unknown = await opening.catch(error => error);
       expect(probes).toContain(stage === 'stdio-feature' ? 'features list' : '--version');
-      expect(result).toMatchObject({ code: 'agent_isolation_unavailable' });
       const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: result });
       expect(failure).toMatchObject({ code: 'agent_isolation_unavailable' });
       expect(formatCodexAppServerErrorForUi(failure)).toContain('machine owner');

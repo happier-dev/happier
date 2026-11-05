@@ -1162,7 +1162,7 @@ export async function openCodexNativeAppServerSession(
     }
   } catch (error) {
     const sanitized = logCodexNativeStartupFailure(error, context.services.logger, startupStage);
-    await sharedAppServer?.dispose();
+    await sharedAppServer?.dispose().catch(() => undefined);
     throw sanitized;
   }
   const sessionRuntime = createCodexNativeAppServerSessionRuntime(
@@ -1302,7 +1302,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     }
   } catch (error) {
     const sanitized = logCodexNativeStartupFailure(error, context.services.logger, startupStage);
-    await sharedAppServer?.dispose();
+    await sharedAppServer?.dispose().catch(() => undefined);
     throw sanitized;
   }
   return createCodexNativeAppServerExecutionRunConversationRuntime(runtime, request.runId);

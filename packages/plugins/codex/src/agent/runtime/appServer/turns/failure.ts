@@ -1,5 +1,7 @@
 import { createProviderErrorV1, ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readCodexAppServerErrorPayload, type CodexAppServerErrorPayload } from './errorPayload.js';
+import { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
+export { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
 import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationRejectionDetails, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -240,10 +242,6 @@ export function readCodexAppServerRuntimeIssueSource(
     default:
       return 'agent_session_error';
   }
-}
-
-export function readCodexAppServerPrimaryFailure(error: unknown): unknown {
-  return error instanceof AggregateError ? error.errors[0] : error;
 }
 
 export function readCodexAppServerStartupFailure(

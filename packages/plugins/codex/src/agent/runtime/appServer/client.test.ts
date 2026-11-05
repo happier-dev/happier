@@ -22,6 +22,10 @@ import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
+import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { createCodexAppServerTurnFailure, readCodexAppServerFailureCause } from './turns/failure';
+import { createStableRunnerPluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
+import { withCodexNativeStartupLock } from './nativeStartupLock';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 
@@ -140,6 +144,81 @@ function createCapturingExec(
 }
 
 describe('createCodexAppServerClient', () => {
+    it('composes runner native qualification and real spawn admission for protocol and plain children', async () => {
+        const lockPath = join(osBoundary.home, '.happier-codex-native-startup.lock');
+        // Substitute only daemon launch authorization and the native executable.
+        // Runner Exec, qualifier validation, JSON-RPC, process and lock owners stay real.
+        const script = `
+            const fs = require('node:fs');
+            const facts = () => ({ native: process.env.NATIVE_MATERIAL === 'present',
+                lockHeld: fs.existsSync(process.env.STARTUP_LOCK) });
+            if (process.argv.includes('features')) process.stdout.write('realtime_conversation under development false');
+            else if (process.argv.includes('plain')) process.stdout.write(JSON.stringify(facts()));
+            else {
+                let initialized;
+                require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+                    const request = JSON.parse(line);
+                    if (request.method === 'initialize') initialized = facts();
+                    if (request.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id,
+                        result: request.method === 'fixture/inspect' ? initialized : {} }) + '\\n');
+                });
+            }
+        `;
+        const exec = createStableRunnerPluginExecService({
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            agentCli: { async checkReadiness(request) { return { launchable: request.candidates.map(agentId => ({ agentId })) }; } },
+            async resolveSystemTool(request) {
+                return { resolutionId: 'codex-fixture', result: { executable: { kind: 'systemTool', id: request.toolId },
+                    executablePath: process.execPath } };
+            },
+            async authorizeLaunch(request, options, resolutionId) {
+                expect(resolutionId).toBe('codex-fixture');
+                return { command: process.execPath, args: ['-e', script, '--', ...(request.args ?? [])],
+                    cwd: osBoundary.home, env: { STARTUP_LOCK: lockPath,
+                        ...(options?.agentNativeLaunch ? { NATIVE_MATERIAL: 'present' } : {}) }, release() {} };
+            },
+        });
+        const nativeLaunch = issueAgentNativeLaunchQualifierForHost(exec);
+        const client = await createCodexNativeAppServerClient({ exec, nativeLaunch, cwd: osBoundary.home, processEnv: {} });
+        try {
+            expect(await client.request('fixture/inspect')).toEqual({ native: true, lockHeld: true });
+            await expect(access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally { await client.dispose(); }
+        const tool = await exec.systemTools.resolve({ toolId: 'codex-cli', purpose: 'Exercise shared-server plain native spawning' });
+        const result = await withCodexNativeStartupLock(async (_overrides, admit) =>
+            await exec.withSpawnAdmission(admit, async scoped => {
+                const child = await scoped.spawn({ executable: tool.executable, args: ['plain'] }, { nativeLaunch });
+                try { return await child.wait(); } finally { await child.dispose(); }
+            }), undefined, undefined, { processEnv: {}, deferUntilSpawn: true });
+        expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({ native: true, lockHeld: true });
+        await expect(access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it.each(['spawn', 'initialize'] as const)(
+        'retains the initiating failure beneath realtime startup wrapping at %s', async stage => {
+            const original = stage === 'spawn'
+                ? Object.assign(new Error('PRIVATE_SOCKET /private/native'), { code: 'EACCES', syscall: 'connect' })
+                : createJsonRpcApplicationError({ method: 'initialize', code: -32603,
+                    message: 'Native initialization rejected: Bearer private-provider-token' });
+            const capture = createCapturingExec({
+                async request() { throw original; },
+            });
+            if (stage === 'spawn') capture.exec.clients.spawn = async () => { throw original; };
+            const result: unknown = await createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {} })
+                .catch(error => error);
+            const conversation = createCodexAppServerRealtimeConversation({ getClient: async () => { throw result; },
+                getThreadId: () => 'thread-1', isDisposed: () => false });
+            expect(await conversation.inspect()).toMatchObject({ status: 'unavailable',
+                diagnostic: { code: 'codex_realtime_launch_enablement_unavailable' } });
+            const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: result });
+            expect(failure).toMatchObject({ code: stage === 'spawn' ? 'agent_startup_transport_failed' : 'agent_startup_rpc_rejected' });
+            expect(readCodexAppServerFailureCause(failure)).toMatchObject(stage === 'spawn'
+                ? { code: 'EACCES', phase: 'client_start' }
+                : { providerErrorCode: -32603, phase: 'client_start', providerErrorMessage: expect.stringContaining('[REDACTED]') });
+            expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+            expect(JSON.stringify(failure)).not.toContain('private-provider-token');
+        });
+
     it('preserves a member-runnable refusal through real native startup without retrying or private error data', async () => {
         const capture = createCapturingExec();
         const refusal = new PluginError({ code: 'agent_cli_not_runnable', retryable: false,

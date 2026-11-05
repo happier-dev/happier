@@ -72,6 +72,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   appServerTransport?: 'daemonProxy';
   rejectExtraRootsSet?: boolean;
   nativeSpawnFailure?: Error;
+  nativeCleanupFailure?: Error;
   nativeProcessResult?: PluginProcessResult;
   logger?: CodexAppServerRuntimeHost['logger'];
   beforeExtraRootsSetResponse?: (input: Readonly<{ occurrence: number; params: Record<string, unknown> }>) => Promise<void>;
@@ -286,7 +287,13 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   await runtime.updateConfig?.({ configOption: { id: 'reasoning_effort', value: 'low' } });
   const nativeExec = {
     ...exec,
-    prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
+    prepareNativeSocketDirectory: async () => {
+      const directory = await prepareTestNativeSocketDirectory();
+      return { ...directory, dispose: async () => {
+        await directory.dispose();
+        if (options.nativeCleanupFailure) throw options.nativeCleanupFailure;
+      } };
+    },
     // Substitute the process boundary with the same real JSON-RPC socket transport.
     clients: { ...exec.clients, spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number;
       launch: { args?: readonly string[]; env?: Readonly<Record<string, string>> } }) => {

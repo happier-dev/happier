@@ -3440,6 +3440,12 @@ projection. A recognized native OS error retains its closed errno in
 `failureCause.code` beneath the public startup category, including after repeated
 sanitization. Native output, paths, response data and arbitrary provider prose
 are excluded; absent evidence remains unclassified rather than guessing a cause.
+Version and feature discovery preserve typed failures independently of SDK class
+identity. Realtime launch diagnostics keep their initiating exception internally,
+so startup sanitization can retain its typed cause while Voice retains its
+existing unavailable result. Failed startup cleanup cannot replace the
+initiating rejection.
+
 The field is optional: earlier issues remain valid, and older readers can ignore
 this diagnostic projection without changing lifecycle or recovery authority.
 
