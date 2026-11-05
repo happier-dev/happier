@@ -125,7 +125,7 @@ export async function fetchAndApplyFeed(params: {
         // Load feed items - if we have a head, load newer items
         const allItems: FeedItem[] = [];
         let hasMore = true;
-        let cursor = head ? { after: head } : undefined;
+        let cursor: { after: string } | { before: string } | undefined = head ? { after: head } : undefined;
         let loadedCount = 0;
         const maxItems = 500;
 
@@ -146,10 +146,10 @@ export async function fetchAndApplyFeed(params: {
             loadedCount += response.items.length;
             hasMore = response.hasMore && !foundKnown;
 
-            // Update cursor for next page
+            // Results are newest first; continue toward older items even after a head catch-up query.
             if (response.items.length > 0) {
                 const lastItem = response.items[response.items.length - 1];
-                cursor = { after: lastItem.cursor };
+                cursor = { before: lastItem.cursor };
             }
         }
 
