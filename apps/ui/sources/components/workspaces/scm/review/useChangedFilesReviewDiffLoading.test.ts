@@ -1,24 +1,31 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import type { ScmDiffArea } from '@happier-dev/protocol';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
-import { renderScreen } from '@/dev/testkit';
-
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: vi.fn(async ({ payload: input }: { payload: { path: string; area: ScmDiffArea } }) => ({
-        success: true,
-        diff:
-            `diff --git a/${input.path} b/${input.path}\n` +
-            `--- a/${input.path}\n` +
-            `+++ b/${input.path}\n` +
-            `@@ -0,0 +1,1 @@\n` +
-            `+change:${input.area}\n`,
-    })),
-}));
+import { act, createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
+import { fetchWorkspaceUnifiedDiffForPath } from '@/scm/diff/fetchWorkspaceUnifiedDiffForPath';
+import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { useChangedFilesReviewDiffLoading } from './useChangedFilesReviewDiffLoading';
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit');
+    return createServerScopedMachineRpcBoundaryMock(vi.fn(async ({ payload }) => {
+        // The external RPC payload is the real SCM file-diff request.
+        const input = payload as { path: string; area: ScmDiffArea };
+        return {
+            success: true,
+            diff:
+                `diff --git a/${input.path} b/${input.path}\n` +
+                `--- a/${input.path}\n` +
+                `+++ b/${input.path}\n` +
+                `@@ -0,0 +1,1 @@\n` +
+                `+change:${input.area}\n`,
+        };
+    }));
+});
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -39,68 +46,34 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server', serverUrl: 'https://example.com', generation: 1 }),
 }));
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
 type HookValue = ReturnType<typeof import('./useChangedFilesReviewDiffLoading')['useChangedFilesReviewDiffLoading']>;
 
 const normalizeError = (v: unknown) => String(v);
 
-async function waitForCondition(condition: () => boolean, options?: { maxTurns?: number }): Promise<void> {
-    const maxTurns = options?.maxTurns ?? 25;
-    for (let i = 0; i < maxTurns; i++) {
-        if (condition()) return;
-        await act(async () => {
-            await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        });
-    }
-    throw new Error('Timed out waiting for condition');
-}
-
-async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
-    let current: HookValue | null = null;
-    function Test() {
-        current = useValue();
-        return null;
-    }
-    let root: renderer.ReactTestRenderer | null = null;
-    root = (await renderScreen(React.createElement(Test))).tree;
-    return {
-        getCurrent: () => {
-            if (!current) throw new Error('Hook did not render');
-            return current;
-        },
-        unmount: () => {
-            if (!root) return;
-            act(() => {
-                root?.unmount();
-            });
-        },
-    };
+async function waitForCondition(condition: () => boolean): Promise<void> {
+    await vi.waitFor(() => expect(condition()).toBe(true));
 }
 
 afterEach(() => {
     vi.resetAllMocks();
-    vi.resetModules();
+    // Keep the real runtime graph collected once; resetting modules made each
+    // test re-import it and let timed-out imports outlive their owning test.
 });
 
 function file(path: string, status: ScmFileStatus['status'] = 'modified'): ScmFileStatus {
     return {
         fullPath: path,
-        relativePath: path,
-        name: path.split('/').pop() ?? path,
+        filePath: '',
+        fileName: path.split('/').pop() ?? path,
         status,
         isIncluded: false,
-        kind: 'file',
-        isDeleted: false,
         linesAdded: 1,
         linesRemoved: 1,
-    } as any;
+    };
 }
 
 describe('useChangedFilesReviewDiffLoading', () => {
     it('does not request an anchor when the viewport explicitly demands no diffs', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
         const hook = await renderHook(() => useChangedFilesReviewDiffLoading({
             sessionId: 's1', isRepo: true, reviewFiles: [file('a.ts')], diffArea: 'pending',
             requestedPaths: [], snapshotSignature: 'empty-demand', diffCache: null,
@@ -108,12 +81,10 @@ describe('useChangedFilesReviewDiffLoading', () => {
         }));
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('idle');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('defaults to fetching only a single diff when requestedPaths is missing', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const reviewFiles = [file('a.ts'), file('b.ts'), file('c.ts')];
 
@@ -129,7 +100,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             selectedPath: '',
             normalizeError,
             fallbackError: 'failed',
-        } as any));
+        }));
 
         await waitForCondition(() => ['loaded', 'error'].includes(hook.getCurrent().diffStateSource.getDiffState('a.ts').status));
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts')).toMatchObject({ status: 'loaded', error: null });
@@ -141,12 +112,10 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('idle');
         expect(hook.getCurrent().diffStateSource.getDiffState('c.ts').status).toBe('idle');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('keeps a validated snapshot across elapsed time and unrelated renders', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
         let reviewFiles = [file('a.ts')];
         function Test() {
@@ -171,17 +140,11 @@ describe('useChangedFilesReviewDiffLoading', () => {
     });
 
     it('shares pending workspace RPCs across rerenders and revalidates a new snapshot', async () => {
-        const { renderHook: renderOwnerHook } = await import('@/dev/testkit');
-        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { ScmDiffCache } = await import('@/scm/diffCache/scmDiffCache');
-        const { fetchWorkspaceUnifiedDiffForPath } = await import('@/scm/diff/fetchWorkspaceUnifiedDiffForPath');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
         const scope = { serverId: 'server', machineId: 'm1', rootPath: '/repo' };
         const diffCache = new ScmDiffCache({ maxEntries: 10, maxTotalBytes: 10_000, now: () => 1 });
         const pending = createDeferred<{ success: true; diff: string }>();
         vi.mocked(machineRpcWithServerScope).mockImplementationOnce(async () => pending.promise);
-        const hook = await renderOwnerHook(({ signature }) => useChangedFilesReviewDiffLoading({
+        const hook = await renderHook(({ signature }) => useChangedFilesReviewDiffLoading({
             sessionId: '', reviewScopeKey: 'workspace:repo', isRepo: true, reviewFiles: [file('a.ts')],
             diffArea: 'pending', requestedPaths: ['a.ts'], snapshotSignature: signature, diffCache,
             tooLarge: false, selectedPath: '', normalizeError, fallbackError: 'failed',
@@ -203,9 +166,6 @@ describe('useChangedFilesReviewDiffLoading', () => {
     });
 
     it('only fetches diffs for requestedPaths', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { ScmDiffCache } = await import('@/scm/diffCache/scmDiffCache');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const reviewFiles = [file('a.ts'), file('b.ts')];
         const diffCache = new ScmDiffCache({ maxEntries: 10, maxTotalBytes: 10_000, now: () => 1_000 });
@@ -222,7 +182,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             selectedPath: '',
             normalizeError,
             fallbackError: 'failed',
-        } as any));
+        }));
 
         await waitForCondition(() => vi.mocked(machineRpcWithServerScope).mock.calls.length === 1);
 
@@ -232,12 +192,10 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('idle');
         expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').diff).toContain('b.ts');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('uses a custom diff fetcher when provided', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const customFetchUnifiedDiffForPath = vi.fn(async (input: {
             path: string;
@@ -270,7 +228,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             fetchUnifiedDiffForPath: customFetchUnifiedDiffForPath,
             normalizeError,
             fallbackError: 'failed',
-        } as any));
+        }));
 
         await waitForCondition(() => customFetchUnifiedDiffForPath.mock.calls.length === 1);
 
@@ -282,18 +240,16 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(vi.mocked(machineRpcWithServerScope)).not.toHaveBeenCalled();
         expect(hook.getCurrent().diffStateSource.getDiffState('workspace.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('workspace.ts').diff).toContain('workspace.ts');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('starts fetching multiple requested diffs concurrently when maxConcurrency allows', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
-        const pending: Array<{ resolve: (value: any) => void }> = [];
+        const pending: Array<{ resolve: () => void }> = [];
         vi.mocked(machineRpcWithServerScope).mockImplementation(async (request) => {
             // RPC boundary payload in this test is the SCM file-diff request.
             const input = request.payload as { path: string; area: ScmDiffArea };
-            return await new Promise((resolve) => {
+            return await new Promise<{ success: true; diff: string }>((resolve) => {
                 pending.push({
                     resolve: () => resolve({
                         success: true,
@@ -323,11 +279,11 @@ describe('useChangedFilesReviewDiffLoading', () => {
             maxConcurrency: 2,
             normalizeError,
             fallbackError: 'failed',
-        } as any));
+        }));
 
         await waitForCondition(() => vi.mocked(machineRpcWithServerScope).mock.calls.length === 2);
 
-        pending.forEach((p) => p.resolve(null));
+        await act(async () => pending.forEach((p) => p.resolve()));
         await waitForCondition(() =>
             hook.getCurrent().diffStateSource.getDiffState('a.ts').status === 'loaded'
             && hook.getCurrent().diffStateSource.getDiffState('b.ts').status === 'loaded',
@@ -335,16 +291,11 @@ describe('useChangedFilesReviewDiffLoading', () => {
 
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('loaded');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('serves cached diffs without fetching', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { ScmDiffCache } = await import('@/scm/diffCache/scmDiffCache');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
-        const { fetchWorkspaceUnifiedDiffForPath } = await import('@/scm/diff/fetchWorkspaceUnifiedDiffForPath');
-        const { buildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
         const scope = { serverId: 'server-a', machineId: 'machine-a', rootPath: '/repo' };
         const reviewFiles = [file('a.ts')];
         const diffCache = new ScmDiffCache({ maxEntries: 10, maxTotalBytes: 10_000, now: () => 1_000 });
@@ -370,11 +321,10 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(vi.mocked(machineRpcWithServerScope)).toHaveBeenCalledTimes(0);
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').diff).toBe('cached-diff');
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('keeps already loaded diffs when requestedPaths shrink', async () => {
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const reviewFiles = [file('a.ts'), file('b.ts')];
         let requestedPaths: string[] = ['a.ts', 'b.ts'];
@@ -393,7 +343,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
                 selectedPath: '',
                 normalizeError,
                 fallbackError: 'failed',
-            } as any);
+            });
             return null;
         }
 
@@ -421,8 +371,6 @@ describe('useChangedFilesReviewDiffLoading', () => {
     });
 
     it('fetches diffs for newly requested paths when requestedPaths changes', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const reviewFiles = [file('a.ts'), file('b.ts')];
         let requestedPaths: string[] = ['a.ts'];
@@ -441,7 +389,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
                 selectedPath: '',
                 normalizeError,
                 fallbackError: 'failed',
-            } as any);
+            });
             return null;
         }
 
@@ -460,5 +408,6 @@ describe('useChangedFilesReviewDiffLoading', () => {
         await waitForCondition(() => current!.diffStateSource.getDiffState('b.ts').status === 'loaded');
 
         expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
+        await screen.unmount();
     });
 });
