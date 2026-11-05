@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 
 import type { TrackedSession } from '@/daemon/types';
+import { readUnifiedProcessCgroupRelativePath } from './readUnifiedProcessCgroupRelativePath';
 import {
   resolveDaemonLegacySessionScopeSubtreeRelativePath,
   resolveDaemonSessionScopeBaseRelativePath,
@@ -14,23 +15,6 @@ type ProcessCgroupMigration = Readonly<{
 
 function normalizePid(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : null;
-}
-
-async function readUnifiedProcessCgroupRelativePath(
-  pid: number,
-  procfsRootDir: string,
-): Promise<string | null> {
-  try {
-    const raw = await readFile(join(procfsRootDir, String(pid), 'cgroup'), 'utf8');
-    for (const line of raw.split('\n')) {
-      if (!line.startsWith('0::')) continue;
-      const relativePath = line.slice('0::'.length).trim();
-      return relativePath || null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 async function readProcessChildren(

@@ -1,7 +1,7 @@
 import { presentMachineAuthorityV1, type MachineAuthorityInputV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { useMachineField } from '@/sync/store/hooks';
 
-export type UseMachineAuthorityInput = Omit<MachineAuthorityInputV1, 'observation' | 'isolation' | 'desiredAdminAccess' | 'platform' | 'isolationPolicy'> & Readonly<{
+export type UseMachineAuthorityInput = Omit<MachineAuthorityInputV1, 'observation' | 'isolation' | 'desiredAdminAccess' | 'platform' | 'isolationPolicy' | 'serviceManaged'> & Readonly<{
   machineId: string;
   serverId?: string | null;
   enabled?: boolean;
@@ -15,7 +15,8 @@ export function useMachineAuthority(input: UseMachineAuthorityInput) {
   const desiredAdminAccess = useMachineField(input.machineId, 'metadata', 'adminAccess', options);
   const platform = useMachineField(input.machineId, 'metadata', 'platform', options);
   const isolationPolicy = useMachineField(input.machineId, 'metadata', 'agentIsolation', options);
-  const presentation = presentMachineAuthorityV1({ ...input, observation, isolation, desiredAdminAccess, platform, isolationPolicy });
+  const serviceManaged = useMachineField(input.machineId, 'daemonState', 'serviceManaged', options);
+  const presentation = presentMachineAuthorityV1({ ...input, observation, isolation, desiredAdminAccess, platform, isolationPolicy, serviceManaged });
   // The raw observation rides along for facts the presentation doesn't carry (daemon user, typed reason).
   return { ...presentation, observation: observation ?? null };
 }

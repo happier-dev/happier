@@ -5,6 +5,7 @@ import { access, stat } from 'node:fs/promises';
 
 import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions, type HappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessionScopeBaseRelativePath';
+import { readUnifiedProcessCgroupRelativePath } from './readUnifiedProcessCgroupRelativePath';
 import { configuration } from '@/configuration';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import {
@@ -17,24 +18,6 @@ import {
 
 function normalizePid(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : null;
-}
-
-async function readUnifiedProcessCgroupRelativePath(
-  pid: number,
-  procfsRootDir: string,
-): Promise<string | null> {
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const raw = await readFile(join(procfsRootDir, String(pid), 'cgroup'), 'utf8');
-    for (const line of raw.split('\n')) {
-      if (!line.startsWith('0::')) continue;
-      const relativePath = line.slice('0::'.length).trim();
-      return relativePath || null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 export type ExecutableLaunchSpec = Readonly<{

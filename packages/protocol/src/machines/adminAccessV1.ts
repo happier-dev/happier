@@ -41,6 +41,11 @@ export const MachineAdminAccessObservationV1Schema = lazyZodSchema(() => z.stric
   daemonUsername: z.nullable(z.string().check(z.minLength(1))),
   /** Absent historical evidence and null observations both mean unknown. */
   daemonPrimaryGroup: z.optional(z.nullable(z.string().check(z.regex(/^[a-z_][a-z0-9_.-]*[$]?$/i)))),
+  /** Native account facts, never inferred from the account name. Missing historical evidence is unknown. */
+  daemonAccount: z.optional(z.strictObject({ passwordLocked: z.nullable(z.boolean()), loginShell: z.nullable(z.string()) })),
+  daemonService: z.optional(z.strictObject({ mode: z.nullable(z.enum(['system', 'user'])),
+    /** Configured automatic boot without signing in: enabled unit and, for user scope, linger. Other unit states are unknown. */
+    startsAtBoot: z.nullable(z.boolean()) })),
   daemonIdentity: z.enum(['root', 'nonRoot', 'unknown']),
   rootEquivalentGroups: z.nullable(z.array(z.string().check(z.minLength(1)))),
   /** AM-8: account-only additions and still-held process-only removals await restart. */

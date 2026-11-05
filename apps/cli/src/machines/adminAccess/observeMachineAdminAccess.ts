@@ -3,7 +3,10 @@ import { lstat, readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { runTailscaleOperatorObservation } from '@happier-dev/cli-common/tailscale';
+import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from '@happier-dev/cli-common/machineSetup';
+import { readSystemdUnitStatus } from '@happier-dev/cli-common/service/discovery';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol';
+import { readUnifiedProcessCgroupRelativePath } from '@/daemon/platform/linux/readUnifiedProcessCgroupRelativePath';
 import { MANAGED_SUDOERS_PATH, recognizeManagedSudoersDropIn } from './managedSudoers';
 
 export type MachineAdminAccessNativeDependencies = Readonly<{
@@ -22,6 +25,53 @@ const ROOT_EQUIVALENT_GROUPS = new Set(['docker', 'lxd', 'libvirt']);
 
 function errorCode(error: unknown): unknown {
   return typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+}
+
+async function observeDaemonAccount(dependencies: MachineAdminAccessNativeDependencies, daemonUsername: string | null,
+  daemonUid: number | null): Promise<NonNullable<MachineAdminAccessObservationV1['daemonAccount']>> {
+  const unknown = { passwordLocked: null, loginShell: null };
+  if ((dependencies.platform ?? process.platform) !== 'linux' || !daemonUsername || daemonUid === null) return unknown;
+  try {
+    // Reuse the setup owner's local account and passwd-status interpretation, without applying any effect.
+    const execute = dependencies.execFile;
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', ...(execute ? {
+      run: async (command: MachineSetupNativeCommand) => {
+        try { return { code: 0, stdout: (await execute(command.executable, command.args)).stdout, stderr: '' }; }
+        catch (error) { const code = errorCode(error); return { code: typeof code === 'number' ? code : null, stdout: '', stderr: '',
+          ...(typeof code === 'string' ? { errorCode: code } : {}) }; }
+      },
+    } : {}) });
+    const account = await backend.observe({ id: 'daemon-account', kind: 'user', username: daemonUsername, uid: daemonUid, locked: true });
+    if (account.reason === 'foreign_effect_conflict') return unknown;
+    const { facts } = account;
+    return { passwordLocked: typeof facts.locked === 'boolean' ? facts.locked : null,
+      loginShell: typeof facts.shell === 'string' ? facts.shell : null };
+  } catch { return unknown; }
+}
+
+async function observeDaemonService(dependencies: MachineAdminAccessNativeDependencies, daemonUid: number | null,
+  execute: NonNullable<MachineAdminAccessNativeDependencies['execFile']>): Promise<NonNullable<MachineAdminAccessObservationV1['daemonService']>> {
+  const unknown = { mode: null, startsAtBoot: null };
+  if ((dependencies.platform ?? process.platform) !== 'linux') return unknown;
+  const cgroup = await readUnifiedProcessCgroupRelativePath(process.pid, '/proc', dependencies.fileSystem?.readFile);
+  const parts = cgroup?.split('/') ?? [];
+  const unit = parts.at(-1);
+  if (!unit?.endsWith('.service')) return unknown;
+  const mode = daemonUid !== null && parts.includes(`user@${daemonUid}.service`) ? 'user'
+    : parts[1] === 'system.slice' ? 'system' : null;
+  if (!mode) return unknown;
+  try {
+    const { stdout } = await execute('systemctl', [...(mode === 'user' ? ['--user'] : []), 'show',
+      '--property=LoadState', '--property=UnitFileState', '--', unit]);
+    const status = readSystemdUnitStatus({ output: stdout });
+    if (status.loadState !== 'loaded') return { mode, startsAtBoot: null };
+    // Non-enabled units can still be dependency-started. Do not infer a negative boot fact.
+    if (status.unitFileState !== 'enabled') return { mode, startsAtBoot: null };
+    if (mode === 'system') return { mode, startsAtBoot: true };
+    // Automatic user-manager boot without signing in needs linger as well as enablement.
+    const linger = (await execute('loginctl', ['show-user', String(daemonUid), '--property=Linger', '--value'])).stdout.trim();
+    return { mode, startsAtBoot: linger === 'yes' ? true : linger === 'no' ? false : null };
+  } catch { return { mode, startsAtBoot: null }; }
 }
 
 async function observeManagedDropIn(dependencies: MachineAdminAccessNativeDependencies, daemonUsername: string | null): Promise<Readonly<{
@@ -91,10 +141,12 @@ export async function observeMachineAdminAccess(dependencies: MachineAdminAccess
   const daemonUid = numericUid !== null && Number.isSafeInteger(numericUid) ? numericUid : null;
   const daemonUsername = username && !/\s/.test(username) ? username : null;
   const daemonPrimaryGroup = primaryGroup && /^[a-z_][a-z0-9_.-]*[$]?$/i.test(primaryGroup) ? primaryGroup : null;
-  const [tailscaledOperator, dropIn, accountGroups] = await Promise.all([
+  const [tailscaledOperator, dropIn, accountGroups, daemonAccount, daemonService] = await Promise.all([
     readOperator(daemonUsername),
     platform === 'linux' ? observeManagedDropIn(dependencies, daemonUsername) : unsupportedDropIn,
     platform === 'linux' && daemonUsername ? readId('-Gn', daemonUsername) : null,
+    observeDaemonAccount(dependencies, daemonUsername, daemonUid),
+    observeDaemonService(dependencies, daemonUid, execute),
   ]);
   const processGroupSet = groups ? new Set(groups.split(/\s+/)) : null;
   const accountGroupSet = accountGroups ? new Set(accountGroups.split(/\s+/)) : null;
@@ -116,7 +168,7 @@ export async function observeMachineAdminAccess(dependencies: MachineAdminAccess
       : daemonUid === null || daemonUsername === null || groupMembership.state === 'unknown' || passwordlessSudoToRoot === 'unknown'
         ? 'observationFailed' : undefined);
   return {
-    version: 1, observedAt: Date.now(), daemonUid, daemonUsername, daemonPrimaryGroup,
+    version: 1, observedAt: Date.now(), daemonUid, daemonUsername, daemonPrimaryGroup, daemonAccount, daemonService,
     daemonIdentity: daemonUid === null ? 'unknown' : daemonUid === 0 ? 'root' : 'nonRoot',
     rootEquivalentGroups, groupMembership, passwordlessSudoToRoot, managedDropIn: dropIn.state, tailscaledOperator,
     ...(reasonCode ? { reasonCode } : {}),
@@ -142,6 +194,10 @@ export function createMachineAdminAccessObserver(dependencies: MachineAdminAcces
           ? published.groupMembership : observation.groupMembership,
         tailscaledOperator: isDeepStrictEqual(observation.tailscaledOperator, published.tailscaledOperator)
           ? published.tailscaledOperator : observation.tailscaledOperator,
+        daemonAccount: isDeepStrictEqual(observation.daemonAccount, published.daemonAccount)
+          ? published.daemonAccount : observation.daemonAccount,
+        daemonService: isDeepStrictEqual(observation.daemonService, published.daemonService)
+          ? published.daemonService : observation.daemonService,
       };
     }
     await dependencies.onChanged(next);

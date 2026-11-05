@@ -5338,3 +5338,16 @@ content queries. Message batches retain each Session's existing first-page size,
 lookahead and cursor, and share envelope/actor projection with scalar reads.
 No wire or persisted shape changes. This source contract does not establish
 loaded cold Plans/Coach latency; that requires a recount on the loaded server.
+
+## Daemon identity observations (development 0.3)
+
+The optional admin-access account and service observations remain unknown
+when absent or inaccessible. Linux password-lock and login-shell facts come
+from the existing native account observer. A locked password does not prove
+that the account has no password or cannot authenticate by another method.
+Service scope describes process cgroup membership; the existing
+`serviceManaged` fact identifies a managed daemon. `startsAtBoot` describes
+configured automatic startup without signing in: an enabled system unit, or
+an enabled user unit with observed linger. An enabled user unit without
+linger reports false. Other enablement states remain unknown because a
+dependency could still start the unit; no dependency graph is inferred.

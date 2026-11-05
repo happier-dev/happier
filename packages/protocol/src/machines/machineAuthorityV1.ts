@@ -15,6 +15,7 @@ export type MachineAuthorityInputV1 = Readonly<{
   isolation?: MachineAgentIsolationStatusV1 | null;
   platform?: string | null;
   isolationPolicy?: unknown;
+  serviceManaged?: boolean | null;
   sharedMachine?: boolean;
   /** Observed target engine, never the client or target OS alone. */
   engine?: 'native' | 'dockerDesktop' | 'unknown';
@@ -32,6 +33,16 @@ export type MachineAuthorityPresentationV1 = Readonly<{
   separateUsers: Readonly<{
     placement: ReturnType<typeof resolveMachineAgentExecutionPlacementV1> | null;
     canEnable: boolean;
+  }>;
+  daemonAccount: Readonly<{
+    username: string | null;
+    passwordLocked: boolean | null;
+    loginShell: string | null;
+  }>;
+  daemonService: Readonly<{
+    managed: boolean | null;
+    mode: 'system' | 'user' | null;
+    startsAtBoot: boolean | null;
   }>;
   sharedAgentUid: boolean;
   /** Material actually delivered to this Machine, not the requester's entire Account. */
@@ -78,6 +89,10 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
     groupMembership: observation?.groupMembership ?? { state: 'unknown' },
     desiredAdminAccess: input.desiredAdminAccess ?? null,
     isolation, separateUsers, sharedAgentUid: input.sharedMachine === true,
+    daemonAccount: { username: observation?.daemonUsername ?? null,
+      passwordLocked: observation?.daemonAccount?.passwordLocked ?? null, loginShell: observation?.daemonAccount?.loginShell ?? null },
+    daemonService: { managed: input.serviceManaged ?? null,
+      mode: observation?.daemonService?.mode ?? null, startsAtBoot: observation?.daemonService?.startsAtBoot ?? null },
     // Every current effective isolation shape still uses happier-agent. Neither
     // desired policy nor unknown/stale setup proves distinct member identities.
     deliveredMaterial: { ownerVisible: true, sharedUserPeerVisible: input.sharedMachine !== false },
