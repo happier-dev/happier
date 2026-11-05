@@ -160,6 +160,7 @@ class PendingOutboxSessionNotHydratedError extends Error {}
 type ResolvedPendingQueueOwnerContext = Readonly<{
     outboxScope: ServerAccountScope;
     request: (path: string, init?: RequestInit) => Promise<Response>;
+    isCurrent: () => Promise<boolean>;
     enqueueEncryption: PendingQueueEncryption;
     readEncryption: PendingQueueReadEncryption;
 }>;
@@ -379,7 +380,7 @@ import {
     resolveSessionRequestForServerAccountScope,
 } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
-import { resolveScopedPendingSessionEncryption } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedPendingSessionEncryption';
+import { prepareScopedPendingSessionEncryption } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedPendingSessionEncryption';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import { sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
@@ -1009,6 +1010,20 @@ class Sync {
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
     private serverScopeGeneration = 0;
+    private activePendingQueueOwnerContextBySession = new Map<string, {
+        snapshot: ReturnType<typeof getActiveServerSnapshot>;
+        credentials: AuthCredentials;
+        writeTimeoutMs: number;
+        context: ResolvedPendingQueueOwnerContext;
+    }>();
+    private scopedPendingQueueOwnerContextBySession = new Map<string, {
+        serverUrl: string;
+        credentialScopeKey: string;
+        writeTimeoutMs: number;
+        cryptoContext: Awaited<ReturnType<typeof prepareScopedPendingSessionEncryption>>['cryptoContext'] | null;
+        outboxScope: ServerAccountScope;
+        context: Promise<ResolvedPendingQueueOwnerContext>;
+    }>();
       private sessionByIdHydrationInFlight = new Map<string, Promise<EnsureSessionVisibleForRouteResult>>();
       private sessionReceivedMessages = new Map<string, Map<string, number>>();
       private sessionMessagesBeforeSeqByKey = new Map<string, number>();
@@ -2070,6 +2085,8 @@ class Sync {
         this.deferredWebVisibilityTeardown = null;
         this.stopJsThreadLagTelemetryRuntime();
         this.serverScopeGeneration += 1;
+        this.activePendingQueueOwnerContextBySession.clear();
+        this.scopedPendingQueueOwnerContextBySession.clear();
         this.flushPendingSettingsForCurrentScopeNow();
         this.flushSessionMaterializedMaxSeq();
         this.clearActiveAccountSettingsScope();
@@ -3674,7 +3691,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3834,7 +3851,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3846,7 +3863,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3863,10 +3880,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(
-                sessionId,
-                ownerContext.outboxScope,
-            ),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3878,7 +3892,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3890,7 +3904,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3902,7 +3916,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3914,7 +3928,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -3935,7 +3949,7 @@ class Sync {
             encryption: ownerContext.readEncryption,
             request: ownerContext.request,
             outboxScope: ownerContext.outboxScope,
-            isOutboxScopeCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, ownerContext.outboxScope),
+            isOutboxScopeCurrent: ownerContext.isCurrent,
         });
     }
 
@@ -4475,75 +4489,128 @@ class Sync {
         return { context, outboxScope } as const;
     }
 
+    private resolveActivePendingQueueOwnerContext(
+        sessionId: string,
+        outboxScope: ServerAccountScope,
+    ): ResolvedPendingQueueOwnerContext {
+        const snapshot = getActiveServerSnapshot();
+        const writeTimeoutMs = readServerFetchWriteTimeoutMs();
+        const existing = this.activePendingQueueOwnerContextBySession.get(sessionId);
+        if (existing
+            && existing.snapshot === snapshot
+            && existing.credentials === this.credentials
+            && existing.writeTimeoutMs === writeTimeoutMs
+            && existing.context.readEncryption === this.encryption
+            && areServerAccountScopesEqual(existing.context.outboxScope, outboxScope)) {
+            return existing.context;
+        }
+
+        const generation = this.serverScopeGeneration;
+        const credentials = this.credentials;
+        const encryption = this.encryption;
+        const isActiveScopeCurrent = () =>
+            this.serverScopeGeneration === generation
+            && getActiveServerSnapshot().generation === snapshot.generation
+            && this.credentials === credentials
+            && this.encryption === encryption
+            && areServerAccountScopesEqual(getActiveServerAccountScope(), outboxScope);
+        const assertActiveScopeCurrent = () => {
+            if (!isActiveScopeCurrent()) throw new Error('Pending queue owner scope changed');
+        };
+        // The snapshot owner compares these callbacks by identity. Keep them stable for one
+        // active authority, while leaving versions, transcript changes, and local writes to it.
+        const context: ResolvedPendingQueueOwnerContext = {
+            outboxScope,
+            request: createPendingQueueRequest({
+                writeTimeoutMs,
+                request: async (path, init) => {
+                    assertActiveScopeCurrent();
+                    const response = await apiSocket.request(path, init);
+                    assertActiveScopeCurrent();
+                    return response;
+                },
+            }),
+            isCurrent: async () => isActiveScopeCurrent()
+                && await this.isPendingQueueOwnerScopeCurrent(sessionId, outboxScope)
+                && isActiveScopeCurrent(),
+            enqueueEncryption: encryption,
+            readEncryption: encryption,
+        };
+        this.activePendingQueueOwnerContextBySession.set(sessionId, {
+            snapshot, credentials, writeTimeoutMs, context,
+        });
+        return context;
+    }
+
     private async resolvePendingQueueOwnerContext(
         sessionId: string,
         expectedActiveScope?: ServerAccountScope,
     ): Promise<ResolvedPendingQueueOwnerContext> {
-        const ownPendingRequest = (
-            request: (path: string, init?: RequestInit) => Promise<Response>,
-        ) => createPendingQueueRequest({
-            request,
-            writeTimeoutMs: readServerFetchWriteTimeoutMs(),
-        });
         if (expectedActiveScope) {
-            const assertCapturedActiveScope = (): void => {
-                if (!areServerAccountScopesEqual(getActiveServerAccountScope(), expectedActiveScope)) {
-                    throw new Error('Pending queue owner scope changed');
-                }
-            };
-            return {
-                outboxScope: expectedActiveScope,
-                request: ownPendingRequest(async (path, init) => {
-                    assertCapturedActiveScope();
-                    const response = await apiSocket.request(path, init);
-                    assertCapturedActiveScope();
-                    return response;
-                }),
-                enqueueEncryption: this.encryption,
-                readEncryption: this.encryption,
-            };
+            return this.resolveActivePendingQueueOwnerContext(sessionId, expectedActiveScope);
         }
         const route = await this.resolvePendingQueueOwnerRoute(sessionId);
         if (route.context.scope === 'active') {
-            const assertCapturedActiveScope = (): void => {
-                if (!areServerAccountScopesEqual(getActiveServerAccountScope(), route.outboxScope)) {
-                    throw new Error('Pending queue owner scope changed');
-                }
-            };
-            return {
-                outboxScope: route.outboxScope,
-                request: ownPendingRequest(async (path, init) => {
-                    // apiSocket is dynamically bound to the active account. Fence immediately
-                    // before entering it, then fence again before any caller applies completion.
-                    assertCapturedActiveScope();
-                    const response = await apiSocket.request(path, init);
-                    assertCapturedActiveScope();
-                    return response;
-                }),
-                enqueueEncryption: this.encryption,
-                readEncryption: this.encryption,
-            };
+            return this.resolveActivePendingQueueOwnerContext(sessionId, route.outboxScope);
         }
 
-        const session = storage.getState().sessions[sessionId] ?? null;
-        const sessionEncryption = session?.encryptionMode === 'plain'
+        const context = route.context;
+        const preparedEncryption = storage.getState().sessions[sessionId]?.encryptionMode === 'plain'
             ? null
-            : await resolveScopedPendingSessionEncryption({ context: route.context, sessionId });
-        const ownerEncryption = {
-            getSessionEncryption: (candidateSessionId: string) =>
-                candidateSessionId === sessionId ? sessionEncryption : null,
-        } satisfies PendingQueueEncryption & PendingQueueReadEncryption;
-        return {
+            : await prepareScopedPendingSessionEncryption({ context, sessionId });
+        const cryptoContext = preparedEncryption?.cryptoContext ?? null;
+        const writeTimeoutMs = readServerFetchWriteTimeoutMs();
+        const existing = this.scopedPendingQueueOwnerContextBySession.get(sessionId);
+        if (existing
+            && existing.serverUrl === context.targetServerUrl
+            && existing.credentialScopeKey === context.credentialScopeKey
+            && existing.writeTimeoutMs === writeTimeoutMs
+            && existing.cryptoContext === cryptoContext
+            && areServerAccountScopesEqual(existing.outboxScope, route.outboxScope)) {
+            return await existing.context;
+        }
+
+        // Resolve credentials and crypto on every call; only equivalent captured owners
+        // share initialization. pendingQueueV2 remains the sole snapshot freshness owner.
+        const owner = Promise.resolve().then(async (): Promise<ResolvedPendingQueueOwnerContext> => {
+            const sessionEncryption = preparedEncryption ? await preparedEncryption.initialize() : null;
+            const ownerEncryption = {
+                getSessionEncryption: (candidateSessionId: string) =>
+                    candidateSessionId === sessionId ? sessionEncryption : null,
+            } satisfies PendingQueueEncryption & PendingQueueReadEncryption;
+            return {
+                outboxScope: route.outboxScope,
+                isCurrent: () => this.isPendingQueueOwnerScopeCurrent(sessionId, route.outboxScope),
+                request: createPendingQueueRequest({
+                    writeTimeoutMs,
+                    request: createSessionRequestForResolvedServerScope({
+                        context,
+                        activeRequest: async () => {
+                            throw new Error('Pending queue owner unexpectedly resolved through the active request');
+                        },
+                    }),
+                }),
+                enqueueEncryption: ownerEncryption,
+                readEncryption: ownerEncryption,
+            };
+        });
+        const entry = {
+            serverUrl: context.targetServerUrl,
+            credentialScopeKey: context.credentialScopeKey,
+            writeTimeoutMs,
+            cryptoContext,
             outboxScope: route.outboxScope,
-            request: ownPendingRequest(createSessionRequestForResolvedServerScope({
-                context: route.context,
-                activeRequest: async () => {
-                    throw new Error('Pending queue owner unexpectedly resolved through the active request');
-                },
-            })),
-            enqueueEncryption: ownerEncryption,
-            readEncryption: ownerEncryption,
+            context: owner,
         };
+        this.scopedPendingQueueOwnerContextBySession.set(sessionId, entry);
+        try {
+            return await owner;
+        } catch (error) {
+            if (this.scopedPendingQueueOwnerContextBySession.get(sessionId) === entry) {
+                this.scopedPendingQueueOwnerContextBySession.delete(sessionId);
+            }
+            throw error;
+        }
     }
 
     private async isPendingQueueOwnerScopeCurrent(

@@ -13,7 +13,8 @@ function tokenForSub(sub: string): string {
   return `e30.${payload}.signature`;
 }
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
   TokenStorage: {
     getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
   },
@@ -116,6 +117,7 @@ describe('resolveServerScopedSessionContext', () => {
       targetServerUrl: 'https://server-b.example.test',
       targetAccountId: 'account-sub-b',
       token,
+      credentialScopeKey: expect.any(String),
       encryption: fakeEncryption,
     });
   });
@@ -147,6 +149,7 @@ describe('resolveServerScopedSessionContext', () => {
       targetServerUrl: 'https://server-a.example.test',
       targetAccountId: 'account-sub-b',
       token,
+      credentialScopeKey: expect.any(String),
       encryption: fakeEncryption,
     });
     expect(getCredentialsSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server-b' });
@@ -195,6 +198,7 @@ describe('resolveServerScopedSessionContext', () => {
       targetServerUrl: 'https://server-a.example.test/',
       targetAccountId: 'account-sub-a',
       token,
+      credentialScopeKey: expect.any(String),
       encryption: fakeEncryption,
     });
   });

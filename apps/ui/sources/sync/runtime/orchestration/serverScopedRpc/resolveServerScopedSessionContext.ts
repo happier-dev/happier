@@ -1,5 +1,6 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import {
   areServerProfileIdentifiersEquivalent,
   getServerProfileById,
@@ -24,6 +25,7 @@ export type ResolvedServerSessionRpcContext =
       targetServerUrl: string;
       targetAccountId: string;
       token: string;
+      credentialScopeKey: string;
       encryption: ScopedRpcSessionEncryptionContext;
     }>;
 
@@ -45,6 +47,7 @@ async function buildScopedContext(params: Readonly<{
     targetServerUrl: params.serverUrl,
     targetAccountId: parseToken(credentials.token),
     token: credentials.token,
+    credentialScopeKey: resolveAuthCredentialsScopeKey(credentials),
     encryption,
   };
 }

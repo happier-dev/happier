@@ -938,6 +938,117 @@ describe('sync.sendMessage optimistic thinking', () => {
         requestSpy.mockRestore();
     });
 
+    it.each(['plain', 'e2ee'] as const)('coalesces concurrent pending refreshes through the public Sync owner (%s)', async (encryptionMode) => {
+        const sessionId = `s_pending_refresh_concurrent_${encryptionMode}`;
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            encryptionMode,
+            pendingVersion: 1,
+        }]);
+        let release!: () => void;
+        const responseGate = new Promise<void>((resolve) => { release = resolve; });
+        // HTTP boundary: keep the real owner resolution, snapshot reconciliation, and store.
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockImplementation(async () => {
+            await responseGate;
+            return Response.json({ pending: [] });
+        });
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await sync.encryption.initializeSessions(new Map([[sessionId, null]]));
+        const refreshes = Array.from({ length: 10 }, () => sync.fetchPendingMessages(sessionId));
+        try {
+            await vi.waitFor(() => expect(requestSpy).toHaveBeenCalled());
+            await flushPendingOutboxRetryMicrotasks();
+            expect(requestSpy).toHaveBeenCalledTimes(1);
+
+            storage.getState().applySessions([{
+                ...storage.getState().sessions[sessionId], pendingVersion: 2,
+            }]);
+            refreshes.push(sync.fetchPendingMessages(sessionId));
+            await vi.waitFor(() => expect(requestSpy).toHaveBeenCalledTimes(2));
+        } finally {
+            release();
+            await Promise.all(refreshes);
+        }
+        expect(storage.getState().sessionPending[sessionId]?.isLoaded).toBe(true);
+        await sync.fetchPendingMessages(sessionId);
+        expect(requestSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('coalesces scoped pending refreshes without freezing credentials (%s)', async (encryptionMode) => {
+        const sessionId = `s_pending_refresh_scoped_${encryptionMode}`;
+        const profile = upsertServerProfile({ serverUrl: 'https://pending-refresh-scoped.example.test', name: 'Scoped refresh' });
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }), serverId: profile.id, encryptionMode, pendingVersion: 1,
+        }]);
+        let token = tokenForSub('scoped-refresh-account');
+        let secretByte = 1;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => ({
+            token, secret: Buffer.from(new Uint8Array(32).fill(secretByte)).toString('base64url'),
+        }));
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string }) => {
+            if (!request.url.includes('/pending?')) {
+                return Response.json({ session: {
+                    id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+                    metadata: 'metadata', metadataVersion: 1, agentState: null, agentStateVersion: 0,
+                    pendingCount: 0, pendingVersion: 1, dataEncryptionKey: null, encryptionMode,
+                } });
+            }
+            await gate;
+            return Response.json({ pending: [] });
+        });
+        const pendingRequests = () => runtimeFetchWithServerReachabilityMock.mock.calls
+            .filter(([request]) => request.url.includes('/pending?'));
+        const { sync } = await import('./sync');
+        const refreshes = Array.from({ length: 10 }, () => sync.fetchPendingMessages(sessionId));
+        try {
+            await vi.waitFor(() => expect(pendingRequests().length).toBeGreaterThan(0));
+            await flushPendingOutboxRetryMicrotasks();
+            expect(pendingRequests()).toHaveLength(1);
+            secretByte = 2;
+            refreshes.push(sync.fetchPendingMessages(sessionId));
+            await vi.waitFor(() => expect(pendingRequests()).toHaveLength(2));
+            token = tokenForSub('replacement-scoped-account');
+            refreshes.push(sync.fetchPendingMessages(sessionId));
+            await vi.waitFor(() => expect(pendingRequests()).toHaveLength(3));
+        } finally {
+            release();
+            await Promise.all(refreshes);
+        }
+    });
+
+    it('retires a pending refresh when its active account changes', async () => {
+        const sessionId = 's_pending_refresh_account_change';
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }), encryptionMode: 'plain', pendingVersion: 1,
+        }]);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockImplementationOnce(async () => {
+            await gate;
+            return Response.json({ pending: [] });
+        }).mockResolvedValue(Response.json({ pending: [] }));
+        const { sync } = await import('./sync');
+        const oldRefresh = sync.fetchPendingMessages(sessionId);
+        await vi.waitFor(() => expect(requestSpy).toHaveBeenCalledTimes(1));
+        storage.getState().activateProfileScope({
+            serverId: getActiveServerSnapshot().serverId, accountId: 'replacement-account',
+        });
+        try {
+            release();
+            await expect(oldRefresh).rejects.toThrow('Pending queue owner scope changed');
+            expect(storage.getState().sessionPending[sessionId]?.isLoaded).not.toBe(true);
+            await sync.fetchPendingMessages(sessionId);
+            expect(requestSpy).toHaveBeenCalledTimes(2);
+            expect(storage.getState().sessionPending[sessionId]?.isLoaded).toBe(true);
+        } finally {
+            release();
+            await oldRefresh.catch(() => {});
+        }
+    });
+
     it('reconciles a server-delivering row when its committed twin arrives without pending-changed', async () => {
         const sessionId = 's_server_pending_commit_without_receipt';
         const localId = 'delivered-local-id';

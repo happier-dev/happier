@@ -47,7 +47,8 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
   },
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
   TokenStorage: {
     getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
   },

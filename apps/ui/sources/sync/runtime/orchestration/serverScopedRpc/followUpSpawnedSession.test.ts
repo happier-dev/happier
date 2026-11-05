@@ -229,6 +229,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
+                credentialScopeKey: 'test-credential-scope-b',
                 encryption: {
                     decryptEncryptionKey: async () => null,
                     initializeSessions: async () => {},
@@ -303,6 +304,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
+                credentialScopeKey: 'test-credential-scope-b',
                 encryption: {
                     decryptEncryptionKey: async () => null,
                     initializeSessions: async () => {},
@@ -406,6 +408,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
+                credentialScopeKey: 'test-credential-scope-b',
                 encryption: {
                     decryptEncryptionKey: async () => null,
                     initializeSessions: async () => {},
@@ -459,6 +462,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
+                credentialScopeKey: 'test-credential-scope-b',
                 encryption: {
                     decryptEncryptionKey: async () => null,
                     initializeSessions: async () => {},
@@ -501,6 +505,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
+                credentialScopeKey: 'test-credential-scope-b',
                 encryption: {
                     decryptEncryptionKey: async () => null,
                     initializeSessions: async () => {},
