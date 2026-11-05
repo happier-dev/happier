@@ -1079,6 +1079,13 @@ contracts; the Security page composition is owned separately from the data hook.
 
 ### Sessionless Project Services (0.3 development)
 
+In 0.3 development source, source-runtime reload refusals retain their existing
+code and optional `launchError.subtype` through source preflight, Session spawn
+serialization and the Action operation result. The subtype distinguishes an
+unfinished writer, missing closure evidence, a changed closure and a failed
+check. It adds diagnostic context without changing admission or retry behavior.
+
+
 `daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration
 Start and fresh-review Restart. It consumes the accepted WorkspaceRef and exact
 Home/Machine/requester, B1's declaration/native resolution, the setup preparation

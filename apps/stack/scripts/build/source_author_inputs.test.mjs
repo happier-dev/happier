@@ -34,27 +34,67 @@ test('CLI and daemon admission follows their real closure across UI-only, runtim
       generationPath: `${resolveDependencyRefreshLockPath(repoDir, env)}.generation` },
     runtimeDependencyClosure: { imports, identity: readSourceRuntimeDependencyIdentity({ imports }) },
   };
+  await mkdir(fixture.path('runtime'), { recursive: true });
+  await writeFile(fixture.path('runtime/source-bundle.json'), JSON.stringify(record));
   const admission = component => assertSourceRuntimeDependenciesCurrent({
-    entrypoint: fixture.path('runtime/apps/cli/src/index.mjs'), record, component, env,
+    entrypoint: fixture.path('runtime/apps/cli/src/index.mjs'), component, env,
   });
+  const countAdmissionTraversals = async component => {
+    let traversals = 0;
+    const originalReadDirectory = fs.readdirSync;
+    fs.readdirSync = (path, ...args) => {
+      if (String(path) === dependency) traversals++;
+      return originalReadDirectory(path, ...args);
+    };
+    syncBuiltinESMExports();
+    try { await admission(component); }
+    finally {
+      fs.readdirSync = originalReadDirectory;
+      syncBuiltinESMExports();
+    }
+    return traversals;
+  };
   for (const component of ['cli', 'daemon']) await assert.doesNotReject(admission(component));
   await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
     await writeFile(fixture.path('repo/pnpm-lock.yaml'), '# UI-only dependency patch');
   });
   assert.notEqual((await readDependencyPublicationState({ installDir: repoDir, env })).identity,
     record.dependencyPublication.identity, 'the fixture really changes the installation-wide identity');
-  for (const component of ['cli', 'daemon']) await assert.doesNotReject(admission(component),
-    `${component} remains admitted after a UI-only lockfile publication`);
+  const traversals = [];
+  for (const component of ['cli', 'daemon', 'cli', 'daemon']) {
+    traversals.push(await countAdmissionTraversals(component));
+  }
+  t.diagnostic(JSON.stringify({ admissionsAfterUnrelatedPublication: traversals }));
+  assert.ok(traversals[0] > 0, 'a new publication checks the real runtime closure once');
+  assert.deepEqual(traversals.slice(1), [0, 0, 0],
+    'successive admissions reuse the successful closure proof, including records read from disk');
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {});
+  assert.ok(await countAdmissionTraversals('daemon') > 0,
+    'a new generation revalidates the closure even when manifest identity is unchanged');
   await assert.rejects(withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
+      { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'writer_active' }, 'an active dependency writer cannot admit its retained closure');
     throw new Error('installation failed');
   }), /installation failed/);
   for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
-    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' }, 'an unchanged closure cannot admit a failed publication');
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'check_failed' }, 'an unchanged closure cannot admit a failed publication');
   await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
     await writeFile(`${dependency}/index.cjs`, 'exports.value = 2;');
   });
   for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
-    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' }, 'a changed runtime dependency still requires reload');
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' }, 'a changed runtime dependency still requires reload');
+});
+
+test('source dependency refusals distinguish missing closure evidence from a failed check', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-refusal-' });
+  await mkdir(fixture.path('runtime'), { recursive: true });
+  const entrypoint = fixture.path('runtime/apps/cli/src/index.mjs');
+  await writeFile(fixture.path('runtime/source-bundle.json'), JSON.stringify({ dependencyPublication: {} }));
+  await assert.rejects(assertSourceRuntimeDependenciesCurrent({ entrypoint }),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'no_closure' });
+  await writeFile(fixture.path('runtime/source-bundle.json'), '{');
+  await assert.rejects(assertSourceRuntimeDependenciesCurrent({ entrypoint }),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'check_failed' });
 });
 
 test('runtime closure invalidates a removed installed path and re-resolves after an install relayout', async t => {

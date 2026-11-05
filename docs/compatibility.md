@@ -172,6 +172,13 @@ an upgraded host; they do not need a dual writer or a stored-data migration.
 
 ## Runtime failure transcript metadata (0.3 development)
 
+The same unreleased closed launch-error schema admits optional `subtype` for
+source-runtime reload diagnostics. Strict development producers and readers
+must load the matching schema; results without a subtype remain valid. The
+existing error code, admission and retry decisions are unchanged. This adds no
+released-client update floor, wire epoch or migration.
+
+
 Correlated Codex JSON-RPC application rejections may add optional
 `failureCause.providerErrorMessage`, using the existing bug-report secret
 redactor. Response data and generic native error messages stay excluded; the

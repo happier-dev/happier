@@ -1420,23 +1420,30 @@ esac
   return { connections, start, privateControllerRepo: fixture.root };
 }
 
-test('controller coalescing shares one AUTO dispatch with full output replay and exit status', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+// review-a-fixes-1104.md A2 supersedes running-result reuse: later callers
+// share the not-yet-started follower, whose dispatch admits current inputs.
+test('controller coalescing shares one fresh AUTO follower with full output replay and exit status', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
   const { start, connections } = await controllerCoalescingFixture(t);
   const first = start(); await first.started;
-  const second = start(); await second.started;
-  const dispatches = connections.length;
-  for (const socket of connections) socket.end();
-  const results = await Promise.all([first.result, second.result]);
-  assert.equal(dispatches, 1, 'identical callers must produce exactly one outbound payload dispatch');
+  const second = start();
+  const third = start();
+  await Promise.all([second.attached, third.attached]);
+  assert.equal(connections.length, 1, 'later callers wait for a fresh dispatch');
+  connections[0].end();
+  const leaderResult = await first.result;
+  await Promise.all([second.started, third.started]);
+  assert.equal(connections.length, 2, 'identical queued callers must share one outbound follower dispatch');
+  connections[1].end();
+  const results = [leaderResult, ...await Promise.all([second.result, third.result])];
   for (const result of results) {
     assert.equal(result.code, 7);
     assert.deepEqual(result.stdout, Buffer.concat([Buffer.from('payload-started\n'), Buffer.from([0, 255])]));
     assert.match(result.stderr, /payload-stderr/);
   }
-  assert.equal(results[0].stderr, results[1].stderr, 'both callers receive the same stderr replay');
+  assert.equal(results[1].stderr, results[2].stderr, 'follower callers receive the same stderr replay');
   const next = start(); await next.started;
-  assert.equal(connections.length, 2, 'a completed result must never serve a new invocation');
-  connections[1].end();
+  assert.equal(connections.length, 3, 'a completed result must never serve a new invocation');
+  connections[2].end();
   assert.equal((await next.result).code, 7);
 });
 
@@ -1472,13 +1479,19 @@ test('controller coalescing queues exactly one whole-package typecheck follower 
 
 test('controller coalescing keeps a shared job after first cancellation and ends it after last cancellation', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
   const { start, connections } = await controllerCoalescingFixture(t);
-  const first = start(); await first.started;
-  const second = start(); await second.started;
+  const leader = start(); await leader.started;
+  const first = start();
+  const second = start();
+  await Promise.all([first.attached, second.attached]);
   assert.equal(connections.length, 1);
+  connections[0].end();
+  await leader.result;
+  await Promise.all([first.started, second.started]);
+  assert.equal(connections.length, 2);
   first.child.kill('SIGTERM');
   await first.result;
-  assert.equal(connections[0].destroyed, false, 'remaining caller must retain the dispatch');
-  const closed = new Promise(resolveClose => connections[0].once('close', resolveClose));
+  assert.equal(connections[1].destroyed, false, 'remaining caller must retain the dispatch');
+  const closed = new Promise(resolveClose => connections[1].once('close', resolveClose));
   second.child.kill('SIGTERM');
   await Promise.all([second.result, closed]);
 });

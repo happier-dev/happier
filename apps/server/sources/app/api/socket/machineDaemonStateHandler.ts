@@ -180,10 +180,7 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
             const presence = await inTx(async tx => {
                 // Rejected/stale CAS requests and exact equal encoded content
                 // need no publication fence, content write or liveness update.
-                // Re-admit equality after its observation so revocation or an
-                // installation change cannot hide behind the no-op path.
-                let observed = await readContent(tx);
-                if (observed.kind === 'unchanged') observed = await readContent(tx);
+                const observed = await readContent(tx);
                 if (observed.kind !== 'change_required') {
                     acknowledgeRead(tx, observed);
                     return null;

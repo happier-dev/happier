@@ -1,8 +1,16 @@
 import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, onTestFailed, vi } from 'vitest';
+import fastify from 'fastify';
+import { serializerCompiler } from 'fastify-type-provider-zod';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createSpawnHappyCliEnvScope, publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappyCliHarness';
 import { routeSpawnModeAndWaitForWebhook } from './routeSpawnModeAndWaitForWebhook';
@@ -133,11 +141,90 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             logDebug: () => {}, warn: () => {},
         };
         const offline = new Error('Node release service unavailable');
-        vi.stubGlobal('fetch', async () => { throw offline; });
-        Object.defineProperty(process, 'execPath', { configurable: true, value: join(root, 'happier') });
+        let bootstrapFetches = 0;
+        vi.stubGlobal('fetch', async () => { bootstrapFetches += 1; throw offline; });
         let launching: Promise<SpawnSessionResult> | undefined;
         try {
+            phase = 'refuse stale source dependencies before runtime bootstrap or child launch';
+            const sourceRoot = join(root, 'source-bundle');
+            const sourceEntrypoint = join(sourceRoot, 'apps/cli/src/index.mjs');
+            const markerPath = join(root, 'installed-dependencies');
+            const generationPath = join(root, 'dependency-generation');
+            mkdirSync(dirname(sourceEntrypoint), { recursive: true });
+            writeFileSync(sourceEntrypoint, 'import "./removed-dependency.mjs";');
+            writeFileSync(markerPath, JSON.stringify({ identity: 'after-refresh' }));
+            writeFileSync(join(sourceRoot, 'source-bundle.json'), JSON.stringify({
+                identity: 'captured-source-fixture', entrypoint: sourceEntrypoint,
+                dependencyPublication: { identity: 'before-refresh', generation: null, writerActive: false, markerPath, generationPath },
+            }));
+            // Match Stack's source launch provenance in both the process and
+            // the request environment; a native snapshot flag cannot stand in
+            // for the actual source-runtime contract.
+            const sourceEnv = {
+                HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: sourceEntrypoint,
+                HAPPIER_STACK_CLI_ROOT_DIR: dirname(dirname(sourceEntrypoint)),
+                HAPPIER_CLI_ROOT_DIR: dirname(dirname(sourceEntrypoint)),
+                HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '0',
+                HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
+                HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
+                HAPPIER_MANAGED_NODE_BIN: originalExecPath,
+            };
+            let stale: SpawnSessionResult;
+            const sourceEnvScope = createEnvKeyScope(Object.keys(sourceEnv));
+            sourceEnvScope.patch(sourceEnv);
+            try {
+                stale = await routeSpawnModeAndWaitForWebhook({ ...params, processEnv: { ...process.env } });
+            } finally {
+                sourceEnvScope.restore();
+            }
+            expect(stale).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED',
+                errorDetail: { kind: 'launch_error', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'no_closure' } });
+
+            phase = 'preserve an unfinished writer refusal through the serialized operation result';
+            const installRoot = join(root, 'installation');
+            const installMarker = join(installRoot, 'node_modules', 'publication.json');
+            const ownerPath = join(installRoot, 'apps', 'stack');
+            mkdirSync(dirname(installMarker), { recursive: true });
+            mkdirSync(dirname(ownerPath), { recursive: true });
+            symlinkSync(fileURLToPath(new URL('../../../../stack', import.meta.url)), ownerPath,
+                process.platform === 'win32' ? 'junction' : 'dir');
+            writeFileSync(installMarker, JSON.stringify({ identity: 'before-refresh' }));
+            writeFileSync(generationPath, JSON.stringify({ generation: 2, completedGeneration: 1 }));
+            writeFileSync(join(sourceRoot, 'source-bundle.json'), JSON.stringify({
+                dependencyPublication: { identity: 'before-refresh', generation: 1, writerActive: false,
+                    markerPath: installMarker, generationPath },
+            }));
+            const writerRefusal = await routeSpawnModeAndWaitForWebhook({ ...params,
+                processEnv: { ...process.env, ...sourceEnv, HAPPIER_DEV_TARGET_EXECUTION: undefined,
+                    HAPPIER_STACK_HOME_DIR: join(root, 'dependency-home') } });
+            if (writerRefusal.type !== 'error') throw new Error('Expected writer refusal');
+            const app = fastify().setSerializerCompiler(serializerCompiler);
+            app.post('/spawn-session', { schema: { response: { 500: SpawnSessionControlErrorResponseSchema } } },
+                (_request, reply) => reply.code(500).send(projectSpawnSessionControlErrorResponse(writerRefusal)));
+            try {
+                const serialized = await app.inject({ method: 'POST', url: '/spawn-session' });
+                const response = SpawnSessionControlErrorResponseSchema.parse(serialized.json());
+                const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+                    errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+                }));
+                const operations = createHostActionOperationRuntime({ machineId: 'source-worker',
+                    resolveAccountId: async () => 'source-owner', generateOperationId: () => 'source-refusal' });
+                await operations.observeExecution({ actionId: 'session.spawn_new',
+                    input: { creationKey: 'source-refusal', executionTarget: { serverId: 'fixture-home', machineId: 'source-worker' },
+                        directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+                    execute: async () => ({ ok: true, result }),
+                });
+                expect(await operations.handlers.getV2({ operationId: 'source-refusal', waitForTerminal: true }))
+                    .toMatchObject({ kind: 'found', operation: { result: { type: 'error',
+                        launchError: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'writer_active' } } } });
+            } finally { await app.close(); }
+            expect(bootstrapFetches).toBe(0);
+            expect(pidToTrackedSession.size).toBe(0);
+            expect(pidToSpawnWebhookTimeout.size).toBe(0);
+            await expect(listSessionMarkers()).resolves.toEqual([]);
+
             phase = 'reject managed JavaScript runtime bootstrap while offline';
+            Object.defineProperty(process, 'execPath', { configurable: true, value: join(root, 'happier') });
             await expect(routeSpawnModeAndWaitForWebhook(params)).rejects.toMatchObject({
                 message: 'Managed JavaScript runtime is unavailable: bootstrap failed', cause: offline,
             });

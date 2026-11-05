@@ -1,3 +1,4 @@
+import { PrismaClient, type Prisma } from "@prisma/client";
 import { lockMachinePresenceInTx, markMachinePresenceInactive, persistMachinePresence } from "@/app/presence/persistMachinePresence";
 import { randomUUID } from "node:crypto";
 
@@ -146,6 +147,38 @@ async function withNonUtcPresenceTx<T>(run: (tx: Tx) => Promise<T>): Promise<Res
     }, { isolationLevel: 'ReadCommitted', transactionClass: 'presence-clock-contract' });
 }
 
+async function observeDaemonStateSql(run: () => Promise<void>) {
+    const observer = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const measured = { statements: 0, contentWrites: 0, publications: 0, lockStatements: 0, lockDurationMs: 0,
+        machineAcquisitions: 0, presenceAcquisitions: 0, admissionReads: 0, contentReads: 0 };
+    observer.$on('query', (event: Prisma.QueryEvent) => {
+        const query = event.query.trimStart();
+        measured.statements++;
+        if (/^SELECT\b/i.test(query) && /FROM "(?:public"\.")?Machine"/.test(query)) {
+            measured.machineAcquisitions++;
+            if (query.includes('"operationProtocolCapabilitiesRevision"')) measured.admissionReads++;
+            else if (query.includes('"daemonStateVersion"') && query.includes('"lastActiveAt"')) measured.contentReads++;
+            if (query.includes('"lastActiveAt"') && /FOR UPDATE\b/.test(query)) measured.presenceAcquisitions++;
+        }
+        if (/^UPDATE\b/i.test(event.query) && event.query.includes('"Machine"')
+            && event.query.includes('"daemonStateVersion"')) measured.contentWrites++;
+        if (/INSERT INTO "(?:public"\.")?AccountChange"/.test(event.query)) measured.publications++;
+        if (/FOR (?:NO KEY UPDATE|KEY SHARE|UPDATE)/i.test(event.query)) {
+            measured.lockStatements++;
+            measured.lockDurationMs += event.duration;
+        }
+    });
+    await observer.$connect();
+    const transaction = db.$transaction;
+    // Observe genuine Prisma/PostgreSQL transport, keeping internal owners real.
+    db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
+        return Reflect.apply(observer.$transaction, observer, args);
+    } });
+    try { await run(); }
+    finally { db.$transaction = transaction; await observer.$disconnect(); }
+    return measured;
+}
+
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
     "Machine writes under PostgreSQL publication contention",
     () => {
@@ -166,6 +199,80 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
         afterAll(async () => {
             if (connected) await db.$disconnect();
             vi.unstubAllEnvs();
+        });
+
+        it.each(['equal', 'stale', 'changed'] as const)('bounds an 18-request concurrent %s daemon-state burst by real content changes', async kind => {
+            const fixture = await createMachineFixture();
+            const initial = await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId } });
+            const daemonState = kind === 'equal' ? initial.daemonState!
+                : encodePlainMachineStoredContent({ status: 'running' });
+            const callbacks = Array.from({ length: 18 }, () => vi.fn());
+            const measured = await observeDaemonStateSql(async () => {
+                await Promise.all(callbacks.map(callback => getSocketHandler(fixture.socket, 'machine-update-state')({
+                    machineId: fixture.machineId, daemonState,
+                    expectedVersion: kind === 'stale' ? initial.daemonStateVersion + 1 : initial.daemonStateVersion,
+                    expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                }, callback)));
+            });
+            const responses = callbacks.map(callback => {
+                expect(callback).toHaveBeenCalledTimes(1);
+                return MachineUpdateStateResponseSchema.parse(callback.mock.calls[0]?.[0]);
+            });
+            const changes = kind === 'changed' ? 1 : 0;
+            console.info('MACHINE_DAEMON_STATE_CONVOY', JSON.stringify({ kind, requests: 18, ...measured }));
+            expect.soft(measured.contentWrites).toBe(changes);
+            expect.soft(await db.account.findUniqueOrThrow({ where: { id: fixture.accountId }, select: { seq: true } }))
+                .toEqual({ seq: changes });
+            expect.soft(await db.accountChange.count({ where: { accountId: fixture.accountId, kind: 'machine', entityId: fixture.machineId } }))
+                .toBe(changes);
+            const stored = await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId } });
+            expect.soft(stored.daemonStateVersion).toBe(initial.daemonStateVersion + changes);
+            expect.soft(stored.daemonState).toBe(changes ? daemonState : initial.daemonState);
+            if (kind !== 'changed') {
+                expect.soft(measured.admissionReads).toBe(callbacks.length);
+                expect.soft(measured.contentReads).toBe(callbacks.length);
+                expect.soft(measured.lockStatements).toBe(0);
+                expect.soft(stored.updatedAt).toEqual(initial.updatedAt);
+                expect.soft(responses.every(response => 'result' in response && response.result === (kind === 'stale' ? 'version-mismatch' : 'success'))).toBe(true);
+            } else {
+                expect(responses.filter(response => 'result' in response && response.result === 'success')).toHaveLength(1);
+                expect(responses.filter(response => 'result' in response && response.result === 'version-mismatch')).toHaveLength(17);
+            }
+        });
+
+        it.each(['revoked', 'reinstalled'] as const)('admits an equal daemon-state request once and observes %s authority on the next request', async kind => {
+            const fixture = await createMachineFixture();
+            const initial = await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId } });
+            const request = {
+                machineId: fixture.machineId, daemonState: initial.daemonState!,
+                expectedVersion: initial.daemonStateVersion,
+                expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            };
+            const callback = vi.fn();
+            const admitted = await observeDaemonStateSql(async () => {
+                await getSocketHandler(fixture.socket, 'machine-update-state')(request, callback);
+            });
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback).toHaveBeenCalledWith({ result: 'success', version: initial.daemonStateVersion,
+                daemonState: initial.daemonState });
+            expect.soft(admitted.admissionReads).toBe(1);
+            expect.soft(admitted.contentReads).toBe(1);
+            expect.soft(admitted.machineAcquisitions).toBe(2);
+
+            await db.machine.update({ where: { id: fixture.machineId }, data: kind === 'revoked'
+                ? { revokedAt: new Date() } : { installationId: randomUUID() } });
+            const nextCallback = vi.fn();
+            const refused = await observeDaemonStateSql(async () => {
+                await getSocketHandler(fixture.socket, 'machine-update-state')(request, nextCallback);
+            });
+            expect(nextCallback).toHaveBeenCalledTimes(1);
+            expect(nextCallback).toHaveBeenCalledWith(expect.objectContaining({ result: 'error' }));
+            expect(refused.admissionReads).toBe(1);
+            expect(refused.contentReads).toBe(0);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId }, select: { daemonStateVersion: true } }))
+                .toEqual({ daemonStateVersion: initial.daemonStateVersion });
+            expect(await db.accountChange.count({ where: { accountId: fixture.accountId } })).toBe(0);
+            console.info('MACHINE_DAEMON_STATE_SINGLE_ADMISSION', JSON.stringify({ kind, admitted, refused }));
         });
 
         it('expires only the exact current observation without changing UTC last-seen or content clocks in a non-UTC session', async () => {

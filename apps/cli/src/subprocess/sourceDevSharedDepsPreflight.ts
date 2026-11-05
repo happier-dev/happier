@@ -16,6 +16,7 @@ import {
 } from 'node:path';
 
 import { projectPath } from '@/projectPath';
+import { assertSourceRuntimeDependenciesCurrent, SourceRuntimeReloadRequiredError } from '@happier-dev/cli-common/sourceRuntimeEntries';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import {
   buildHappyCliSubprocessInvocation,
@@ -63,7 +64,7 @@ export type SourceDevSharedDepsPreflightResult =
   | { type: 'ready'; checked: false; reason: 'not-source-entrypoint' }
   | { type: 'ready'; checked: false; reason: 'not-source-dev' }
   | { type: 'ready'; checked: true; reason: 'current' | 'synced' | 'admitted-copy' }
-  | { type: 'error'; errorMessage: string };
+  | { type: 'error'; errorMessage: string; code?: SourceRuntimeReloadRequiredError['code']; subtype?: SourceRuntimeReloadRequiredError['subtype'] };
 
 function normalizePathSeparators(pathLike: string): string {
   return pathLike.replaceAll('\\', '/');
@@ -681,6 +682,7 @@ export function normalizeBundledWorkspaceNameFromPackageName(packageName: string
 
 export async function prepareSourceDevSharedDepsForHappyCliSpawn(params: Readonly<{
   args: readonly string[];
+  processEnv?: SourceDevSharedDepsProcessEnv;
   signal?: AbortSignal;
   launchOptions?: HappyCliSubprocessLaunchOptions;
   logDebug?: (message: string, payload?: unknown) => void;
@@ -694,6 +696,16 @@ export async function prepareSourceDevSharedDepsForHappyCliSpawn(params: Readonl
   progressIntervalMs?: number;
   workspaceNames?: readonly string[];
 }>): Promise<SourceDevSharedDepsPreflightResult> {
+  try {
+    await assertSourceRuntimeDependenciesCurrent({
+      entrypoint: (params.processEnv ?? process.env).HAPPIER_CLI_SUBPROCESS_ENTRYPOINT,
+      env: params.processEnv ?? process.env,
+      signal: params.signal,
+    });
+  } catch (error) {
+    if (!(error instanceof SourceRuntimeReloadRequiredError)) throw error;
+    return { type: 'error', code: error.code, subtype: error.subtype, errorMessage: error.message };
+  }
   const resolveInvocation = params.resolveInvocation ?? buildHappyCliSubprocessInvocation;
   const invocation = resolveInvocation(Array.from(params.args), params.launchOptions);
   if (!isHappyCliSourceEntrypointInvocation(invocation)) {

@@ -10,6 +10,17 @@ import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawn
 import { buildConnectedServiceCredentialRefreshSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 
 describe('Session launch cause transport', () => {
+  it('accepts an existing source-runtime refusal without the optional diagnostic subtype', () => {
+    const legacyCause = { kind: 'launch_error' as const, code: 'SOURCE_RUNTIME_RELOAD_REQUIRED',
+      message: 'Reload the Stack from current source.' };
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse({
+      errorCode: 'SPAWN_FAILED', errorMessage: legacyCause.message, errorDetail: legacyCause,
+    }));
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }))).toMatchObject({ type: 'error', launchError: legacyCause });
+    expect(response.errorDetail).not.toHaveProperty('subtype');
+  });
   it('retains a transient lease cause through strict transport without disclosing attached secrets', () => {
     const secret = 'sk-private-refresh-reason';
     const failure = buildConnectedServiceCredentialRefreshSpawnErrorResult({ agentId: 'claude', error: {

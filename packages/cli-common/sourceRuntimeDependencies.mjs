@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// Retained entrypoints re-read their capture on each launch. Keep a successful
+// closure decision at this owner until the installed publication changes.
+const validatedRuntimeDependencies = new Map();
+
 /** Completed artifacts retain their marker identity, not a future writer generation. */
 export function buildInputDependencyIdentityMatches(left, right) {
   return Boolean(left && right && left.writerActive === false && right.writerActive === false && left.identity === right.identity);
@@ -20,9 +24,10 @@ export class SourceRuntimeReloadRequiredError extends Error {
   phase = 'dependencies';
   retryable = false;
 
-  constructor(component = 'daemon') {
+  constructor(component = 'daemon', subtype = 'check_failed') {
     super('Source runtime dependencies changed or are unavailable. Reload the Stack from current source.');
     this.name = 'SourceRuntimeReloadRequiredError';
+    this.subtype = subtype;
     this.component = component;
     this.entryGraph = component;
   }
@@ -46,10 +51,11 @@ export async function assertSourceRuntimeDependenciesCurrent({ entrypoint, recor
     // Older source captures cannot prove their installed-tree binding. An
     // explicit current-source reload publishes the locators with that identity.
     if (!sourceRuntimeDependencyIdentityMatches(captured, captured)) {
-      throw new SourceRuntimeReloadRequiredError(component);
+      throw new SourceRuntimeReloadRequiredError(component, 'no_closure');
     }
     let generation = readOptionalJson(captured.generationPath);
     if (generation?.generation != null && generation.generation !== generation.completedGeneration) {
+      validatedRuntimeDependencies.delete(entrypoint);
       // Only the source checkout's dependency owner knows whether this is an
       // active writer or an interrupted installation. Reuse its cancellable
       // release wait; completed launches do not load preparation tooling.
@@ -64,20 +70,31 @@ export async function assertSourceRuntimeDependenciesCurrent({ entrypoint, recor
     // A completed reinstall can retain exactly the same dependency content.
     // An unfinished publication is unavailable until its producer completes it.
     const writerActive = generation?.generation != null && generation.generation !== generation.completedGeneration;
-    if (writerActive) throw new SourceRuntimeReloadRequiredError(component);
-    if (!sourceRuntimeDependencyIdentityMatches(captured, { identity, writerActive,
-      ...(record.runtimeDependencyClosure ? { generation: generation?.generation ?? null } : {}) })) {
-      const closure = record.runtimeDependencyClosure;
+    if (writerActive) throw new SourceRuntimeReloadRequiredError(component, 'writer_active');
+    const closure = record.runtimeDependencyClosure;
+    const current = { identity, writerActive, ...(closure ? { generation: generation?.generation ?? null } : {}) };
+    if (!sourceRuntimeDependencyIdentityMatches(captured, current)) {
       if (identity && closure) {
+        const validated = validatedRuntimeDependencies.get(entrypoint);
+        if (validated?.closureIdentity === closure.identity
+          && validated.markerPath === captured.markerPath && validated.generationPath === captured.generationPath
+          && sourceRuntimeDependencyIdentityMatches(validated, current)) return;
         const installDir = dirname(dirname(captured.markerPath));
         const { readSourceRuntimeDependencyIdentity } = await import(pathToFileURL(join(installDir,
           'apps/stack/scripts/build/source_author_inputs.mjs')).href);
-        if (readSourceRuntimeDependencyIdentity({ imports: closure.imports, signal }) === closure.identity) return;
+        if (readSourceRuntimeDependencyIdentity({ imports: closure.imports, signal }) === closure.identity) {
+          validatedRuntimeDependencies.set(entrypoint, { ...current, closureIdentity: closure.identity,
+            markerPath: captured.markerPath, generationPath: captured.generationPath });
+          return;
+        }
+        throw new SourceRuntimeReloadRequiredError(component, 'closure_changed');
       }
-      throw new SourceRuntimeReloadRequiredError(component);
+      throw new SourceRuntimeReloadRequiredError(component, closure ? 'check_failed' : 'no_closure');
     }
-  } catch {
+  } catch (error) {
+    validatedRuntimeDependencies.delete(entrypoint);
     signal?.throwIfAborted();
+    if (error instanceof SourceRuntimeReloadRequiredError) throw error;
     // Filesystem/JSON diagnostics contain local paths, not useful recovery facts.
     throw new SourceRuntimeReloadRequiredError(component);
   }

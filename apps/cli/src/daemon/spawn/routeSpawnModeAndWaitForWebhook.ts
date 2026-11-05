@@ -150,6 +150,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   const sourceDevWorkspaceNames = resolveSourceDevWorkspaceNamesForBackendTarget(params.effectiveBackendTargetV2);
   const sourceDevSharedDepsPreflight = await prepareSourceDevSharedDepsForHappyCliSpawn({
     args,
+    processEnv: params.processEnv,
     launchOptions: { preferWindowsPackagedBinary: true },
     logDebug: params.logDebug,
     ...(sourceDevWorkspaceNames ? { workspaceNames: sourceDevWorkspaceNames } : {}),
@@ -157,6 +158,8 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   if (sourceDevSharedDepsPreflight.type === 'error') {
     params.logDebug('[DAEMON RUN] Source-dev CLI shared deps preflight failed before spawn', {
       errorMessage: sourceDevSharedDepsPreflight.errorMessage,
+      code: sourceDevSharedDepsPreflight.code,
+      subtype: sourceDevSharedDepsPreflight.subtype,
     });
     await params.cleanupSpawnResources();
     await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
@@ -164,6 +167,12 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: sourceDevSharedDepsPreflight.errorMessage,
+      ...(sourceDevSharedDepsPreflight.code ? { errorDetail: {
+        kind: 'launch_error' as const,
+        code: sourceDevSharedDepsPreflight.code,
+        ...(sourceDevSharedDepsPreflight.subtype ? { subtype: sourceDevSharedDepsPreflight.subtype } : {}),
+        message: sourceDevSharedDepsPreflight.errorMessage,
+      } } : {}),
     };
   }
 

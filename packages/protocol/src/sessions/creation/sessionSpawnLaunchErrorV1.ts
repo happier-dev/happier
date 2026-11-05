@@ -27,6 +27,7 @@ const SessionSpawnChildExitV1Schema = lazyZodSchema(() => z.strictObject({
 export const SessionSpawnLaunchErrorV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('launch_error'),
   code: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_.:-]*$/u)),
+  subtype: z.optional(z.enum(['writer_active', 'no_closure', 'closure_changed', 'check_failed'])),
   message: z.string().check(z.refine(value => value.trim().length > 0)),
   rpcErrorCode: z.optional(z.enum([MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES.OUTCOME_UNKNOWN, RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE])),
   connectionPhase: z.optional(z.enum(SCOPED_RPC_SOCKET_CONNECTION_PHASES)),

@@ -109,6 +109,25 @@ function makeRuntime(scripts, { failCommonOnce = false } = {}) {
 }
 
 for (const nested of [false, true]) {
+  test(`shared-only updates keep immutable cached chunks valid (nested=${nested})`, async () => {
+    const before = await serialize(makeFixture({ nested }));
+    const changed = makeFixture({ nested });
+    const shared = changed.find(module => module.path.endsWith('/shared.js'));
+    shared.output[0].data.code = shared.output[0].data.code.replace('41', '99');
+    const after = await serialize(changed);
+    const previousByFilename = new Map(before.map(asset => [asset.filename, asset]));
+    for (const asset of after) {
+      const previous = previousByFilename.get(asset.filename);
+      if (previous) assert.equal(asset.source, previous.source,
+        'an immutable chunk filename must never identify different bytes');
+    }
+    const cached = after.map(asset => previousByFilename.get(asset.filename) ?? asset);
+    const runtime = makeRuntime(cached);
+    const entry = nested ? await runtime.context.entry.openLibrary() : runtime.context.entry;
+    assert.equal((await entry.openA()).value, 100);
+    assert.equal(runtime.loads.filter(url => url.includes('__common')).length, 1);
+  });
+
   test(`async-only shared code downloads once on demand before concurrent consumers (nested=${nested})`, async () => {
     const scripts = await serialize(makeFixture({ nested }));
     const eagerShared = scripts.filter(asset => !asset.metadata.isAsync)

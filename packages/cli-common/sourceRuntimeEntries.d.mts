@@ -1,5 +1,22 @@
 import type { build, BuildOptions, Metafile, Plugin, TransformOptions, TransformResult } from 'esbuild';
 
+export class SourceRuntimeReloadRequiredError extends Error {
+  readonly code: 'SOURCE_RUNTIME_RELOAD_REQUIRED';
+  readonly subtype: NonNullable<import('@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1').SessionSpawnLaunchErrorV1['subtype']>;
+  readonly phase: 'dependencies';
+  readonly retryable: false;
+  readonly component: string;
+  readonly entryGraph: string;
+  constructor(component?: string, subtype?: SourceRuntimeReloadRequiredError['subtype']);
+}
+export function assertSourceRuntimeDependenciesCurrent(options: Readonly<{
+  entrypoint?: string;
+  record?: unknown;
+  component?: string;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}>): Promise<void>;
+
 export const SOURCE_CONDITION: 'happier-source';
 export const SOURCE_RUNTIME_OUTPUT_OPTIONS: Readonly<Pick<BuildOptions,
   'charset' | 'minifyWhitespace' | 'legalComments' | 'supported'>>;

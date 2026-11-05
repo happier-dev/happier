@@ -567,11 +567,13 @@ hstack init --cli-root-dir=/path/to/your/happier-dev-checkout
 ```
 
 In 0.3 development source, noninteractive commands from the shared primary
-checkout on a Linux controller coalesce before worker selection. Identical
-checkout, working directory, command arguments and command-policy environment
-share one dispatch, with stdout/stderr replay from the beginning and the same
-exit status. A whole-package typecheck requested during an active identical
-check joins one queued follower, so it starts after the current check completes.
+checkout on a Linux controller coalesce before worker selection. Later calls
+with the same checkout, working directory, command arguments and command-policy
+environment share one queued follower while a run is active. It starts
+after the current run completes and performs normal source and dependency
+admission then, so later callers receive a fresh execution's result. Callers
+sharing a follower receive stdout/stderr from the beginning and the same exit
+status. This applies to ordinary commands and whole-package typechecks alike.
 Cancelling a caller detaches it; the last caller cancels that shared dispatch.
 Completed results are not cached. Explicit environment options participate in
 identity without appearing in diagnostic identifiers. Sibling-checkout,

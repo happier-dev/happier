@@ -4768,3 +4768,79 @@ test('Protocol preparation cancels a held publication lock without generating ex
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Protocol preparation cancels a held publication lock without generating exports or compiling', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-protocol-cancel-'));
+  const restoreEnv = withPatchedProcessEnv(null, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
+  let release;
+  let held;
+  let preparation;
+  let observationTimer;
+  const nativeWatch = fs.watch;
+  try {
+    writePnpmWorkspaceFixture(root, { workspaces: ['packages/*'] });
+    for (const app of ['cli', 'ui', 'server']) {
+      mkdirSync(join(root, 'apps', app), { recursive: true });
+      writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    const dir = join(root, 'packages/protocol');
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    mkdirSync(join(dir, 'scripts'));
+    const manifestPath = join(dir, 'package.json');
+    const originalManifest = JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
+      exports: {}, scripts: { build: 'fixture-compiler' } });
+    writeFileSync(manifestPath, originalManifest);
+    writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+    writeFileSync(join(dir, 'export-aliases.json'), '{}');
+    writeFileSync(join(dir, 'src/index.ts'), 'export const value = 1;');
+    const generator = new URL('../../packages/protocol/scripts/generate-exports.mjs', import.meta.url).href;
+    writeFileSync(join(dir, 'scripts/generate-exports.mjs'), `export * from ${JSON.stringify(generator)};`);
+    const lockPath = resolveWorkspacePackageBuildLockPath(dir, { name: '@happier-dev/protocol' });
+    let markHeld;
+    const ready = new Promise(resolve => { markHeld = resolve; });
+    held = withWorkspaceBundleLock(async () => {
+      markHeld();
+      await new Promise(resolve => { release = resolve; });
+    }, { lockPath });
+    await ready;
+    let markWaiting;
+    const waiting = new Promise(resolve => { markWaiting = resolve; });
+    // Observe the real native watch so cancellation happens during contention,
+    // rather than relying on a delay or replacing internal lock behavior.
+    t.mock.method(fs, 'watch', (...args) => {
+      const watcher = nativeWatch(...args);
+      if (String(args[0]) === dirname(lockPath)) markWaiting();
+      return watcher;
+    });
+    syncBuiltinESMExports();
+    const controller = new AbortController();
+    let compilerStarted = false;
+    preparation = ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/protocol'], {
+      quiet: true, signal: controller.signal, env: { ...process.env, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '' },
+      workspaceBuildBoundary: { prepareEnv: async (_dir, env) => env,
+        runPackageBuild: async () => { compilerStarted = true; } },
+    }).then(() => ({ resolved: true }), error => ({ error }));
+    await waiting;
+    controller.abort();
+    const result = await Promise.race([preparation, new Promise(resolve => {
+      observationTimer = setTimeout(() => resolve({ stillWaiting: true }), 1_000);
+    })]);
+    assert.equal(result.stillWaiting, undefined, 'canceled preparation must settle while the publication lock is held');
+    assert.equal(result.error?.name, 'AbortError');
+    assert.equal(readFileSync(manifestPath, 'utf8'), originalManifest);
+    release();
+    await held;
+    await preparation;
+    assert.equal(readFileSync(manifestPath, 'utf8'), originalManifest);
+    assert.equal(compilerStarted, false);
+  } finally {
+    clearTimeout(observationTimer);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    release?.();
+    await held?.catch(() => {});
+    await preparation?.catch(() => {});
+    restoreEnv();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { isBuiltin } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.mjs';
+export { assertSourceRuntimeDependenciesCurrent, SourceRuntimeReloadRequiredError } from './sourceRuntimeDependencies.mjs';
 
 export const SOURCE_CONDITION = 'happier-source';
 
