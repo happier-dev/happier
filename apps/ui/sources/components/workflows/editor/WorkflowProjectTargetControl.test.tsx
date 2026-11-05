@@ -234,6 +234,22 @@ describe('workflow project target control', () => {
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
     });
 
+    it('browses inline and returns without changing the retained target or opening a modal', async () => {
+        const onChange = vi.fn();
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show');
+        const screen = await renderControl({ target: { machineId: 'machine-1', directory: '/repo/payments' }, onChange });
+        const before = show.mock.calls.length;
+        await screen.pressByTestIdAsync('workflow-editor-project-directory');
+        expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(1);
+        expect(show.mock.calls).toHaveLength(before);
+        await act(async () => screen.findByType(MachinePathBrowserView).props.onRequestClose());
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(0);
+        expect(screen.findAllByType(MachineSelector)).toHaveLength(1);
+        show.mockRestore();
+    });
+
     it('applies a browsed folder only to the target it was opened for', async () => {
         const onChange = vi.fn();
         const opened = { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' };
