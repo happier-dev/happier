@@ -2,7 +2,7 @@ import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v
 import type { BrowserInputEventV1, BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
 import { BrowserPageInteractions } from '../streamed/BrowserPageInteractions';
 import * as React from 'react';
-import type { RemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
+import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 import { Animated, Image, Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MachineLiveStreamControlSidebandV1, MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';

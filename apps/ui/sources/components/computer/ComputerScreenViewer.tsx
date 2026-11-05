@@ -15,7 +15,7 @@ import { BrowserPresenceFooter, type BrowserPresenceAgent, type BrowserPresenceC
 import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgentCursor';
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
 import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
-import { useRemoteViewerActions } from '@/components/stream/useRemoteViewerActions';
+import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';

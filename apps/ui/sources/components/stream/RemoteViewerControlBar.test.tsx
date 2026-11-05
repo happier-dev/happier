@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, renderScreen } from '@/dev/testkit';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { RemoteViewerControlBar } from './RemoteViewerControlBar';
-import { useRemoteViewerActions } from './useRemoteViewerActions';
+import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -20,8 +20,7 @@ describe('remote viewer keyboard toggle', () => {
             keyboard = useBrowserSoftKeyboard({ enabled: true, manual: true, target: null,
                 sendText: actions.sendText, sendKey: actions.sendKey });
             return <RemoteViewerControlBar enabled actions={{ ...actions, keyboard }} testID="controls" controls={{
-                mode: 'direct', setMode: () => {}, resetZoom: () => {}, zoomReset: 0,
-                onViewTransformChange: () => {}, renderCursor: () => null, renderDragTrail: () => null,
+                mode: 'direct', setMode: () => {}, resetZoom: () => {},
             }} />;
         }
         const screen = await renderScreen(<Host />);

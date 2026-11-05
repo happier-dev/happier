@@ -3,7 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
-import { useRemoteViewerActions } from './useRemoteViewerActions';
+import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 
 describe('remote viewer actions', () => {
     it('combines one-shot and locked modifiers on the next key or click without consuming them on movement', async () => {

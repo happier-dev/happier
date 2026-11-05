@@ -2,19 +2,16 @@ import * as React from 'react';
 import { View } from 'react-native';
 import Svg, { Polyline } from 'react-native-svg';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { HappierLiveStreamInputMode, HappierLiveStreamViewTransform } from '@happier-dev/plugin-ui/presentation';
+import type { HappierLiveStreamInputMode, HappierLiveStreamViewTransform, RemoteViewerControls } from '@happier-dev/plugin-ui/presentation';
 import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import type { RemoteViewerActions } from './useRemoteViewerActions';
+import type { RemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 
 /** A viewer preference, scoped by its producer to Home, Account, Machine and source identity. */
 export const remoteViewerModes = createPersistentUiState<HappierLiveStreamInputMode>('remote-viewer-input-mode-v1',
     value => value === 'trackpad' ? 'trackpad' : 'direct');
 const FIT: HappierLiveStreamViewTransform = { scale: 1, x: 0, y: 0 };
-export type RemoteViewerStageControls = Readonly<{
-    mode: HappierLiveStreamInputMode;
-    setMode(mode: HappierLiveStreamInputMode): void;
-    resetZoom(): void;
+export type RemoteViewerStageControls = RemoteViewerControls & Readonly<{
     zoomReset: number;
     onViewTransformChange(transform: HappierLiveStreamViewTransform): void;
     renderCursor(position: Readonly<{ x: number; y: number }>): React.ReactNode;

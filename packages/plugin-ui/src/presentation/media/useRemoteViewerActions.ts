@@ -1,7 +1,9 @@
 import * as React from 'react';
 
-import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
-import type { RemoteViewerClipboardResult, RemoteViewerClipboardShortcut } from './remoteViewerClipboard';
+import type { HappierLiveStreamInputGesture as LiveStreamInputGesture } from './inputGesture.js';
+
+export type RemoteViewerClipboardResult = Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>;
+export type RemoteViewerClipboardShortcut = (action: 'copy' | 'cut' | 'paste') => Promise<RemoteViewerClipboardResult>;
 
 export const REMOTE_VIEWER_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'ArrowRight', 'Home', 'End'] as const;
 type KeyGesture = Extract<LiveStreamInputGesture, { kind: 'keyboard_key' }>;

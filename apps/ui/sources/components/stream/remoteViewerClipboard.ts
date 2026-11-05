@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -8,8 +9,6 @@ type RemoteClipboard = Readonly<{
     read(action: 'copy' | 'cut'): Promise<string>;
     write(text: string): Promise<void>;
 }>;
-export type RemoteViewerClipboardResult = Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>;
-export type RemoteViewerClipboardShortcut = (action: 'copy' | 'cut' | 'paste') => Promise<RemoteViewerClipboardResult>;
 
 /** Browser and Computer share the local OS boundary, including WebKit's gesture-bound write. */
 export async function transferRemoteViewerClipboard(action: 'copy' | 'cut' | 'paste', remote: RemoteClipboard): Promise<void> {

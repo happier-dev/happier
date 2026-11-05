@@ -1459,3 +1459,22 @@ export {
   type HappierCollectionRowDensity,
   type HappierCollectionRowTextMetrics,
 } from './collection/CollectionRowContent.js';
+
+export {
+  RemoteViewerControlBar,
+  type RemoteViewerControlBarHost,
+  type RemoteViewerControlBarLabels,
+  type RemoteViewerControlBarProps,
+  type RemoteViewerControls,
+} from './media/RemoteViewerControlBar.js';
+export {
+  REMOTE_VIEWER_KEYS,
+  useRemoteViewerActions,
+  type RemoteViewerActions,
+  type RemoteViewerActionResult,
+  type RemoteViewerClipboardResult,
+  type RemoteViewerClipboardShortcut,
+  type RemoteViewerKeyboard,
+  type RemoteViewerModifier,
+  type RemoteViewerModifierState,
+} from './media/useRemoteViewerActions.js';

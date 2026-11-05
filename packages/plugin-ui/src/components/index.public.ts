@@ -1624,3 +1624,22 @@ export {
   type HappierCollectionRowTextMetrics,
 } from '../presentation/collection/CollectionRowContent.js';
 export { Checkbox, type CheckboxProps, type CheckboxSize } from './Checkbox.js';
+
+export {
+  RemoteViewerControlBar,
+  type RemoteViewerControlBarHost,
+  type RemoteViewerControlBarLabels,
+  type RemoteViewerControlBarProps,
+  type RemoteViewerControls,
+} from '../presentation/media/RemoteViewerControlBar.js';
+export {
+  REMOTE_VIEWER_KEYS,
+  useRemoteViewerActions,
+  type RemoteViewerActions,
+  type RemoteViewerActionResult,
+  type RemoteViewerClipboardResult,
+  type RemoteViewerClipboardShortcut,
+  type RemoteViewerKeyboard,
+  type RemoteViewerModifier,
+  type RemoteViewerModifierState,
+} from '../presentation/media/useRemoteViewerActions.js';
