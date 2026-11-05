@@ -1,5 +1,7 @@
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { localStackSourceRuntimeRoot } from './localSourceRuntimeBootstrap.mjs';
 import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { resolveBundledWorkspaceSyncModulePath } from '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs';
@@ -44,6 +46,9 @@ async function bundledWorkspacePackagesAreHealthy({
 export async function refreshLocalBundledWorkspacePackages(cliRootDir, opts = {}) {
   const cliRoot = String(cliRootDir ?? '').trim();
   if (!cliRoot) return;
+  // Authored imports are already owned by the successful source bootstrap.
+  // Their commands do not consume the compiled workspace publication.
+  if (resolve(cliRoot) === localStackSourceRuntimeRoot) return;
   if (isBundledWorkspaceMetadataInvocation(opts.argv)) return;
   const disabled = String(process.env.HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES ?? '').trim().toLowerCase();
   if (disabled === '0' || disabled === 'false' || disabled === 'no') return;
