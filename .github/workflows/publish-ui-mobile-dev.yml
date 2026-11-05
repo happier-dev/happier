@@ -528,7 +528,7 @@ jobs:
     name: iOS TestFlight submit (dev lane) (local, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 180
     permissions:
       actions: write
@@ -599,7 +599,7 @@ jobs:
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode
         with:
-          xcode_version: "26.2"
+          xcode_version: "27.1"
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:

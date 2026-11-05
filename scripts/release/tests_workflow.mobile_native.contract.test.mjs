@@ -22,7 +22,7 @@ test('selected pre-release native validation compiles Android and iOS without pu
   assert.equal(job.if, "${{ !inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_mobile_native == 'true' }}");
   assert.deepEqual(job.strategy.matrix.include, [
     { platform: 'android', runner: 'ubuntu-24.04' },
-    { platform: 'ios', runner: 'macos-26' },
+    { platform: 'ios', runner: 'xcode-27' },
   ]);
   assert.equal(job['runs-on'], '${{ matrix.runner }}');
   assert.deepEqual(job.permissions, { contents: 'read' });
@@ -44,7 +44,7 @@ test('selected pre-release native validation compiles Android and iOS without pu
   assert.match(android.run, /\.\/gradlew :app:assembleDebug/);
   assert.match(commands, /JAVA_HOME_17_X64/);
   const xcode = steps.find(step => step.uses === './.github/actions/setup-xcode');
-  assert.equal(xcode?.with.xcode_version, '26.2');
+  assert.equal(xcode?.with.xcode_version, '27.1');
   const pods = steps.findIndex(step => /pod install/.test(step.run ?? ''));
   const ios = steps.findIndex(step => /xcodebuild -workspace/.test(step.run ?? ''));
   assert.ok(pods > patches && ios > pods, 'compile the app with its patched CocoaPods closure');
@@ -53,3 +53,16 @@ test('selected pre-release native validation compiles Android and iOS without pu
   assert.match(steps[ios].run, /-destination 'generic\/platform=iOS Simulator'/);
   assert.match(steps[ios].run, /build CODE_SIGNING_ALLOWED=NO/);
 });
+
+for (const [file, jobId] of [
+  ['build-ui-mobile-local.yml', 'build_ios'],
+  ['publish-ui-mobile-dev.yml', 'ios_local'],
+]) {
+  test(`${file} compiles iOS with the same stable SDK as native validation`, () => {
+    const release = parse(readFileSync(new URL(`../../.github/workflows/${file}`, import.meta.url), 'utf8'));
+    const job = release.jobs[jobId];
+    assert.equal(job['runs-on'], 'xcode-27');
+    const xcode = job.steps.find(step => step.uses === './.github/actions/setup-xcode');
+    assert.equal(xcode?.with.xcode_version, '27.1');
+  });
+}

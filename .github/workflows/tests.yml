@@ -3088,7 +3088,7 @@ jobs:
           - platform: android
             runner: ubuntu-24.04
           - platform: ios
-            runner: macos-26
+            runner: xcode-27
     env:
       CI: "1"
       EXPO_NO_TELEMETRY: "1"
@@ -3125,7 +3125,7 @@ jobs:
         if: ${{ matrix.platform == 'ios' }}
         uses: ./.github/actions/setup-xcode
         with:
-          xcode_version: "26.2"
+          xcode_version: "27.1"
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn

@@ -495,7 +495,7 @@ jobs:
     name: Build (ios)
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: macos-26
+    runs-on: xcode-27
     permissions:
       actions: write
       contents: read
@@ -538,7 +538,7 @@ jobs:
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode
         with:
-          xcode_version: "26.2"
+          xcode_version: "27.1"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
