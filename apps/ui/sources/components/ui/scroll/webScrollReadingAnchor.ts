@@ -11,6 +11,7 @@ type AnchorNode = Readonly<{
 type ScrollerNode = {
   scrollTop: number;
   readonly clientWidth: number;
+  readonly clientHeight: number;
   readonly scrollHeight: number;
   getBoundingClientRect: () => Rect & Readonly<{ left: number }>;
   contains: (node: never) => boolean;
@@ -77,11 +78,14 @@ export function attachWebScrollReadingAnchor(
   let anchors: readonly Anchor[] = [];
   let width = scroller.clientWidth;
   let observedHeight = scroller.scrollHeight;
+  let observedViewportHeight = scroller.clientHeight;
   let relayoutPending = false;
   let readingScrollTop = scroller.scrollTop;
   let scrollOffset = 0;
   let scheduledRestore: number | null = null;
+  let resizeFramePending = false;
   const cancelRestore = () => {
+    resizeFramePending = false;
     if (scheduledRestore === null) return;
     win.cancelAnimationFrame(scheduledRestore);
     scheduledRestore = null;
@@ -126,6 +130,7 @@ export function attachWebScrollReadingAnchor(
   const restore = () => {
     cancelRestore();
     observedHeight = scroller.scrollHeight;
+    observedViewportHeight = scroller.clientHeight;
     if (scroller.clientWidth !== width) {
       width = scroller.clientWidth;
       relayoutPending = true;
@@ -137,18 +142,31 @@ export function attachWebScrollReadingAnchor(
     if (Math.abs(offBy) >= 1) scroller.scrollTop += offBy;
     readingScrollTop = scroller.scrollTop;
   };
+  const scheduleRestore = () => {
+    if (scheduledRestore !== null) return;
+    scheduledRestore = win.requestAnimationFrame(() => {
+      scheduledRestore = null;
+      resizeFramePending = false;
+      if (relayoutPending && scroller.scrollTop !== readingScrollTop) restore();
+    });
+  };
+  const onLayout = () => {
+    restore();
+    if (!relayoutPending) return;
+    // Native layout scroll + scrollend can arrive after ResizeObserver, before the next frame.
+    resizeFramePending = true;
+    scheduleRestore();
+  };
   const onScroll = () => {
     const scrollTop = scroller.scrollTop;
     if (scrollTop === readingScrollTop) return;
     if (relayoutPending) {
       // A relayout whose resize callback has not run yet (a synchronous layout read can clamp first).
-      if (scroller.clientWidth !== width || scroller.scrollHeight !== observedHeight) return restore();
-      // A native layout adjustment has no scrollend. A deliberate scroll completes before the
-      // next frame and read() cancels this restoration, accepting that new reading position.
-      if (scheduledRestore === null) scheduledRestore = win.requestAnimationFrame(() => {
-        scheduledRestore = null;
-        if (relayoutPending) restore();
-      });
+      if (scroller.clientWidth !== width || scroller.scrollHeight !== observedHeight
+        || scroller.clientHeight !== observedViewportHeight) return restore();
+      // If layout metrics already match, defer until the next frame. A completed deliberate
+      // scroll cancels this restoration and establishes the new reading position.
+      scheduleRestore();
       return;
     }
     scrollOffset += readingScrollTop - scrollTop;
@@ -156,7 +174,7 @@ export function attachWebScrollReadingAnchor(
   };
   const onScrollEnd = () => {
     // A restore's echo must not replace anchors needed by a later recomposition resize.
-    if (relayoutPending && scroller.scrollTop === readingScrollTop) return;
+    if (relayoutPending && (scroller.scrollTop === readingScrollTop || resizeFramePending)) return;
     relayoutPending = false;
     read();
   };
@@ -175,7 +193,7 @@ export function attachWebScrollReadingAnchor(
   scroller.addEventListener('scrollend', onScrollEnd);
   scroller.addEventListener('focusin', onFocus);
   win.addEventListener('resize', onResize);
-  const observer = new win.ResizeObserver(restore);
+  const observer = new win.ResizeObserver(onLayout);
   observer.observe(scroller as never);
   if (content !== null && content !== undefined)
     observer.observe(content as never);

@@ -63,6 +63,7 @@ function createLayout(input: {
       return layout.width;
     },
     get clientHeight() {
+      counts.dimensions += 1;
       return layout.viewportHeight;
     },
     get scrollHeight() {
@@ -150,20 +151,22 @@ describe('attachWebScrollReadingAnchor', () => {
     detach();
   });
 
-  it('keeps a native relayout scroll until the delayed viewport resize is observed', () => {
+  it('preserves the reading position when a late viewport clamp completes before ResizeObserver', () => {
     const page = createLayout({ rowsAbove: 400, scrollTop: 160, width: 1440 });
+    page.layout.viewportHeight = 852;
     const detach = attachWebScrollReadingAnchor(page);
     const offset = page.focusedOffset();
     page.emit('resize');
     page.layout.width = 390;
+    page.layout.viewportHeight = 789;
     page.relayout();
-    // Chrome's layout scroll arrives before its viewport-height update, without scrollend.
+    // Chrome 156 reports the late height clamp as scroll + scrollend before ResizeObserver.
+    page.layout.viewportHeight = 733;
     page.layout.scrollTop = 0;
     page.emit('scroll');
-    page.layout.viewportHeight -= 56;
-    page.relayout();
-    page.emit('scroll');
     page.emit('scrollend');
+    page.relayout();
+    page.flushFrames();
     expect(page.layout.scrollTop).toBe(160);
     expect(page.focusedOffset()).toBe(offset);
     detach();
@@ -177,7 +180,8 @@ describe('attachWebScrollReadingAnchor', () => {
     page.layout.width = 1440;
     page.relayout();
     page.layout.scrollTop = 0;
-    page.emit('scroll'); // Layout adjustment, without the scrollend a completed reveal emits.
+    page.emit('scroll');
+    page.emit('scrollend'); // Chrome 156 completes this layout scroll after the final observer.
     page.flushFrames();
     expect(page.layout.scrollTop).toBe(160);
     expect(page.focusedOffset()).toBe(offset);
@@ -304,6 +308,7 @@ describe('attachWebScrollReadingAnchor', () => {
     page.layout.width = 390;
     page.relayout();
 
+    page.flushFrames(); // The resize frame completes before a subsequent intentional reveal.
     // A reveal (or the person) scrolls; no wheel or touch is involved for a programmatic scroll.
     page.layout.scrollTop = 20;
     page.emit('scroll');
@@ -342,6 +347,7 @@ describe('attachWebScrollReadingAnchor', () => {
       get scrollTop() { return layout.scrollTop; },
       set scrollTop(value: number) { layout.scrollTop = Math.max(0, value); },
       get clientWidth() { return layout.width; },
+      get clientHeight() { return 600; },
       get scrollHeight() { return 170 + layout.headerAbove + 400; },
       getBoundingClientRect: () => ({ top: layout.viewportTop, left: 0, height: 600, width: layout.width }),
       contains: (node: unknown) => node === header || node === step,
