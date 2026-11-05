@@ -36,6 +36,26 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+  it('reports the failed answer state without recording question or answer content', async () => {
+    const failures: unknown[] = [];
+    const text = 'Private freeform answer';
+    const empty = freeform.replace('Otter freeform probe', 'Type something.');
+    const port = createFakeControlPort({ captures: [empty, freeform.replace('Otter freeform probe', 'Different terminal draft')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port,
+      questions: [{ question: 'Which probe animal?', header: 'Animal', options: ['Cat', 'Dog'] }],
+      answers: { 'Which probe animal?': [text] }, onFailure: (failure) => failures.push(failure),
+    })).resolves.toEqual({ status: 'failed', reason: 'native_freeform_not_applied' });
+    expect(failures).toEqual([expect.objectContaining({
+      reason: 'native_freeform_not_applied', questionIndex: 0, questionCount: 1,
+      lastInput: 'text', ownedDraftLength: text.length,
+      screen: expect.objectContaining({ kind: 'question', notes: 'none', freeform: { length: 24, lines: 1 } }),
+    })]);
+    expect(JSON.stringify(failures)).not.toContain(text);
+    expect(JSON.stringify(failures)).not.toContain('Different terminal draft');
+    expect(JSON.stringify(failures)).not.toContain('Which probe animal?');
+    expect(port.sentKeys).toEqual([]);
+  });
+
   it('submits its own freeform answer when typing scrolls the entire question heading out of view', async () => {
     const initial = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.initial.txt', import.meta.url), 'utf8');
     const filled = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.filled.txt', import.meta.url), 'utf8');
@@ -133,21 +153,28 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
       ...['notes.empty', 'notes.escaped', 'notes.continued'].map(capture),
       capture('notes.empty').replace('Notes: Add notes on this design…', 'Notes: press n to add notes'),
     ];
-    for (const notesScreen of notesScreens) {
+    for (const [index, notesScreen] of notesScreens.entries()) {
+      const reason = index === 0 || index === 3 ? 'local_notes_editor_active' : 'local_notes_draft_present';
+      const failures: unknown[] = [];
       const port = createFakeControlPort({ captures: [notesScreen] });
-      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers,
+        onFailure: (failure) => failures.push(failure),
+      })).resolves.toEqual({ status: 'failed', reason });
+      expect(failures).toEqual([expect.objectContaining({ reason, lastInput: null,
+        screen: expect.objectContaining({ notes: index === 0 || index === 3 ? 'editing' : 'draft' }),
+      })]);
       expect(port.sentKeys).toEqual([]);
       expect(port.sentLiteral).toEqual([]);
       const laterPage = notesScreen.replace(' ☐ Preview probe', '← ☐ Header Color ☐ Preview probe ✔ Submit →');
       const laterPort = createFakeControlPort({ captures: [laterPage] });
       await expect(answerClaudeNativeQuestion({ ...controls, port: laterPort, questions: [...questions, ...input.questions],
         answers: { ...answers, 'Which probe color?': ['Amber'] },
-      })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+      })).resolves.toEqual({ status: 'failed', reason });
       expect(laterPort.sentKeys).toEqual([]);
     }
     const changedNotes = focus(screen, '1. Compact fixture', '2. Keep fixture rows').replace('Notes: press n to add notes', 'Notes: A terminal note');
     const changedPort = createFakeControlPort({ captures: [screen, changedNotes] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port: changedPort, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: changedPort, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_notes_draft_present' });
     expect(changedPort.sentKeys).toEqual(['ArrowDown']);
     const freeformPort = createFakeControlPort({ captures: [screen] });
     await expect(answerClaudeNativeQuestion({ ...controls, port: freeformPort, questions: input.questions,
@@ -267,10 +294,10 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
       if (captures[0] === clipped) expect(port.sentKeys.slice(0, 2)).toEqual(['ShiftTab', 'ShiftTab']);
     }
     const wrong = createFakeControlPort({ captures: [...flow.slice(0, -2), clipped.replace('→ Large', '→ Small')] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port: wrong, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: wrong, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'native_review_answers_mismatch' });
     expect(wrong.sentKeys.filter((key) => key === 'Enter')).toHaveLength(3);
     const premature = createFakeControlPort({ captures: [...flow.slice(0, 4), clipped] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port: premature, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: premature, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'native_review_answers_mismatch' });
     expect(premature.sentKeys.filter((key) => key === 'Enter')).toHaveLength(2);
     expect(parseClaudeNativeQuestionScreen(clipped + '\nUnknown dialog')).toBeNull();
     expect(parseClaudeNativeQuestionScreen(clipped.slice(clipped.indexOf('Ready to submit your answers?')))).toBeNull();
@@ -534,7 +561,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     await expect(answerClaudeNativeQuestion({ ...controls, port: own, questions: nativeQuestions, answers: { 'Which comma probe?': [text] } })).resolves.toEqual({ status: 'answered' });
     expect(own.sentLiteral).toEqual([text]);
     const local = createFakeControlPort({ captures: [filled] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port: local, questions: nativeQuestions, answers: { 'Which comma probe?': [shown] } })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: local, questions: nativeQuestions, answers: { 'Which comma probe?': [shown] } })).resolves.toEqual({ status: 'failed', reason: 'local_freeform_conflict' });
     expect(local.sentKeys).toEqual([]);
     expect(local.sentLiteral).toEqual([]);
   });

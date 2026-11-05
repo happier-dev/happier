@@ -14,6 +14,25 @@ export type ClaudeNativeQuestionAnswerResult =
   | Readonly<{ status: 'answered' | 'not_visible' }>
   | Readonly<{ status: 'failed'; reason: string }>;
 
+/** Structural evidence only: never include terminal text, questions, choices or answers. */
+export type ClaudeNativeQuestionFailure = Readonly<{
+  reason: string;
+  questionIndex: number;
+  questionCount: number;
+  lastInput: TerminalSpecialKey | 'text' | null;
+  ownedDraftLength: number | null;
+  screen: Readonly<{
+    kind: ClaudeNativeQuestionPresentation['kind'];
+    answeredTabs: readonly boolean[] | null;
+    questionVisible: boolean;
+    notes: ClaudeNativeQuestionPresentation['notes'];
+    nextFocused: boolean;
+    options: readonly Readonly<{ focused: boolean; checked: boolean | null }>[];
+    freeform: Readonly<{ length: number; lines: number }> | null;
+    reviewAnswers: readonly Readonly<{ length: number; lines: number }>[];
+  }> | null;
+}>;
+
 export async function answerClaudeNativeQuestion(params: Readonly<{
   port: TerminalControlPort;
   questions: readonly StructuredQuestionLike[];
@@ -24,8 +43,29 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   verifyPollIntervalMs?: number | undefined;
   verifyPollTimeoutMs?: number | undefined;
   verifyApplied?: (() => 'pending' | 'matched' | 'mismatched') | undefined;
+  onFailure?: ((failure: ClaudeNativeQuestionFailure) => void) | undefined;
 }>): Promise<ClaudeNativeQuestionAnswerResult> {
-  const failed = (reason: string): ClaudeNativeQuestionAnswerResult => ({ status: 'failed', reason });
+  let presentation: ClaudeNativeQuestionPresentation | null = null;
+  let questionIndex = -1;
+  let lastInput: ClaudeNativeQuestionFailure['lastInput'] = null;
+  const ownDrafts = new Map<number, string>();
+  const textShape = (text: string) => ({ length: text.length, lines: text.split('\n').length });
+  const failed = (reason: string): ClaudeNativeQuestionAnswerResult => {
+    if (params.onFailure) {
+      const draft = presentation?.freeformIndex == null ? null : presentation.options[presentation.freeformIndex];
+      params.onFailure({ reason, questionIndex, questionCount: params.questions.length, lastInput,
+        ownedDraftLength: ownDrafts.get(questionIndex)?.length ?? null,
+        screen: presentation ? {
+          kind: presentation.kind, answeredTabs: presentation.tabs?.map((tab) => tab.answered) ?? null,
+          questionVisible: presentation.question !== null, notes: presentation.notes, nextFocused: presentation.nextFocused,
+          options: presentation.options.map(({ focused, checked }) => ({ focused, checked })),
+          freeform: draft ? textShape(draft.label) : null,
+          reviewAnswers: presentation.reviewAnswers.map((answer) => textShape(answer.answer)),
+        } : null,
+      });
+    }
+    return { status: 'failed', reason };
+  };
   let answers: StructuredQuestionAnswersV1;
   try {
     const publication = normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', { questions: params.questions }, { native: true }) as { questions: readonly StructuredQuestionLike[] };
@@ -50,7 +90,6 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   )));
   if (unrepresentable) return failed('native_freeform_unrepresentable');
 
-  const ownDrafts = new Map<number, string>();
   // Native rendering makes logical newlines and visual wraps indistinguishable. Only an exact
   // payload written by this operation may use a display comparison across those boundaries.
   const draftMatches = (index: number, actual: string, expected: string): boolean => (
@@ -59,8 +98,6 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       : !actual.includes('\n') && actual === expected
   );
 
-  let presentation: ClaudeNativeQuestionPresentation | null = null;
-  let questionIndex = -1;
   let completionVisible = false;
   let captureReason: string | null = null;
   const capture = async (): Promise<boolean> => {
@@ -83,7 +120,9 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
     }
     // Notes belong to the terminal user, including an empty active editor.
     // Check before navigation as well as submission: arrow/tab keys can edit them.
-    if (presentation?.notesDraft) { captureReason = 'local_answer_conflict'; return false; }
+    if (presentation && presentation.notes !== 'none') {
+      captureReason = presentation.notes === 'editing' ? 'local_notes_editor_active' : 'local_notes_draft_present'; return false;
+    }
     return true;
   };
   const send = async (key: TerminalSpecialKey | { text: string }): Promise<boolean> => {
@@ -95,6 +134,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
         : await params.port.sendLiteralText(key.text);
     const failure = sendResultToFailure(result);
     if (failure) { captureReason = ('reason' in failure ? failure.reason : undefined) ?? failure.kind; return false; }
+    lastInput = typeof key === 'string' ? key : 'text';
     return true;
   };
   const refresh = async (): Promise<boolean> => {
@@ -118,20 +158,22 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
           : answer.answer === desired[index]!.rendered;
     })
   );
-  const conflict = (index: number): boolean => {
+  const conflict = (index: number): string | null => {
     const screen = read();
     const target = desired[index]!;
     const question = questions[index]!;
     const draft = screen.freeformIndex === null ? null : screen.options[screen.freeformIndex]!;
     const draftText = !draft || /^Type something\.?$/u.test(draft.label) ? '' : draft.label;
-    return screen.options.slice(0, question.options.length).some((option, optionIndex) => option.checked === true && !target.selected.includes(optionIndex))
-      || Boolean(draftText && !draftMatches(index, draftText, target.freeform[0] ?? ''));
+    if (screen.options.slice(0, question.options.length).some((option, optionIndex) => option.checked === true && !target.selected.includes(optionIndex))) return 'local_selection_conflict';
+    return draftText && !draftMatches(index, draftText, target.freeform[0] ?? '') ? 'local_freeform_conflict' : null;
   };
   const moveTo = async (target: number, index: number): Promise<boolean> => {
     // The bound is the exact visible row count, including native multi-select's Next row.
     const steps = read().options.length + Number(read().multiSelect);
     for (let step = 0; step <= steps; step += 1) {
-      if (read().kind !== 'question' || questionIndex !== index || conflict(index)) { captureReason = 'local_answer_conflict'; return false; }
+      if (read().kind !== 'question' || questionIndex !== index) { captureReason = 'native_question_navigation_changed'; return false; }
+      const reason = conflict(index);
+      if (reason) { captureReason = reason; return false; }
       const current = read().nextFocused ? read().options.length : read().options.findIndex((option) => option.focused);
       if (current === target) return true;
       if (!await send(target > current ? 'ArrowDown' : 'ArrowUp') || !await refresh()) return false;
@@ -155,7 +197,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   while (!submitted) {
     const screen = read();
     if (screen.kind === 'review') {
-      if (!reviewMatches(screen)) return failed('local_answer_conflict');
+      if (!reviewMatches(screen)) return failed('native_review_answers_mismatch');
       if (!screen.options[0]!.focused) {
         if (!await send('ArrowUp') || !await refresh()) return failed(captureReason!);
         if (!read().options[0]!.focused || !reviewMatches(read())) return failed('native_review_changed');
@@ -167,7 +209,8 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
     const index = questionIndex;
     if (index < 0 || seenPages.has(index)) return failed('native_question_navigation_stalled');
     seenPages.add(index);
-    if (conflict(index)) return failed('local_answer_conflict');
+    const reason = conflict(index);
+    if (reason) return failed(reason);
     const question = questions[index]!;
     const target = desired[index]!;
     for (const optionIndex of target.selected) {
@@ -200,7 +243,8 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       if (!await send('Tab') || !await refresh()) return failed(captureReason!);
       // In Claude's multiline editor Tab first leaves text entry for the same page's Next row.
       if (read().kind === 'question' && questionIndex === index && read().nextFocused) {
-        if (conflict(index)) return failed('local_answer_conflict');
+        const reason = conflict(index);
+        if (reason) return failed(reason);
         if (!await send('Enter') || !await refresh()) return failed(captureReason!);
       }
     }

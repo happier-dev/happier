@@ -14,7 +14,7 @@ export type ClaudeNativeQuestionPresentation = Readonly<{
   nextFocused: boolean;
   /** Preview choices have annotations instead of an inline freeform answer. */
   freeformIndex: number | null;
-  notesDraft: boolean;
+  notes: 'none' | 'draft' | 'editing';
   options: readonly Readonly<{ label: string; focused: boolean; checked: boolean | null; continuationLines?: readonly string[] }>[];
   /** The review heading and earlier answers are above the viewport. */
   reviewClipped: boolean;
@@ -138,7 +138,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   // Restrict clipping to the choices: the question and footer still span the dialog.
   const box = / {2,}┌─+┐\s*$/u.exec(body[first]!);
   const previewColumn = !review && box ? stringWidth(body[first]!.slice(0, box.index + box[0].indexOf('┌'))) : null;
-  let notesDraft = false;
+  let notes: ClaudeNativeQuestionPresentation['notes'] = 'none';
   if (previewColumn !== null) {
     const end = body.findIndex((line, index) => index > first && RULE.test(line) && line.trim().length > 0);
     if (end < 0) return null;
@@ -146,7 +146,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     const notesStart = rightColumn.findIndex((line) => line.startsWith('Notes: '));
     if (notesStart < 0) return null;
     // Notes can wrap or contain explicit newlines, even after placeholder-shaped text.
-    notesDraft = rightColumn.slice(notesStart).filter(Boolean).join('\n') !== 'Notes: press n to add notes';
+    if (rightColumn.slice(notesStart).filter(Boolean).join('\n') !== 'Notes: press n to add notes') notes = 'draft';
     for (let index = first; index < end; index += 1) body[index] = clipDialogLine(body[index]!, previewColumn).trimEnd();
   }
 
@@ -237,7 +237,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     const hint = footer.slice(2).map((line) => line.trim()).join(' ');
     if (footer.length < 3 || !RULE.test(footer[0]!) || !(previewColumn !== null ? /^\s+Chat about this$/u : /^\s*\d+\. Chat about this$/u).test(footer[1]!) || !HINT.test(hint)) return null;
     // The editor owns navigation even when its text equals the idle notes hint.
-    if (previewColumn !== null && hint.includes(' · ctrl+g to edit in ')) notesDraft = true;
+    if (previewColumn !== null && hint.includes(' · ctrl+g to edit in ')) notes = 'editing';
     if (multiSelect && options.some((option) => option.checked === null)) return null;
     if (previewColumn === null) {
       const freeform = options.at(-1)!;
@@ -245,7 +245,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
       if (continuation.length > 0) freeform.label = [freeform.label, ...continuation].join('\n');
     }
   }
-  return { kind: review ? 'review' : 'question', tabs, question: review || heading.length === 0 ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notesDraft, options, reviewClipped, reviewAnswers };
+  return { kind: review ? 'review' : 'question', tabs, question: review || heading.length === 0 ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notes, options, reviewClipped, reviewAnswers };
 }
 
 /** One page identity for publication and navigation, independent of selection progress. */

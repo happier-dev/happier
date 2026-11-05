@@ -284,6 +284,10 @@ The native screen parser separates the preview column from option labels and
 records the actual freeform row. The existing answer driver refuses terminal
 notes or an active notes editor before navigation or submission; notes are
 annotations on a choice and are never converted into freeform answers.
+Failed native answers record their specific conflict or verification reason and
+the existing capture's structural state in the CLI file log: page, focus, answered
+tabs, notes state, text lengths and line counts, and last input action. Question,
+choice, answer and terminal text are excluded; no additional capture is taken.
 When the viewport clips a question's tabs and beginning, one shared resolver
 identifies its page from the complete visible question suffix and choice labels
 against the pending hook input. Publication and answer navigation use that same

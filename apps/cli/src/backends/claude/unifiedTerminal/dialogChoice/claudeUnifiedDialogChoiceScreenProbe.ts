@@ -121,6 +121,7 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
                 port: params.port, questions: dialog.questions, answers: decision.structuredAnswersV1,
                 isCurrent: () => params.broker.isCurrentNativeDialog(dialog),
                 verifyApplied: () => params.broker.verifyNativeQuestionAnswer(dialog, decision.structuredAnswersV1!),
+                onFailure: (failure) => logger.infoFile('[claude-unified-dialog-choice] Native question answer failed', failure),
                 wait: params.wait, settleMs: params.settleMs,
                 verifyPollIntervalMs: params.verifyPollIntervalMs, verifyPollTimeoutMs: params.verifyPollTimeoutMs,
               })
