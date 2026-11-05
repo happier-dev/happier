@@ -1032,7 +1032,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         const { PluginPageWidgetArea } = await import('@/components/widgets/area/PluginPageWidgetArea');
         const { useWidgetDefinitionFlows } = await import('@/components/widgets/definitions/useWidgetDefinitionFlows');
         const { WidgetAboutPanel } = await import('@/components/widgets/definitions/WidgetAboutPanel');
-        const { resolveMountedWidgetAreaLayoutSelectionOwner } = await import('@/components/widgets/area/widgetAreaLayoutSelection');
+        const { resolveMountedWidgetAreaLayoutSelectionOwner } = await import('@/sync/domains/widgets/widgetAreaLayoutSelection');
         const pagePort: PluginUiWidgetAreaPresentation['port'] = { execute: (operation, context, options) =>
             areaPort.execute({ area: 'pinned', context, operation, layoutId: options?.layoutId }, options?.signal) };
         let about: ReturnType<typeof useWidgetDefinitionFlows> | undefined;

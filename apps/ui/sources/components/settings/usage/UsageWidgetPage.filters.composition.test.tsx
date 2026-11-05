@@ -33,10 +33,23 @@ import { USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import { t } from '@/text';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRouteParams';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
+import { createActionToolExecutorBridge } from '../../../../../cli/src/agent/tools/happierTools/createActionToolExecutorBridge';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'] }).module;
 });
+
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 const totals: UsageAnalyticsQueryResponse['totals'] = { eventCount: 1,
     tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
@@ -51,17 +64,47 @@ let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let reader: CurrentUiContextReader | null = null;
 let unregister: (() => void) | undefined;
 
+// Existing filter journeys keep all cards in their measured viewport; viewport admission has its own journey below.
+const visibleContentGeometry = { measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, 0, 1000, 300) };
+const visibleScrollGeometry = { getInnerViewRef: () => visibleContentGeometry };
+const visiblePageGeometry = {
+    createNodeMock: (node: Readonly<{ props: Record<string, unknown> }>) =>
+        node.props.testID === 'usage-page' ? visibleScrollGeometry : visibleContentGeometry,
+};
+
+async function renderMeasuredPage(element: React.ReactElement) {
+    const screen = await renderScreen(element, visiblePageGeometry);
+    await act(async () => screen.findByTestId('usage-page')!.props.onLayout?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } },
+    }));
+    return screen;
+}
+
 function CurrentContextPort() {
     reader = useOptionalCurrentUiContextReader();
     React.useEffect(() => {
         if (!reader) return;
         const current = reader;
-        unregister = registerCurrentUiContextActionPort(surface => createCurrentUiContextVoiceToolPort({
-            reader: current, invocationSurface: surface, readProjection: () => null, readNavigationBinding: () => null,
+        unregister = registerCurrentUiContextActionPort((surface, hostAction) => createCurrentUiContextVoiceToolPort({
+            reader: current, invocationSurface: surface, hostAction, readProjection: () => null, readNavigationBinding: () => null,
         }));
         return unregister;
     }, [reader]);
     return null;
+}
+
+// Route feedback is a genuine input boundary: both entry routes echo their owned
+// filter/view params while an asynchronous mounted command is still settling.
+function RoutedUsagePage({ sessionId }: Readonly<{ sessionId?: string }>) {
+    const [params, setParams] = React.useState<Record<string, string | undefined>>({ layoutId: 'overview', period: '7days' });
+    const initialFilters = React.useMemo(() => resolveUsagePageInitialFilters(params), [params]);
+    const onLayoutChange = React.useCallback((layoutId: string) => setParams(current => ({ ...current, layoutId })), []);
+    const onFiltersChange = React.useCallback((filters: Parameters<typeof buildUsageRouteParams>[0]) => {
+        const { layoutId: _layoutId, ...owned } = buildUsageRouteParams(filters);
+        setParams(current => ({ ...current, ...owned }));
+    }, []);
+    return <UsageWidgetPage sessionId={sessionId} initialFilters={initialFilters}
+        onFiltersChange={onFiltersChange} onLayoutChange={onLayoutChange} />;
 }
 
 afterEach(async () => {
@@ -70,6 +113,100 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
+    it.each([
+        { entry: 'settings', sessionId: undefined, readFails: false },
+        { entry: 'Session', sessionId: 'session-usage-parity', readFails: false },
+        { entry: 'Session with failed document read', sessionId: 'session-usage-parity', readFails: true },
+    ])('publishes and executes view, range and scope commands from the mounted $entry Usage entry', async ({ sessionId, readFails }) => {
+        const readGate = createDeferred<void>();
+        let holdRead = false;
+        let heldReads = 0;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-entry-parity.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+                ? Response.json(createRootLayoutFeaturesResponse())
+                : request.path === '/v1/kv/bulk' ? Response.json({ values: [] })
+                : request.path === '/v2/usage/query' ? Response.json(accounting)
+                : request.path.startsWith('/v1/artifacts/') && holdRead
+                    ? (heldReads++, readGate.promise.then(() => readFails
+                        ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined))
+                : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        // Both routes admit this same page; the Session route supplies its hydrated Session id.
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage sessionId={sessionId} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        await waitForHomeGovernance(() => expect(screen.findAllByType(WidgetSurface).length).toBeGreaterThan(0));
+        await flushHookEffects({ cycles: 40 });
+        const receive = createUiClientActionReverseHandler({ serverId: server.id, accountId: 'account-a', isCurrent: () => true });
+        // Connected-client RPC is the wire boundary; native MCP argument binding,
+        // CLI reverse dispatch and the answering App's Action executor remain real.
+        const caller = createActionExecutor({ clientActionExecute: createClientActionReverseDispatcher(() => ({
+            hasConnectedClientRpcHandler: () => true,
+            callConnectedClientRpc: async (_method, payload, options) => {
+                options.onIssued();
+                return { ok: true, result: await receive(JSON.parse(JSON.stringify(payload)),
+                    { signal: options.signal ?? new AbortController().signal }) };
+            },
+        })) });
+        const bridge = createActionToolExecutorBridge({ surface: 'mcp', isActionEnabled: () => true,
+            executor: { execute: async (actionId, input, context) => {
+                const result = await caller.execute(actionId, input, context);
+                return result.ok ? { ok: true, result: result.result ?? null } : result;
+            } } });
+        const invoke = async (title: string) => {
+            const read = await bridge.executeActionByToolName('action_execute', { actionId: 'ui.current_context.read',
+                input: { clientId: 'mounted-usage' } }, sessionId ?? 'native-session');
+            expect(read).toMatchObject({ ok: true });
+            if (!read.ok) throw new Error('Native current-context read failed');
+            const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(command => command.title === title);
+            expect(command, `mounted command: ${title}`).toBeDefined();
+            let pending!: ReturnType<typeof bridge.executeActionByToolName>;
+            act(() => { pending = bridge.executeActionByToolName('action_execute', { actionId: 'ui.current_context.command.invoke',
+                input: { clientId: 'mounted-usage', commandId: command!.id } }, sessionId ?? 'native-session'); });
+            // Native dispatch does not hold a React act transaction open across
+            // the read. Let the effect republish before checking its completion.
+            await flushHookEffects({ cycles: 30 });
+            if (holdRead) {
+                try {
+                    expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('costs');
+                    expect(heldReads).toBeGreaterThan(0);
+                } finally { readGate.resolve(); }
+            }
+            const outcome = await pending;
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
+            await flushHookEffects({ cycles: 30 });
+        };
+        const toolbar = () => screen.findByType(UsageFilterBar).props;
+        const viewNames = screen.findByType(WidgetAreaLayoutBar).props.layouts.map((view: { name: string }) => view.name);
+        expect(reader?.readCurrentUiContext()?.commands.map(command => command.title)).toEqual(expect.arrayContaining(viewNames));
+        await invoke(t(getUsagePeriodDefinition('30days').translationKey));
+        expect(toolbar().page.period).toBe('30days');
+        expect(toolbar().page.scope.session).toBe(sessionId ?? null);
+        const filters = toolbar().scopeFilters;
+        expect(filters.map((filter: { field: string }) => filter.field)).toEqual(sessionId ? [] : ['sources', 'agents', 'machines', 'projects']);
+        expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(expect.arrayContaining(
+            filters.flatMap((filter: { title: string; options: readonly { label: string }[] }) => filter.options.map(option => `${filter.title}: ${option.label}`))));
+        if (!sessionId) {
+            const sourceFilter = filters.find((filter: { field: string }) => filter.field === 'sources');
+            const source = sourceFilter.options.find((option: { id: string }) => option.id === 'native');
+            await invoke(`${sourceFilter.title}: ${source.label}`);
+            expect(toolbar().page.scope.sources).toEqual(['native']);
+        }
+        await invoke(t('usage.board.page.costBasisReported'));
+        expect(toolbar().page.scope.costBasis).toBe('reported');
+        holdRead = true;
+        await invoke(t('usage.presets.costs'));
+        await waitForHomeGovernance(() => expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('costs'));
+        expect(reader!.readCurrentUiContext()!.detail).toContain('costs');
+    });
+
     it.each(['overview', 'work'])('admits the personalized %s once and selects from a closing menu across a page republish', async layoutId => {
         const selectedRoutes: string[] = [];
         const inventoryRead = createDeferred<void>();

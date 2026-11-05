@@ -16,7 +16,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { storage, useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { widgetAreaLayoutBaseSurface } from '@/components/widgets/area/widgetAreaLayoutSelection';
+import { widgetAreaLayoutBaseSurface } from '@/sync/domains/widgets/widgetAreaLayoutSelection';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';

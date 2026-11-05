@@ -189,7 +189,7 @@ export const WidgetInstanceActionOutputSchemasV1 = {
   'widgets.area.layout.rename': WidgetAreaLayoutSummaryV1Schema,
   'widgets.area.layout.delete': z.strictObject({ surface: layoutSurface, artifactId: z.string().check(z.minLength(1)) }),
   'widgets.area.layout.reorder': WidgetAreaLayoutSummaryV1Schema,
-  'widgets.area.layout.select': WidgetSurfaceReadV1Schema,
+  'widgets.area.layout.select': z.strictObject({ surface: areaSurface }),
   'widgets.catalog.list': z.strictObject({ surface: WidgetSurfaceRefV1Schema, entries: z.array(WidgetCatalogEntryV1Schema), presentation: WidgetSurfacePresentationV1Schema }),
   'widgets.item.list': WidgetSurfaceReadV1Schema,
   'widgets.item.add': mutationResult, 'widgets.item.remove': mutationResult,

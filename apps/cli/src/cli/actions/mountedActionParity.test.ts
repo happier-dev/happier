@@ -112,7 +112,7 @@ describe('named area layout selection CLI dispatch', () => {
 
   it('forwards the selection to the mounted client rather than reading an Account layout', async () => {
     const result = getActionSpec('widgets.area.layout.select').outputSchema!.parse({
-      surface, instances: [], items: [], canEdit: true, isShared: false, state: 'missing', revision: null,
+      surface,
     });
     const delivered: unknown[] = [];
     const ports = { ...scopePorts, clientActionExecute: async (args) => {

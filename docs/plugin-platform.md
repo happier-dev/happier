@@ -4329,7 +4329,10 @@ ordinary plugin declarations do not provide one, so Reset remains typed
 unavailable for those layouts. `widgets.area.layout.select`
 changes the answering mounted area's selection through its current selection
 owner. Without that mounted owner it returns typed unavailable; reading a
-document independently uses `widgets.item.list`. Selection stays with the
+document independently uses `widgets.item.list`. In unreleased 0.3, successful
+selection returns `{ surface }`, acknowledging the applied selection even when
+the best-effort document read fails or its scope retires afterwards. The mounted
+area owns acquisition errors and Retry. Selection stays with the
 page's existing route or local state, rather than an Account-wide preference.
 
 Native/declarative page ScrollAreas and the Project ItemList pass the incumbent

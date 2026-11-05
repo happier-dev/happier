@@ -1,7 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetAreaLayoutArtifactPortV1, resolveHostWidgetAreaPresetsV1, USAGE_WIDGET_PRESET_IDS, WidgetAreaMutationErrorV1, type WidgetAreaPresetV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { LazyActionAccountContext } from './actionAccountContext';
-import { selectMountedWidgetAreaLayout } from '@/components/widgets/area/widgetAreaLayoutSelection';
+import { selectMountedWidgetAreaLayout } from '@/sync/domains/widgets/widgetAreaLayoutSelection';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';

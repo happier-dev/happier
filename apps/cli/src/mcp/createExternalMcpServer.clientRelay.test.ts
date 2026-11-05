@@ -57,6 +57,11 @@ describe('standalone MCP client Action admission', () => {
     let primarySessionId: string | null = 'canonical-session';
     const portableHomeId = 'srv_mcp_cursor';
     let primaryServerId = portableHomeId;
+    const dashboardInput = { surface: { serverId: configuration.activeServerId, accountId: 'viewer',
+      owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' } } };
+    const dashboardResult = getActionSpec('widgets.area.layout.select').outputSchema!.parse({
+      ...dashboardInput,
+    });
     // The Home HTTP service is a network boundary. Session parsing, Account
     // mode and daemon locality resolution use their real canonical owners.
     const home = createServer((request, response) => {
@@ -98,6 +103,7 @@ describe('standalone MCP client Action admission', () => {
           ref: typeof request.input === 'object' && request.input !== null ? Reflect.get(request.input, 'ref') : undefined,
           bindings: {},
         }
+          : request.actionId === 'widgets.area.layout.select' ? dashboardResult
           : request.actionId === 'ui.find' ? { status: 'idle' }
           : request.actionId === 'session.pending.next' ? { status: 'none' }
           : request.actionId === 'usage.coach.dismiss' ? coachResult
@@ -151,6 +157,12 @@ describe('standalone MCP client Action admission', () => {
         expect(JSON.parse(text.text)).toEqual(connected ? connectedResult : absentResult);
       }
       expect(admitted).toHaveLength(connected ? 3 : 0);
+      const dashboard = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'widgets.area.layout.select', input: dashboardInput,
+      } }));
+      const dashboardText = dashboard.content.find(entry => entry.type === 'text');
+      if (!dashboardText || dashboardText.type !== 'text') throw new Error('Missing dashboard result');
+      expect(JSON.parse(dashboardText.text)).toEqual(connected ? dashboardResult : { errorCode: 'unavailable', error: 'noClient' });
       const ref = { surface: { serverId: configuration.activeServerId, accountId: 'viewer',
         owner: { kind: 'companion', sessionId: 'mcp-session-active' } }, instanceId: 'checks' };
       const companion = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {

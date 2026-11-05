@@ -21,8 +21,10 @@ vi.mock('socket.io-client', async importOriginal =>
 const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let actionPolicy = normalizeActionsSettingsV1({ v: 1 });
 let artifactReadFails = false;
+let layoutReadPaths: string[] = [];
 const runtime = installSessionPaneRuntimeTestHarness({ request: async (url, init) => {
     const path = new URL(String(url)).pathname;
+    if (/^\/v1\/artifacts\/[^/]+$/.test(path) && (init?.method ?? 'GET') === 'GET') layoutReadPaths.push(path);
     if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: actionPolicy } }, version: 0 });
     if (artifactReadFails && /^\/v1\/artifacts\/[^/]+$/.test(path) && (init?.method ?? 'GET') === 'GET')
         return Response.json({ error: 'Failed to get artifact' }, { status: 500 });
@@ -54,6 +56,7 @@ afterAll(() => disposeActionLoader?.());
 beforeEach(() => {
     artifacts.clear(); retirePresentationNotice();
     artifactReadFails = false;
+    layoutReadPaths = [];
     // These layout-owner scenarios exercise acknowledged edits under the user's explicit policy.
     setActionPolicy(normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: { 'widgets.item.rename': ['ui'], 'widgets.item.move': ['ui'],
@@ -459,4 +462,26 @@ it('binds every core-page host preset and selects an independently persisted cop
         result: { state: 'missing', items: [] } });
     expect(artifacts.list()).toHaveLength(1);
     await hook.unmount();
+});
+
+it.each([true, false])('acknowledges selection only when cancellation follows its effect (cancelBeforeSelection=%s)', async cancelBeforeSelection => {
+    const { selectMountedWidgetAreaLayout } = await import('@/sync/domains/widgets/widgetAreaLayoutSelection');
+    const input = { serverId: runtime.serverId, pageId: 'usage', area: 'main', context: {}, presets: [
+        { id: 'overview', name: 'Overview', items: [] }, { id: 'costs', name: 'Costs', items: [] },
+    ] };
+    const hook = await renderHook(() => useCorePageWidgetAreaBinding(input));
+    try {
+        const surface = hook.getCurrent().surface!;
+        if (surface.owner.kind !== 'corePage') throw new Error('Expected core page');
+        const destination = { ...surface, owner: { ...surface.owner, layoutId: 'costs' } };
+        const controller = new AbortController();
+        if (cancelBeforeSelection) controller.abort();
+        const result = selectMountedWidgetAreaLayout(destination, controller.signal);
+        controller.abort();
+        await act(async () => { expect(await result).toEqual(cancelBeforeSelection
+            ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
+            : { ok: true, result: { surface: destination } }); });
+        expect(hook.getCurrent().surface?.owner).toMatchObject({ layoutId: cancelBeforeSelection ? 'overview' : 'costs' });
+        expect(layoutReadPaths.filter(path => path === `/v1/artifacts/${buildWidgetSurfaceArtifactIdV1(destination)}`)).toHaveLength(0);
+    } finally { await hook.unmount(); }
 });

@@ -70,7 +70,7 @@ it('select through the answering client changes the mounted document and refuses
         } } }, { signal: new AbortController().signal })).execution;
     await act(async () => {
         const result = await execute({ ...surface, serverId, owner: { ...owner, layoutId: 'empty' } });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(result, JSON.stringify(result)).toEqual({ ok: true, result: { surface: { ...surface, serverId, owner: { ...owner, layoutId: 'empty' } } } });
     });
     await vi.waitFor(() => expect(hook.getCurrent().layout.state).toMatchObject({ status: 'ready', surface: { owner: { layoutId: 'empty' } }, placements: [] }));
     expect(routeChanges).toEqual(['empty']);

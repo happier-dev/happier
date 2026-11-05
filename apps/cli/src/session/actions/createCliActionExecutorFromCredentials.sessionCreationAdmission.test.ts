@@ -358,14 +358,14 @@ describe('paired terminal Action admission', () => {
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 expect(JSON.parse(String(options.body))).toMatchObject({ actionId: 'widgets.area.layout.select', input: { surface } });
                 expect(new Headers(options.headers).get(AUTHORITY_CEILING_HEADER_V1)).toBe('account_automation');
-                return Response.json({ ok: true, result: { surface, instances: [], canEdit: true } });
+                return Response.json({ ok: true, result: { surface } });
             });
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
                 ...(explicitMachine ? { machineId: 'own-machine' } : {}),
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
             expect(await executor.execute('widgets.area.layout.select', { surface }, { surface: 'cli', authority: 'account_automation' }))
-                .toEqual(own ? { ok: true, result: { surface, instances: [], canEdit: true } }
+                .toEqual(own ? { ok: true, result: { surface } }
                     : { ok: false, errorCode: 'unavailable', error: 'noClient' });
         });
     });

@@ -18,7 +18,7 @@ import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor } from '@/comp
 import { readWidgetActionRuntimeV1, readWidgetSurfaceActionPortV1 } from './widgetCatalogActionDeps';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { resolveMountedWidgetAreaLayoutSelectionOwner, type WidgetAreaLayoutSelectionOwner } from '@/components/widgets/area/widgetAreaLayoutSelection';
+import { resolveMountedWidgetAreaLayoutSelectionOwner, type WidgetAreaLayoutSelectionOwner } from '@/sync/domains/widgets/widgetAreaLayoutSelection';
 import { resolveCallerHostedHtmlResourceBindingV1 } from '@/components/ui/surfaces/hostedHtml/sessionCallerHostedHtmlRequestController';
 
 const unavailable = (errorCode = 'widget_refresh_unavailable'): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });

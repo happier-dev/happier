@@ -1,5 +1,6 @@
+import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
+import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from './clientActionReverseDispatch';
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
@@ -21,6 +22,30 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it.each(['agent', 'mcp', 'cli'] as const)('routes a named dashboard from %s to the answering App while the caller Session is in the background', async surface => {
+    const input = WidgetInstanceActionInputSchemasV1['widgets.area.layout.select'].parse({ surface: {
+      serverId: 'home', accountId: 'viewer', owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' },
+    } });
+    const result = getActionSpec('widgets.area.layout.select').outputSchema!.parse({
+      ...input,
+    });
+    let selections = 0;
+    const caller = executor({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        if (method !== RPC_METHODS.UI_ACTION_EXECUTE) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        expect(UiActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ actionId: 'widgets.area.layout.select', input,
+          context: { defaultSessionId: 'background-agent' } });
+        options.onIssued();
+        selections++;
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+      },
+    });
+    expect(await caller.execute('widgets.area.layout.select', input,
+      { surface, authority: 'account_automation', defaultSessionId: 'background-agent' })).toEqual({ ok: true, result });
+    expect(selections).toBe(1);
+  });
+
   it.each([
     { clientId: 'app-b', clients: ['app-a', 'app-b'], expected: 'opened' },
     { clientId: undefined, clients: ['app-b'], expected: 'opened' },

@@ -16,7 +16,8 @@ import { WidgetArea } from './WidgetArea';
 import { useWidgetAreaLayout, type WidgetAreaPort } from './useWidgetAreaLayout';
 import { WidgetAreaLayoutBar, type WidgetAreaLayoutActions, type WidgetAreaLayoutLabels } from './WidgetAreaLayoutBar';
 import { WidgetAreaPresetLine } from './WidgetAreaPresetLine';
-import { registerWidgetAreaLayoutSelectionOwner, widgetAreaLayoutBaseSurface } from './widgetAreaLayoutSelection';
+import { createWidgetAreaSelectionReadHandoff, useWidgetAreaLayoutSelectionOwner } from './widgetAreaLayoutSelection';
+import { widgetAreaLayoutBaseSurface, type WidgetAreaLayoutSelectionOwner } from '@/sync/domains/widgets/widgetAreaLayoutSelection';
 
 /** A page value as people read it: a string is itself; anything else is its compact JSON. */
 function describePageValue(value: JsonValue): string {
@@ -51,9 +52,11 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
     const selectedLayoutId = selected?.port === pagePort ? selected.layoutId : undefined;
     const context = React.useMemo(() => pluginPageWidgetContext(pageContext), [pageContext]);
     const mounted = React.useRef(true);
+    const [readHandoff] = React.useState(() => createWidgetAreaSelectionReadHandoff<Awaited<ReturnType<typeof pagePort.execute>>>());
+    const handoffBinding = React.useMemo(() => ({}), [pagePort, pageContext]);
     const currentBinding = React.useRef({ pagePort, pageContext });
     currentBinding.current = { pagePort, pageContext };
-    React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; readHandoff.cancel(); }; }, [readHandoff]);
     const port = React.useMemo<WidgetAreaPort>(() => {
         // The mounted area port admits declaration, context and lifetime and supplies identity.
         // Authored page values never select a Home/Account or a different destination.
@@ -70,7 +73,14 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
                 const failed = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
                 const isCurrent = () => mounted.current && currentBinding.current.pagePort === pagePort && currentBinding.current.pageContext === pageContext;
                 if (!isCurrent() || signal?.aborted) return failed('widget_area_scope_retired');
-                if (!admitted) return pagePort.execute(operation, pageContext, { signal, layoutId: selectedLayoutId });
+                if (!admitted) {
+                    const offered = operation.actionId === 'widgets.item.list' ? readHandoff.takeWhere(handoffBinding,
+                        surface => surface.owner.kind === 'pluginArea' && surface.owner.area === props.area
+                            && surface.owner.layoutId === selectedLayoutId, signal) : null;
+                    const result = await offered;
+                    if (!isCurrent() || signal?.aborted) return failed('widget_area_scope_retired');
+                    return result ?? pagePort.execute(operation, pageContext, { signal, layoutId: selectedLayoutId });
+                }
                 if (admitted.surface.owner.kind !== 'pluginArea' || admitted.surface.owner.area !== props.area) return failed('widget_area_owner_mismatch');
                 const targetContext: Record<string, JsonValue> = {};
                 for (const [slot, entry] of Object.entries(admitted.context.slots ?? {})) if (entry.value) targetContext[slot] = entry.value.value;
@@ -101,22 +111,24 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
                 },
             },
         };
-    }, [context, pageContext, pagePort, props.area, selectedLayoutId]);
+    }, [context, handoffBinding, pageContext, pagePort, props.area, readHandoff, selectedLayoutId]);
     const layout = useWidgetAreaLayout(port, context);
     const ready = layout.state.status === 'ready' ? layout.state : null;
     const baseKey = ready ? stableJsonStringify(widgetAreaLayoutBaseSurface(ready.surface)) : '';
     const base = React.useMemo(() => baseKey ? JSON.parse(baseKey) as WidgetSurfaceRefV1 : null, [baseKey]);
-    React.useEffect(() => {
-        if (!base) return;
+    const selectionOwner = React.useMemo((): WidgetAreaLayoutSelectionOwner | null => {
+        if (!base) return null;
         const isCurrent = () => mounted.current && currentBinding.current.pagePort === pagePort && currentBinding.current.pageContext === pageContext;
-        return registerWidgetAreaLayoutSelectionOwner({ surface: base, isCurrent, providedContext: widgetProvidedContext(context),
-            read: (destination, signal) => pagePort.execute({ actionId: 'widgets.item.list' }, pageContext,
-                { signal, layoutId: 'layoutId' in destination.owner ? destination.owner.layoutId : undefined }),
+        return { surface: base, displayedSurface: ready?.surface, isCurrent, providedContext: widgetProvidedContext(context),
+            read: (destination, signal) => readHandoff.offer(destination, handoffBinding, signal, readSignal =>
+                pagePort.execute({ actionId: 'widgets.item.list' }, pageContext,
+                    { signal: readSignal, layoutId: 'layoutId' in destination.owner ? destination.owner.layoutId : undefined })),
             select: destination => {
                 if (destination.owner.kind === 'pluginArea') setSelected({ port: pagePort, layoutId: destination.owner.layoutId });
             },
-        });
-    }, [base, context, pageContext, pagePort]);
+        };
+    }, [base, context, handoffBinding, pageContext, pagePort, readHandoff, ready?.surface]);
+    useWidgetAreaLayoutSelectionOwner(selectionOwner);
     const executeLayoutAction = React.useCallback<WidgetAreaLayoutsExecute>(async (actionId, raw) => {
         const failed = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
         const parsed = WidgetInstanceActionInputSchemasV1[actionId].safeParse(raw);
