@@ -4278,7 +4278,10 @@ test('native launcher governs nested Vitest workers on an explicitly selected pr
 });
 
 test('AUTO resolves repository-relative cwd on the selected target and retains it across admission retries', async t => {
-  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const compilationFloorKiB = resolveHeavyweightMemoryFloorKiB('compilation');
+  const fixture = await memoryRoutingFixture(t, {
+    availableKiB: 28000000, totalKiB: compilationFloorKiB, roomyTotalKiB: compilationFloorKiB, roomyLoad: 12,
+  });
   const { invocation } = fixture;
   for (const cwdOption of [['--cwd=apps/cli'], ['--cwd', 'apps/cli']]) {
     const result = spawnSync('/bin/sh', [launcher, ...cwdOption, '--', 'probe-command'], invocation);
