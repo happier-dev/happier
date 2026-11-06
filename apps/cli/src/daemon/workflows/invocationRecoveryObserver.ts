@@ -20,7 +20,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { readProjectSetupConsentHoldV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionCompletionOperation, ActionCompletionRun } from '@happier-dev/protocol/actions/actionCompletion';
@@ -277,6 +277,10 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   cancelSession?: typeof cancelSessionInput;
   observeRun?: typeof observeWorkflowDetachedExecutionRunInput;
   nativeActionOperations?: Readonly<{
+    findAction?: (execution: Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }>,
+      signal?: AbortSignal) => Promise<Readonly<{
+        kind: 'found'; target: ActionCompletionOperation; operation: ActionOperationSnapshotV1;
+      }> | Readonly<{ kind: 'absent' }> | null>;
     findStartup?: (creationKey: string, signal?: AbortSignal) => Promise<Readonly<{
       kind: 'found'; target: ActionCompletionOperation; operation: ActionOperationSnapshotV1;
     }> | Readonly<{ kind: 'absent' }> | null>;
@@ -397,8 +401,28 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         return approval;
       }
       const id = ActionIdSchema.safeParse(execution.actionId);
+      // Native work can start before returning an acceptance/output envelope.
+      // The durable Action request identity still names that original owner;
+      // losing its observer never authorizes replay or unsolicited cancellation.
+      if (input.progress.blockKind === 'action' && id.success && getActionSpec(id.data).operation
+        && resolveActionExecutionPlacementForInput(getActionSpec(id.data), execution.input) === 'machine' && !execution.awaitedOperations?.length
+        && !execution.awaitedRuns?.length && execution.output === undefined && params.nativeActionOperations?.findAction) {
+        try {
+          const found = await params.nativeActionOperations.findAction(execution, input.signal);
+          if (found?.kind === 'found' && found.operation.actionId === execution.actionId
+            && found.operation.requestId === execution.actionRequestId
+            && found.operation.scope.machineId === found.target.machineId
+            && found.operation.operationId === found.target.operationId) {
+            const learned = { ...execution, awaitedOperations: [found.target] };
+            const observed = await observe({ ...input, progress: { ...input.progress, execution: learned } });
+            return { ...observed, execution: observed.execution ?? learned };
+          }
+        } catch { input.signal?.throwIfAborted(); }
+        // No exact receipt is not proof that an admitted effect stopped.
+        return { kind: 'unresolved', code: 'action_operation_observation_unavailable' };
+      }
       if (execution.awaitedOperations?.length) {
-        if (!id.success || execution.output === undefined) {
+        if (!id.success) {
           return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
         }
         const transport = params.nativeActionOperations;
@@ -427,6 +451,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
             const failed = readRetainedWorkflowSessionStartupFailure(output && typeof output === 'object' && !Array.isArray(output) && 'operation' in output
               ? output.operation : undefined, snapshots[0]!.target, execution.actionRequestId);
             if (failed) return { kind: 'failed', code: failed.error?.errorCode ?? 'action_operation_failed',
+              ...(failed.error?.failureCause ? { failureCause: failed.error.failureCause } : {}),
               ...(failed.error?.error ? { message: failed.error.error } : {}) };
             return await recoverAbsentStartup();
           }
@@ -455,12 +480,23 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
               },
             } : {}) };
           }
+          if (execution.output === undefined) {
+            const failed = observedOperations.find(({ operation }) => operation.state === 'failed');
+            if (failed) return { kind: 'failed', code: failed.operation.error?.errorCode ?? 'action_operation_failed',
+              ...(failed.operation.error?.failureCause ? { failureCause: failed.operation.error.failureCause } : {}),
+              ...(failed.operation.error?.error ? { message: failed.operation.error.error } : {}) };
+            if (observedOperations.some(({ operation }) => operation.state === 'cancelled')) return { kind: 'cancelled', code: 'cancelled' };
+            // A projected native receipt proves settlement, but cannot recreate
+            // a lost Action result/acceptance envelope for completion adapters.
+            return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
+          }
           // A step's cold-start operation owns startup, not its input result.
           // Open control still needs the retained executor's exact input;
           // closed control must first handle any Session created by startup.
           if (input.progress.blockKind === 'step') {
             const failed = observedOperations.find(({ operation }) => operation.state === 'failed');
             if (failed) return { kind: 'failed', code: failed.operation.error?.errorCode ?? 'action_operation_failed',
+              ...(failed.operation.error?.failureCause ? { failureCause: failed.operation.error.failureCause } : {}),
               ...(failed.operation.error?.error ? { message: failed.operation.error.error } : {}) };
             if (observedOperations.some(({ operation }) => operation.state === 'cancelled')) return { kind: 'cancelled', code: 'cancelled' };
             if (execution.actionId === 'session.spawn_new' && input.run && input.index
@@ -510,7 +546,8 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
             if (consent && output.success) return { kind: 'unresolved', code: consent.code, setupConsentOutput: output.data };
           }
           return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
-            : { kind: completion.kind, code: completion.errorCode };
+            : { kind: completion.kind, code: completion.errorCode,
+              ...(completion.kind === 'failed' && completion.failureCause ? { failureCause: completion.failureCause } : {}) };
         } catch { return { kind: 'unresolved', code: 'action_operation_observation_unavailable' }; }
       }
       if (!id.success || !execution.awaitedRuns?.length || execution.output === undefined || !input.frozenActionContract?.completion) {

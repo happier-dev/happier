@@ -69,6 +69,9 @@ import { createWorkflowRunReviewEntryNotificationHandler } from '@/notifications
 import { WorkflowSessionCompositionError } from './sessionStepExecutor';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
 import { lookupSessionsByTags } from '@/session/transport/http/sessionsHttp';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 
 type MachineAdmissionTransport = NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
 
@@ -582,6 +585,28 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
     }>) {
       const storage = createWorkflowRunStorageClient({ token: params.credentials.token, machineId: input.machineId });
+      const findNativeOperation = async (identity: Readonly<{ actionId: string; requestId: string; machineId: string; key: string }>,
+        signal?: AbortSignal) => {
+        let cursor: string | undefined;
+        do {
+          const request = { requestIdentity: { actionId: identity.actionId, requestId: identity.requestId }, ...(cursor ? { cursor } : {}) };
+          const raw = identity.machineId === input.machineActionDirectTargetTransport.machineId
+            ? await input.machineActionDirectTargetTransport.invoke(ACTION_OPERATION_RPC_METHODS_V2.list, request, signal ? { signal } : undefined)
+            : await callExactMachineRpc({ credentials: params.credentials, machineId: identity.machineId,
+              serverUrl: resolveServerHttpBaseUrl(), authorityCeiling: 'account_automation',
+              method: ACTION_OPERATION_RPC_METHODS_V2.list, request, ...(signal ? { signal } : {}) });
+          const page = ActionOperationListV1ResponseSchema.parse(raw);
+          if (page.items.some(operation => operation.scope.accountId !== params.accountId
+            || operation.scope.machineId !== identity.machineId)) return null;
+          const operation = page.items.find(operation => operation.actionId === identity.actionId && operation.requestId === identity.requestId);
+          if (operation) return { kind: 'found' as const, operation, target: { key: identity.key, serverId,
+            machineId: identity.machineId, operationId: operation.operationId } };
+          if (page.nextCursor === cursor) throw new Error('action_operation_cursor_not_progressing');
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor && !signal?.aborted);
+        signal?.throwIfAborted();
+        return { kind: 'absent' as const };
+      };
       const actionExecutor = createCliActionExecutorFromCredentials({
         credentials: params.credentials,
         machineId: input.machineId,
@@ -618,24 +643,21 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           machineId: input.machineId,
           actionExecutor,
           nativeActionOperations: {
+            findAction: async (execution, signal) => {
+              const id = ActionIdSchema.safeParse(execution.actionId);
+              if (!id.success || !execution.input || typeof execution.input !== 'object' || Array.isArray(execution.input)) return null;
+              const target = resolveExternalActionMachineTarget({ actionId: id.data, rawInput: execution.input, target: undefined });
+              if (target?.kind !== 'ready') return null;
+              const homeId = typeof execution.input.homeId === 'string' ? execution.input.homeId
+                : getActionSpec(id.data).invocationServerIdForInput?.(execution.input) ?? serverId;
+              if (!await isServerProfileHomeIdentity(serverId, homeId)) return null;
+              return await findNativeOperation({ actionId: execution.actionId, requestId: execution.actionRequestId,
+                machineId: target.machineId, key: 'native' }, signal);
+            },
             findStartup: async (creationKey, signal) => {
               if (input.machineActionDirectTargetTransport.machineId !== input.machineId) return null;
-              let cursor: string | undefined;
-              do {
-                const page = ActionOperationListV1ResponseSchema.parse(await input.machineActionDirectTargetTransport.invoke(
-                  ACTION_OPERATION_RPC_METHODS_V2.list, { ...(cursor ? { cursor } : {}) }, signal ? { signal } : undefined));
-                if (page.items.some(operation => operation.scope.accountId !== params.accountId
-                  || operation.scope.machineId !== input.machineId)) return null;
-                const operation = page.items.find(operation => operation.actionId === 'session.spawn_new'
-                  && operation.requestId === creationKey && operation.scope.accountId === params.accountId
-                  && operation.scope.machineId === input.machineId);
-                if (operation) return { kind: 'found', operation, target: { key: 'startup', serverId, machineId: input.machineId,
-                  operationId: operation.operationId } };
-                if (page.nextCursor === cursor) throw new Error('action_operation_cursor_not_progressing');
-                cursor = page.nextCursor ?? undefined;
-              } while (cursor && !signal?.aborted);
-              signal?.throwIfAborted();
-              return { kind: 'absent' };
+              return await findNativeOperation({ actionId: 'session.spawn_new', requestId: creationKey,
+                machineId: input.machineId, key: 'startup' }, signal);
             },
             findSession: async ({ runId, creationKey, signal }) => {
               const tag = deriveWorkflowSessionCreationTag(serverId, runId, creationKey);

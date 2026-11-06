@@ -97,6 +97,135 @@ describe('production daemon retained operation target', () => {
   let releaseHome = () => {};
   afterEach(() => { releaseHome(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it.each(['local', 'remote', 'foreign-home', 'foreign-account', 'foreign-machine', 'foreign-request', 'foreign-action', 'account-action', 'failed'] as const)
+  ('recovers an exact Action after losing its pre-acceptance observer and retains custody until physical settlement (%s)', async match => {
+    const accountId = 'account-1', machineId = 'original-worker';
+    const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+    const rootId = '2aaf1a39-4c48-4904-83a4-7eae318dfc2c', childId = '33333333-3333-4333-8333-333333333333';
+    const actionId = match === 'account-action' ? 'machines.managed.cancel' : 'machines.setup.apply';
+    const actionRequestId = `${runId}/${childId}/0`;
+    const targetMachineId = match === 'remote' ? 'native-worker' : machineId;
+    const targetHomeId = match === 'foreign-home' ? 'another-home' : 'home';
+    const actionInput: import('@happier-dev/protocol').JsonValue = match === 'account-action'
+      ? { homeId: 'home', managedId: 'managed-1' }
+      : { homeId: targetHomeId, machineId: targetMachineId, targets: [{ homeId: targetHomeId, machineId: targetMachineId,
+        desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], recipePlans: [] }] };
+    const failureCause = { phase: 'machines.setup.apply', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } as const;
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {},
+      blocks: [{ kind: 'action', id: 'setup', actionId, input: {} }] };
+    releaseHome = publishServerHttpRuntimeOrigin('http://127.0.0.1:43187', 'https');
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
+        startedBy: 'user', definition, authoredDefinition: definition, workDepth: 0, metadata: null, frozenChildren: {}, materializedLeaves: [],
+        source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' }, originalCommittedRevision: 'a'.repeat(40) },
+        origin: { kind: 'direct' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      } }));
+    const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint: { kind: 'happier.workflow-checkpoint.v1',
+        rootRecordId: rootId, nextSequence: '2', frontier: { nextBlockOrdinal: 1, paused: false } } }));
+    const seal = (root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: root ? rootId : childId,
+        sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'action',
+        invocationPath: { blockId: root ? '$root' : 'setup', scope: [] }, attempt: '0', logicalInvocationRecordId: root ? rootId : childId,
+        ...(!root ? { execution: { kind: 'action' as const, actionId, actionRequestId, localInputId: 'setup-input', input: actionInput } } : {}) },
+    }));
+    const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
+      rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
+    await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: storage.run().revision, checkpointEnvelope,
+      invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: 'admitting', contentEnvelope: seal(false) }] });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      if (!String(url).endsWith('/v3/automations/runs/workflow-storage') || !body || typeof body !== 'object' || !('operation' in body))
+        throw new Error('Unexpected Home write');
+      return { status: 200, data: body.operation === 'recovery.list'
+        ? { candidates: [{ run: storage.run(), parentAttempt: 0 }] } : await storage.execute(body as WorkflowRunStorageTestkitOperation) };
+    });
+    const operations = createHostActionOperationRuntime({ machineId: match === 'foreign-machine' ? 'another-worker' : targetMachineId,
+      resolveAccountId: async () => match === 'foreign-account' ? 'another-account' : accountId,
+      generateOperationId: () => 'native-setup' });
+    const observer = new AbortController(), recovery = new AbortController();
+    let opened!: () => void, finish!: () => void;
+    const nativeOpened = new Promise<void>(resolve => { opened = resolve; });
+    const physicalSettlement = new Promise<void>(resolve => { finish = resolve; });
+    let nativeSignal: AbortSignal | undefined;
+    // The native command boundary remains live after its original network
+    // observer disappears. Abort requests stop; only command settlement ends custody.
+    const caller = match === 'account-action' ? Promise.resolve() : operations.observeExecution({ actionId: match === 'foreign-action' ? 'machines.reboot' : actionId,
+      actionRequestId: match === 'foreign-request' ? 'another-request' : actionRequestId, input: actionInput, rpcContext: { signal: observer.signal },
+      execute: async context => { nativeSignal = context.signal; opened(); await physicalSettlement;
+        return match === 'failed' ? { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed', failureCause }
+          : { ok: false, errorCode: 'cancelled', error: 'cancelled' }; } });
+    void caller.catch(() => undefined);
+    if (match !== 'account-action') await nativeOpened;
+    observer.abort(new Error('lost observer'));
+    // The RPC response is no longer observed; native ownership remains live.
+    if (match !== 'account-action') expect(nativeSignal?.aborted).toBe(false);
+    const methods: string[] = [];
+    const invoke = async (method: string, request: unknown) => {
+      methods.push(method);
+      if (method === 'actionOperation.list.v2') return operations.handlers.listV2(request);
+      if (method === 'actionOperation.get.v2') return operations.handlers.getV2(request);
+      if (method === 'actionOperation.cancel.v1') return operations.handlers.cancel(request);
+      throw new Error(`Unexpected native operation RPC: ${method}`);
+    };
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+      expect(request.machineId).toBe(targetMachineId);
+      return await invoke(request.method, request.request);
+    });
+    const runtime = createProductionDaemonWorkflowRuntime({ credentials: { token: 'token', encryption: null }, accountId, serverId: 'home' });
+    const recover = runtime.createRecoveryForMachine({ machineId,
+      machineAdmissionTransport: async () => { throw new Error('No new native work'); },
+      machineActionDirectTargetTransport: { machineId, invoke } });
+    try {
+      await recover('startup', recovery.signal);
+      if (match === 'account-action') {
+        expect(storage.rowById(childId)?.index.lifecycle).toBe('outcome_uncertain');
+        storage.requestControl('cancel_requested');
+        await recover('control', recovery.signal);
+        expect(storage.run().workflowCustodyState).toBe('settled');
+        expect(methods).toEqual([]);
+        return;
+      }
+      expect(nativeSignal?.aborted).toBe(false);
+      expect(storage.run().workflowCustodyState).toBe('pending');
+      if (match === 'failed') {
+        finish();
+        await operations.handlers.getV2({ operationId: 'native-setup', waitForTerminal: true });
+        await expect.poll(() => storage.rowById(childId)?.index.lifecycle).toBe('failed');
+        const envelope = parseWorkflowStoredContentEnvelopeV1(storage.rowById(childId)!.contentEnvelope);
+        if (!envelope) throw new Error('Missing recovered progress envelope');
+        const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope,
+          binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: childId,
+            sequence: '1', parentRecordId: rootId, memberOrdinal: '0', attempt: '0' } });
+        expect(opened).toMatchObject({ kind: 'available', content: { reason: { code: 'native_effect_failed', failureCause } } });
+        return;
+      }
+      storage.requestControl('cancel_requested');
+      await recover('control', recovery.signal);
+      if (match !== 'local' && match !== 'remote') {
+        expect(nativeSignal?.aborted).toBe(false);
+        expect(storage.run().workflowCustodyState).toBe('pending');
+        expect(methods).not.toContain('actionOperation.cancel.v1');
+        return;
+      }
+      expect(nativeSignal?.aborted).toBe(true);
+      expect(storage.rowById(childId)?.index.lifecycle).toBe('cancel_requested');
+      expect(storage.run().workflowCustodyState).toBe('pending');
+      expect(storage.run().state).toBe('running');
+      expect(await operations.handlers.getV2({ operationId: 'native-setup' })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+      finish();
+      await operations.handlers.getV2({ operationId: 'native-setup', waitForTerminal: true });
+      await expect.poll(() => storage.run().workflowCustodyState).toBe('settled');
+      expect(storage.run().state).toBe('cancelled');
+      expect(storage.rowById(childId)?.index.lifecycle).toBe('cancelled');
+      expect(methods).toContain('actionOperation.cancel.v1');
+    } finally { finish(); recovery.abort(); await caller.catch(() => undefined); }
+  });
+
   it.each(['exact', 'local-only', 'pending', 'foreign-account', 'foreign-machine', 'absent', 'stored-absent', 'already-uncertain', 'cancel-requested-parent', 'cancelled-root-parent',
     'session-discovered', 'stored-session', 'stored-inputless-session', 'session-mismatch', 'lookup-unavailable',
     'pending-success', 'stored-pending-success', 'already-stopped-success', 'pending-failure', 'miswired-success', 'foreign-session-success', 'stop-unconfirmed'] as const)

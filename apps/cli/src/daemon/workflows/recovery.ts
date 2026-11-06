@@ -19,6 +19,7 @@ import { logger } from '@/ui/logger';
 import { readWorkflowProjectSetupConsentHold } from './stepExecution';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowCoordinatorInvocation } from './coordinator';
 import type { ApprovalExecutionOriginV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { DiscussionInviteInputV1Schema } from '@happier-dev/protocol/discussions/actions';
@@ -75,7 +76,7 @@ export type WorkflowInvocationRecoveryObservation = (
     setupConsentOutput?: Readonly<{ operation: ActionOperationSnapshotV1 }> }>
   | Readonly<{ kind: 'completed'; result: JsonValue; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'needs_attention'; code: 'session_input_result_unavailable'; usage?: WorkflowUsageV1 }>
-  | Readonly<{ kind: 'failed'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'failed'; code: string; message?: string; failureCause?: ActionFailureCauseV1; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'stopped'; code: string }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string; usage?: WorkflowUsageV1 }>
@@ -364,6 +365,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
         ...(observation.kind === 'completed' ? { result: observation.result } : {}),
         ...(observation.kind !== 'unresolved' && observation.usage ? { usage: observation.usage } : {}),
         ...(observation.kind !== 'completed' && observation.code ? { reason: observation.code,
+          ...(observation.kind === 'failed' && observation.failureCause ? { failureCause: observation.failureCause } : {}),
           ...(observation.kind === 'failed' && observation.runtimeIssueV1 ? { runtimeIssueV1: observation.runtimeIssueV1 } : {}),
           ...(observation.kind === 'failed' && observation.message !== undefined ? { reasonMessage: observation.message } : {}) } : {}),
       }, { previousLifecycle: currentLifecycle, lifecycle, observedAtMs: Date.now() }),
