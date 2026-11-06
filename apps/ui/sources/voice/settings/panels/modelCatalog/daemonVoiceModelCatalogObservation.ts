@@ -9,6 +9,7 @@ import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/mac
 import type { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
 import { readDaemonVoiceInferenceClientErrorCode, type DaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 export type DaemonVoiceModelCatalogErrorCode = Extract<DaemonVoiceInferenceClientErrorCode,
     'feature_disabled' | 'machine_unreachable' | 'runtime_unavailable' | 'unsupported_runtime_family'
@@ -49,6 +50,9 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
     let pending: Reading | null = null;
     const listeners = new Set<() => void>();
     const publish = (next: DaemonVoiceModelCatalogObservationState) => {
+        if (snapshot.statuses !== next.statuses) {
+            next = { ...next, statuses: retainKeyedRows(snapshot.statuses, next.statuses, status => resolveCanonicalModelPackId(status.packId)) };
+        }
         if (snapshot.statuses === next.statuses && snapshot.errorCode === next.errorCode
             && snapshot.loading === next.loading && snapshot.stale === next.stale) return;
         snapshot = next;

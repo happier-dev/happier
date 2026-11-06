@@ -9,7 +9,7 @@ import { pressTestInstanceAsync, renderScreen, waitForTestEvent } from '@/dev/te
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { DaemonVoiceInferenceModelStatusSchema, DaemonVoiceInferenceModelsListResponseSchema,
   DaemonVoiceInferenceModelsStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -493,7 +493,8 @@ describe('LocalNeuralTtsSettings (native)', () => {
     const accountId = account.scope.accountId;
     account.request.mockImplementation(async (url, init) => boundary.answerMachineHttpRequest(url, 'tts-machine', accountId, init)
       ?? accountHttp(url, init));
-    const machine = createMachineFixture({ id: 'tts-machine', activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'tts-machine', activeAt: Date.now(), storageMode: 'plain',
+      access: createPlainMachineRowFixture({ id: 'tts-machine', accountId }).access });
     storage.getState().applyMachines([machine], true, { sourceServerId: account.scope.serverId });
     const status = DaemonVoiceInferenceModelStatusSchema.parse({
           packId: 'acme.voice/tts-pack', pluginIdentity: { pluginId: 'acme.voice', packId: 'tts-pack' },

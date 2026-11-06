@@ -1,8 +1,9 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol/voice/modelPacks/catalog';
 vi.mock('socket.io-client', async original =>
@@ -21,6 +22,7 @@ const { t } = await import('@/text');
 const alert = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
 
 const { useLocalNeuralModelPackState } = await import('./useLocalNeuralModelPackState.native');
+const { useLocalNeuralKokoroVoiceCatalog } = await import('./useLocalNeuralKokoroVoiceCatalog.native');
 const { createVoiceSettingsAccountTestHarness } = await import('../voiceSettingsAccountTestHarness');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -60,6 +62,52 @@ describe('useLocalNeuralModelPackState (native)', () => {
     });
     expect(adjacent, JSON.stringify(adjacent)).toMatchObject({ ok: true });
     expect(account.persistedSettings.voice.privacy.recentMessagesCount).toBe(7);
+  });
+
+  it('publishes no equal device model or voice observations and preserves unchanged voice rows', async () => {
+    const manifest = { packId: input.packId, kind: 'tts_sherpa', model: 'kokoro', version: '1',
+      voices: [{ id: 'af_heart', title: 'Heart', sid: 0 }, { id: 'af_bella', title: 'Bella', sid: 1 }],
+      files: [{ path: 'model.bin', url: 'https://example.test/model.bin', sha256: 'a'.repeat(64), sizeBytes: 1 }] };
+    const writeManifest = () => filesystem.files.set(`${filesystem.root}/${input.packId}/pack.json`,
+      new TextEncoder().encode(JSON.stringify({ manifest })));
+    writeManifest();
+    filesystem.files.set(`${filesystem.root}/${input.packId}/model.bin`, new Uint8Array([1]));
+    const summaryPublished = vi.fn();
+    const voicesPublished = vi.fn();
+    function useCatalog() {
+      const pack = useLocalNeuralModelPackState(input);
+      const voices = useLocalNeuralKokoroVoiceCatalog({ installSummary: pack.installSummary });
+      React.useEffect(() => { summaryPublished(); }, [pack.installSummary]);
+      React.useEffect(() => { voicesPublished(); }, [voices]);
+      return { ...pack, voices };
+    }
+    const hook = await renderHook(useCatalog);
+    await flushHookEffects();
+    const initial = hook.getCurrent();
+    expect(initial.voices).toHaveLength(2);
+    summaryPublished.mockClear();
+    voicesPublished.mockClear();
+    for (let refresh = 0; refresh < 5; refresh += 1) {
+      await act(async () => { await hook.getCurrent().refreshInstallState(); });
+    }
+    expect(summaryPublished).toHaveBeenCalledTimes(0);
+    expect(voicesPublished).toHaveBeenCalledTimes(0);
+    expect(hook.getCurrent().installSummary).toBe(initial.installSummary);
+    expect(hook.getCurrent().voices).toBe(initial.voices);
+    // A model revision is real, but does not change its voice catalog.
+    manifest.version = '2';
+    writeManifest();
+    await act(async () => { await hook.getCurrent().refreshInstallState(); });
+    await flushHookEffects();
+    expect(summaryPublished).toHaveBeenCalledTimes(1);
+    expect(voicesPublished).toHaveBeenCalledTimes(0);
+    manifest.voices[0]!.title = 'Updated Heart';
+    writeManifest();
+    await act(async () => { await hook.getCurrent().refreshInstallState(); });
+    await flushHookEffects();
+    expect(voicesPublished).toHaveBeenCalledTimes(1);
+    expect(hook.getCurrent().voices[0]).toMatchObject({ title: 'Updated Heart' });
+    expect(hook.getCurrent().voices[1]).toBe(initial.voices[1]);
   });
 
   it('warns when native storage becomes unavailable, falls back, and recovers on a later refresh', async () => {

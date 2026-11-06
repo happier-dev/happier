@@ -10,6 +10,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getVoiceContributedSettingsDeclarations, voiceSettingsDeclarationRegistry } from '@/voice/settings/voiceContributedSettingsDeclarations';
@@ -35,8 +36,12 @@ const retainedCatalogRows = new Map<string, readonly VoiceCatalogRow[]>();
 const retainedCatalogListeners = new Map<string, Set<() => void>>();
 
 function retainCatalogRows(targetKey: string, rows: readonly VoiceCatalogRow[]) {
-  retainedCatalogRows.set(targetKey, rows);
+  const previous = retainedCatalogRows.get(targetKey);
+  const retained = retainKeyedRows(previous, rows, row => row.id);
+  if (retained === previous) return retained;
+  retainedCatalogRows.set(targetKey, retained);
   retainedCatalogListeners.get(targetKey)?.forEach((listener) => listener());
+  return retained;
 }
 
 type CatalogOperation = 'preview' | 'stopPreview' | 'listCatalog' | 'retryCatalog';
@@ -302,8 +307,8 @@ export function useRealtimeVoiceCatalog(params: Readonly<{
     };
     void read().then((rows) => {
       if (requestRef.current.generation === generation && !controller.signal.aborted) {
-        retainCatalogRows(targetKey, rows);
-        setState({ targetKey, value: { phase: 'ready', rows } });
+        const retained = retainCatalogRows(targetKey, rows);
+        setState({ targetKey, value: { phase: 'ready', rows: retained } });
       }
     }).catch(() => {
       if (requestRef.current.generation === generation && !controller.signal.aborted) setState({ targetKey, value: { phase: 'error' } });

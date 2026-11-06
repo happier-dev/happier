@@ -1,4 +1,4 @@
-import type * as React from 'react';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
@@ -61,6 +61,36 @@ afterEach(async () => { standardCleanup(); await runtime.dispose(); await accoun
 afterAll(() => { setPreferredLanguageFromSettings(initialLanguage); });
 
 describe('the shared realtime voice catalog', () => {
+  it('publishes no equal provider catalog rows to passive readers and retains unaffected voices', async () => {
+    const params = { providerId: runtime.entry.providerId, catalogAvailable: true, credentialUsable: true,
+      targetKey: 'equal-provider-catalog-voice-perf-1106' };
+    const voices = [{ voice_id: 'sage', name: 'Sage' }, { voice_id: 'maple', name: 'Maple' }];
+    runtime.fetch.mockImplementation(async () => runtime.response({ voices }));
+    const active = await renderHook(() => useRealtimeVoiceCatalog(params));
+    const publications = vi.fn();
+    const passive = await renderHook(() => {
+      const catalog = useRealtimeVoiceCatalog(params);
+      React.useEffect(() => { publications(); }, [catalog.lastKnownRows]);
+      return catalog;
+    });
+    const refresh = async () => {
+      await act(async () => active.getCurrent().requestCatalog());
+      await waitForTestEvent(active.subscribe, active.getCurrent, value => value.catalog.phase === 'ready');
+    };
+    await refresh();
+    const initial = passive.getCurrent().lastKnownRows;
+    expect(initial).toHaveLength(2);
+    publications.mockClear();
+    for (let read = 0; read < 5; read += 1) await refresh();
+    expect(publications).toHaveBeenCalledTimes(0);
+    expect(passive.getCurrent().lastKnownRows).toBe(initial);
+    voices[0]!.name = 'Updated Sage';
+    await refresh();
+    expect(publications).toHaveBeenCalledTimes(1);
+    expect(passive.getCurrent().lastKnownRows?.find(row => row.id === 'sage')).toMatchObject({ name: 'Updated Sage' });
+    expect(passive.getCurrent().lastKnownRows?.find(row => row.id === 'maple')).toBe(initial?.find(row => row.id === 'maple'));
+  });
+
   it('admits explicit catalog open and retry through Settings Actions before contacting the provider', async () => {
     const picker = await renderHook(() => useRealtimeVoiceCatalog({ providerId: runtime.entry.providerId, catalogAvailable: true, credentialUsable: true,
       targetKey: 'admitted-catalog-open' }));
@@ -72,9 +102,9 @@ describe('the shared realtime voice catalog', () => {
     expect(runtime.fetch).not.toHaveBeenCalled();
     expect(picker.getCurrent().catalog.phase).toBe('error');
     account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: { v: 1,
-      actions: { 'settings.invoke': { enabled: true } } } }));
+      actions: { 'settings.invoke': { enabled: true } }, approvalWaivedSurfaces: { 'settings.invoke': ['ui'] } } }));
     await act(async () => picker.getCurrent().requestCatalog());
-    await waitForTestEvent(picker.subscribe, picker.getCurrent, value => value.catalog.phase === 'ready');
+    await waitForTestEvent(picker.subscribe, picker.getCurrent, value => value.catalog.phase !== 'loading');
     expect(picker.getCurrent().catalog.phase).toBe('ready');
     expect(picker.getCurrent().lastKnownRows?.[0]?.name).toBe('Happier voice');
   });

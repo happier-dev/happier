@@ -107,7 +107,7 @@ function TestHarness(props: Readonly<{ enabled?: boolean; refreshKey?: string; s
     const rows = buildModelCatalogRows({ statuses: owner.state.statuses, selectedSttPackId: null, selectedTtsPackId: null });
     const current = owner.state.statuses.find(candidate => candidate.packId === STT_PACK);
     return React.createElement('State', {
-        ...owner.state, installState: current?.installState ?? null, count: owner.state.statuses.length,
+        ...owner.state, catalogState: owner.state, installState: current?.installState ?? null, count: owner.state.statuses.length,
         canonicalCanInstall: rows.stt.find(row => row.packId === STT_PACK)?.canInstall ?? false,
         externalVisible: rows.stt.some(row => row.packId === EXTERNAL_PACK),
         install: owner.install, remove: owner.remove, refresh: owner.refresh, cancel: owner.cancel,
@@ -591,6 +591,47 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(state(passive)).toMatchObject({ count: 0, loading: false });
         expect(state(remounted)).toMatchObject({ count: 0, loading: false });
         expect(listingRequests()).toHaveLength(reads);
+    });
+
+    it.each(['refresh', 'warm'] as const)('publishes no equal %s observations and retains unaffected rows on change', async (operation) => {
+        const models = [status(STT_PACK, { installState: 'installed' }), externalStatus()];
+        catalogReply(models);
+        const tree = await mount({ refreshKey: 'machine-a' });
+        const { captureDaemonVoiceModelCatalogObservation } = await import('./daemonVoiceModelCatalogObservation');
+        const observation = captureDaemonVoiceModelCatalogObservation('machine-a');
+        const initial = observation.getSnapshot();
+        const initialState = state(tree).catalogState;
+        const listener = vi.fn();
+        const unsubscribe = observation.subscribe(listener);
+        try {
+            for (let refresh = 0; refresh < 5; refresh += 1) {
+                await act(async () => {
+                    if (operation === 'refresh') await state(tree).refresh();
+                    else observation.observeModels(models.map(model => ({ ...model })));
+                });
+            }
+            expect(listener).toHaveBeenCalledTimes(0);
+            expect(observation.getSnapshot()).toBe(initial);
+            expect(state(tree).catalogState).toBe(initialState);
+            const settledReads = requests.length;
+            vi.useFakeTimers();
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(requests).toHaveLength(settledReads);
+            expect(mutations()).toHaveLength(0);
+            vi.useRealTimers();
+            const changed = status(STT_PACK, { installState: 'installed', runtimeState: 'ready' });
+            await act(async () => {
+                if (operation === 'refresh') {
+                    catalogReply([changed, externalStatus()]);
+                    await state(tree).refresh();
+                } else observation.observeModels([changed]);
+            });
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(state(tree).statuses.find((model: DaemonVoiceInferenceModelStatus) => model.packId === STT_PACK))
+                .toMatchObject({ runtimeState: 'ready' });
+            expect(observation.getSnapshot().statuses.find(model => model.packId === EXTERNAL_PACK))
+                .toBe(initial.statuses.find(model => model.packId === EXTERNAL_PACK));
+        } finally { unsubscribe(); }
     });
 
     it('shares an in-flight catalog refresh across active readers of the same machine', async () => {

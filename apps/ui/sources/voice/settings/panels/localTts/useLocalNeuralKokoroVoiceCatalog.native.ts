@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { readInstalledKokoroVoices, type KokoroVoiceSummary } from '@/voice/kokoro/assets/readInstalledKokoroVoices';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import type { getModelPackInstallSummary } from '@/voice/modelPacks/installer.native';
 
@@ -11,8 +12,8 @@ type InstallSummary = Awaited<ReturnType<typeof getModelPackInstallSummary>>;
 
 export function useLocalNeuralKokoroVoiceCatalog(params: {
   installSummary: InstallSummary | null;
-}): KokoroVoiceSummary[] {
-  const [voices, setVoices] = React.useState<KokoroVoiceSummary[]>([]);
+}): readonly KokoroVoiceSummary[] {
+  const [voices, setVoices] = React.useState<readonly KokoroVoiceSummary[]>([]);
 
   React.useEffect(() => {
     let canceled = false;
@@ -20,7 +21,7 @@ export function useLocalNeuralKokoroVoiceCatalog(params: {
     fireAndForget((async () => {
       const summary = params.installSummary;
       const catalog = await readInstalledKokoroVoices({ packId: summary?.manifest?.packId ?? '', installSummary: summary });
-      if (!canceled) setVoices([...catalog]);
+      if (!canceled) setVoices(current => retainKeyedRows(current, catalog, voice => voice.id));
     })(), { tag: 'useLocalNeuralKokoroVoiceCatalog.load' });
 
     return () => {

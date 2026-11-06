@@ -138,10 +138,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
                     : current.actionError?.operation === 'remove'
                         ? failedStatus?.installState === 'not_installed'
                         : false;
-                return {
-                    ...current,
-                    actionError: actionNowSucceeded ? null : current.actionError,
-                };
+                return actionNowSucceeded ? { ...current, actionError: null } : current;
             });
         } catch {
             // The shared observation retains the typed read failure.

@@ -177,12 +177,14 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     if (!started.ok) throw new Error('start failed');
     // Let the genuine native call start before exercising a late SDK completion.
     await vi.waitFor(() => expect(nativeSynthesize).toHaveBeenCalledOnce());
+    const waiting = manager.next({ streamId: started.streamId, generation: started.generation });
     await expect(manager.cancel({
       streamId: started.streamId,
       generation: started.generation,
       reason: 'barge_in',
     })).resolves.toMatchObject({ ok: true });
 
+    await expect(waiting).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     expect(cancelTts).toHaveBeenCalledWith(expect.stringContaining('tts-stream-cancel'));
     pending.resolve(Buffer.from('stale'));
     await expect(workerSynthesize.mock.results[0]?.value).rejects.toMatchObject({ code: 'cancelled' });
@@ -266,6 +268,37 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     });
     expect(cancelTts).toHaveBeenCalledWith(expect.stringContaining('tts-stream-abandoned'));
     pending.resolve();
+  });
+
+  it('keeps pending client demand alive through native synthesis beyond the abandonment deadline', async () => {
+    const root = await createTempDir();
+    const pending = deferred<Uint8Array>();
+    const cancelTts = vi.spyOn(worker, 'cancelTts');
+    const nativeSynthesize = vi.fn<VoiceInferenceRuntime['synthesizeTts']>((input) => pending.promise.then(bytes => ({
+      output: input.output, bytes, name: 'segment.wav',
+    })));
+    nativeRuntime = { ...nativeRuntime, synthesizeTts: nativeSynthesize };
+    vi.useFakeTimers();
+    const manager = createVoiceInferenceTtsSegmentManager({
+      voiceInferenceWorker: worker, streamRoot: root, prefetchDepth: 1, ackTimeoutMs: 100,
+    });
+    managers.push(manager);
+    const started = await manager.start({
+      requestId: 'tts-stream-waiting', text: 'A slow native reply.',
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: null, speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    if (!started.ok) throw new Error('start failed');
+    const waiting = manager.next({ streamId: started.streamId, generation: started.generation });
+    await vi.waitFor(() => expect(nativeSynthesize).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(300);
+    pending.resolve(Buffer.from('slow-audio'));
+    await expect(waiting).resolves.toMatchObject({ ok: true, event: { type: 'segment', segmentIndex: 0 } });
+    expect(cancelTts).not.toHaveBeenCalled();
+    await expect(manager.ack({
+      streamId: started.streamId, generation: started.generation,
+      segmentId: `${started.streamId}:0`, segmentIndex: 0,
+    })).resolves.toMatchObject({ ok: true, complete: true });
   });
 
   it('keeps a client-driven stream alive well past the abandonment deadline', async () => {

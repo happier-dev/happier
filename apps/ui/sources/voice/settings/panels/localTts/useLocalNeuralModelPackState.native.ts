@@ -17,6 +17,7 @@ import { describeModelPackInstallError } from '@/voice/settings/panels/modelPack
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { createVoiceModelCancellationCommand } from '@/voice/settings/voiceModelCancellation';
 import { useCurrentUiContextMountedCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 type ModelStatus = ModelPackRowStatus;
 type RunningInstall = NonNullable<Awaited<ReturnType<typeof findRunningModelPackInstall>>>;
@@ -63,7 +64,7 @@ export function useLocalNeuralModelPackState(params: {
     try {
       const summary = await getModelPackInstallSummary({ packId: params.packId });
       if (!isCurrent() || !accountLifetime.isCurrent()) return;
-      setInstallSummary(summary);
+      setInstallSummary(current => retainDeep(current, summary));
       setInstalled(summary.installed);
       setModelStatus((cur) => cur === 'downloading' ? cur : summary.installed ? 'ready' : 'idle');
       setUpdateCheckedRemote(null);

@@ -179,7 +179,11 @@ export function createVoiceInferenceTtsSegmentManager(
     }
     session.abandonTimer = setTimeout(() => {
       session.abandonTimer = null;
-      void closeSession(session, { cancelWorker: true, outcome: 'discarded' });
+      // A pending next() is active demand, even when native synthesis is slow.
+      // Delivery starts the existing ACK deadline; cancellation still closes now.
+      if (session.waiters.length === 0) {
+        void closeSession(session, { cancelWorker: true, outcome: 'discarded' });
+      }
     }, ackTimeoutMs);
     (session.abandonTimer as { unref?: () => void }).unref?.();
   }
