@@ -1,0 +1,35 @@
+{
+  "ref": {
+    "selection": {
+      "kind": "attempt",
+      "attempt": {
+        "run": {
+          "v": 1,
+          "repository": { "kind": "github", "deployment": "https://github.com", "repository": "happier-dev/forge-qa-sandbox" },
+          "runId": "40126196389"
+        },
+        "attemptId": "1",
+        "number": 1
+      }
+    },
+    "jobId": "120968048785"
+  },
+  "name": "forge-qa-test-two",
+  "state": { "nativeLabel": "failure", "outcomeBucket": "failed", "phase": "completed", "outcome": "failure" },
+  "steps": {
+    "kind": "available",
+    "values": [
+      { "id": "1", "name": "Set up job", "state": { "nativeLabel": "success", "outcomeBucket": "passed", "phase": "completed", "outcome": "success" }, "completedAtMs": 1792870699000, "number": 1, "startedAtMs": 1792870699000 },
+      { "id": "2", "name": "forge-qa matrix test", "state": { "nativeLabel": "failure", "outcomeBucket": "failed", "phase": "completed", "outcome": "failure" }, "completedAtMs": 1792870699000, "number": 2, "startedAtMs": 1792870699000 },
+      { "id": "3", "name": "forge-qa long-running cancellation fixture", "state": { "nativeLabel": "skipped", "outcomeBucket": "neutral", "phase": "completed", "outcome": "skipped" }, "completedAtMs": 1792870699000, "number": 3, "startedAtMs": 1792870699000 },
+      { "id": "4", "name": "Complete job", "state": { "nativeLabel": "success", "outcomeBucket": "passed", "phase": "completed", "outcome": "success" }, "completedAtMs": 1792870699000, "number": 4, "startedAtMs": 1792870699000 }
+    ]
+  },
+  "checkRunId": "120968048785",
+  "completedAtMs": 1792870701000,
+  "headSha": "01044b88aacae86deb0735f44f1bc830e5c95895",
+  "runnerLabels": ["ubuntu-latest"],
+  "runnerName": "GitHub Actions 1000069162",
+  "startedAtMs": 1792870698000,
+  "webUrl": "https://github.com/happier-dev/forge-qa-sandbox/actions/runs/40126196389/job/120968048785"
+}

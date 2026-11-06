@@ -1,0 +1,51 @@
+﻿2026-10-24T19:38:19.2861788Z Current runner version: '2.338.0'
+2026-10-24T19:38:19.2877953Z ##[group]Runner Image Provisioner
+2026-10-24T19:38:19.2878509Z Hosted Compute Agent
+2026-10-24T19:38:19.2878915Z Version: 20261021.618
+2026-10-24T19:38:19.2879300Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-24T19:38:19.2879732Z Build Date: 2026-10-21T00:45:21Z
+2026-10-24T19:38:19.2880220Z Worker ID: {240fb23b-51fa-4c79-8b7d-63ceefb43d98}
+2026-10-24T19:38:19.2880672Z Region: centralus
+2026-10-24T19:38:19.2881060Z Cloud: Azure
+2026-10-24T19:38:19.2881541Z ##[endgroup]
+2026-10-24T19:38:19.2882289Z ##[group]Operating System
+2026-10-24T19:38:19.2882695Z Ubuntu
+2026-10-24T19:38:19.2883044Z 24.04.5
+2026-10-24T19:38:19.2883346Z LTS
+2026-10-24T19:38:19.2883702Z ##[endgroup]
+2026-10-24T19:38:19.2884036Z ##[group]Runner Image
+2026-10-24T19:38:19.2884411Z Image: ubuntu-24.04
+2026-10-24T19:38:19.2884798Z Version: 20261012.334.1
+2026-10-24T19:38:19.2885576Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-24T19:38:19.2886445Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-24T19:38:19.2887025Z ##[endgroup]
+2026-10-24T19:38:19.2887732Z ##[group]GITHUB_TOKEN Permissions
+2026-10-24T19:38:19.2888925Z Contents: read
+2026-10-24T19:38:19.2889270Z Metadata: read
+2026-10-24T19:38:19.2889598Z ##[endgroup]
+2026-10-24T19:38:19.2890863Z Secret source: Actions
+2026-10-24T19:38:19.2891528Z Cache mode: write
+2026-10-24T19:38:19.2892011Z Prepare workflow directory
+2026-10-24T19:38:19.3096157Z Prepare all required actions
+2026-10-24T19:38:19.3160602Z Complete job name: forge-qa-test-two
+2026-10-24T19:38:19.3937768Z ##[group]Run echo '::group::forge-qa test details'
+2026-10-24T19:38:19.3938647Z [36;1mecho '::group::forge-qa test details'[0m
+2026-10-24T19:38:19.3939311Z [36;1mecho "forge-qa shard $FORGE_QA_SHARD"[0m
+2026-10-24T19:38:19.3940169Z [36;1mecho '::endgroup::'[0m
+2026-10-24T19:38:19.3941182Z [36;1mif [ "$FORGE_QA_SHARD" = two ] && { [ "$FORGE_QA_FAIL" = true ] || [ "$FORGE_QA_FORCE" = true ] || [ "$FORGE_QA_BRANCH" = forge-qa-failing ]; }; then[0m
+2026-10-24T19:38:19.3942635Z [36;1m  echo '::error title=forge-qa intentional failure::Fake test failure for QA'[0m
+2026-10-24T19:38:19.3943442Z [36;1m  exit 1[0m
+2026-10-24T19:38:19.3943908Z [36;1mfi[0m
+2026-10-24T19:38:19.5174114Z shell: /usr/bin/bash -e {0}
+2026-10-24T19:38:19.5174579Z env:
+2026-10-24T19:38:19.5174839Z   FORGE_QA_FAIL: false
+2026-10-24T19:38:19.5175120Z   FORGE_QA_FORCE: 
+2026-10-24T19:38:19.5175402Z   FORGE_QA_BRANCH: forge-qa-failing
+2026-10-24T19:38:19.5175725Z   FORGE_QA_SHARD: two
+2026-10-24T19:38:19.5176031Z ##[endgroup]
+2026-10-24T19:38:19.5353684Z ##[group]forge-qa test details
+2026-10-24T19:38:19.5354259Z forge-qa shard two
+2026-10-24T19:38:19.5355013Z ##[endgroup]
+2026-10-24T19:38:19.5370368Z ##[error]Fake test failure for QA
+2026-10-24T19:38:19.5385438Z ##[error]Process completed with exit code 1.
+2026-10-24T19:38:19.5545628Z Cleaning up orphan processes

@@ -13,7 +13,7 @@ export default defineConfig({
   root: packageRoot,
   plugins: [createWorkspacePackageSourcesPlugin([
     { packageName: '@happier-dev/forge-ci', packageSourceRoot: resolve(packageRoot, 'src') },
-    ...['plugin-sdk', 'plugin-ui', 'protocol', 'deployment-protocol', 'channels-protocol', 'triage-protocol', 'triage-sources'].map(name => ({
+    ...['plugin-sdk', 'plugin-ui', 'protocol', 'deployment-protocol', 'channels-protocol', 'triage-protocol', 'triage-sources', 'cli-common', 'agents', 'brand', 'release-runtime'].map(name => ({
       packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(repoRoot, 'packages', name, 'src'),
     })),
   ])],

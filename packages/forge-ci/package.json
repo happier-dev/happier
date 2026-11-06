@@ -29,6 +29,11 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "exports": {
+    "./translations": {
+      "happier-source": "./src/translations.ts",
+      "types": "./dist/translations.d.ts",
+      "default": "./dist/translations.js"
+    },
     "./runtime": {
       "happier-source": "./src/runtime.ts",
       "types": "./dist/runtime.d.ts",

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { ForgeCiJobV1Schema } from '@happier-dev/triage-protocol/ci/v1';
 import type { ForgeCiLogV1, ForgeCiStepV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { buildForgeCiLogIndexV1, decodeForgeCiLogBytesV1 } from './index.js';
 import { selectForgeCiLogLinesV1, selectLogLinesV1 } from './selection.js';
@@ -23,6 +25,34 @@ describe('shared hosted log index', () => {
   it('rejects a zero-line tail instead of expanding it to every admitted line', () => {
     const index = buildForgeCiLogIndexV1({ log: log('first\nlast') });
     expect(selectLogLinesV1(index, { kind: 'tail', lines: 0 })).toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('covers the captured GitHub step seconds while preserving tied candidates, groups and original anchors', () => {
+    // The exact job Action payload is captured in this package; reuse the existing 3,113-byte native log fixture.
+    const captured = ForgeCiJobV1Schema.parse(JSON.parse(readFileSync('src/runtime/logs/github-failed-job.fixture.json', 'utf8')));
+    if (captured.steps.kind !== 'available') throw new Error('Captured job must contain its native steps');
+    const text = readFileSync('../plugins/scm-github/src/ui/forge/actions/ActionsPage.failed-job.fixture.txt', 'utf8');
+    expect(new TextEncoder().encode(text)).toHaveLength(3113);
+    const source = { ...log(text), job: captured.ref };
+    const exact = buildForgeCiLogIndexV1({ log: source, steps: captured.steps.values });
+    // The native mapper supplies this source-precision fact, not a guessed sub-second completion time.
+    const steps = captured.steps.values.map(value => ({ ...value, timestampPrecision: 'second' as const }));
+    const index = buildForgeCiLogIndexV1({ log: source, steps, baseline: exact });
+    expect(index.lines).toHaveLength(51);
+    expect(index.lines.every(line => line.attribution.kind === 'ambiguous' && line.attribution.stepIds.join(',') === '1,2,3,4')).toBe(true);
+    expect(index.lines[48]).toMatchObject({ number: 49, plainText: '##[error]Fake test failure for QA' });
+    expect(index.lines.map(line => line.originalText).join('')).toBe(text);
+    expect(index.groups).toHaveLength(6);
+    expect(index.groups.every(group => group.closed)).toBe(true);
+    const details = index.groups.find(group => group.title === 'forge-qa test details');
+    expect(index.lines.find(line => line.plainText === 'forge-qa shard two')?.groupIds).toContain(details?.id);
+    const selected = selectForgeCiLogLinesV1(index, { kind: 'steps', stepIds: ['2'] });
+    expect(selected).toMatchObject({ kind: 'value', ambiguous: true, unattributed: false });
+    if (selected.kind === 'value') expect(selected.lines).toContain(index.lines[48]);
+    expect(index.work).toEqual({ decodedLines: 0, tokenizedLines: 0, indexedLines: 51 });
+    expect(index.lines[48]?.tokens).toBe(exact.lines[48]?.tokens);
+    expect(index.groups).toBe(exact.groups);
+    expect(buildForgeCiLogIndexV1({ log: source, steps, baseline: index })).toBe(index);
   });
 
   it('includes the end of a coarse second but leaves exact sub-second windows and outside context unchanged', () => {
