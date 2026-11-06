@@ -3,6 +3,14 @@ import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAc
 import { formatAccountDisplayName } from './formatAccountDisplayName';
 import { t } from '@/text';
 
+/** The one generic label for an Account whose sanitized actor is unavailable. */
+export function resolveUnknownAccountActorName(form: 'value' | 'sentence'): string {
+    return form === 'sentence'
+        ? t('session.collaboration.discussion.attribution.anotherPerson')
+        : t('detailPages.approval.requester.anotherPerson');
+}
+
+
 /** Shared Account byline facts; neither a profile lookup nor an access decision. */
 export function resolveAccountActorPresentation(actor: TranscriptAccountActor, viewerScope: ServerAccountScope | null) {
     const isSelf = areServerAccountScopesEqual(actor, viewerScope);
