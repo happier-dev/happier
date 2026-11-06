@@ -690,7 +690,8 @@ an already admitted message into a rejection.
 
 ## Compatibility
 
-**New client against an old daemon.** `session.agentTransition` is rejected with
+**New client against a daemon older than `cli-v0.2.14`.** Transition registration shipped in
+`cli-v0.2.14`; a daemon without it rejects `session.agentTransition` with
 `RPC_ERROR_CODES.METHOD_NOT_AVAILABLE`, which the client op maps to the operation-scoped arm
 `rejected('unsupported_operation')` with `sourceEffect: 'none'`. Inspection maps the same code to
 `reason: 'operation_unavailable'`, and
@@ -702,9 +703,9 @@ response, is `outcome_unknown` — never a rejection.**
 **Old client against a new daemon/server.** Unchanged: the divider rides the shipped passthrough
 event arm, and no existing fork/spawn/message vector changed shape.
 
-**No intermediate-shape compatibility.** Nothing of this feature is in any released build —
-`git grep sessionAgentTransitionV1` is empty at `cli-stable`, `cli-preview`, `server-stable` and
-`ui-web-stable` — so shapes written only by an intermediate development build are not obligations.
+**No intermediate-shape compatibility.** Transition registration shipped in `cli-v0.2.14`.
+Its released wire contracts remain compatibility obligations; shapes written only by an
+unreleased intermediate development build are not obligations.
 The divider's `sourceCutoffSeqInclusive` is therefore required rather than optional, and there is no
 "this divider recorded no bound" reader state. Do not reintroduce one.
 
