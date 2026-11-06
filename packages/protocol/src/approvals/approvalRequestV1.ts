@@ -20,7 +20,7 @@ import { computeActionInputApprovalDigestV1, isAutomationApprovalRequestSurface 
 import type { ActionId } from '../actions/actionIds.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { ActionRequestAttributionV1Schema, isSharedRequesterActionV1 } from '../actions/actionRequestAttributionV1.js';
-import { ActionOperationCredentialUseV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema } from '../actions/actionExecutionResult.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { DiscussionReplyReturnV1Schema } from '../workflows/workflowDiscussionPublicationV1.js';
 import { DiscussionIdSchema } from '../discussions/references.js';
@@ -150,6 +150,7 @@ export const ApprovalExecutionV2Schema = lazyZodSchema(() => z.strictObject({
   errorCode: z.optional(z.string().check(z.minLength(1))),
   error: z.optional(z.string().check(z.minLength(1))),
   details: z.optional(z.unknown()),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   /** Host-stamped actual credential admissions, not plugin result data or replay authority. */
   operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
 }).check(z.superRefine((value, ctx) => {
@@ -515,7 +516,7 @@ function validateApprovalRequestLifecycle(
   if (status === 'executed' && execution?.ok !== true) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status executed requires a successful execution result' });
   if (status === 'failed' && execution?.ok !== false) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status failed requires a failed execution result' });
   if (status === 'outcome_unknown' && (value.v !== 2 || execution?.ok !== false
-    || (execution as ApprovalExecutionV2).effectAttempted !== true)) {
+    || (execution as ApprovalExecutionV2).effectAttempted === false)) {
     ctx.addIssue({ code: 'custom', path: ['execution'], message: 'Unknown approval outcomes require a possibly attempted V2 execution' });
   }
   if (value.v === 2 && execution?.ok === true && Object.hasOwn(execution, 'details')) {

@@ -1,10 +1,14 @@
+import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentExecutionFailureDetailsV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
+import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, projectOpenProjectRefusalV1 } from '../projects/openProjectV1.js';
 import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema,
   MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
-import { AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
 import { ActionIdSchema, isPluginDevLoopActionIdV1 } from '../actions/actionIds.js';
@@ -39,7 +43,7 @@ import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } f
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
-import { DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import type {
   ApprovalExecutionV2,
@@ -60,6 +64,45 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (input.request.actionId === 'deployments.teardown') {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    if (input.failure.errorCode === 'unsupported_action') {
+      const details = (storedRead ? createStoredReadSchema(DeploymentTeardownRefusalDetailsV1Schema)
+        : DeploymentTeardownRefusalDetailsV1Schema).safeParse(input.failure.details);
+      return args.success && details.success ? { ...input.failure, details: details.data } : null;
+    }
+    const { ok: _ok, ...receipt } = DeploymentReceiptAcceptedResultV1Schema._zod.def.options[0].shape;
+    const detailsSchema = z.strictObject({ ...receipt, step: DeploymentTeardownStepV1Schema,
+      reason: DeploymentIdentifierV1Schema });
+    const details = (storedRead ? createStoredReadSchema(detailsSchema) : detailsSchema).safeParse(input.failure.details);
+    if (details.success) {
+      const expectedCode = details.data.state === 'failed' ? 'deployment_failed'
+        : details.data.state === 'outcome_unknown' ? 'outcome_unknown' : null;
+      return args.success && details.data.environmentId === args.data.environmentId
+        && expectedCode === input.failure.errorCode ? { ...input.failure, details: details.data } : null;
+    }
+  }
+  if (input.request.actionId === 'projects.open') {
+    const args = (storedRead ? createStoredReadSchema(OpenProjectInputV1Schema) : OpenProjectInputV1Schema).safeParse(input.request.actionArgs);
+    const details = (storedRead ? createStoredReadSchema(OpenProjectRefusalV1Schema) : OpenProjectRefusalV1Schema).safeParse(input.failure.details);
+    return args.success && details.success && details.data.code === input.failure.errorCode
+      ? { ...input.failure, details: details.data } : null;
+  }
+  if (isDeploymentActionIdV1(input.request.actionId) && deploymentOperationForRootActionV1(input.request.actionId)) {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    const details = (storedRead ? createStoredReadSchema(DeploymentExecutionFailureDetailsV1Schema)
+      : DeploymentExecutionFailureDetailsV1Schema).safeParse(input.failure.details);
+    if (details.success) {
+      if (!args.success || !('serverId' in args.data) || !('environmentId' in args.data)
+        || details.data.environmentId !== args.data.environmentId
+        || 'targetLinkId' in args.data && args.data.targetLinkId !== undefined && details.data.targetLinkId !== args.data.targetLinkId
+        || ![details.data.failure.code, details.data.cleanupFailure?.code].includes(input.failure.errorCode)) return null;
+      return isSameApprovalHome(input.request, args.data.serverId, details.data.serverId)
+        ? { ...input.failure, details: details.data } : null;
+    }
+  }
   if (isDeploymentDomainChildActionIdV1(input.request.actionId)) {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
@@ -247,16 +290,19 @@ export function projectApprovalExecutionFailureV2(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
   executedAtMs: number;
-  /** Defaults to true for execution-path callers; pre-execution settlement must opt out explicitly. */
+  /** Producer evidence, or false from a refusal before dispatch; absence stays unknown. */
   effectAttempted?: boolean;
 }>): ApprovalExecutionV2 {
   const strictFailure = parseStrictApprovalFailure(input);
+  const failureCause = ActionFailureCauseV1Schema.safeParse(input.failure.failureCause);
+  const effectAttempted = input.failure.effectAttempted ?? input.effectAttempted;
   return {
     executedAtMs: input.executedAtMs,
-    effectAttempted: input.effectAttempted !== false,
+    ...(effectAttempted !== undefined ? { effectAttempted } : {}),
     ok: false,
     errorCode: input.failure.errorCode,
     error: input.failure.error,
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     ...(strictFailure?.details !== undefined ? { details: strictFailure.details } : {}),
   };
 }
@@ -267,6 +313,10 @@ export function projectApprovalExecutionFailureV2(input: Readonly<{
  * This is a read projection, not a rewrite of the durable execution receipt.
  */
 function readDomainExecutionFailure(request: ApprovalRequest): ActionExecuteFailure | null {
+  if (request.actionId === 'projects.open') {
+    const result = createStoredReadSchema(OpenProjectRefusalV1Schema).safeParse(request.execution?.result);
+    return result.success ? projectOpenProjectRefusalV1(result.data) : null;
+  }
   if (isFilesystemActionId(request.actionId)) {
     const schema = getActionSpec(request.actionId).outputSchema;
     if (!schema) return null;
@@ -416,8 +466,13 @@ export function readApprovalExecutionFailure(
   const error = typeof execution.error === 'string' && execution.error.trim().length > 0
     ? execution.error
     : errorCode;
-  const failure: ActionExecuteFailure = { ok: false, errorCode, error };
-  if (request.v !== 2) return failure;
+  if (request.v !== 2) return { ok: false, errorCode, error };
+  const currentExecution = request.execution!;
+  const failureCause = ActionFailureCauseV1Schema.safeParse(currentExecution.failureCause);
+  const failure: ActionExecuteFailure = { ok: false, errorCode, error,
+    ...(typeof currentExecution.effectAttempted === 'boolean' ? { effectAttempted: currentExecution.effectAttempted } : {}),
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+  };
   const details = request.execution?.details;
   if (details === undefined) return failure;
   return parseStrictApprovalFailure({
