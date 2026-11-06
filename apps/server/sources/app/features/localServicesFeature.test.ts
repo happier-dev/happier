@@ -6,6 +6,16 @@ import { resolveServerFeaturePayload } from "./catalog/resolveServerFeaturePaylo
 import { serverFeatureRegistry } from "./catalog/serverFeatureRegistry";
 
 describe("local services server feature resolver", () => {
+    it('advertises product service relay readiness with an empty arbitrary-port allowlist', () => {
+        const payload = resolveServerFeaturePayload({ ...grantSigningEnv(),
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: '1',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: '',
+        }, serverFeatureRegistry);
+        expect(payload.capabilities.localServices.preview).toMatchObject({
+            pmsRelayReady: true, pmsStreamingReady: true, webSocketSupport: true, disabledReasons: [],
+        });
+    });
+
     it("defaults private preview on while public exposure stays disabled", () => {
         const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
 

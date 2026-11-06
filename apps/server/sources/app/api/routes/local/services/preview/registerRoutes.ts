@@ -14,6 +14,7 @@ import type { MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machi
 import type { Fastify } from "@/app/api/types";
 import { claimHttpUpgrade } from "@/app/api/utils/httpUpgradeOwnership";
 import {
+    createLocalServicePreviewPortPolicyRefusal,
     proxyLocalServicePreviewHttpRequest,
     type LocalServicePreviewHttpRequest,
     type OpenLocalServicePreviewTunnel,
@@ -75,6 +76,7 @@ export type RegisterLocalServicePreviewRoutesOptions = Readonly<{
         machineId: string;
     }>) => PreviewAccessExchangeResult;
     registerPreview?: (input: LocalServicePreviewRuntimeRegistrationInput) => LocalServicePreviewRuntimeRegistrationResult;
+    isPreviewPortAllowed?: (resource: LocalServicePreviewResourceV1, admittedPreview?: LocalServicePreviewDirectBindingV1) => boolean;
     resolveNativeDirectTarget?: (input: Readonly<{ accountId: string; machineId: string }>) => Promise<MachineIrohEndpointAuthorityV1 | null>;
     mintNativeDirectAccess?: (input: Readonly<{ previewId: string; actorAccountId?: string; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>) => Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
     nativeDirectEnabled?: (request: object) => boolean | Promise<boolean>;
@@ -762,6 +764,8 @@ export function registerLocalServicePreviewRoutes(
         }
         if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
         const accountId = options.resolvePreviewAccountId?.(previewId);
+            if (options.isPreviewPortAllowed?.(resource, serviceAdmission ? resource : undefined) === false) return reply.code?.(403)
+                .send?.(createLocalServicePreviewPortPolicyRefusal(resource.target.port));
         if ('kind' in parsed.data) {
             if (!accountId || !options.registerPreview) return sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable');
             const admission = options.registerPreview({ resource, accountId,

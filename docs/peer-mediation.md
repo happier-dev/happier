@@ -646,7 +646,8 @@ preview origin/path and suppresses reserved Happier cookie names.
 
 - `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` defaults **false**.
 - `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` defaults **`[]`** — `parsePortList` returns an
-  empty array for an unset value, i.e. a deny-all destination list.
+  empty array for an unset value, denying arbitrary destination ports. In unreleased 0.3,
+  a product-started declared service's owner-verified bound port is admitted independently.
 - `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` defaults **true** and feeds the
   `machines.tunnel.directPeer` gate (`resolveMachineTunnelFeature` in
   `apps/server/sources/app/features/machineTunnelFeature.ts`). Native private-preview admission
@@ -661,7 +662,7 @@ Both gates are enforced when the relay authorization is minted
 | --- | --- |
 | `serverRoutedEnabled` false | `blocked_by_server_policy` |
 | destination host not loopback | `destination_host_not_allowed` |
-| port not in both the scope and the server allowlist | `destination_port_not_allowed` |
+| port absent from the scope, or neither operator-listed nor the admitted product-service port | `destination_port_not_allowed` |
 | requested caps exceed server caps | `relay_cap_exceeded` |
 
 ### 2.3 Local-service preview gates
@@ -919,7 +920,7 @@ memory boundary and elapsed-window reclamation are retained per exposure; overfl
 uses only that share's overflow bucket, never the quota of an unrelated share.
 
 `resolveLocalServicesFeature` (`apps/server/sources/app/features/localServicesFeature.ts`) turns
-unmet prerequisites into **ten** reason codes, carried on
+unmet prerequisites into reason codes, carried on
 `capabilities.localServices.preview.disabledReasons` and
 `capabilities.localServices.publicPreview.disabledReasons`. The client renders them — see §4.
 
@@ -928,7 +929,6 @@ unmet prerequisites into **ten** reason codes, carried on
 | `disabled_by_server_policy` | `preview` | `…LOCAL_SERVICES_PREVIEW__ENABLED` is false |
 | `disabled_by_server_policy` | `publicPreview` | `…LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` is false — the default, and short-circuits the rest |
 | `pms_server_relay_disabled` | both | `…MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` is false |
-| `pms_allowed_ports_empty` | both | `…MACHINES_TUNNEL_ALLOWED_PORTS` is empty |
 | `peer_mediation_grant_signing_unavailable` | both | route-grant signing does not resolve (§2.1), so the relay tunnel opener would throw on every request |
 | `mode_unconfigured` | `publicPreview` | no allowed exposure mode configured |
 | `max_ttl_unconfigured` | `publicPreview` | no maximum link lifetime configured |
@@ -963,7 +963,7 @@ The configuration table reflects the 0.3 development signer default as of 2026-1
 
 | Configuration | What runs |
 | --- | --- |
-| Defaults with the Home master secret | The derived signer enables the peer-mediation substrate and the loopback-direct half (`directPeerEnabled` is already true). Preview relay still needs its tunnel gate and port allowlist. Observability is off (fail-closed). |
+| Defaults with the Home master secret | The derived signer enables the peer-mediation substrate and the loopback-direct half (`directPeerEnabled` is already true). Preview relay still needs its tunnel gate; arbitrary ports also need the operator allowlist. Observability is off (fail-closed). |
 | Explicit signing override | A complete, valid override replaces the derived authority. Partial, invalid or expired configuration refuses signing, disables peer mediation and makes the mint route return 404. |
 | + `…PEER_MEDIATION_OBSERVABILITY__ENABLED` with a usable signer | PMS-9 observability, readable through the socket subscription and the daemon snapshot action. |
 | + `…TUNNEL_SERVER_ROUTED__ENABLED` and a non-empty `…TUNNEL_ALLOWED_PORTS` | Historical ~16,000 LOC inventory: voice tunnel, private preview, simulator relay, direct machine RPC. This is not the current speech enablement contract. |

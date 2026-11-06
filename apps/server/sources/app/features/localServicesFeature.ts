@@ -28,12 +28,10 @@ export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPay
     const localServicesEnabled = featureConfig.enabled;
     const pmsPreviewReady = featureConfig.previewEnabled
         && tunnelConfig.serverRoutedEnabled
-        && tunnelConfig.allowedPorts.length > 0
         && peerMediationConfig.substrateEnabled;
     const pmsDisabledReasons = (() => {
         if (!featureConfig.previewEnabled) return ["disabled_by_server_policy"];
         if (!tunnelConfig.serverRoutedEnabled) return ["pms_server_relay_disabled"];
-        if (tunnelConfig.allowedPorts.length === 0) return ["pms_allowed_ports_empty"];
         // Same code `resolvePeerMediationFeature` emits for the same unmet prerequisite; one
         // vocabulary for one fact.
         if (!peerMediationConfig.substrateEnabled) return ["peer_mediation_grant_signing_unavailable"];

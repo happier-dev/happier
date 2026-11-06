@@ -17,10 +17,13 @@ internet — which is disabled by default and remains a development feature.
 | Capability | Status | Default |
 | --- | --- | --- |
 | Detecting local services and listing them in the launchpad | Shipped | On |
-| Opening a private preview from the app | Shipped, with a usable signer and a relay port allowlist | Feature on; relay tunnel and ports need configuration |
+| Opening a private preview from the app | Current 0.3 development source, with a usable signer and relay tunnel | Feature on; relay tunnel needs configuration; arbitrary ports also need an allowlist |
 | Public exposure through a shareable secret link | Development only | Off |
 
 Private previews are the normal path and the rest of this page is mostly about them.
+The table describes the current checkout; it does not certify stable or preview
+release availability.
+
 
 **Local service scan needs attention** describes a discovery problem. Its detail
 identifies an unreadable or missing Project folder, unavailable open-project
@@ -47,8 +50,8 @@ default is a development-source contract, not a stable or preview availability c
   configured on the machine running the dev server.**
 - For an explicit override, the ability to generate and store a private key as an
   environment variable.
-- A rough idea of which ports your people actually develop on. The relay needs an explicit
-  allowlist and it starts empty.
+- For services started outside Happier, the ports your people need to reach. The relay's
+  arbitrary-port allowlist starts empty. Happier-started declared services use their verified bound port.
 
 ## How a preview actually travels
 
@@ -223,21 +226,24 @@ reports preview relay readiness as unavailable. Configuring key bytes is not eno
 key must still be valid when a preview is admitted. This does not expire an already-open
 TCP tunnel.
 
-### 3. Allow the ports previews may reach
+### 3. Enable relay access and allow arbitrary ports when needed
 
 ```bash
 HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED=true
 HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS=3000,4200,5173,8000,8080
 ```
 
-These two are a pair and both are restrictive by default: the relay-routed tunnel is **off**
-unless you turn it on, and the allowlist is **empty**, which denies every port. A preview to
-a port outside the list is refused when the grant is minted — the port is checked before any
-connection is attempted, not after.
+The relay-routed tunnel is **off** unless you turn it on. In current 0.3 development,
+a declared service started by Happier can open at whatever port it bound, including an
+OS-assigned port. The Machine's existing service owner verifies the exact running occurrence
+and endpoint at preview admission. The viewer and service starter must retain their existing
+Machine access; knowing a port does not grant access.
 
-Pick the ports your framework defaults actually use rather than a wide range. The allowlist
-is the only thing standing between "preview my dev server" and "preview anything listening
-on loopback", including a database admin console or another person's tool.
+The allowlist starts **empty** and applies to every other port, including passively detected
+services and servers started outside Happier. Those ports must be listed before a route grant
+can be minted. Pick only the ports your people need: an arbitrary loopback listener could be
+a database admin console or another person's tool. An empty list leaves Happier-started
+declared-service previews available when the other relay prerequisites are met.
 
 ### 4. Optional: private preview settings
 
@@ -258,7 +264,7 @@ rather than in the logs. Each sentence maps to exactly one thing:
 | What the app says | What is missing |
 | --- | --- |
 | "The server relay for machine tunnels is turned off." | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` |
-| "The server allows no tunnel ports." | `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` |
+| A service started outside Happier reports a port refusal | Add its port to `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` |
 | "Local service previews are turned off on the server." | `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED` |
 | "Public previews are turned off on the server." | `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` — expected, and correct |
 
@@ -275,9 +281,9 @@ Its symptoms:
 
 Two more that look alike and are not:
 
-- **A preview to one port works and another does not.** The second port is not in
+- **An arbitrary-port preview works on one port and fails on another.** Check
   `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS`. Ports are matched exactly; there are no
-  ranges.
+  ranges. Happier-started declared services instead use their verified bound endpoint.
 - **Previews worked and then stopped everywhere at once.** Check
   `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT`. Once it passes, machines stop
   trusting the key. The 0.3 development relay also stops advertising that signer and
@@ -286,7 +292,7 @@ Two more that look alike and are not:
 <Callout type="info">
   `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` sounds like it would help here and
   does not enable the server-relayed preview path. That path needs the server-routed gate
-  and port allowlist above. In 0.3 development, native direct preview admission additionally
+  above, plus the port allowlist for arbitrary destinations. In 0.3 development, native direct preview admission additionally
   uses the direct-peer policy and an actually available Machine native transport; turning
   on that gate alone does not supply the transport.
 </Callout>

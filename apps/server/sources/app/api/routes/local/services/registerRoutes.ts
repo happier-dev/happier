@@ -17,7 +17,8 @@ import {
     createServerFeatureGatedRouteApp,
     isServerFeatureEnabledForHome,
 } from "@/app/features/catalog/serverFeatureGate";
-import { readLocalServicesFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { readLocalServicesFeatureEnv, readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isPeerTcpTunnelRelayPortAllowed } from '@/app/machines/peer/mediation/tunnel/authorization';
 import {
     resolveEffectiveSessionAccess,
     type SessionAccessLevel,
@@ -233,6 +234,13 @@ export function registerLocalServiceRoutes(
         );
 
     const previewRouteOptions: RegisterLocalServicePreviewRoutesOptions = {
+        isPreviewPortAllowed: (resource, admittedPreview) => {
+            const policy = readMachineTunnelFeatureEnv(env);
+            return isPeerTcpTunnelRelayPortAllowed({
+                port: resource.target.port, grantedPorts: [resource.target.port], serverAllowedPorts: policy.allowedPorts,
+                admittedPreview,
+            });
+        },
         registerPreview: (input) => runtimes.preview.registerPreview(input),
         mintNativeDirectAccess: (input) => runtimes.preview.mintNativeDirectAccess(input),
         resolveNativeDirectTarget: (input) => readAvailableMachineIrohEndpointAuthority({ ...input, requiredCapability: 'localServicePreviewNativeAccess' }),

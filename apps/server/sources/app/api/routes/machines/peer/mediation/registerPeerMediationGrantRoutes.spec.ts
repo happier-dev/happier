@@ -934,6 +934,17 @@ describe("registerPeerMediationGrantRoutes", () => {
             scope: { kind: "tcp_tunnel", tunnelId: "tcp-1", allowedPorts: [4444] },
         } });
         expect(tcp.response).toMatchObject({ ok: false, reasonCode: "destination_port_not_allowed" });
+        const forgedService = await route.invoke({ userId: 'account_1', body: {
+            v: 2, machineId: 'machine_1', flowKind: 'tcp_tunnel', routeKind: 'server_relay', ttlMs: 30_000,
+            destination: { host: '127.0.0.1', port: 4444 }, relaySocketId: 'relay_socket_1',
+            scope: { kind: 'tcp_tunnel', tunnelId: 'forged-service', allowedPorts: [4444], preview: {
+                previewId: 'unverified-service', machineId: 'machine_1', owner: { kind: 'user', id: 'account_1' },
+                target: { scheme: 'http', host: '127.0.0.1', port: 4444 },
+                serviceTarget: { kind: 'managed_service', machineId: 'machine_1', managedServiceId: 'invented-instance', cwd: '/workspace/app',
+                    declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } },
+            } },
+        } });
+        expect(forgedService.response).toMatchObject({ ok: false, reasonCode: 'invalid_scope' });
         const foreignAccount = await route.invoke({ userId: "account_2" });
         expect(foreignAccount.response).toMatchObject({ ok: false, reasonCode: "access_denied" });
     });

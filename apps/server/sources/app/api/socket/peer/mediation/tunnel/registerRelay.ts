@@ -126,7 +126,6 @@ function participantMachineId(envelope: PeerTcpTunnelRelayEnvelope): string | un
 
 function validateOpenFramePolicy(input: Readonly<{
     envelope: PeerTcpTunnelRelayEnvelopeV1;
-    caps: PeerTcpTunnelRelayCaps;
 }>): string | null {
     const frame = input.envelope.frame;
     if (frame.kind !== 'open') return null;
@@ -138,8 +137,8 @@ function validateOpenFramePolicy(input: Readonly<{
         return frame.open.destination === undefined ? null : 'destination_host_not_allowed';
     }
     if (!frame.open.destination || !isLiteralLoopbackHostname(frame.open.destination.host)) return 'destination_host_not_allowed';
-    if (frame.open.relayAuthorization?.payload.flowKind !== 'voice_media'
-        && !input.caps.allowedPorts.includes(frame.open.destination.port)) return 'destination_port_not_allowed';
+    // Destination admission belongs to grant minting. The signed destination is
+    // verified below; replaying the operator list here would reject admitted Services.
     return null;
 }
 
@@ -1045,7 +1044,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             return;
         }
 
-        const policyDenyReason = envelope.v === 1 ? validateOpenFramePolicy({ envelope, caps }) : null;
+        const policyDenyReason = envelope.v === 1 ? validateOpenFramePolicy({ envelope }) : null;
         if (policyDenyReason) {
             emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: policyDenyReason });
             emitAbort({ io: ctx.io, userId, envelope, reasonCode: policyDenyReason, tunnelKey, senderSocketId: socket.id });

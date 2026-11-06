@@ -5,7 +5,7 @@ import { decodePeerTcpTunnelBinaryFrameV2, encodePeerTcpTunnelBinaryFrameV2, typ
 import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
 import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
-import { type LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { localServicePreviewDirectBindingV1, type LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import {
     createPeerTcpTunnelRelayStream,
     type PeerTcpTunnelRelayStream,
@@ -147,6 +147,7 @@ export function createLocalServicePreviewTunnelOpener(
                 kind: "tcp_tunnel",
                 tunnelId,
                 allowedPorts: [preview.target.port],
+                preview: localServicePreviewDirectBindingV1(preview),
             },
             nowMs: nowMs(),
             ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedTcpTunnel,

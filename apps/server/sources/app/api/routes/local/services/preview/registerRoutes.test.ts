@@ -878,11 +878,55 @@ describe('local service preview routes', () => {
         }
     }, 15_000);
 
+    it('applies arbitrary-port policy to native preview admission too', async () => {
+        sessionFindUnique.mockResolvedValue(sharedSession);
+        const env = { HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HANDY_MASTER_SECRET: 'test-master-secret',
+            HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: '' };
+        const runtimes = createLocalServiceRouteRuntimes(env);
+        expect(runtimes.preview.registerPreview({ resource: preview, accountId: 'user_1' }).ok).toBe(true);
+        const app = createFakeRouteApp();
+        registerLocalServiceRoutes(app as never, { env, runtimes });
+        const reply = createReplyStub();
+        await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({
+            userId: 'viewer_1', authAuthority: 'present_user', params: { previewId: preview.previewId }, body: {
+                v: 1, initiator: { kind: 'account_client', endpointId: 'a'.repeat(64) }, ephemeralPublicKeyBase64Url: 'c'.repeat(43),
+            },
+        }, reply);
+        expect(reply.statusCode).toBe(403);
+        expect(reply.send).toHaveBeenCalledWith({ error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: 5173 });
+    });
+
+    it.each([
+        { allowedPorts: '', expectedStatus: 403 },
+        { allowedPorts: '5173', expectedStatus: 200 },
+    ])('checks the relay port policy before handing any renderer a server admission ($expectedStatus)', async ({ allowedPorts, expectedStatus }) => {
+        sessionFindUnique.mockResolvedValue(sharedSession);
+        const env = { HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HANDY_MASTER_SECRET: 'test-master-secret',
+            HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: allowedPorts };
+        const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: env.HAPPIER_PUBLIC_SERVER_URL,
+            hostOriginBaseDomain: 'preview.happier.test' });
+        expect(runtime.registerPreview({ resource: preview, accountId: 'user_1' }).ok).toBe(true);
+        const app = createFakeRouteApp();
+        registerLocalServiceRoutes(app as never, { env, runtimes: { ...createLocalServiceRouteRuntimes(env), preview: runtime } });
+        const reply = createReplyStub();
+        await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({
+            userId: 'viewer_1', authAuthority: 'present_user', params: { previewId: preview.previewId }, body: { v: 1, kind: 'server_preview' },
+        }, reply);
+        expect(reply.statusCode).toBe(expectedStatus);
+        if (expectedStatus === 403) expect(reply.send).toHaveBeenCalledWith({ error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: 5173 });
+        else expect(LocalServicePreviewServerAccessV1Schema.safeParse(reply.send.mock.calls[0]?.[0]).success).toBe(true);
+    });
+
     it('refreshes expired server admission for a shared viewer without native endpoint availability', async () => {
         sessionFindUnique.mockResolvedValue(sharedSession);
         const env = { HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HANDY_MASTER_SECRET: 'test-master-secret',
             HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
-            HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED: 'false' };
+            HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED: 'false',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: '5173' };
         let now = 1_000;
         const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: env.HAPPIER_PUBLIC_SERVER_URL,
             hostOriginBaseDomain: 'preview.happier.test', tokenTtlMs: 60_000, nowMs: () => now });
@@ -958,7 +1002,8 @@ describe('local service preview routes', () => {
         });
         const env = { HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HANDY_MASTER_SECRET: 'test-master-secret',
             HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
-            HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED: 'true' };
+            HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: '5173' };
         const runtimes = createLocalServiceRouteRuntimes(env);
         runtimes.preview.registerPreview({ resource: { ...preview, owner }, accountId: 'user_1' });
         const app = createFakeRouteApp();

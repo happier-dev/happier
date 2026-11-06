@@ -5,6 +5,7 @@ import { PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1, PeerTcpTunnelRelayAuth
 import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type PeerTcpTunnelDestinationV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { type TcpTunnelGrantScopeV1, type VoiceMediaGrantScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
+import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import tweetnacl from "tweetnacl";
 
 export type MintPeerTcpTunnelRelayAuthorizationV2Result =
@@ -64,6 +65,22 @@ export type MintProviderBrokerRelayAuthorizationV2Input = Readonly<{
 
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString("base64url");
+}
+
+/** Shared by relay minting and preview URL admission, before any renderer loads a document.
+ * admittedPreview comes only from the preview owner after Machine/service admission;
+ * generic route-grant requests cannot supply preview bindings.
+ */
+export function isPeerTcpTunnelRelayPortAllowed(input: Readonly<{
+    port: number;
+    grantedPorts: readonly number[];
+    serverAllowedPorts: readonly number[];
+    admittedPreview?: LocalServicePreviewDirectBindingV1;
+}>): boolean {
+    return input.grantedPorts.includes(input.port) && (
+        input.serverAllowedPorts.includes(input.port)
+        || (input.admittedPreview?.serviceTarget !== undefined && input.admittedPreview.target.port === input.port)
+    );
 }
 
 /** Dedicated Home-to-broker application authority. It deliberately has no
@@ -163,10 +180,10 @@ export function mintPeerTcpTunnelRelayAuthorizationV2(
         };
     }
     if (
-        input.scope.kind === "tcp_tunnel" && (
-            !input.scope.allowedPorts.includes(input.destination.port)
-            || !input.serverCaps.allowedPorts.includes(input.destination.port)
-        )
+        input.scope.kind === "tcp_tunnel" && !isPeerTcpTunnelRelayPortAllowed({
+            port: input.destination.port, grantedPorts: input.scope.allowedPorts, serverAllowedPorts: input.serverCaps.allowedPorts,
+            admittedPreview: input.scope.preview,
+        })
     ) {
         return {
             ok: false,

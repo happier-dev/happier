@@ -29,6 +29,33 @@ it("mints TCP admission without application lifetime or cumulative byte budgets"
     })).toMatchObject({ valid: true });
 });
 
+it('admits an owner-verified product service on its bound port while arbitrary ports still need operator approval', () => {
+    const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(20));
+    const port = 45097;
+    const preview = { previewId: 'product-preview', machineId: 'machine', owner: { kind: 'user' as const, id: 'account' },
+        target: { scheme: 'http' as const, host: '127.0.0.1', port },
+        serviceTarget: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: 'instance', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest' as const, name: 'web' } } } };
+    for (const allowedPorts of [[], [5173]]) {
+        const input = {
+            accountId: 'account', targetMachineId: 'machine', relaySocketId: 'socket', destination: { host: '127.0.0.1', port },
+            scope: { kind: 'tcp_tunnel' as const, tunnelId: 'tunnel', allowedPorts: [port], preview },
+            nowMs: 1000, ttlMs: 30000, serverGateEnabled: true,
+            serverCaps: { allowedPorts, maxFrameBytes: 65536 }, signingKey: { keyId: 'test-key', secretKey: signing.secretKey },
+        };
+        expect(mintPeerTcpTunnelRelayAuthorizationV2(input)).toMatchObject({ ok: true });
+        expect(mintPeerTcpTunnelRelayAuthorizationV2({ ...input, scope: { ...input.scope, preview: undefined } }))
+            .toMatchObject({ ok: false, reasonCode: 'destination_port_not_allowed' });
+        expect(mintPeerTcpTunnelRelayAuthorizationV2({ ...input, scope: { ...input.scope, preview: { ...preview, serviceTarget: undefined } } }))
+            .toMatchObject({ ok: false, reasonCode: 'destination_port_not_allowed' });
+        expect(mintPeerTcpTunnelRelayAuthorizationV2({ ...input, destination: { host: '127.0.0.1', port: port + 1 },
+            scope: { ...input.scope, allowedPorts: [port + 1] } }))
+            .toMatchObject({ ok: false, reasonCode: 'destination_port_not_allowed' });
+        expect(mintPeerTcpTunnelRelayAuthorizationV2({ ...input, scope: { ...input.scope, allowedPorts: [] } }))
+            .toMatchObject({ ok: false, reasonCode: 'destination_port_not_allowed' });
+    }
+});
+
 it("preserves explicit Voice application budgets independently of TCP admission", () => {
     const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
     const input = {
