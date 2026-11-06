@@ -1,11 +1,13 @@
 import { resolveUsageBucketBounds, resolveUsageCalendarDateStart } from '@happier-dev/protocol/usage/usageCalendar';
-import { type UsageAnalyticsCoverage, type UsageAnalyticsGranularity, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
+import { resolveUsageAccountingCalendarPeriod } from '@happier-dev/protocol/usage/usageAgentCalendar';
+import { type UsageAnalyticsCoverage, type UsageAnalyticsGranularity, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageQueryPeriod, type UsageQuery, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { getPreferredLanguage, t } from '@/text';
 import { formatUsageCalendarDate as formatSharedUsageCalendarDate, formatUsageCalendarRange }
     from '@happier-dev/protocol/usage/usageFormatting';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 /** Shared presentation semantics from the admitted query: fixed offsets and exclusive ends. */
 export type UsageCalendarRange = Readonly<{
@@ -15,9 +17,9 @@ export type UsageCalendarRange = Readonly<{
     timeZoneOffsetMinutes: number;
 }>;
 
-/** An open range is drawn only as far as the producer witnessed it, never up to the viewer's clock. */
+/** Current calendars carry their admitted range; older replies retain their witnessed endpoint. */
 export function resolveUsageShownCalendarRange(query: UsageQuery, coverage?: UsageAnalyticsCoverage,
-    accounting?: UsageAnalyticsQueryResponse): UsageCalendarRange | null {
+    accounting?: UsageAnalyticsQueryResponse, observationRange?: UsageQueryResultSlice['accountingObservationRange']): UsageCalendarRange | null {
     // Older open-ended responses already witness their last observation/day. Source freshness
     // can be older than those observations and the viewer clock cannot extend retained facts.
     let firstObserved: number | undefined;
@@ -26,7 +28,9 @@ export function resolveUsageShownCalendarRange(query: UsageQuery, coverage?: Usa
         firstObserved = firstObserved === undefined ? startMs : Math.min(firstObserved, startMs);
         witnessedEnd = witnessedEnd === undefined ? endMs : Math.max(witnessedEnd, endMs);
     };
-    for (const row of accounting?.contributions ?? []) witness(row.observedAtMs, row.observedAtMs + 1);
+    const observed = accounting?.summary?.observationRange ?? observationRange;
+    if (observed) witness(observed.startMs, observed.endMs);
+    else for (const row of accounting?.contributions ?? []) witness(row.observedAtMs, row.observedAtMs + 1);
     // Full bucket bounds are only a fallback for older readers without observation timestamps.
     if (witnessedEnd === undefined) {
         for (const bucket of accounting?.series ?? []) witness(bucket.bucketStartMs, bucket.bucketEndMs);
@@ -35,14 +39,16 @@ export function resolveUsageShownCalendarRange(query: UsageQuery, coverage?: Usa
             witness(startMs, startMs + 86_400_000);
         }
     }
-    const endMs = query.period.endMs ?? coverage?.range.endMs ?? witnessedEnd;
+    const carried = accounting?.summary?.accountingCalendar?.value;
+    const endMs = query.period.endMs ?? carried?.period.endMs ?? coverage?.range.endMs ?? witnessedEnd;
     if (endMs === undefined) return null;
     const relativeName = 'relative' in query.period ? query.period.relative : undefined;
     const relative = relativeName !== undefined ? resolveUsageQueryPeriod(query, endMs - 1) : null;
-    // All time shows retained history; an explicitly pinned epoch start stays exact.
-    const startMs = relativeName === 'all' ? firstObserved
-        : relative?.startMs ?? query.period.startMs ?? coverage?.range.startMs;
-    return { ...(startMs !== undefined ? { startMs } : {}), endMs,
+    const period = resolveUsageAccountingCalendarPeriod({
+        period: { startMs: relative?.startMs ?? query.period.startMs, endMs }, accounting,
+        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, observationStartMs: firstObserved,
+    });
+    return { ...period,
         granularity: query.granularity, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes };
 }
 

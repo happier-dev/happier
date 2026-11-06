@@ -20,12 +20,14 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   buildUsageAnalyticsViewModel,
+  resolveResponseDayStreaks,
   type UsageAnalyticsViewModel,
 } from '@/sync/api/account/usageAnalytics';
 import { getPreferredLanguage, t, type TranslationKeyNoParams } from '@/text';
 import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCostFacts';
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
-import { type UsagePageCostProjection, type UsageAnalyticsCoverage } from '@happier-dev/protocol';
+import { type UsagePageCostProjection} from '@happier-dev/protocol/usage/usageCostFacts';
+import { type UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { formatUsageCalendarPeriod, formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
@@ -76,6 +78,35 @@ function usageBodyProjections(accounting: object) {
   return byKey;
 }
 
+/** Keep the analytics input, not the read's history/provenance envelope. Coverage
+ * is rendered from the live slice; only ranking and calendar streaks consume it
+ * inside the analytics/cost projection. Other response members retain the
+ * aggregation owner's value-equal references. No second model cache is needed.
+ */
+function usageAnalyticsInput(accounting: UsageQueryResultSlice['accounting'], key: keyof NonNullable<UsageQueryResultSlice['accounting']>): unknown {
+  const descriptor = accounting && Object.getOwnPropertyDescriptor(accounting, key);
+  // Lazy members depend on their getter, not on a value read eagerly just to
+  // decide whether a model is needed. Ordinary validated JSON uses its value.
+  return descriptor?.get ?? descriptor?.value;
+}
+
+function useUsageAnalyticsAccounting(accounting: UsageQueryResultSlice['accounting'], timeZoneOffsetMinutes = 0) {
+  const dayStreaks = React.useMemo(() => accounting?.activity?.calendarDays
+    ? resolveResponseDayStreaks(accounting, timeZoneOffsetMinutes) : null, [
+    accounting?.activity?.calendarDays, accounting?.coverage?.range, accounting?.coverage?.status,
+    accounting?.insights, timeZoneOffsetMinutes,
+  ]);
+  return React.useMemo(() => accounting, [
+    usageAnalyticsInput(accounting, 'totals'), usageAnalyticsInput(accounting, 'tokenCategories'), usageAnalyticsInput(accounting, 'costPresentation'),
+    usageAnalyticsInput(accounting, 'activity'), usageAnalyticsInput(accounting, 'insights'), usageAnalyticsInput(accounting, 'leaders'),
+    usageAnalyticsInput(accounting, 'series'), usageAnalyticsInput(accounting, 'modelTimeline'), usageAnalyticsInput(accounting, 'engineTimeline'),
+    usageAnalyticsInput(accounting, 'breakdowns'), usageAnalyticsInput(accounting, 'messageStats'), usageAnalyticsInput(accounting, 'contributions'),
+    usageAnalyticsInput(accounting, 'costFacts'),
+    accounting?.coverage?.status, accounting?.coverage?.reasons, accounting?.coverage?.ranked,
+    dayStreaks?.activeDays, dayStreaks?.currentStreakDays, dayStreaks?.longestStreakDays,
+  ]);
+}
+
 /** Names stay in the opened Account projection; accounting carries only the Project anchor. */
 export function useUsageProjectLabels(serverId: string): ReadonlyMap<string, string> {
   const rows = useProjectAccountRows();
@@ -110,13 +141,13 @@ export function useUsageAnalyticsView(
   slice: UsageQueryResultSlice,
   query: UsageQuery,
 ): UsageBodyAnalyticsView | null {
-  const accounting = slice.accounting;
+  const accounting = useUsageAnalyticsAccounting(slice.accounting, query.timeZoneOffsetMinutes ?? 0);
   const language = getPreferredLanguage();
-  return React.useMemo(() => {
+  const key = `${query.metric}\u0000${query.costBasis}\u0000${query.timeZoneOffsetMinutes ?? 0}\u0000${language}`;
+  const view = React.useMemo(() => {
     if (!accounting) return null;
     const metric = UsageAccountingMetricSchema.safeParse(query.metric);
     if (!metric.success) return null;
-    const key = `${query.metric}\u0000${query.costBasis}\u0000${query.timeZoneOffsetMinutes ?? 0}\u0000${language}`;
     const byKey = usageBodyProjections(accounting);
     const cached = byKey.get(key);
     if (cached !== null && typeof cached === 'object') return cached;
@@ -126,7 +157,9 @@ export function useUsageAnalyticsView(
       { period: 'all', metric: metric.data, costMode: query.costBasis, focus: null },
       query.timeZoneOffsetMinutes ?? 0,
     );
-    const built = { ...analytics, metric: metric.data, pageCost: analytics.pageCost ?? projectUsagePageCost(accounting, query.costBasis) };
+    // The admitted-response model supplies pageCost. Keep its lazy section getters intact:
+    // spreading the model would evaluate every section before the body reads one.
+    const built = Object.assign(analytics, { metric: metric.data }) as UsageBodyAnalyticsView;
     byKey.set(key, built);
     return built;
   }, [
@@ -136,6 +169,12 @@ export function useUsageAnalyticsView(
     query.timeZoneOffsetMinutes,
     language,
   ]);
+  // A later remount sees the latest admitted envelope. Let it share the same
+  // retained model through the incumbent response cache as mounted readers do.
+  if (view && slice.accounting && slice.accounting !== accounting) {
+    usageBodyProjections(slice.accounting).set(key, view);
+  }
+  return view;
 }
 
 /** Comparison bodies share the same admitted-response projection owner as current facts. */
@@ -144,15 +183,15 @@ export function useUsageComparisonCost(
   costBasis: UsageQuery['costBasis'],
   selection: UsagePageCostProjection['selection'] | undefined,
 ): number | null {
-  const accounting = slice.comparison?.accounting;
+  const accounting = useUsageAnalyticsAccounting(slice.comparison?.accounting);
   const kind = selection?.kind;
   const currency = selection?.currency;
   const mode = selection?.mode;
-  return React.useMemo(() => {
+  const key = JSON.stringify(['comparison', costBasis, kind, currency, mode]);
+  const amount = React.useMemo(() => {
     if (!accounting || kind === undefined || currency === undefined) return null;
     // Selection objects can be replaced by an unrelated current-range revision;
     // only their monetary meaning affects this preceding-range projection.
-    const key = JSON.stringify(['comparison', costBasis, kind, currency, mode]);
     const byKey = usageBodyProjections(accounting);
     const cached = byKey.get(key);
     if (typeof cached === 'number' || cached === null) return cached;
@@ -160,6 +199,10 @@ export function useUsageComparisonCost(
     byKey.set(key, amount);
     return amount;
   }, [accounting, costBasis, kind, currency, mode]);
+  if (slice.comparison?.accounting && slice.comparison.accounting !== accounting) {
+    usageBodyProjections(slice.comparison.accounting).set(key, amount);
+  }
+  return amount;
 }
 
 /**
@@ -446,23 +489,62 @@ export function UsageBodyNoUsage(props: Readonly<{
   if (isUsageReadOutstanding(props.slice, ['accounting']))
     return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: USAGE_ACCOUNTING_SOURCES }} {...(props.readingShape ? { shape: props.readingShape } : {})} />;
   if (!props.slice.accounting)
-    return (
-      <SurfaceStateCard
-        testID={`${props.testID}.unavailable`}
-        kind={props.slice.sources.some(source => source.source === 'accounting' && source.status === 'error') ? 'error' : 'unavailable'}
-        layout="inline"
-        size="line"
-        replacesContent={false}
-        title={t('usage.board.page.readFailedTitle')}
-        reason={t('usage.board.page.readFailedReason')}
-        action={{ label: t('common.retry'), onPress: props.onRetry }}
-      />
-    );
+    return <UsageBodyReadFailed slice={props.slice} sources={USAGE_ACCOUNTING_SOURCES} testID={props.testID} onRetry={props.onRetry} />;
   return (
     <UsageBodyInsufficient
       testID={`${props.testID}.empty`}
       title={t('usage.board.page.noUsageTitle')}
       reason={t('usage.board.page.noUsageReason')}
+    />
+  );
+}
+
+/**
+ * Whether a settled body has nothing to draw because one of its reads failed: what it would show is
+ * unknown, never zero, so it says it was not read instead of its empty state. A read this Home's server is
+ * too old for is its own fact (`readUsageSourceNeedsNewerServer`), not a failure.
+ */
+export function isUsageReadFailed(slice: UsageQueryResultSlice, sources: readonly string[]): boolean {
+  if (isUsageReadOutstanding(slice, sources)) return false;
+  if (sources.includes('accounting') && !slice.accounting) return true;
+  return readUsageCoverageGaps(slice, sources).some(gap => gap.status === 'error' && !needsNewerServer(gap));
+}
+
+/**
+ * A body whose read failed. On the Usage page the header says a failed page read once, with its Retry, so
+ * the body only says it was not read. Elsewhere (Home, a Project), or for the widget's own read, the
+ * widget says the cause and offers Retry itself.
+ */
+export function UsageBodyReadFailed(props: Readonly<{
+  slice: UsageQueryResultSlice;
+  sources: readonly string[];
+  testID: string;
+  onRetry: () => void;
+}>) {
+  const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
+  const gaps = readUsageCoverageGaps(props.slice, props.sources);
+  const failed = gaps.some(gap => gap.status === 'error');
+  if (pageHasDetail && failed && usageCoverageLineMode(gaps, true) === 'hidden')
+    return (
+      <SurfaceStateCard
+        testID={`${props.testID}.notRead`}
+        kind="empty"
+        layout="inline"
+        size="line"
+        replacesContent={false}
+        title={t('usage.board.page.notReadTitle')}
+      />
+    );
+  return (
+    <SurfaceStateCard
+      testID={`${props.testID}.unavailable`}
+      kind={failed ? 'error' : 'unavailable'}
+      layout="inline"
+      size="line"
+      replacesContent={false}
+      title={t('usage.board.page.readFailedTitle')}
+      reason={t('usage.board.page.readFailedReason')}
+      action={{ label: t('common.retry'), onPress: props.onRetry }}
     />
   );
 }
@@ -477,13 +559,15 @@ export function UsageBodyInsufficient(
     action?: Readonly<{ label: string; onPress: () => void }>;
   }>,
 ) {
+  // A state that replaces the body is the widget's empty state: the frame sizes it (centred in a card with
+  // room, one line in a compact footprint or a column). A sub-section beside admitted facts stays one line.
+  const replacesContent = props.replacesContent !== false;
   return (
     <SurfaceStateCard
       testID={props.testID}
       kind="empty"
-      replacesContent={props.replacesContent !== false}
-      layout="inline"
-      size="line"
+      replacesContent={replacesContent}
+      {...(replacesContent ? {} : { layout: 'inline' as const, size: 'line' as const })}
       title={props.title}
       {...(props.reason ? { reason: props.reason } : {})}
       {...(props.action
@@ -569,8 +653,7 @@ function usageCoverageHeadlineKey(gaps: readonly Pick<UsageQuerySourceState, 'st
 export function usageCoverageSummary(slice: UsageQueryResultSlice, sources: readonly string[]): string {
   const gaps = readUsageCoverageGaps(slice, sources);
   if (!gaps.length) return '';
-  const key = usageCoverageHeadlineKey(gaps);
-  if (key === 'usage.board.page.coveragePartial') return usagePartialHistoryLabel();
+  if (!gaps.some(needsNewerServer) && usageCoverageHeadlineKey(gaps) === 'usage.board.page.coveragePartial') return usagePartialHistoryLabel();
   return usageCoverageDescription(slice, sources);
 }
 
@@ -580,16 +663,30 @@ export function usagePartialHistoryLabel(): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/**
+ * A failed read this Home's server is too old to answer (a typed `update_required` for the server). It is not a
+ * failure to retry: it is worded as needing a newer server and offers no Retry. Other components keep the
+ * ordinary failure wording rather than being relabelled.
+ */
+function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateRequired'>): boolean {
+  return gap.status === 'error' && gap.updateRequired?.component === 'server';
+}
+
 /** One wording owner for the page's Sources chooser and the failed or pending line. */
 export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: readonly string[]): string {
   const gaps = readUsageCoverageGaps(slice, sources);
   if (!gaps.length) return '';
-  const names = [...new Set(gaps.map(gap => gap.status === 'unsupported'
+  const nameGaps = (list: readonly UsageQuerySourceState[]) => [...new Set(list.map(gap => gap.status === 'unsupported'
     ? `${usageSourceTitle(gap.source)} (${t('usage.board.sources.unsupported')})` : usageSourceTitle(gap.source)))].join(', ');
-  const key = usageCoverageHeadlineKey(gaps);
+  const newer = gaps.filter(needsNewerServer);
+  const rest = gaps.filter(gap => !needsNewerServer(gap));
   const reasons = sources.includes('accounting')
     ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
-  return [t(key, { sources: names }), ...reasons].join(' · ');
+  return [
+    ...(rest.length ? [t(usageCoverageHeadlineKey(rest), { sources: nameGaps(rest) })] : []),
+    ...(newer.length ? [t('usage.board.page.coverageNeedsNewerServer', { sources: nameGaps(newer) })] : []),
+    ...reasons,
+  ].join(' · ');
 }
 
 export type UsageCoverageLineMode = 'hidden' | 'failed' | 'detail';
@@ -619,10 +716,21 @@ function isUsagePageReadSource(source: string): boolean {
   return USAGE_PAGE_READ_SOURCES.has(usagePageReadFamily(source));
 }
 
-function readUsagePageFailedNames(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): string[] {
+function readUsagePageFailedNames(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[], newerServer = false): string[] {
   return [...new Set(slices.flatMap(slice => slice.sources
-    .filter(source => source.status === 'error' && isUsagePageReadSource(source.source))
+    .filter(source => source.status === 'error' && isUsagePageReadSource(source.source) && needsNewerServer(source) === newerServer)
     .map(source => usageSourceTitle(usagePageReadFamily(source.source)))))];
+}
+
+/** Whether this Home's server is too old to answer one page read (`how_you_work`, `work`): a figure that read fills says so, not "not measured yet". */
+export function readUsageSourceNeedsNewerServer(slice: Pick<UsageQueryResultSlice, 'sources'>, source: string): boolean {
+  return slice.sources.some(gap => usagePageReadFamily(gap.source) === source && needsNewerServer(gap));
+}
+
+/** The page header's one "Reading … needs a newer server" fact: shared reads this Home's server is too old for. */
+export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): string | null {
+  const names = readUsagePageFailedNames(slices, true);
+  return names.length ? t('usage.board.page.coverageNeedsNewerServer', { sources: names.join(', ') }) : null;
 }
 
 /**
@@ -706,7 +814,7 @@ export function UsageCoverageLine(
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(gaps, pageHasDetail);
   if (mode === 'hidden') return null;
-  const failed = mode === 'failed' || gaps.some((gap) => gap.status === 'error');
+  const failed = mode === 'failed' || gaps.some((gap) => gap.status === 'error' && !needsNewerServer(gap));
   if (mode === 'failed') {
     // One short line: what failed, with its Retry; the detail is in Sources.
     const names = [...new Set(gaps.filter(gap => gap.status === 'error').map(gap => usageSourceTitle(gap.source)))].join(', ');

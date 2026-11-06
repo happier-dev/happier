@@ -8,7 +8,7 @@ import { buildDayStrip, buildHeatmapGrid, type UsageHeatmapMode } from '@/sync/a
 import { t } from '@/text';
 import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { resolveUsageBucketBounds, resolveUsageCalendarDateStart } from '@happier-dev/protocol/usage/usageCalendar';
-import { type UsageAnalyticsCoverage } from '@happier-dev/protocol';
+import { type UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { formatUsageCalendarDate, usageMissingBucketValue, type UsageCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { withUsageAccentAlpha } from './usageAccent';
 import { RippleCell, rippleDelayMs } from '@/components/instrument/charts/RippleGrid';

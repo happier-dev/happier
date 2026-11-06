@@ -12,6 +12,24 @@ afterEach(() => {
 const credentials: AuthCredentials = { token: 'test-token', secret: 'test-secret' };
 
 describe('apiUsage v2 analytics query', () => {
+    it('queries All personal usage without inventing an epoch start', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
+        const reads: unknown[] = [];
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input).includes('/v2/usage/query')) reads.push(JSON.parse(String(init?.body)));
+            return Response.json({ v: 1, totals: { eventCount: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
+        });
+        const { getUsageForPeriod } = await import('./apiUsage');
+        await getUsageForPeriod(credentials, 'all');
+        expect(reads).toHaveLength(1);
+        const request = UsageAnalyticsQueryRequestSchema.parse(reads[0]);
+        expect(request.dateRange?.endMs).toEqual(expect.any(Number));
+        expect(request.dateRange).not.toHaveProperty('startMs');
+    });
+
     it('admits analytics once at HTTP and still refuses malformed responses', async () => {
         const { queryUsageAnalytics } = await import('./apiUsage');
         const { UsageAnalyticsQueryResponseSchema } = await import('@happier-dev/protocol/usage/usageAnalyticsContracts');

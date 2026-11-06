@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
+import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { projectProviderAccountUsageQuotaReadV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
@@ -15,14 +17,39 @@ import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
 import { UsageRhythmWidget } from './UsageRhythmWidget';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { UsageWidgetBatchProvider } from './usageWidgetBatch';
+import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
-import { describeUsagePageFailedSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageMeterListFirstReadReserve } from './usageBodyKit';
+import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageMeterListFirstReadReserve, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 describe('shared Usage identity and dependent coverage', () => {
+    it('keeps unused analytics sections deferred through the body view cache', async () => {
+        const admitted = usageQaAccountingFixture();
+        let timelineReads = 0;
+        const accounting = { ...admitted,
+            get modelTimeline() {
+                timelineReads += 1;
+                return admitted.modelTimeline;
+            },
+        };
+        const query = normalizeUsageQuery({ period: { relative: '7days' } });
+        const slice = { accounting } as UsageQueryResultSlice;
+        const hook = await renderHook(() => useUsageAnalyticsView(slice, query));
+        expect(timelineReads).toBe(0);
+        expect(hook.getCurrent()?.metric).toBe(query.metric);
+        expect(hook.getCurrent()?.trend).toBeDefined();
+        expect(timelineReads).toBe(0);
+        expect(hook.getCurrent()?.modelMix).toBe(hook.getCurrent()?.modelMix);
+        expect(timelineReads).toBe(1);
+        expect(hook.getCurrent()?.pageCost).toBeDefined();
+        await hook.unmount();
+    });
+
     it('projects the declared comparison source through pending, answered and failed reads', () => {
         const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
         const comparison = resolveUsageComparisonQuery(query)!;
@@ -82,7 +109,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const cold = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: cold, pending: true, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
-        const render = (slice: UsageQueryResultSlice) => <UsageRhythmWidget query={query} slice={slice} model={{ ...model, slice }}
+        const render = (slice: UsageQueryResultSlice) => <UsageRhythmWidget query={query} slice={slice} model={model}
             serverId="home" id="usage_rhythm" testID="rhythm-read" />;
         const screen = await renderScreen(render(cold));
         expect(screen.findByTestId('rhythm-read.empty')).toBeNull();
@@ -96,6 +123,33 @@ describe('shared Usage identity and dependent coverage', () => {
         await screen.update(render(known));
         expect(screen.findByTestId('rhythm-read.rhythm')).not.toBeNull();
         expect(screen.findByTestId('rhythm-read.loading')).toBeNull();
+    });
+    it('says a failed read as not read, never as zero; on the Usage page the header owns the cause and its Retry', async () => {
+        const query = normalizeUsageQuery({ period: { relative: '7days' }, granularity: 'day', includeActivity: true, activityResolution: 'both' });
+        const failed = resolveUsagePageAggregation({ queries: [query],
+            accounting: [{ query, status: 'error', errorCode: 'usage_query_failed' }] }).results[0]!;
+        const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: failed, pending: false, error: null,
+            freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
+        const bodies = <>
+            <UsageDailyWidget query={query} slice={failed} model={model} serverId="home" id="usage_daily" testID="daily" />
+            <UsageRhythmWidget query={query} slice={failed} model={model} serverId="home" id="usage_rhythm" testID="rhythm" />
+        </>;
+        // Home or a Project: each widget is its own read, so it says the cause with its Retry.
+        const own = await renderScreen(bodies);
+        expect.soft(own.findByTestId('rhythm.empty')).toBeNull();
+        expect.soft(own.findByTestId('rhythm.unavailable')).not.toBeNull();
+        expect.soft(own.findByTestId('daily.unavailable')).not.toBeNull();
+        await own.unmount();
+        // The Usage page says the failed read once in its header; its bodies only say they were not read.
+        const page = await renderScreen(<InjectedAuthProvider credentials={null}>
+            <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)}>{bodies}</UsageWidgetBatchProvider>
+        </InjectedAuthProvider>);
+        const text = page.getTextContent();
+        expect.soft(text).not.toContain(t('usage.board.howYouWork.rhythmEmptyTitle'));
+        expect.soft(text).not.toContain(t('usage.board.page.readFailedTitle'));
+        expect.soft(text).not.toContain(t('common.retry'));
+        expect.soft(page.findByTestId('rhythm.notRead')).not.toBeNull();
+        expect(page.findByTestId('daily.notRead')).not.toBeNull();
     });
     it.each([false, true])('keeps the real open-ended QA calendar and gaps visible (relative: %s)', async relative => {
         const accounting = usageQaAccountingFixture();
@@ -142,7 +196,9 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('does not invent a Legacy Agent for scalar reports with unknown attribution', () => {
         expect(usageAgentTitle('legacy')).toBe(t('usage.board.page.unattributed'));
+        expect(usageAgentTitle('unknown', 'Unknown agent')).toBe(usageAgentTitle(''));
         expect(usageDimensionLabel('agent', 'legacy', 'Legacy')).toBe(t('usage.board.page.unattributed'));
+        expect(usageAgentTitle('custom-acp')).toBe('Custom ACP Agent');
     });
     it('projects known accounting producers as usage, not technical ingestion names', () => {
         for (const source of ['legacy', 'legacy_usage_report']) {
@@ -226,6 +282,28 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(describeUsagePagePendingSources([slice([{ source: 'accounting', status: 'partial' }])])).toBeNull();
         // A widget's own read (a pool selection) is said by that widget, not listed in the page header.
         expect(describeUsagePagePendingSources([slice([{ source: 'selection:openai-codex-pool', status: 'pending' }])])).toBeNull();
+    });
+    it('says a read the server is too old for as "needs a newer server", not as a failure to retry', async () => {
+        const server = { kind: 'update_required', operation: 'session.detail', component: 'server', reason: 'session_read_batch_unsupported' } as const;
+        const client = { ...server, component: 'client', reason: 'access_projection_version_unsupported' } as const;
+        const slice = (sources: readonly { source: string; status: string; errorCode?: string; updateRequired?: unknown }[]) =>
+            ({ sources }) as unknown as UsageQueryResultSlice;
+        const upgrade = slice([{ source: 'accounting', status: 'available' },
+            { source: 'how_you_work', status: 'error', errorCode: 'update_required', updateRequired: server }]);
+        const newer = t('usage.board.page.coverageNeedsNewerServer', { sources: usageSourceTitle('how_you_work') });
+        // The page header: the unsupported detail is named once as needing a newer server, never as a failed read.
+        expect.soft(describeUsagePageFailedSources([upgrade])).toBeNull();
+        expect.soft(describeUsagePageNewerServerSources([upgrade])).toBe(newer);
+        // Another component's requirement keeps the ordinary failure wording (it is not relabelled as a server update).
+        const clientSlice = slice([{ source: 'how_you_work', status: 'error', errorCode: 'update_required', updateRequired: client }]);
+        expect.soft(describeUsagePageNewerServerSources([clientSlice])).toBeNull();
+        expect.soft(describeUsagePageFailedSources([clientSlice])).toBe(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
+        // A body's own line off the Usage page: the same sentence, and no Retry, because retrying cannot help.
+        const onRetry = vi.fn();
+        const screen = await renderScreen(<UsageCoverageLine slice={upgrade} sources={['how_you_work']} onRetry={onRetry} testID="upgrade-coverage" />);
+        expect.soft(screen.getTextContent()).toContain(newer);
+        expect.soft(screen.getTextContent()).not.toContain(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
+        expect(screen.getTextContent()).not.toContain(t('common.retry'));
     });
     it('names a failed page read once for the header, never a widget-own read', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>
@@ -456,11 +534,35 @@ describe('shared Usage identity and dependent coverage', () => {
             month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
         }).format(0));
     });
+    it('uses the producer admitted calendar bounds for All, including an empty period', () => {
+        const fixture = usageQaAccountingFixture();
+        const endMs = Date.parse('2026-11-04T15:00:00Z');
+        const startMs = Date.parse('2026-11-02T22:00:00Z');
+        const query = normalizeUsageQuery({ period: { relative: 'all' }, timeZoneOffsetMinutes: 120 });
+        const populated = projectUsageAnalyticsSummary({ ...fixture, contributions: [{ ...fixture.contributions![0]!,
+            observedAtMs: Date.parse('2026-11-03T13:00:00Z') }] }, UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs, endMs }, granularity: 'day', timeZoneOffsetMinutes: 120, includeActivity: true,
+        }));
+        expect(resolveUsageShownCalendarRange(query, populated.coverage, populated)).toEqual({
+            startMs, endMs, granularity: 'day', timeZoneOffsetMinutes: 120,
+        });
+        // A rich response with retained series/activity is not an empty Account.
+        const empty = projectUsageAnalyticsSummary({ v: 1, contributions: [], series: [],
+            totals: { tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' }, eventCount: 0 },
+            activity: { calendarDays: [], weekdayHourBuckets: [] } }, UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs: endMs, endMs }, granularity: 'day', timeZoneOffsetMinutes: 120, includeActivity: true,
+        }));
+        expect(empty.summary?.accountingCalendar?.value.days).toEqual([]);
+        expect(resolveUsageShownCalendarRange(query, empty.coverage, empty)).toEqual({
+            startMs: endMs, endMs, granularity: 'day', timeZoneOffsetMinutes: 120,
+        });
+    });
     it('bounds older all-time and activity-only responses by their witnessed dates without using source freshness', () => {
         const accounting = usageQaAccountingFixture();
         const all = normalizeUsageQuery({ period: { relative: 'all' }, timeZoneOffsetMinutes: 120 });
         expect(resolveUsageShownCalendarRange(all, accounting.coverage, accounting)).toMatchObject({
-            startMs: accounting.contributions![0]!.observedAtMs,
+            startMs: Date.parse('2026-10-08T22:00:00Z'),
             endMs: accounting.contributions!.reduce((latest, row) => Math.max(latest, row.observedAtMs), 0) + 1,
         });
         const older = { ...accounting, contributions: undefined, series: [] };

@@ -8,13 +8,13 @@ import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/u
 import type {
     UsageAnalyticsQueryRequest,
     UsageAnalyticsQueryResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
+import { resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { buildUsageFocusFilters } from './usageFocusFilters';
 export { buildUsageFocusFilters } from './usageFocusFilters';
 import {
     getUsagePeriodDefinition,
-    resolveUsagePeriodStartTimeSeconds,
     type UsageLegacyPeriodGranularity,
     type UsagePeriod,
     type UsagePeriodGranularity,
@@ -265,7 +265,8 @@ export async function getUsageForPeriod(
     const nowMs = Date.now();
     const timeZoneOffsetMinutes = -new Date(nowMs).getTimezoneOffset();
     const definition = getUsagePeriodDefinition(period);
-    const startTime = resolveUsagePeriodStartTimeSeconds(period, nowMs, timeZoneOffsetMinutes);
+    const range = resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes }, nowMs);
+    const startTime = range.startMs === undefined ? undefined : range.startMs / 1000;
     const endTime = Math.floor(nowMs / 1000);
 
     return queryUsage(credentials, {
