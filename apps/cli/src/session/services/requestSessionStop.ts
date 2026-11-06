@@ -12,6 +12,7 @@ import {
   type SessionStopResult as SessionStopCommandResult,
 } from '@happier-dev/protocol';
 import type {
+  StopSessionOrigin,
   StopSessionResult,
 } from '@/daemon/sessions/stopSessionContract';
 import { waitForTrackedRunnerProcessesExit } from '@/daemon/sessions/waitForTrackedRunnerProcessesExit';
@@ -84,6 +85,11 @@ async function stopOutcomeFromAttemptResult(params: Readonly<{
     }
     return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
   }
+  if (result.status === 'refused_turn_in_flight') {
+    // Pre-signal refusal by the daemon's turn guard: the session was left
+    // running on purpose, which no `physical_stop_unconfirmed` reason can say.
+    return SessionStopOutcomeSchema.parse({ status: 'refused_turn_in_flight' });
+  }
   if (result.status === 'not_found') {
     // Nothing was found to stop. That is either PROOF that no runtime exists or
     // a failure to determine it, and the fact that separates them is the one
@@ -137,13 +143,17 @@ async function stopSessionOnOwningMachine(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
   machineId: string;
+  origin?: StopSessionOrigin;
 }>): Promise<StopSessionAttemptResult> {
   try {
     const rawResult = await callMachineRpc({
       credentials: params.credentials,
       machineId: params.machineId,
       method: RPC_METHODS.STOP_SESSION,
-      request: { sessionId: params.sessionId },
+      request: {
+        sessionId: params.sessionId,
+        ...(params.origin ? { origin: params.origin } : {}),
+      },
       // Stop's graceful/forced exit and retirement phases can exceed the generic RPC
       // cutoff. The relay retains its finite forwarding deadline and disconnect guard.
       timeoutMs: null,
@@ -309,6 +319,12 @@ async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promis
 export async function requestSessionStop(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
+  /**
+   * Caller attribution for the owning daemon's stop turn guard. Omitted by
+   * legacy/spawn-cleanup/archive/transition callers, whose stops stay
+   * unguarded.
+   */
+  origin?: StopSessionOrigin;
 }>): Promise<
   | (Readonly<{ ok: true }> & SessionStopCommandResult)
   | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
@@ -346,6 +362,7 @@ export async function requestSessionStop(params: Readonly<{
         credentials: params.credentials,
         sessionId: resolved.sessionId,
         machineId: owningMachine.machineId,
+        ...(params.origin ? { origin: params.origin } : {}),
       });
       if (physicalStopResult.status !== 'stopped') {
         return {

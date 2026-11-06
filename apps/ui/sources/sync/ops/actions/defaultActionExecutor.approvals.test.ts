@@ -306,7 +306,12 @@ describe('createDefaultActionExecutor approvals', () => {
 
         expect(res.ok).toBe(true);
         expect((res as any).result?.status).toBe('executed');
-        expect(sessionStopWithServerScope).toHaveBeenCalledWith('s1', { serverId: undefined });
+        // The approved action keeps its originating MCP attribution when the
+        // user approves it from the UI, so the stop stays turn-guarded.
+        expect(sessionStopWithServerScope).toHaveBeenCalledWith(
+            's1',
+            { serverId: undefined, origin: 'agent-action' },
+        );
     });
 
     it('reports unavailable session control as an action failure with retry recovery details', async () => {

@@ -1325,7 +1325,10 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             foldersFeatureDecision: { state: folderActionsEnabled ? 'enabled' : 'disabled' },
             stopErrorMessage: t('sessionInfo.failedToStopSession'),
             archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
-            stopSession: async (target) => await sessionStopWithServerScope(target.sessionId, { serverId: target.serverId ?? null }),
+            stopSession: async (target) => await sessionStopWithServerScope(target.sessionId, {
+                serverId: target.serverId ?? null,
+                origin: 'user-explicit',
+            }),
             archiveSession: async (target, options) => {
                 return await sessionArchiveWithServerScope(target.sessionId, { serverId: target.serverId ?? null, ...options });
             },

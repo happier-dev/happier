@@ -6,7 +6,7 @@ import {
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
+import { StopSessionResultSchema, type StopSessionOrigin, type StopSessionResult } from '@happier-dev/protocol';
 import { isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 import { log } from '@/log';
@@ -22,6 +22,7 @@ type LegacySessionKillResponse = Readonly<{
 export type DaemonMachineSessionStopAttempt =
     | Readonly<{ type: 'stopped' }>
     | Readonly<{ type: 'requested' }>
+    | Readonly<{ type: 'refused_turn_in_flight' }>
     | Readonly<{
         type: 'fallback';
         reason: 'not_found' | 'control_unavailable' | 'tracked_runner_absent';
@@ -37,6 +38,12 @@ export type SessionStopStrategyOutcome =
         failedAt: 'daemon_machine_rpc' | 'session_rpc';
         reason: 'requested';
         recovery: 'wait_for_inactive';
+        message: string;
+    }>
+    | Readonly<{
+        success: false;
+        failedAt: 'daemon_machine_rpc';
+        reason: 'refused_turn_in_flight';
         message: string;
     }>
     | Readonly<{
@@ -155,12 +162,17 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
     machineId: string;
     sessionId: string;
     serverId?: string | null;
+    /** Caller attribution for the daemon's stop turn guard; omitted keeps the legacy payload. */
+    origin?: StopSessionOrigin;
 }>): Promise<DaemonMachineSessionStopAttempt> {
     try {
-        const response = await machineRpcWithServerScope<unknown, { sessionId: string }>({
+        const response = await machineRpcWithServerScope<unknown, { sessionId: string; origin?: StopSessionOrigin }>({
             machineId: params.machineId,
             method: RPC_METHODS.STOP_SESSION,
-            payload: { sessionId: params.sessionId },
+            payload: {
+                sessionId: params.sessionId,
+                ...(params.origin ? { origin: params.origin } : {}),
+            },
             authorization: {
                 kind: 'session.write',
                 sessionId: params.sessionId,
@@ -173,6 +185,9 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
         const strictResult = readStrictStopSessionResult(response);
         if (strictResult?.status === 'stopped') return { type: 'stopped' };
         if (strictResult?.status === 'requested') return { type: 'requested' };
+        if (strictResult?.status === 'refused_turn_in_flight') {
+            return { type: 'refused_turn_in_flight' };
+        }
         if (strictResult?.status === 'not_found') {
             return { type: 'fallback', reason: 'not_found', message: 'Session not found' };
         }
@@ -259,6 +274,8 @@ async function stopSessionViaRunnerRpc(params: Readonly<{
 export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
+    /** Caller attribution for the daemon's stop turn guard; omitted keeps the legacy payload. */
+    origin?: StopSessionOrigin;
 }>): Promise<SessionStopStrategyOutcome> {
     let daemonFallback: Extract<DaemonMachineSessionStopAttempt, { type: 'fallback' }> | null = null;
     const machineTarget = readMachineControlTargetForSession(params.sessionId);
@@ -267,9 +284,20 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
             machineId: machineTarget.machineId,
             sessionId: params.sessionId,
             serverId: params.serverId ?? null,
+            ...(params.origin ? { origin: params.origin } : {}),
         });
         if (daemonStop.type === 'stopped') {
             return { success: true, effect: 'process_stopped', method: 'daemon_machine_rpc' };
+        }
+        if (daemonStop.type === 'refused_turn_in_flight') {
+            // The daemon answered "do not stop": falling through to the live
+            // runner would bypass its turn guard and kill the turn anyway.
+            return {
+                success: false,
+                failedAt: 'daemon_machine_rpc',
+                reason: 'refused_turn_in_flight',
+                message: 'A turn is in flight; wait for it to finish or stop from the app',
+            };
         }
         if (daemonStop.type === 'requested') {
             return {

@@ -190,7 +190,35 @@ describe('createActionExecutor (session control)', () => {
     );
 
     expect(res).toEqual({ ok: true, result: { success: true } });
-    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
+    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a', origin: 'user-explicit' });
+  });
+
+  // session.stop only exposes on session_agent/mcp/cli; UI and voice surfaces
+  // stop through their own direct paths, not this executor.
+  it.each([
+    { surface: 'session_agent' as const, origin: 'agent-action' },
+    { surface: 'mcp' as const, origin: 'agent-action' },
+    { surface: 'cli' as const, origin: 'user-explicit' },
+  ])('attributes session.stop from the $surface surface as $origin', async ({ surface, origin }) => {
+    const sessionStop = vi.fn(async () => ({ success: true }));
+    const executor = createExecutor({ sessionStop });
+
+    await executor.execute(
+      'session.stop' as any,
+      { sessionId: 's1' },
+      { surface, defaultSessionId: null },
+    );
+
+    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', origin });
+  });
+
+  it('leaves session.stop unattributed when the invocation carries no surface', async () => {
+    const sessionStop = vi.fn(async () => ({ success: true }));
+    const executor = createExecutor({ sessionStop });
+
+    await executor.execute('session.stop' as any, { sessionId: 's1' }, { defaultSessionId: null });
+
+    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1' });
   });
 
   it.each([

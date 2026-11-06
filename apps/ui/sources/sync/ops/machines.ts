@@ -855,6 +855,13 @@ export async function machineStopSession(
     if (result.type === 'requested') {
         return { ok: true, status: 'requested' };
     }
+    if (result.type === 'refused_turn_in_flight') {
+        return {
+            ok: false,
+            error: 'A turn is in flight; wait for it to finish or stop from the app',
+            errorCode: 'session_stop_refused_turn_in_flight',
+        };
+    }
     if (result.errorCode) {
         return {
             ok: false,

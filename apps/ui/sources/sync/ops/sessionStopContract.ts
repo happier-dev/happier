@@ -6,4 +6,5 @@ export type SessionStopResponseCode =
     | 'session_stop_requested'
     | 'session_stop_not_found'
     | 'session_stop_control_unavailable'
+    | 'session_stop_refused_turn_in_flight'
     | 'session_stop_failed';

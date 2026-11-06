@@ -19,6 +19,7 @@ import {
 import { resolveActionSurfaceAvailability, type ActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
 import type { ActionId } from './actionIds.js';
+import type { StopSessionOrigin } from '../sessionStop.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
@@ -283,7 +284,12 @@ export type ActionExecutorDeps = Readonly<{
     callerPermissionMode?: string | null;
   }>) => Promise<unknown>;
   sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
-  sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<SessionStopActionDependencyResult>;
+  sessionStop?: (args: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    /** Caller attribution for the daemon-side stop turn guard. */
+    origin?: StopSessionOrigin;
+  }>) => Promise<SessionStopActionDependencyResult>;
   sessionPermissionModeSet?: (args: Readonly<{
     sessionId: string;
     permissionMode: string;
@@ -2324,7 +2330,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop' };
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionStop({ sessionId, ...(serverId ? { serverId } : {}) });
+          // Human-driven surfaces stop as explicit user intent; agent, MCP and
+          // voice surfaces stop as agent actions, which the daemon's turn guard
+          // holds. No surface keeps the stop unattributed (legacy ALLOW).
+          const stopOrigin: StopSessionOrigin | null = ctx.surface == null
+            ? null
+            : ctx.surface === 'cli' || ctx.surface === 'ui_button' || ctx.surface === 'ui_slash_command'
+              ? 'user-explicit'
+              : 'agent-action';
+          const res = await deps.sessionStop({
+            sessionId,
+            ...(serverId ? { serverId } : {}),
+            ...(stopOrigin ? { origin: stopOrigin } : {}),
+          });
           const stopFailed = 'success' in res ? res.success === false : res.ok === false;
           if (stopFailed) {
             const errorCode = res.code?.trim()

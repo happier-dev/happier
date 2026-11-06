@@ -37,6 +37,7 @@ import {
   SessionMcpSelectionV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   SessionSpawnSourceContextV1Schema,
+  StopSessionRpcParamsSchema,
   getActionSpec,
   resolveSessionWorkspaceRootForMachine,
   type ConnectedServiceBindingsV1,
@@ -50,6 +51,7 @@ import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { runSessionAgentTransition } from '@/session/agentTransition/sessionAgentTransitionCoordinator';
 import { previewSessionAgentTransitionBrief } from '@/session/agentTransition/previewSessionAgentTransitionBrief';
+import { readSessionTurnInFlight } from '@/session/services/waitForSessionIdle';
 import {
   inspectSessionContinuation,
   inspectSessionContinuations,
@@ -2175,15 +2177,40 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   // Register stop session handler
-  rpcHandlerManager.registerHandler(RPC_METHODS.STOP_SESSION, async (params: any) => {
-    const { sessionId } = params || {};
-
-    if (!sessionId) {
+  rpcHandlerManager.registerHandler(RPC_METHODS.STOP_SESSION, async (raw: any) => {
+    const parsed = StopSessionRpcParamsSchema.safeParse(raw ?? {});
+    if (!parsed.success && !(typeof raw?.sessionId === 'string' && raw.sessionId.trim().length > 0)) {
+      // Preserve the released failure mode for the one param error legacy
+      // callers can hit.
       throw new Error('Session ID is required');
     }
+    if (!parsed.success) {
+      // A caller-attributed stop this daemon cannot classify (unknown origin)
+      // must not silently degrade to the unattributed ALLOW path.
+      throw new Error('Invalid stop-session parameters');
+    }
+    const { sessionId, origin, force } = parsed.data;
 
-    const result = normalizeMachineStopSessionResult(await stopSession(sessionId));
-    logger.debug(`[API MACHINE] Stop session ${sessionId}: ${result.status}`);
+    // Turn guard: only agent-attributed, unforced stops stand down while a
+    // turn is in flight. Unattributed (legacy) and user-explicit stops keep
+    // today's dispatch-always semantics — the primary meaning of an explicit
+    // stop is killing a busy turn.
+    let result: StopSessionResult;
+    if (origin === 'agent-action' && force !== true) {
+      const credentials = await readCredentials().catch(() => null);
+      const turnInFlight = credentials === null
+        // Turn truth cannot be established without credentials: fail closed.
+        ? true
+        : await readSessionTurnInFlight({ credentials, idOrPrefix: sessionId });
+      result = turnInFlight
+        ? { status: 'refused_turn_in_flight' }
+        : normalizeMachineStopSessionResult(await stopSession(sessionId));
+    } else {
+      result = normalizeMachineStopSessionResult(await stopSession(sessionId));
+    }
+    logger.debug(
+      `[API MACHINE] Stop session ${sessionId}: ${result.status}${origin ? ` origin:${origin}` : ''}`,
+    );
     return result;
   });
 

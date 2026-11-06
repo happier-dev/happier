@@ -1702,11 +1702,17 @@ export function createCliActionDeps(params: Readonly<{
       return res;
     },
 
-    sessionStop: async ({ sessionId }) => {
+    sessionStop: async ({ sessionId, origin }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      return await requestSessionStop({ credentials: params.credentials, idOrPrefix: sessionId });
+      return await requestSessionStop({
+        credentials: params.credentials,
+        idOrPrefix: sessionId,
+        // The executor computed this from the invoking surface: human CLI/UI
+        // stops stay unguarded; agent/MCP/voice stops hit the daemon turn guard.
+        ...(origin ? { origin } : {}),
+      });
     },
 
     sessionTitleSet: async ({ sessionId, title }) => {
