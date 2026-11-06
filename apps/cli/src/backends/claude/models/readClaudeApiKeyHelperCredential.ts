@@ -22,6 +22,7 @@ export type ClaudeApiKeyHelperCredential =
  */
 export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifecycle & Readonly<{
   claudeConfigDir: string;
+  cwd?: string;
   env: NodeJS.ProcessEnv;
   onNativeCleanup?: RegisterNativeCatalogCleanup;
 }>): Promise<ClaudeApiKeyHelperCredential> {
@@ -72,6 +73,7 @@ export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifec
       const value = await new Promise<string | null>((resolve) => {
         const started = spawn(command, {
           shell: true,
+          cwd: params.cwd,
           env: params.env,
           stdio: ['ignore', 'pipe', 'ignore'],
           windowsHide: true,

@@ -44,6 +44,7 @@ export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAda
   probeModelsRaw: async ({ cwd, timeoutMs, deadlineAt, signal, onNativeCleanup, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {
     const containingDeadlineAt = deadlineAt ?? Date.now() + timeoutMs;
     const resolution = await resolveClaudeModelCatalogResolution({
+      cwd,
       timeoutMs,
       deadlineAt: containingDeadlineAt,
       signal,

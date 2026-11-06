@@ -361,7 +361,7 @@ unavailable target returns the built-in catalog for the current call and leaves 
 untouched. Malformed JSON, non-object user settings roots and non-string helper settings are
 skipped, matching Claude Code's non-interactive settings loading. Project helpers are not executed without
 Claude Code's workspace-trust decision. The helper receives the effective profile/session
-environment, and its credential kind and value remain part of the existing endpoint-scoped cache identity. Helper, HTTP
+environment and selected session directory, and its credential kind and value remain part of the existing endpoint-scoped cache identity. Helper, HTTP
 and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource
 cleanup. Helper output uses both API-key and Bearer headers without the subscription OAuth beta
 header. Custom endpoint path prefixes are preserved, while saved subscription credentials remain restricted to Anthropic.

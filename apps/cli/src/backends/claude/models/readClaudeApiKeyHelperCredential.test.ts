@@ -31,6 +31,17 @@ describe('readClaudeApiKeyHelperCredential', () => {
       .resolves.toEqual({ status: 'ok', value: 'helper-token' });
   });
 
+  it('runs a relative credential command in the selected session directory', async () => {
+    await writeFile(join(claudeConfigDir, 'session-key'), 'selected-session-token');
+    const script = join(claudeConfigDir, 'relative-key.cjs');
+    await writeFile(script, "process.stdout.write(require('node:fs').readFileSync('session-key', 'utf8'))");
+    await writeUserSettings({ apiKeyHelper: `"${process.execPath}" "${script}"` });
+    const params = { claudeConfigDir, cwd: claudeConfigDir, env: process.env, timeoutMs: 5_000 };
+
+    await expect(readClaudeApiKeyHelperCredential(params))
+      .resolves.toEqual({ status: 'ok', value: 'selected-session-token' });
+  });
+
   it('passes the session environment to the helper', async () => {
     await writeUserSettings({
       apiKeyHelper: process.platform === 'win32' ? 'echo %HELPER_TOKEN%' : 'echo "$HELPER_TOKEN"',

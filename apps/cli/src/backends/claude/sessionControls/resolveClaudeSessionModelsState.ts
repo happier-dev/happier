@@ -27,6 +27,7 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
   // caching and falls back to the curated list when the Models API is unavailable. No binding is
   // needed here: the in-session process already runs with the selected account environment.
   const resolution = await resolveClaudeModelCatalogResolution({
+    cwd: params.cwd,
     timeoutMs: params.timeoutMs,
     nowMs: params.nowMs,
     accountSettings: params.accountSettings,

@@ -250,7 +250,7 @@ The one exception is **Experimental: local permission bridge**, which affects **
 
 In development source, Happier executes Claude Code's user-scoped `apiKeyHelper` shell command
 during model discovery. It reads the selected Claude configuration directory, passes the session
-environment to the helper, and preserves a gateway's `ANTHROPIC_BASE_URL` path prefix.
+environment and selected project directory to the helper, and preserves a gateway's `ANTHROPIC_BASE_URL` path prefix.
 **Setting sources** must include user settings; discovery does not execute project helpers.
 If the configured helper fails without caller cancellation, Happier shows its built-in Claude
 model catalog and does not select a saved account. Malformed JSON, non-object user settings

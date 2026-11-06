@@ -40,6 +40,7 @@ export type ClaudeModelEffortLevelsTracker = Readonly<{
  */
 export function createClaudeModelEffortLevelsTracker(params: Readonly<{
   resolveTimeoutMs: () => number;
+  cwd?: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
 }>): ClaudeModelEffortLevelsTracker {
   let levels: readonly string[] = [];
@@ -83,6 +84,7 @@ export function createClaudeModelEffortLevelsTracker(params: Readonly<{
     resolution.promise = (async () => {
       try {
         const models = await resolveClaudeModelCatalog({
+          cwd: params.cwd,
           timeoutMs: params.resolveTimeoutMs(),
           accountSettings: params.accountSettings,
         });

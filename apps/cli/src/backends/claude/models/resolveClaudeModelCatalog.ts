@@ -129,6 +129,7 @@ function trimCatalogEntries(protectedKey: string): void {
 }
 
 export type ResolveClaudeModelCatalogParams = CatalogProbeLifecycle & Readonly<{
+  cwd?: string;
   onNativeCleanup?: RegisterNativeCatalogCleanup;
   bypassCache?: boolean;
   connectedServices?: ConnectedServiceBindingsV1 | null;
@@ -164,6 +165,7 @@ export async function resolveClaudeModelCatalogResolution(
   // reads, a native credential read, or the configured user helper. Helper and HTTP phases share
   // one containing deadline, including when the helper rotates a short-lived credential.
   const target = await resolveClaudeModelProbeTarget({
+    cwd: params.cwd,
     timeoutMs: params.timeoutMs,
     deadlineAt,
     signal: params.signal,

@@ -860,6 +860,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // (cached, best-effort) and carried on the mode so spawn-time resolution and launch-option
         // hashing both see the same value instead of reading a cache at hash time.
         const modelEffortTracker = createClaudeModelEffortLevelsTracker({
+            cwd: workingDirectory,
             resolveTimeoutMs: () => resolveClaudeHelpProbeTimeoutMs(),
             accountSettings: options.accountSettings ?? null,
         });
@@ -1539,6 +1540,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     let currentReasoningEffortUpdatedAt = 0;
     // See the sibling runtime path above: tiers travel on the mode so hashing stays pure.
     const modelEffortTracker = createClaudeModelEffortLevelsTracker({
+        cwd: workingDirectory,
         resolveTimeoutMs: () => resolveClaudeHelpProbeTimeoutMs(),
         accountSettings: options.accountSettings ?? null,
     });

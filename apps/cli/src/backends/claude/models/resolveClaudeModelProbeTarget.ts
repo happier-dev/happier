@@ -159,6 +159,7 @@ async function resolveConnectedCredential(params: Readonly<{
 }
 
 export type ResolveClaudeModelProbeTargetParams = CatalogProbeLifecycle & Readonly<{
+  cwd?: string;
   connectedServices?: ConnectedServiceBindingsV1 | null;
   credentials?: Credentials | null;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -236,6 +237,7 @@ export async function resolveClaudeModelProbeTarget(
     const helperKey = await readClaudeApiKeyHelperCredential({
       claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
       env: effectiveEnv,
+      cwd: params.cwd,
       timeoutMs: params.timeoutMs,
       deadlineAt: params.deadlineAt,
       signal: params.signal,
