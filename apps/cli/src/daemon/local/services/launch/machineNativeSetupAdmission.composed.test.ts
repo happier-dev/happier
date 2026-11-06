@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createMachineNativeEffectAdmission, machineNativeEffectAdmission } from './machineNativeEffectAdmission';
-import { applyMachineSetup } from '@/machines/setup/applyMachineSetup';
+import { PassThrough } from 'node:stream';
+import { checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupNativeCommand } from '@happier-dev/cli-common/machineSetup';
+import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
+import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
+import { applyMachineSetup, removeMachineSetup } from '@/machines/setup/applyMachineSetup';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider } from '@/terminal/pty/provider';
 
@@ -59,6 +63,43 @@ function setupFixture() {
 }
 
 describe('Setup with unreadable Docker', () => {
+  it.each(['exit', 'error'] as const)('admits the next native effect after a failed Remove interpreter exits, retaining its unknown result only on the operation (%s)', async failure => {
+    const f = setupFixture();
+    const runNative = async (command: MachineSetupNativeCommand) => {
+      if (Buffer.from(command.inputBytes ?? []).toString().includes('fixture_remove')) {
+        if (failure === 'error') throw Object.assign(new Error('private Docker removal failure'), { code: 'EIO' });
+        return { code: 1, stdout: '', stderr: 'private Docker removal failure' };
+      }
+      throw new Error(`Unexpected native command ${command.executable}`);
+    };
+    const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: f.input.machineId, desiredRevision: 0 },
+      steps: [{ id: 'remove', kind: 'script', shell: 'sh', body: 'fixture_remove\n', affects: 'dockerEngine' }],
+      backend: createMachineSetupNativeBackend({ run: runNative }) });
+    const spawn: MachineElevationSpawn = launch => {
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      const settled = runMachineSetupEffectInternal(launch.args.slice(launch.args.indexOf('effect-internal') + 1),
+        { stdin, stdout, runNative, readUid: () => 0 }).then(code => {
+          stdout.end(); stderr.end(); return { code, signal: null };
+        });
+      return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
+    };
+    try {
+      const result = await removeMachineSetup({ ...f.input, plans: [plan],
+        environmentIo: { ...f.input.environmentIo, run: async () => { throw Object.assign(new Error('Docker absent'), { code: 'ENOENT' }); } },
+        elevation: { installationId: 'installation', installedCli: '/managed/happier', spawn,
+          readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true,
+          observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
+            rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }) } });
+      expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', details: { kind: 'machineSetup', failure: { kind: 'native_effect_failed' } } });
+      await expect(machineNativeEffectAdmission.run({ operation: { operationId: 'after-failed-remove', kind: 'fixture' },
+        keys: [{ kind: 'dockerEngine', dockerEndpoint: 'next-engine' }] }, async () => 'admitted')).resolves.toBe('admitted');
+      expect(JSON.stringify(result)).not.toContain('private Docker');
+    } finally {
+      await machineNativeEffectAdmission.reconcileUnknown({ keys: [{ kind: 'machineSetup' }],
+        observeSettled: async operation => operation.operationId === 'setup-first' });
+      f.terminalSessions.dispose();
+    }
+  });
     it.each(['ENOENT', 'EACCES', 'ECONNREFUSED', 'plugin_exec_system_tool_unavailable'])(
         'runs setup with unreadable Docker (%s) and makes concurrent native work wait', async code => {
         const setup = setupFixture();

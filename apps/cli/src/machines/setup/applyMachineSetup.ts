@@ -197,11 +197,8 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
     const execute = async (context: MachineNativeEffectContext) => {
       try {
         await input.onAdmitted?.();
-        const result = await machineNativeEffectAdmission.runStage(context, () => applyAdmittedMachineSetup(input));
-        if (!result.ok && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'outcome_unknown' || result.errorCode === 'stop_unconfirmed')) {
-          machineNativeEffectAdmission.markUnsettled(context);
-        }
-        return result;
+        return await machineNativeEffectAdmission.runStage(context,
+          () => applyAdmittedMachineSetup(input, () => machineNativeEffectAdmission.markUnsettled(context)));
       } catch (error) {
         if (error instanceof ProjectNativeToolchainUncertainError
           || error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete') {
@@ -224,7 +221,7 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
   }
 }
 
-async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Promise<ActionExecuteResult> {
+async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUnsettledNativeProcess: () => void): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
   const platform = input.platform ?? process.platform;
   const signal = input.signal ?? input.operation.signal;
@@ -312,6 +309,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
         return { ...attachment, ...observation, terminals: { ...terminals } };
       } });
     terminalId = outcome.terminalId;
+    if (outcome.kind === 'outcome_uncertain') onUnsettledNativeProcess();
     return outcome.result;
   };
   const toolchain = input.setup.toolchain;

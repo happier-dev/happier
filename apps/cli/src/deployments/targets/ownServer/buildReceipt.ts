@@ -1,3 +1,4 @@
+import { projectDeploymentFailure } from '../../deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import { configuration } from '@/configuration';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployment-protocol';
@@ -271,6 +272,6 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
         const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
         const errorCode = code === 'outcome_unknown' || isProjectNativeProcessUncertain(error) ? 'outcome_unknown'
             : signal.aborted ? 'cancelled' : code;
-        return { ok: false, errorCode, error: errorCode };
+        return projectDeploymentFailure(errorCode, error);
     }
 }

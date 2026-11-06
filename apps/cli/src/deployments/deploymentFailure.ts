@@ -3,6 +3,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { readDeploymentOutputValidationFailure } from './outputValidation';
+import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 
 /** Preserve typed owner diagnostics across deployment exceptions and child transport. */
 export function projectDeploymentFailure(errorCode: string, error?: unknown, phase = 'deployment.failure'): ActionExecuteFailure {
@@ -14,5 +15,6 @@ export function projectDeploymentFailure(errorCode: string, error?: unknown, pha
     if (carried.success && carried.data.errorCode === errorCode) return carried.data;
     const cause = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase).failureCause;
     return { ok: false, errorCode, error: errorCode,
+        ...(error instanceof MachineNativeEffectAdmissionError && error.code === errorCode && error.details ? { details: error.details } : {}),
         ...(cause === undefined ? {} : { failureCause: cause }) };
 }

@@ -1,4 +1,4 @@
-import { readDeploymentSystemToolFailure } from '@/deployments/deploymentSystemToolFailure';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import { DeploymentOwnServerContentV1Schema, OwnServerDeploymentInputBasisV1Sche
 import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { configuration } from '@/configuration';
 import { createDeploymentExecEnvPortForHost, createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -42,14 +42,7 @@ function refuse(reason: string | ActionExecuteFailure): never {
     const code = typeof reason === 'string' ? reason : reason.errorCode;
     throw Object.assign(new Error(code, typeof reason === 'string' ? undefined : { cause: reason }), { code });
 }
-const failure = (errorCode: string, error?: unknown): ActionExecuteFailure => {
-    const systemToolFailure = readDeploymentSystemToolFailure(errorCode, error);
-    if (systemToolFailure) return systemToolFailure;
-    const refused = error instanceof Error ? ActionExecuteFailureSchema.safeParse(error.cause) : null;
-    if (refused?.success && refused.data.errorCode === errorCode) return refused.data;
-    return { ok: false, errorCode, error: errorCode,
-        ...(error instanceof MachineNativeEffectAdmissionError && error.code === errorCode && error.details ? { details: error.details } : {}) };
-};
+const failure = projectDeploymentFailure;
 const codeOf = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
 const failureCode = (error: unknown, aborted: boolean) => {
     const code = codeOf(error);

@@ -3465,6 +3465,11 @@ the incumbent producer's proof. Docker installers and repairs can therefore run
 before Docker is readable and report their own execution failures. Known engine
 coordinates retain the existing conflict behavior.
 
+Setup releases native admission when the interpreter and its owned native work
+have stopped, including failed and unknown effect outcomes. Partial package facts
+remain on the operation; they do not retain a Machine-wide lock without a live
+process. Deployment admission failures retain the incumbent Action operation ID.
+
 ## Rules for changes
 
 - Extend the owning host path and migrate its callers together. Do not add another Agent registry, lifecycle loop, prompt queue, permission owner, thinking flag or whole-metadata state writer.
