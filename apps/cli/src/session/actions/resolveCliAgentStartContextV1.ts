@@ -5,7 +5,7 @@ import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/reso
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import type { RoleSourceInventoryV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
-import type { AccountSettings, AgentStartContextV1, BackendTargetRefV2, ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
+import type { AccountSettings, AgentStartContextV1, BackendTargetRefV2, ResolvedRolesSnapshotV1, PersistedBackendTargetRefV2, RoleEngineV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import {
   resolveModelSelectionIntentFromSessionMetadata, readAcpSessionModeIntentFromMetadata,
@@ -19,6 +19,22 @@ import type { WorkflowTargetUnavailableReasonV1 } from '@happier-dev/protocol/wo
 export type AgentStartRunCallerBinding =
   | Readonly<{ hostSessionId: string; callingRunId: string; callingRunDepth: number }>
   | Readonly<{ runId: string; runDepth: number; runOriginSessionId?: string }>;
+
+/** The same effective engine observation feeds birth and later report copies. */
+export function readCliSessionEngineBaselineV1(input: Readonly<{
+  backendTarget: PersistedBackendTargetRefV2;
+  appliedChildSelection?: Extract<ExecutionRunAppliedParentSelection, { status: 'unavailable' }>
+    | Pick<Extract<ExecutionRunAppliedParentSelection, { status: 'applied' }>, 'status' | 'modelId' | 'modelSelection' | 'teamCredentialModel'>;
+}>): Readonly<{
+  modelSelection: ProviderBoundModelRef | undefined;
+  defaultEngine: RoleEngineV1;
+}> {
+  const agentTargetKey = buildBackendTargetKeyV2(input.backendTarget);
+  const applied = input.appliedChildSelection?.status === 'applied' ? input.appliedChildSelection : undefined;
+  const modelSelection = applied?.modelSelection ?? (!applied?.teamCredentialModel && applied?.modelId
+    ? { agentTargetKey, providerConnectionId: null, modelId: applied.modelId } : undefined);
+  return { modelSelection, defaultEngine: { agentTargetKey, ...(modelSelection?.modelId ? { modelId: modelSelection.modelId } : {}) } };
+}
 
 /** Adapts existing host snapshots; policy and role precedence remain Protocol-owned. */
 export function resolveCliAgentStartContextV1(input: Readonly<{

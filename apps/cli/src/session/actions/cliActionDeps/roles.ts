@@ -137,7 +137,7 @@ export function createCliRolesActionDeps(
           ?? resolveBackendTargetFromSessionMetadata(metadata);
         if (!backendTarget) throw new RoleActionRefusalV1('target_unavailable');
         const appliedChildSelection = bound ? await params.getCurrentAppliedChildSelection?.() : undefined;
-        const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget, metadata, appliedChildSelection });
+        const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget, appliedChildSelection });
         const inventory = await readEffectiveDeps().agentsBackendsList({ includeDisabled: false });
         context.signal?.throwIfAborted();
         return { defaultEngine, availableAgentTargetKeys: inventory.items.filter(item => item.enabled).map(item => item.targetKey) };
