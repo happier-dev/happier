@@ -24,6 +24,12 @@ authorization are unchanged. The declaration and existing carrier envelopes
 remain closed, with matching development Protocol and dispatch/daemon readers;
 no wire field, codec purpose, epoch or rollback adapter is added.
 
+On a foreign admitted `machines.agents.list` root, the receiving handler returns
+the Machine's Agent roster and detection facts with the definition catalog
+marked unavailable. It never reads the executor's Account ACP catalog for that
+root. Requester definitions use the existing executable-only `draftDefinitions`
+input; custodian catalog reads retain their existing behavior.
+
 ## Authored Domain preparation (unreleased 0.3)
 
 The existing `deployments.domains.add` Action adds an authored `content` arm;

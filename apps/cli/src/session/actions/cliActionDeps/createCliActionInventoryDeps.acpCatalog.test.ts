@@ -22,6 +22,11 @@ import { buildReviewEngineInventoryItems } from '../inventory/buildReviewEngineI
 import { ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createCliMachineInventoryActionDeps } from './machineInventory';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
+import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 
 const record = { v: 1, definitions: [{ id: 'row-review', name: 'row-review', title: 'Row Review', launch: { kind: 'command' as const, command: 'review-agent', args: ['acp'] },
    env: {}, capabilities: { supportsLoadSession: true, supportsModes: 'yes', supportsModels: 'yes',
@@ -137,6 +142,64 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
 }
 
 describe('ACP Action inventory row authority', () => {
+  it.each(['guest', 'custodian'] as const)('keeps the host Account ACP catalog private for an admitted %s list', async actor => {
+    const hostRecord = { v: 1, definitions: [{ ...record.definitions[0], id: 'host-only', title: 'Host private Agent',
+      launch: { kind: 'command', command: process.execPath, args: ['--host-private-config'] },
+    }] } satisfies AcpCatalogRecordV1;
+    const { deps, credentials, requests } = await createInventory('ready', { initialRecord: hostRecord });
+    const service = createCapabilitiesService({ capabilities: [createAcpAgentInventoryCapability({ accountId: 'custodian' })],
+      checklists: { 'machine-details': [], 'new-session': [] }, buildContext: async () => ({ cliSnapshot: null }) });
+    const nativeFacts = { installed: true, version: '1.0', latestVersion: null,
+      update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'unsupported' },
+      platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] };
+    // Machine RPC is the boundary; Account catalog admission, Action execution,
+    // definition projection and the registered ACP capability all remain real.
+    const machineDeps = createCliMachineInventoryActionDeps({ credentials }, {
+      inventoryDeps: deps, callMachineAction: async input => {
+        if (input.method === 'daemon.extensions.contributionRegistryProjection.describe') {
+          return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+            'acme/helper': { id: 'helper', title: 'Remote Helper', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+          } } };
+        }
+        if (input.method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        const response = await service.detect(input.request as CapabilitiesDetectRequest);
+        return { ...response, results: { ...response.results,
+          'cli.acme/helper': { ok: true, checkedAt: 1, data: nativeFacts },
+        } };
+      },
+    });
+    const executor = createActionExecutor({ ...deps, ...machineDeps });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+      accountId: actor, custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'machines.agents.list', requestId: 'list',
+      machineId: 'machine', installationId: 'installation', target: { kind: 'machine', machineId: 'machine' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const context = { surface: 'cli' as const, authority: 'account_automation' as const,
+      externalActionExecutionAuthorization: authorization };
+    const result = await executor.execute('machines.agents.list', { machineId: 'machine' }, context);
+    if (actor === 'guest') {
+      expect(result).toEqual({ ok: true, result: {
+        items: [{ agentId: 'acme/helper', title: 'Remote Helper', ...nativeFacts }],
+        definitionCatalog: { status: 'unavailable', reason: 'requester-account-unavailable' },
+      } });
+      expect(requests).toEqual([]);
+      // The guest's explicit executable-only draft remains usable on this root.
+      const draft = await machineDeps.machinesAgentsList?.({ machineId: 'machine',
+        draftDefinitions: [{ definitionId: 'guest-draft', title: 'Guest Agent',
+          launch: { kind: 'command', command: process.execPath, args: [] } }],
+      }, context);
+      expect(draft).toMatchObject({ items: [{ definitionId: 'guest-draft', title: 'Guest Agent', installed: true }] });
+      expect(requests).toEqual([]);
+    } else {
+      expect(result).toMatchObject({ ok: true, result: { items: [
+        { agentId: 'acme/helper', title: 'Remote Helper', ...nativeFacts },
+        { agentId: 'custom-acp', definitionId: 'host-only', title: 'Host private Agent', installed: true },
+      ] } });
+      expect(result).not.toHaveProperty('result.definitionCatalog');
+      expect(requests).toContain(`GET ${ACP_CATALOG_ROWS_ROUTE_V1}`);
+    }
+  });
   it.each(['models', 'session_modes', 'summary'] as const)('returns native %s evidence only for an explicit configured probe in its requested workspace', async kind => {
     await withTempDir('happier-acp-action-probe-', async directory => {
       // Genuine executable boundary: the real ACP transport negotiates this

@@ -67,8 +67,13 @@ export function createCliMachineInventoryActionDeps(
           if (!roster.success) throw new MachineAgentInventoryUnavailableError(args.agentId ?? 'unknown');
           const agents = buildMachineAgentInventoryDescriptors(roster.data.projection)
             .filter(({ agentId }) => !args.agentId || args.agentId === agentId);
-          const observedDefinitions: ReturnType<typeof projectAcpCatalogForMachineInventory> = !args.agentId || args.definitionId
-            ? projectAcpCatalogForMachineInventory(await inventoryDeps.readAccountAcpCatalog({ signal: context.signal })) : {};
+          const binding = context.externalActionExecutionAuthorization?.binding;
+          // A foreign root admits Machine facts, not this executor's Account catalog.
+          // Requester-owned definitions arrive only through the draft path above.
+          const observedDefinitions: ReturnType<typeof projectAcpCatalogForMachineInventory> = binding && binding.accountId !== binding.custodianAccountId
+            ? { definitionCatalog: { status: 'unavailable', reason: 'requester-account-unavailable' } }
+            : !args.agentId || args.definitionId
+              ? projectAcpCatalogForMachineInventory(await inventoryDeps.readAccountAcpCatalog({ signal: context.signal })) : {};
           const definitionInventory = args.definitionId && 'definitions' in observedDefinitions
             ? { ...observedDefinitions, definitions: observedDefinitions.definitions?.filter(definition => definition.definitionId === args.definitionId) }
             : observedDefinitions;
