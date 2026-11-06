@@ -547,7 +547,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                     const unavailable = plan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
                     if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
                         ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason,
-                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId)); continue; }
+                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId,
+                        typeof unavailable.facts.remedy === 'string' ? unavailable.facts.remedy : undefined)); continue; }
                     if (request.acceptPlan && !await request.acceptPlan(plan)) { await stop('denied'); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plan } });
                     const requestRefusal = await currentRefusal();

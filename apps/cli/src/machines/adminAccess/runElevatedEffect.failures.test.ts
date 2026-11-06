@@ -124,7 +124,7 @@ it.each([
         : await runElevatedMachineSetupIntent({ ...input, basis, steps: [step] }, dependencies);
     expect(result).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable', failure: {
         kind: 'native_check_unavailable', reason: requiredFact === 'packageManagerLocks' ? 'needs_admin_to_check' : 'required_fact_unavailable',
-        requiredFact, remedy: expect.stringContaining(requiredFact),
+        requiredFact, remedy: requiredFact === 'packageManagerLocks' ? 'check_with_administrator' : expect.stringContaining(requiredFact),
     } });
     expect(JSON.stringify(result)).not.toContain('private native account diagnostic');
     expect(commands).toEqual(requiredFact === 'packageManagerLocks' ? ['dpkg', 'apt-get', 'dpkg-query', 'lslocks'] : ['getent']);
