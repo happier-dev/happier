@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
-import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
 import { buildUsageRecapCardModels } from './buildUsageRecapCardModels';
@@ -87,6 +87,24 @@ const response = UsageAnalyticsQueryResponseSchema.parse({
 });
 
 describe('buildUsageRecapCardModels', () => {
+    it('uses observed All calendar days and keeps an empty All recap empty', () => {
+        const filters = { period: 'all', metric: 'tokens', focus: null, costMode: 'auto' } as const;
+        const query = normalizeUsageQuery({ period: { relative: 'all' }, timeZoneOffsetMinutes: 0 });
+        const viewModel = buildUsageAnalyticsViewModel(UsageAnalyticsQueryResponseSchema.parse({ ...response, insights: undefined,
+            activity: { calendarDays: [
+                { date: '2026-11-01', eventCount: 2 },
+                { date: '2026-11-02', eventCount: 0 },
+                { date: '2026-11-03', eventCount: 2 },
+            ] } }), filters, 0);
+        const cards = buildUsageRecapCardModels({ viewModel, filters, query });
+        expect(cards.find(card => card.id === 'usage')).toMatchObject({
+            label: t('usage.allTime'), visual: { kind: 'progress', ratio: 2 / 3 },
+        });
+        const empty = buildUsageAnalyticsViewModel(UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, activity: { calendarDays: [] } }), filters, 0);
+        expect(buildUsageRecapCardModels({ viewModel: empty, filters, query })).toEqual([]);
+    });
     it('keeps an unavailable day summary out of numeric streak copy', () => {
         const filters = { period: '7days', metric: 'tokens', focus: null, costMode: 'auto' } as const;
         const viewModel = buildUsageAnalyticsViewModel({ ...response, activity: undefined, insights: undefined }, filters);
