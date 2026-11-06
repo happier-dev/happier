@@ -20,6 +20,47 @@ import {
 import { withOptionalCliSharedDepsBuildLock } from '../../apps/cli/scripts/optionalWorkspaceBundleLock.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
 
+for (const mode of ['async', 'sync']) for (const ownerKind of ['lock', 'priority-claim']) {
+  test(`workspace bundle ${mode} retires ${ownerKind} history without growing quarantine names`, () => {
+    const script = `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+const root = fs.mkdtempSync(join(tmpdir(), 'workspace-reclaim-name-'));
+const lockPath = join(root, 'publication.lock');
+const ownerPath = lockPath + ${JSON.stringify(ownerKind === 'priority-claim' ? '.priority-claim' : '')};
+const nativeRename = fs.renameSync;
+fs.renameSync = (from, to) => {
+  assert.equal((String(to).match(/\\.reclaim-/g) ?? []).length, 1,
+    'retiring retained history must not append another quarantine suffix');
+  return nativeRename(from, to);
+};
+syncBuiltinESMExports();
+try {
+  const owner = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+  for (let cleanup = 0; cleanup < 2; cleanup++) {
+    // Include legacy nested history: retiring it must return to the base name.
+    fs.writeFileSync(ownerPath + '.reclaim-history'.repeat(cleanup + 1), JSON.stringify({
+      pid: 2147483000, createdAtMs: 1, updatedAtMs: 1,
+    }));
+    const result = ${mode === 'async' ? 'await owner.withWorkspaceBundleLock' : 'owner.withWorkspaceBundleLockSync'}(({ assertOwned }) => {
+      assertOwned(); return 'published';
+    }, { lockPath, wait: false });
+    assert.equal(result, 'published');
+    assert.deepEqual(fs.readdirSync(root), []);
+  }
+} finally {
+  fs.renameSync = nativeRename;
+  fs.rmSync(root, { recursive: true, force: true });
+}
+`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
+
 for (const mode of ['async', 'sync']) {
   test(`${mode} joint priority yields free resources while blocked and retains its age when ready`, async t => {
     const root = mkdtempSync(join(tmpdir(), 'workspace-priority-convoy-'));

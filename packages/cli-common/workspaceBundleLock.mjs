@@ -466,9 +466,10 @@ export function observeWorkspaceBundleLock(lockPath, options = {}) {
   return { active, ownerId };
 }
 
-function reclaimLockSnapshot(lockPath, expectedRaw) {
+function reclaimLockSnapshot(lockPath, expectedRaw, baseLockPath = lockPath) {
   if (expectedRaw == null) return true;
-  const reclaimPath = `${lockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  // Retained snapshots share the base lock's namespace; never grow their names.
+  const reclaimPath = `${baseLockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     renameSync(lockPath, reclaimPath);
   } catch (error) {
@@ -534,7 +535,7 @@ function classifyRetainedLockSnapshots(
       (releasedOwner && ownerSnapshotMatchesCurrentProcess(snapshot, releasedOwner))
       || shouldReclaim(snapshot, staleAfterMs, Date.now(), lockOwnerObservationOptions(options, initializationGraceMs))
     ) {
-      const retired = reclaimLockSnapshot(retainedPath, snapshot.raw);
+      const retired = reclaimLockSnapshot(retainedPath, snapshot.raw, lockPath);
       if (!retired) {
         throw new Error(`Workspace bundle lock recovery cleanup failed: ${lockPath}`);
       }
@@ -598,7 +599,7 @@ function recoverRetainedLockSnapshot(lockPath, classificationOptions) {
     throw new Error(`Workspace bundle lock recovery is pending: ${lockPath}`);
   }
   for (const duplicate of duplicates) {
-    if (!reclaimLockSnapshot(duplicate.retainedPath, duplicate.snapshot.raw)) {
+    if (!reclaimLockSnapshot(duplicate.retainedPath, duplicate.snapshot.raw, lockPath)) {
       throw new Error(`Workspace bundle lock recovery cleanup failed: ${lockPath}`);
     }
   }
