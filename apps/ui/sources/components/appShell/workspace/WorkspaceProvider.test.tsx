@@ -1140,6 +1140,40 @@ describe('consumed workspace navigation owner', () => {
         expect(sidebar.tabsByKey.board).toBeUndefined();
         expect(sidebar.isOpen).toBe(false);
     });
+    it.each(['/settings', '/settings/skills', '/settings/appearance', '/settings/account'] as const)('presents explicit phone-web navigation to %s after a Session', async href => {
+        boundary.platform = 'web';
+        const location = { pathname: '/session/A1', search: '?serverId=home-a&mobileSurface=collaboration', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                history.state = state;
+                if (!href) return;
+                const next = new URL(href, 'https://happier.invalid');
+                location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+            },
+            pushState: (state: unknown, unused: string, href: string) => history.replaceState(state, unused, href), go() {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const element = () => <WorkspaceProvider enabled={false} phone catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        // A direct external URL must replace the previously retained Session.
+        location.pathname = href; location.search = '';
+        boundary.pathname = href; boundary.params = {};
+        await screen.update(element());
+        const selected = () => {
+            const state = navigation().state;
+            return state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
+        };
+        expect(hrefForDestinationRef(catalog, selected())).toBe(href);
+        // The same owner handles a Settings press from inside an admitted Session.
+        await act(async () => { navigation().openHref('/session/A2?serverId=home-a'); });
+        await act(async () => { navigation().navigationForTab(navigation().state.groups[navigation().state.focusedGroupId].activeTabId).push(href); });
+        expect(hrefForDestinationRef(catalog, selected())).toBe(href);
+        expect(location.pathname).toBe(href);
+    });
     it('opens Connected Account approval review beside a dirty preview and preserves it through subsequent preview navigation', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
         const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
