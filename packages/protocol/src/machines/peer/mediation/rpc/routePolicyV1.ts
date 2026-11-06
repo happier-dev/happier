@@ -970,6 +970,12 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
   ], 'auth', 'Native connected-account commands use the custodian Account credentials, secrets and connection persistence; shared Machine grants do not confer that Account authority.')
     .map(policy => ({ ...policy, sharedMachineAccess: 'custodian_only' as const })),
+  actionSpecServerRequired(SESSION_RPC_METHODS.SESSION_COMPACT, 'auth',
+    'Manual compaction requires the requester Session input authority retained by the Session Action owner.',
+    'session.compact'),
+  { ...serverRequired(RPC_METHODS.UI_ACTION_CHILD_EXECUTE, 'auth',
+    'Client Action children retain their admitted parent Session and server-stamped requester Account; they do not act as the Machine custodian.'),
+    rpcClassification: 'internal_only', sharedMachineAccess: 'use' } satisfies MachineRpcRoutePolicyV1,
   actionSpecServerRequired(AGENT_SIGN_IN_STATUS_RPC_METHOD, 'auth',
     'Shared Machine Use reads native sign-in state; the daemon projects identity from the admitted role before encrypting its reply.',
     'machines.agents.signIn.status'),
