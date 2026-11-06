@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, View } from 'react-native';
+import { View } from 'react-native';
 import {
   UsageAgentMoons,
   UsageAroundThePeriod,
@@ -198,9 +198,6 @@ export function UsageMachinesBody(props: UsageBodyProps) {
 export function UsageProjectsBody(props: UsageBodyProps) {
   const host = useUsageChartHost(props.serverId);
   const models = usePlanetFamilyModels(props);
-  const open = React.useCallback((url: string) => {
-    void Linking.openURL(url);
-  }, []);
   if (!models) return <Pending {...props} />;
   return (
     <UsageProjects
@@ -208,7 +205,6 @@ export function UsageProjectsBody(props: UsageBodyProps) {
       paint={host.paint}
       model={models.projects}
       labels={usageProjectsLabels()}
-      onOpen={open}
       label={t('usage.widgets.usage_projects')}
       testID={`${props.testID}.projects`}
     />
