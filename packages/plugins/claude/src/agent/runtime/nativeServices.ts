@@ -247,6 +247,7 @@ export function createClaudeNativeAgentSdkContext(
     },
     sessions: {
       current: {
+        ...(currentSession?.media ? { media: currentSession.media } : {}),
         auth: {
           services: {
             async refreshRuntimeAuth(request, options) {
