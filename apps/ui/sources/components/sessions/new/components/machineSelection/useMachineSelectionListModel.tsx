@@ -213,12 +213,16 @@ function machineSubtitle(machine: MachineDisplayRenderable): string | undefined 
  * The machine row's second line (K1 picker anatomy): presence first ("Online", "Offline · last seen
  * 4 days ago"), then the row's own fact when it has one (a domain's reason, the Home's detail).
  */
-function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReachabilityScope | null | undefined, detail: string | undefined, managedMachine?: ManagedMachineV1): string {
+function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReachabilityScope | null | undefined, detail: string | undefined, managedMachine?: ManagedMachineV1,
+    ownerNamedByGroup = false): string {
     const presence = describeMachinePresenceLine(machine, undefined, projectMachineManagedPresence(machine, managedMachine), scope);
     // An online machine says what it is ("Online · Linux", lab m-pick); an offline one keeps its
     // last-seen time as its only fact, so the line stays short.
-    const platform = presence.online ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
-    return [presence.label, describeMachineSharedOwnership(machine), platform, detail].filter(Boolean).join(' · ');
+    // A shared machine's ownership fact already names its platform ("Ben's · Linux"); say it once.
+    // Under a group that already names the owner, the row reads like one of your own (FIN-DESIGN-REVIEW L5).
+    const ownership = ownerNamedByGroup ? null : describeMachineSharedOwnership(machine);
+    const platform = presence.online && !ownership ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
+    return [presence.label, ownership, platform, detail].filter(Boolean).join(' · ');
 }
 
 function buildOptionTestID(testIdPrefix: string | undefined, machine: MachineDisplayRenderable): string | undefined {
@@ -330,7 +334,9 @@ function isBlockedOnlyByPresence(
     presence: ReturnType<typeof resolveMachinePickerPresence>,
 ): boolean {
     if (presence.status !== 'offline') return false;
-    return eligibility.eligible ? !eligibility.managedWake : eligibility.reason === 'worker_status_unavailable';
+    // A shared machine that is only offline says so in its presence line, not again as "Unavailable".
+    return eligibility.eligible ? !eligibility.managedWake
+        : eligibility.reason === 'worker_status_unavailable' || eligibility.reason === 'machine_unavailable';
 }
 
 /**
@@ -920,7 +926,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
                         labelEllipsizeMode: 'middle',
                         subtitle: machineStatusLine(machine, scopeForServer(group.serverId), availability.reason ?? presentation?.subtitle,
-                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id]),
+                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared'),
                         subtitleLeading: (
                             <MachinePresenceDot
                                 machine={machine}
@@ -1018,6 +1024,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                             scopeForServer(group.serverId),
                             availability.reason ?? (presentation ? presentation.subtitle : machineSubtitle(machine)),
                             machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id],
+                            // Any shared machine splits this Home's rows into groups named by owner.
+                            machine.isShared === true,
                         ),
                         subtitleLeading: (
                             <MachinePresenceDot

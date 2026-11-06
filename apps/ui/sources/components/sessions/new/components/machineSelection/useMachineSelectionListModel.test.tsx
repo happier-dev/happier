@@ -417,7 +417,9 @@ describe('useMachineSelectionListModel', () => {
         const { describeMachineSharedGroupTitle, describeMachineSharedOwnership } = await import('@/sync/domains/machines/machineOwnershipGroups');
         expect(shared.title).toBe(`Server A · ${describeMachineSharedGroupTitle(ready.access!.custodian)}`);
         expect(shared.options.map((option) => option.id)).toEqual(['server-a::shared', 'server-a::pending']);
-        expect(shared.options[0]?.subtitle).toContain(describeMachineSharedOwnership(ready));
+        // The group already names the owner; the row says its own facts once (FIN-DESIGN-REVIEW L5).
+        expect(shared.options[0]?.subtitle).not.toContain(describeMachineSharedOwnership(ready));
+        expect(shared.options[0]?.subtitle).toContain('macOS');
         expect(model.getCurrent().selectedOptionId).toBe('server-a::pending');
         expect(shared.options[1]?.disabled).toBe(true);
         shared.options[1]?.onSelect?.();
@@ -435,6 +437,22 @@ describe('useMachineSelectionListModel', () => {
         await trigger.unmount();
     });
 
+    it('says an offline shared machine is offline once, under the group that names its owner (FIN-DESIGN-REVIEW L5)', async () => {
+        const offline: Machine = { ...createMachine('shared-offline'), active: false, activeAt: 1, isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
+        } };
+        const group = { serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false, machines: [createScopedMachine(offline)] };
+        const model = await renderHook(() => useMachineSelectionListModel({ groups: [group],
+            selectedMachine: offline, selectedServerId: 'server-a', recentMachines: [], favoriteMachines: [], showFavorites: false, showRecent: false,
+            showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false, onSelectMachine: vi.fn(), onSelectScopedMachine: vi.fn() }));
+        const option = model.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .find(entry => entry.id.endsWith('shared-offline'));
+        const { describeMachineSharedOwnership } = await import('@/sync/domains/machines/machineOwnershipGroups');
+        expect(option?.subtitle).toBeDefined();
+        expect(option?.subtitle).not.toContain('common.unavailable');
+        expect(option?.subtitle).not.toContain(describeMachineSharedOwnership(offline)!);
+        await model.unmount();
+    });
     it.each([true, false])('keeps a shared bucket distinct when its custodian name is unavailable (single Home: %s)', async singleHome => {
         const shared = { ...createMachine('shared-without-owner'), isShared: true };
         const group = { serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false, machines: [createScopedMachine(shared)] };
