@@ -30,6 +30,7 @@ import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protoco
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
+import type { KvListResponse } from '@/sync/api/account/apiKv';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 
 
@@ -45,6 +46,7 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
                 ...(afterHeader === null ? {} : { headers: { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: afterHeader } }),
             });
         }
+        if (pathname === '/v1/kv') return Response.json({ items: [] } satisfies KvListResponse);
         if (pathname === '/v1/machines') return Response.json([] satisfies FetchedMachineRow[]);
         if (pathname === '/v3/automations') return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }));
         if (pathname === '/v1/feed') return Response.json(FeedResponseSchema.parse({ items: [], hasMore: false }));

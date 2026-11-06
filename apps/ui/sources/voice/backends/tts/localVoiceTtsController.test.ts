@@ -7,6 +7,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { DaemonVoiceInferenceTtsStreamStartResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 
@@ -70,7 +71,9 @@ describe('localVoiceTtsController', () => {
                 if (machineReply) return machineReply;
                 if (request.path === '/v1/features') return featureResponse();
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                return undefined;
+                return createEmptyAccountBootstrapHttpResponse(request.path, {
+                    method: request.method, headers: request.headers,
+                }) ?? undefined;
             } });
         disconnect = await account.restoreActiveConnection();
         await sync.resumeSync('manual');
