@@ -5985,6 +5985,11 @@
       "types": "./dist/local/services/actions/v1.d.ts",
       "default": "./dist/local/services/actions/v1.js"
     },
+    "./local/services/adoptionV1": {
+      "happier-source": "./src/local/services/adoptionV1.ts",
+      "types": "./dist/local/services/adoptionV1.d.ts",
+      "default": "./dist/local/services/adoptionV1.js"
+    },
     "./local/services/hosts": {
       "happier-source": "./src/local/services/hosts.ts",
       "types": "./dist/local/services/hosts.d.ts",
