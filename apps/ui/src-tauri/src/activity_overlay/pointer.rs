@@ -32,6 +32,13 @@ pub(super) struct Tracker {
 }
 
 impl Tracker {
+    pub fn is_visible(&self) -> Result<bool, String> {
+        self.crossings
+            .lock()
+            .map(|state| state.visible)
+            .map_err(|_| "Overlay pointer state poisoned".to_owned())
+    }
+
     pub fn outside_press(&self) { (self.press)(); }
     pub fn observe(&self, sample: Sample) {
         let changed = self
@@ -178,6 +185,11 @@ pub(crate) fn set_visible<R: Runtime>(
         return Ok(());
     }
     if !visible {
+        // AppKit motion monitors must release before hidden geometry refreshes stop.
+        #[cfg(target_os = "macos")]
+        if let Some(window) = app.get_webview_window(label) {
+            platform::geometry_changed(&window, tracker)?;
+        }
         set_outside_press(app, label, false)?;
         set_engaged(app, label, false)?;
     }
@@ -195,12 +207,7 @@ pub(crate) fn set_engaged<R: Runtime>(
     let Some(tracker) = tracker(app, label) else {
         return Ok(());
     };
-    let visible = tracker
-        .crossings
-        .lock()
-        .map_err(|_| "Overlay pointer state poisoned")?
-        .visible;
-    platform::set_engaged(app, label, engaged && visible)
+    platform::set_engaged(app, label, engaged && tracker.is_visible()?)
 }
 
 pub(crate) fn set_outside_press<R: Runtime>(app: &AppHandle<R>, label: &str, wanted: bool) -> Result<(), String> {
@@ -211,12 +218,7 @@ pub(crate) fn geometry_changed<R: Runtime>(app: &AppHandle<R>, label: &str) -> R
     let Some(tracker) = tracker(app, label) else {
         return Ok(());
     };
-    let visible = tracker
-        .crossings
-        .lock()
-        .map_err(|_| "Overlay pointer state poisoned")?
-        .visible;
-    if !visible {
+    if !tracker.is_visible()? {
         return Ok(());
     }
     if let Some(window) = app.get_webview_window(label) {

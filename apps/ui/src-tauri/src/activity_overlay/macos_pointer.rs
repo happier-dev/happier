@@ -40,6 +40,11 @@ define_class!(
 impl PointerOwner {
     fn sample(&self) -> Result<(), String> {
         let ivars = self.ivars();
+        let visible = ivars.tracker.is_visible()?;
+        if !visible {
+            super::pointer::motion_monitors::update(&mut ivars.motion.borrow_mut(), visible, false, || self.register_motion())?;
+            return Ok(());
+        }
         let window = &ivars.window;
         let frame = window.frame();
         let point = unsafe { NSEvent::mouseLocation() };
@@ -47,7 +52,7 @@ impl PointerOwner {
         let point = (point.x, point.y);
         let sample = if let Some(hit_rect) = ivars.hit_rect.get() {
             let sample = Sample::from_bottom_left_hit_rect(frame, hit_rect, point);
-            super::pointer::motion_monitors::update(&mut ivars.motion.borrow_mut(), !sample.inside && !ivars.tracker.position_events, || self.register_motion())?;
+            super::pointer::motion_monitors::update(&mut ivars.motion.borrow_mut(), visible, !sample.inside && !ivars.tracker.position_events, || self.register_motion())?;
             // The drawing envelope also covers old animation frames and Extract flights.
             // Only the island receives input; global motion restores entry while ignored.
             if window.ignoresMouseEvents() == sample.inside {
