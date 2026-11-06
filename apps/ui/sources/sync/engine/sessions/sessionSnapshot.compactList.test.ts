@@ -9,12 +9,81 @@ import { buildRenderableFromRowAndCache, fetchAndApplySessions } from './session
 import { fetchAndApplySessionById } from './sessionById';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
-import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 
 const initialState = storage.getState();
 afterEach(() => { vi.restoreAllMocks(); storage.setState(initialState, true); });
+
+it.each([
+    { mode: 'e2ee', keyTransition: 'same-key', audience: 'shared' },
+    { mode: 'e2ee', keyTransition: 'changed-key', audience: 'shared' },
+    { mode: 'plain', keyTransition: 'same-key', audience: 'shared' },
+    { mode: 'e2ee', keyTransition: 'same-key', audience: 'legacy-owner' },
+] as const)('keeps $mode $audience Bot display custody across an exact offscreen read and compact refresh with $keyTransition', async ({ mode, keyTransition, audience }) => {
+    const serverId = 'shared-bot-home';
+    const id = 'shared-bot';
+    const secret = new Uint8Array(32).fill(81);
+    const key = new Uint8Array(32).fill(82);
+    const credentials = mode === 'plain' ? { token: 'shared-bot-viewer' } : { token: 'shared-bot-viewer', secret: encodeBase64(secret) };
+    const accountCurrentness = mode === 'plain' ? createPlainAccountEncryptionCurrentnessFixture()
+        : createLegacyAccountEncryptionCurrentnessFixture({ secret });
+    const encryption = await Encryption.create(secret);
+    encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+    if (mode === 'e2ee') await encryption.initializeSessions(new Map([[id, key]]), { serverId });
+    const cipher = encryption.getSessionEncryption(id)!;
+    const { ownerMetadata: _ownerMetadata, ...recipientBase } = createPlainSessionCurrentProjectionRecordFixture({ id, metadataVersion: 7 });
+    const metadata = { ...(audience === 'legacy-owner' ? { path: '/shared-bot', host: 'home' } : { v: 1 }),
+        bot: { kind: 'bot' }, botFace: { seed: 'shared-bot-face' } };
+    const level = audience === 'legacy-owner' ? 'owner' : 'view';
+    let full = V2SessionRecordSchema.parse({ ...recipientBase,
+        encryptionMode: mode,
+        metadataLayoutVersion: audience === 'legacy-owner' ? 0 : 1,
+        metadata: mode === 'plain' ? JSON.stringify(metadata) : await cipher.encryptRaw(metadata),
+        dataEncryptionKey: mode === 'plain' ? null : encodeBase64(await encryption.encryptEncryptionKey(key)),
+        share: audience === 'legacy-owner' ? null : { accessLevel: 'view', canApprovePermissions: false },
+        effectiveAccess: { v: 1, level, sources: [], capabilities: createSessionAccessFixture(level).capabilities } });
+    const readRow = (sessionId: string) => storage.getState().sessionListRowsByServerId[serverId]?.[sessionId];
+    const applySessions = (rows: Parameters<ReturnType<typeof storage.getState>['applySessions']>[0]) => storage.getState().applySessions(rows);
+    let documentReads = 0;
+    const refresh = (openDisplay: boolean) => fetchAndApplySessions({ serverId, credentials, accountCurrentness, encryption,
+        sessionDataKeys: new Map(), contentDemand: openDisplay ? 'list-projection' : undefined,
+        sessionListBackgroundHydrationMaxRows: 0,
+        request: async path => path === '/v2/sessions/read-batch'
+            ? (documentReads++, Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: full } } }] }))
+            : Response.json({ sessions: [createCompactSessionListRowFixture(full)] }),
+        getCurrentSessionListRenderable: readRow,
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions, log: { log() {} },
+    });
+    await refresh(true);
+    expect(storage.getState().sessionListBotRowsByServerId[serverId]?.[id]?.metadata?.botFace?.seed).toBe('shared-bot-face');
+    expect(storage.getState().sessions[id]).toBeUndefined();
+    if (keyTransition === 'changed-key') full = { ...full,
+        dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(83))) };
+    const exact = await fetchAndApplySessionById({ serverId, sessionId: id, credentials, encryption,
+        fetchAccountCurrentness: async () => accountCurrentness,
+        contentDemand: 'list-projection', includeTurnsProjection: false, sessionDataKeys: new Map(),
+        prefetched: { detail: { status: 200, body: { session: full } } },
+        request: async () => { throw new Error('Unexpected exact transport'); }, getCurrentSessionListRenderable: readRow,
+        applySessionListRows: entries => storage.getState().applyServerScopedSessionListRows(serverId, entries.map(entry => entry.row), { source: 'rowOnly', mode: 'append' }),
+        applySessions, log: { log() {} },
+    });
+    expect(exact.ok).toBe(true);
+    documentReads = 0;
+    await refresh(false);
+    if (keyTransition === 'same-key') {
+        expect(storage.getState().sessionListBotRowsByServerId[serverId]?.[id]?.metadata?.botFace?.seed).toBe('shared-bot-face');
+        expect(readRow(id)?.metadataVersion).toBe(7);
+        expect(documentReads).toBe(0);
+    } else {
+        expect(readRow(id)?.metadata).toBeNull();
+        expect(storage.getState().sessionListBotRowsByServerId[serverId]?.[id]).toBeUndefined();
+    }
+    expect(storage.getState().sessions[id]).toBeUndefined();
+});
 
 it('keeps the last opened Session when background hydration fails without sending diagnostics to the error toast', async () => {
     const serverId = 'background-failure-home';
@@ -310,7 +379,8 @@ it('withdraws retained owner display at the real store when a compact row change
         dataEncryptionKey: null, documents: 'omitted' as const, metadataAudience: 'owner' as const,
         agentStateDocument: 'omitted' as const, share: null };
     const admittedRow = V2SessionListResponseSchema.parse({ sessions: [row] }).sessions[0]!;
-    const next = buildRenderableFromRowAndCache(admittedRow, { token: 'same-account' }, undefined, undefined, null, previous, 'scope');
+    const next = buildRenderableFromRowAndCache(admittedRow, { token: 'same-account' }, undefined, undefined, null, previous,
+        { owner: 'scope', shared: 'scope' });
     storage.getState().applyServerScopedSessionListRows(serverId, [next], { source: 'rowOnly', mode: 'replace' });
     expect(storage.getState().sessionListRowsByServerId[serverId]?.[previous.id]?.metadata).toBeNull();
 });

@@ -141,11 +141,16 @@ export function admitOpenedSessionListDisplayMetadata(
         ? withOpenedSessionListDisplayVersion(admission, value.metadataVersion) : admission;
 }
 
-export function resolveSessionListDocumentAdmissionScope(serverId: string | null | undefined, credentials: AuthCredentials,
-    accountCurrentness: AccountEncryptionIdentity | undefined): string {
-    return JSON.stringify([serverId ?? null, resolveAuthCredentialsScopeKey(credentials),
+export type SessionListDocumentAdmissionScopes = Readonly<{ owner: string; shared: string }>;
+
+export function resolveSessionListDocumentAdmissionScopes(serverId: string | null | undefined, credentials: AuthCredentials,
+    accountCurrentness: AccountEncryptionIdentity | undefined): SessionListDocumentAdmissionScopes {
+    const home = [serverId ?? null, resolveAuthCredentialsScopeKey(credentials)];
+    // A recipient's display uses the Session key, independently of whether this
+    // page also opened Account-owned content. Layout-1 owner displays additionally bind it.
+    return { shared: JSON.stringify(home), owner: JSON.stringify([...home,
         accountCurrentness?.mode ?? null, accountCurrentness?.signingKeyFingerprint ?? null,
-        accountCurrentness?.contentKeyFingerprint ?? null, accountCurrentness?.updatedAt ?? null]);
+        accountCurrentness?.contentKeyFingerprint ?? null, accountCurrentness?.updatedAt ?? null]) };
 }
 
 /** Nonsecret comparison material for a device-local display derivation, never document authority. */

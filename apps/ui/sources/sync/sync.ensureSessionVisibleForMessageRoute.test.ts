@@ -27,7 +27,8 @@ import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/
 import { createPlainAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { buildRenderableFromRowAndCache, createSessionListDocumentAdmission } from './engine/sessions/sessionSnapshot';
+import { buildRenderableFromRowAndCache } from './engine/sessions/sessionSnapshot';
+import { resolveSessionListDocumentAdmissionScopes } from './domains/session/sessionDocumentAdmission';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
@@ -330,7 +331,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().applyServerScopedSessionListRows(serverId,
             [buildRenderableFromRowAndCache(createCompactSessionListRowFixture({ ...row, updatedAt: 21, seq: 2 }), credentials,
                 currentness, undefined, undefined, undefined,
-                createSessionListDocumentAdmission({ row, serverId, credentials, accountCurrentness: currentness }).scope)],
+                resolveSessionListDocumentAdmissionScopes(serverId, credentials, currentness))],
             { source: 'ordinary', mode: 'append' });
         expect(readSessionFullPublicationUpdatedAt({ id: sessionId, serverId })).toBe(0);
         response.resolve();

@@ -68,7 +68,8 @@ import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSe
 import { SESSION_LIST_DOCUMENT_ADMISSION, buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildRenderableFromRowAndCache, createSessionListDocumentAdmission } from './sessionSnapshot';
 import { admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState, mergeSessionListDocumentObservations,
-  areSessionListDocumentAdmissionsEqual, type SessionListDocumentAdmission } from '@/sync/domains/session/sessionDocumentAdmission';
+  areSessionListDocumentAdmissionsEqual, resolveSessionListDocumentAdmissionScopes,
+  type SessionListDocumentAdmission } from '@/sync/domains/session/sessionDocumentAdmission';
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { parsePlainSessionAgentStateResult } from './parsePlainSessionPayload';
 import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
@@ -633,6 +634,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     const sessionListRenderable = buildRenderableFromRowAndCache(
       row, params.credentials, accountCurrentness, undefined,
       params.getExistingSession?.(sessionId), params.getCurrentSessionListRenderable?.(sessionId),
+      resolveSessionListDocumentAdmissionScopes(params.serverId, params.credentials, accountCurrentness),
     );
     await ensureAccountCurrentness();
     if (!isCurrent()) return staleResult();

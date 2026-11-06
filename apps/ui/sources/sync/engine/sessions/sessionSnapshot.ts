@@ -14,7 +14,8 @@ import type { SessionListQueryResponseV1 } from '@happier-dev/protocol/sessions/
 import { matchSessionListStartedByV1, readSessionListStartedByV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { resolveSessionListDocumentAdmissionScope as resolveDocumentAdmissionScope,
+import { resolveSessionListDocumentAdmissionScopes as resolveDocumentAdmissionScope,
+    type SessionListDocumentAdmissionScopes,
     admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState, mergeSessionListDocumentObservations,
     hasCurrentSessionListDisplayMetadata } from '@/sync/domains/session/sessionDocumentAdmission';
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
@@ -133,7 +134,7 @@ type HydratedSession = Omit<Session, 'presence'> & {
     [SESSION_AGENT_STATE_OPEN_RESULT]?: AgentStateOpenResult;
 };
 
-function admitOpenedSessionDocuments(row: V2SessionRecord, scope: string, session: HydratedSession,
+function admitOpenedSessionDocuments(row: V2SessionRecord, scope: SessionListDocumentAdmissionScopes, session: HydratedSession,
     previous?: SessionListDocumentAdmission): SessionListDocumentAdmission {
     const metadataAdmission = admitOpenedSessionListDisplayMetadata(documentAdmission(row, scope), session);
     const opened = session[SESSION_AGENT_STATE_OPEN_RESULT]?.status === 'available'
@@ -145,14 +146,17 @@ function isCompactSessionListRow(row: SessionListRow): row is CompactSessionList
     return 'documents' in row && row.documents === 'omitted';
 }
 
-function documentAdmission(row: SessionListRow, scope: string): SessionListDocumentAdmission {
-    return { scope, encryptionMode: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
-        metadataLayoutVersion: readSessionMetadataLayoutVersion(row.metadataLayoutVersion),
+function documentAdmission(row: SessionListRow, scopes: SessionListDocumentAdmissionScopes): SessionListDocumentAdmission {
+    const metadataAudience = isCompactSessionListRow(row) ? row.metadataAudience
+        : readSessionAccessRole(row, { allowLegacy: true }) === 'owner' ? 'owner' : 'shared';
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
+    // Only layout-1 owner content uses Account material; legacy content uses the Session key too.
+    return { scope: metadataLayoutVersion === 1 ? scopes[metadataAudience] : scopes.shared,
+        encryptionMode: row.encryptionMode === 'plain' ? 'plain' : 'e2ee', metadataLayoutVersion,
         observedMetadataVersion: row.metadataVersion,
         observedAgentStateVersion: row.agentStateVersion ?? 0,
         dataEncryptionKey: row.dataEncryptionKey ?? null,
-        metadataAudience: isCompactSessionListRow(row) ? row.metadataAudience
-            : readSessionAccessRole(row, { allowLegacy: true }) === 'owner' ? 'owner' : 'shared' };
+        metadataAudience };
 }
 
 /** Exact and list readers issue the same memory-only document custody witness. */
@@ -474,10 +478,11 @@ export function buildRenderableFromRowAndCache(
     cachedEntry: SessionListCacheEntryV1 | undefined,
     existingSession?: Session | null | undefined,
     currentRenderable?: SessionListRenderableSession | null | undefined,
-    admissionScope?: string,
+    admissionScope?: SessionListDocumentAdmissionScopes,
 ): SessionListRenderableSession {
     if (isCompactSessionListRow(row)) {
-        const admission = documentAdmission(row, admissionScope ?? '');
+        const admission = documentAdmission(row, admissionScope ?? resolveDocumentAdmissionScope(
+            currentRenderable?.serverId ?? existingSession?.serverId, credentials, accountCurrentness));
         const existingAdmission = (existingSession as HydratedSession | undefined)?.[SESSION_LIST_DOCUMENT_ADMISSION];
         const existingRenderable = existingSession && sameDocumentAdmission(existingAdmission, admission)
             ? buildSessionListRenderableFromSession(existingSession, currentRenderable ?? undefined) : undefined;
@@ -515,7 +520,6 @@ export function buildRenderableFromRowAndCache(
             workerQuestionHandling: previous.workerQuestionHandling,
         }) : renderable;
     }
-    const rowMetadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
     const existingSessionRenderable = existingSession
         ? buildSessionListRenderableFromSession(existingSession, currentRenderable ?? undefined)
         : undefined;
@@ -571,17 +575,13 @@ export function buildRenderableFromRowAndCache(
     // The Session key and shared content stay unopened, while the Account-owned envelope
     // can independently prove visibility. Keep same-layout readable details from the matching
     // cache/Session projection or the applied row, retaining their truthful metadata revision.
-    const cachedProjectionUsable = cachedRenderable?.metadata != null
-        && readSessionMetadataLayoutVersion(cachedEntry?.metadataLayoutVersion) === rowMetadataLayoutVersion;
-    const existingSessionProjectionMatches = existingSessionRenderable?.metadata != null
-        && readSessionMetadataLayoutVersion(existingSession?.metadataLayoutVersion) === rowMetadataLayoutVersion
-        && existingSession?.metadataVersion === row.metadataVersion;
-    // Hydrated metadata retains identity evidence that older compact cache rows omitted.
-    const projectionSource = existingSessionProjectionMatches
-        ? existingSessionRenderable
-        : cachedProjectionUsable
-            ? cachedRenderable
-            : undefined;
+    const admission = documentAdmission(row, admissionScope ?? resolveDocumentAdmissionScope(
+        currentRenderable?.serverId ?? existingSession?.serverId, credentials, accountCurrentness));
+    const admittedCurrent = sameDocumentAdmission(currentRenderable?.[SESSION_LIST_DOCUMENT_ADMISSION], admission)
+        ? currentRenderable : undefined;
+    const admittedSession = sameDocumentAdmission(existingSession?.[SESSION_LIST_DOCUMENT_ADMISSION], admission)
+        ? existingSessionRenderable : undefined;
+    const projectionSource = admittedCurrent ?? admittedSession ?? readSessionListWarmCacheDisplay(cachedEntry, admission, row);
     const undecidedSession: SessionListRenderableSource = {
         ...buildHydratedSessionFromRowState({
             row,
@@ -596,9 +596,12 @@ export function buildRenderableFromRowAndCache(
         // Carry only that memory projection; buildHydratedSessionFromRowState stripped wire input.
         lockedDisplayTitle: currentRenderable?.lockedDisplayTitle,
         metadataUndecided: true,
+        // Exact offscreen reads omit shared content too. Keep its existing admission
+        // with the retained display, so a later compact refresh can reuse it.
+        [SESSION_LIST_DOCUMENT_ADMISSION]: projectionSource?.[SESSION_LIST_DOCUMENT_ADMISSION]
+            ? mergeSessionListDocumentObservations(projectionSource[SESSION_LIST_DOCUMENT_ADMISSION], admission) : admission,
     };
-    return buildSessionListRenderableFromSession(undecidedSession, projectionSource
-        ?? (ownerMetadataRead?.kind === 'owner' ? existingRenderable : undefined));
+    return buildSessionListRenderableFromSession(undecidedSession, projectionSource ?? undefined);
 }
 
 function buildRenderableFromCachedEntry(cachedEntry: SessionListCacheEntryV1): SessionListRenderableSession {
@@ -638,12 +641,12 @@ function needsWarmHydration(params: {
     currentRenderable?: SessionListRenderableSession | null | undefined;
     isRequiredHydrationRow?: boolean;
     isAttentionHydrationRow?: boolean;
-    admissionScope?: string;
+    admissionScope: SessionListDocumentAdmissionScopes;
     fullDocumentDemand?: boolean;
 }): boolean {
     const { row, cachedEntry, existingSession } = params;
     if (isCompactSessionListRow(row)) {
-        const admission = documentAdmission(row, params.admissionScope ?? '');
+        const admission = documentAdmission(row, params.admissionScope);
         const existing = existingSession as HydratedSession | undefined;
         const current = params.currentRenderable
             ?? (existing && sameDocumentAdmission(existing[SESSION_LIST_DOCUMENT_ADMISSION], admission)
