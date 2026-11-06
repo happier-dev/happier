@@ -897,6 +897,16 @@ type ActionFamilyId = (typeof ACTION_ID_FAMILIES_V1)[keyof typeof ACTION_ID_FAMI
 
 export const ACTION_IDS: readonly ActionFamilyId[] = Object.freeze(Object.values(ACTION_ID_FAMILIES_V1).flat());
 
+/** Only these Machine roots prepare their existing deployment Environment access. */
+const MACHINE_DEPLOYMENT_ENVIRONMENT_ACCESS_ACTION_IDS_V1: readonly string[] = [
+  'machines.services.list', 'machines.services.detail', 'machines.services.logs.read', 'machines.services.control',
+  'machines.services.exec', 'machines.reboot', 'machines.processes.list', 'machines.processes.get', 'machines.processes.check',
+] as const satisfies readonly ActionFamilyId[];
+
+export function isMachineDeploymentEnvironmentAccessActionIdV1(value: string): boolean {
+  return MACHINE_DEPLOYMENT_ENVIRONMENT_ACCESS_ACTION_IDS_V1.includes(value);
+}
+
 export const RUNTIME_ACTION_IDS_V1 = [
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ACTION_ID_FAMILIES_V1.browser_control,
