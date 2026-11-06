@@ -95,6 +95,19 @@ describe("rpcHandler", () => {
     });
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it.each([RPC_METHODS.SESSION_CONTINUATION_INSPECT, RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH,
+        RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW])('forwards machine-owned continuation reads without a Session write proof: %s', async operation => {
+        const method = `${machineId}:${operation}`;
+        const result = { type: 'available' };
+        const target = createTarget('continuation-daemon', result);
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const caller = createAuthenticatedFakeSocket();
+        rpcHandler(accountId, caller as unknown as Socket, { io });
+        const callback = vi.fn();
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' } }, callback);
+        expect(callback).toHaveBeenCalledWith({ ok: true, result });
+    });
+
     it("waits briefly for a late session-scoped room member before forwarding the RPC", async () => {
         resetRpcAvailabilityEnv({
             HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS: "30",

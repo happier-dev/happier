@@ -315,6 +315,36 @@ type TestAdmittedRequester = Readonly<{
 describe("external Action execution authorization", () => {
     let harness: LightSqliteHarness;
 
+    it.each(['usage.prices.get', 'usage.prices.refresh'] as const)('admits only the captured native price purpose: %s', async actionId => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { app } = await createApp(fixture.team.id);
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        try {
+            const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                    envelope: { ...fixture.envelope, input: {} } } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const method = actionId === 'usage.prices.get' ? 'GET' : 'POST';
+            const path = actionId === 'usage.prices.get' ? '/v1/account/usage/prices' : '/v1/account/usage/prices/refresh';
+            const body = method === 'POST' ? {} : undefined;
+            const verify = (requestMethod: string, requestPath: string, requestBody: unknown, effectActionId = actionId) =>
+                verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token, effectActionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    method: requestMethod, path: requestPath, body: requestBody,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId,
+                        target: authorization.binding.target, installationId: fixture.machine.installationId!,
+                        requestId: authorization.binding.requestId, method: requestMethod, path: requestPath,
+                        body: requestBody, privateKey: fixture.keyPair.secretKey }) });
+            expect(await verify(method, path, body)).toMatchObject({ effectActionId: actionId });
+            expect(await verify(method === 'GET' ? 'POST' : 'GET', path, body)).toBeNull();
+            expect(await verify(method, `${path}?accountId=other`, body)).toBeNull();
+            expect(await verify(method, path, { accountId: 'other' })).toBeNull();
+            expect(await verify(method, path, body, actionId === 'usage.prices.get' ? 'usage.prices.refresh' : 'usage.prices.get')).toBeNull();
+            expect(await verify('POST', '/v2/usage/query', { query: {} })).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it('keeps an eligibility database outage at 503 through signed-root HTTP admission and accepts the same root after recovery', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });

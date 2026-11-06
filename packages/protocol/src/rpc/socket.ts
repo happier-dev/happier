@@ -643,6 +643,9 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.SESSION_AGENT_TRANSITION, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
   ] as const satisfies readonly SocketRpcSessionWriteClassificationV1[])
     .map((row) => [row.method, Object.freeze(row)] as const),
 );

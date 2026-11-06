@@ -1,3 +1,5 @@
+import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { readExternalActionNativeCredentialSpawnChildInTx } from './externalActionNativeCredentialChild';
 import { readManagedCredentialDeliveryAuthorityInTx, readManagedCredentialDeliverySubmittedAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
@@ -1687,6 +1689,14 @@ function isDiscussionActionHttpPreparation(verified: VerifiedExternalActionExecu
 function isAccountActionHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const root = verified.binding.actionId;
+    if (root === USAGE_PRICE_ACTION_IDS.get || root === USAGE_PRICE_ACTION_IDS.refresh) {
+        const read = root === USAGE_PRICE_ACTION_IDS.get;
+        return verified.effectActionId === root
+            && proof.method.toUpperCase() === (read ? 'GET' : 'POST')
+            && proof.path === (read ? accountUsageRoutePaths.prices : accountUsageRoutePaths.pricesRefresh)
+            && (read ? proof.body === undefined : getActionSpec(root).inputSchema.safeParse(proof.body).success)
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, {}));
+    }
     if (root === 'usage.recap.compose' || root === 'usage.recap.export' || root === 'usage.recap.deliver') {
         // The installed executor signs this consumed safe-view read under its
         // unchanged recap root. No owner record or private Usage grant follows.
