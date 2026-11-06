@@ -45,6 +45,27 @@ const repository = { provider: { id: 'github', kind: 'github' as const, displayN
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
+  it('executes an original CLI finite shell command after its UI approval', async () => {
+    const homeId = 'srv_portable_home';
+    const profileId = 'requester-local-profile';
+    const h = await createHarness('machines.terminal.open', 'ask', false, homeId);
+    try {
+      const launch = { kind: 'shell_command', command: 'printf reviewed-finite-command' };
+      const requested = await h.runOriginalCli({ serverId: profileId, machineId: 'machine',
+        terminalKey: 'reviewed-finite-command', cwd: h.rootPath, launch },
+        'machines.terminal.open', { serverId: profileId, authority: 'present_user' });
+      expect(requested, JSON.stringify(requested))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(h.spawned).toHaveLength(0);
+      expect(await h.approval()).toMatchObject({ status: 'open', actionArgs: { launch },
+        executionOriginV1: { authority: 'present_user', surface: 'cli', caller: { kind: 'host' } } });
+      const decided = await h.decide('approve');
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
+        status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
+      expect(h.spawned).toHaveLength(1);
+      expect(await h.approval()).toMatchObject({ status: 'executed', execution: { ok: true } });
+    } finally { await h.close(); }
+  });
   it.each(['daemon.filesystem.listDirectory', 'daemon.filesystem.readFile', 'daemon.filesystem.getDirectoryTree'] as const)
   ('preserves immediate owner CLI %s through authenticated root custody', async actionId => {
     const h = await createHarness(actionId, 'allowed');

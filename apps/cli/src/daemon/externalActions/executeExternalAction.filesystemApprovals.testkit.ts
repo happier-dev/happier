@@ -249,7 +249,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   let protectedMachineKeys: Readonly<{ source: string; worker: string }> | undefined;
   const publishedMachineContent = (machine: 'source' | 'worker') => {
     const mode: 'e2ee' | 'plain' = protectedMachineKeys ? 'e2ee' : 'plain';
-    return { storageMode: mode,
+    return { storageMode: mode, managedMachineRef: null,
       dataEncryptionKey: protectedMachineKeys?.[machine] ?? MACHINE_PLAIN_DATA_KEY_MARKER,
       access: { custodian: { accountId: machine === 'source' ? sourceAccountId : cliPolicy?.machineCustodianAccountId ?? 'account',
         displayName: machine === 'source' ? 'Source Account' : 'Account' },

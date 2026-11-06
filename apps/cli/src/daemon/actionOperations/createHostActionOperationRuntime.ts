@@ -17,6 +17,7 @@ import { type DeploymentDeployInputV1 } from '@happier-dev/protocol/deployments/
 import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecuteResult, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -537,6 +538,9 @@ export async function runHostActionOperation(
   rpcContext?: ActionOperationRpcContext,
 ): Promise<ActionExecuteResult> {
   const context: RpcActionExecutorContext = request.context;
+  // The finite Project owner reviews placement before creating its operation.
+  // Wrapping it here accepts refused work and loses its retained setup review.
+  if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, request.actionId)) return request.execute(context);
   // Ordinary Open relays still observe at the native receiver. Installed
   // carried confirmation observes here before policy; the receiver consumes
   // that same private acceptance rather than joining its own invocation.
