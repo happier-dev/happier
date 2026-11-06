@@ -1491,3 +1491,9 @@ export { HappierRegistryShelf, type RegistryShelfProps, type RegistryShelfProjec
 export { HappierRegistryShelfAddControl, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistryShelfAddControlHost } from './capabilities/RegistryShelfAddControl.js';
 export { HappierRegistrySourcesUnavailable, type RegistrySourceFailure, type RegistrySourcesUnavailableProps, type RegistrySourcesUnavailableLabels, type RegistrySourcesUnavailableStateProps, type RegistrySourcesUnavailableHost } from './capabilities/RegistrySourcesUnavailable.js';
 export { HappierPoliteAccessibilityStatus } from './feedback/PoliteAccessibilityStatus.js';
+export { HappierAvatarStack, type HappierAvatarStackEntry, type HappierAvatarStackProps } from './content/AvatarStack.js';
+export { HappierPageLoadingRows, type HappierPageLoadingRowsProps } from './layout/PageLoadingRows.js';
+export { HappierPageHeaderPlaceholder, type HappierPageHeaderPlaceholderProps } from './layout/PageHeaderPlaceholder.js';
+export { HappierModalCardFooterActions, type HappierModalCardFooterActionsProps } from './interaction/ModalCardFooterActions.js';
+export { HappierHorizontalScrollEdgeMask, HappierHorizontalScrollEdgeMaskShape, type HappierHorizontalScrollEdgeMaskProps, type HappierHorizontalScrollEdgeMaskNativeHost, type HappierHorizontalScrollEdgeMaskGradient } from './layout/HorizontalScrollEdgeMask.js';
+export { resolveVerticalScrollEdgeMaskStyle, resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskRampsStyle, resolveScrollEdgeMaskStopPx, resolveHorizontalScrollEdgeMaskStyle, type ResolveHorizontalScrollEdgeMaskStyleOptions, type ScrollEdgeMaskStop, type HorizontalScrollEdgeMaskRamps, type ScrollEdgeVisibility } from './layout/scrollEdgeMask.js';

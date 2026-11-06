@@ -240,6 +240,10 @@ export type PluginUiPresentationHost = Readonly<{
    * tuck under the open keyboard. Absent (web, a hosted frame), the footer stays at the page's foot.
    */
   renderKeyboardStickyFooter?(input: Readonly<{ openedOffset: number; children: ReactNode }>): ReactNode;
+  /** The existing native alpha-mask leaf; web uses the shared CSS mask directly. */
+  renderHorizontalScrollEdgeMask?(input: import('../components/HorizontalScrollEdgeMask.js').HorizontalScrollEdgeMaskProps): ReactNode;
+  /** Hook into the containing card's existing phone-sheet binding. */
+  useModalCardPhoneSheet?(): boolean;
   /** The host's own date and time picker for `LocalDateTimeField`; absent, the field is typed alone. */
   localDateTimePicker?: import('../presentation/form/LocalDateTimeField.js').HappierLocalDateTimePickerHost;
   /** Qualified row destinations use the incumbent workspace owner; absent hosts keep ordinary activation. */

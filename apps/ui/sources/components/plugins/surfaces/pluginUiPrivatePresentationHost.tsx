@@ -79,6 +79,8 @@ import { useCollectionRailWidth } from '@/components/ui/lists/collection/useColl
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { resolveAppLocalDateTimePicker } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
+import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
+import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import type { ExecutableParticipantPickerProps } from '@happier-dev/plugin-ui/components';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
@@ -358,6 +360,12 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         return <PluginDictationButton {...input} />;
     },
     storedImageHost: STORED_IMAGE_HOST,
+    renderHorizontalScrollEdgeMask(input: import('@happier-dev/plugin-ui/components').HorizontalScrollEdgeMaskProps) {
+        return <HorizontalScrollEdgeMask {...input} style={input.style as React.ComponentProps<typeof HorizontalScrollEdgeMask>['style']} />;
+    },
+    useModalCardPhoneSheet() {
+        return useSheetDismiss() !== null;
+    },
     renderKeyboardStickyFooter(input: Readonly<{ openedOffset: number; children: React.ReactNode }>) {
         return <KeyboardStickyFooter offset={input.openedOffset}>{input.children}</KeyboardStickyFooter>;
     },

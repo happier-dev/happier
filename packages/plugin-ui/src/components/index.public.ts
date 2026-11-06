@@ -1645,3 +1645,7 @@ export {
   type RemoteViewerModifierState,
 } from '../presentation/media/useRemoteViewerActions.js';
 export { RegistryShelf, RegistryShelfAddControl, RegistrySourcesUnavailable, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistrySourceFailure, type RegistrySourcesUnavailableProps } from './RegistryShelf.js';
+export { AvatarStack, type AvatarStackEntry, type AvatarStackProps } from './AvatarStack.js';
+export { PageLoadingRows, type PageLoadingRowsProps } from './PageLoadingRows.js';
+export { ModalCardFooterActions, type ModalCardFooterActionsProps } from './ModalCardFooterActions.js';
+export { HorizontalScrollEdgeMask, type HorizontalScrollEdgeMaskProps } from './HorizontalScrollEdgeMask.js';
