@@ -1,5 +1,7 @@
 import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
-import { materializeRecipientOperationRequestV1, normalizeRecipientContractV1, resolveRequiredRecipientContractApprovalDigestV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { materializeRecipientOperationRequestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { resolveVoiceCredentialOperationAuthorization, type VoiceCredentialAccessPhase, type VoiceCredentialOperationAuthorization, type VoiceCredentialOperationSelectedSource, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -29,7 +31,6 @@ import {
 
 import {
   resolveAccountVoiceCredential,
-  resolveAccountVoiceCredentialApprovalDigest,
   resolveAccountVoiceCredentialSourceSelection,
 } from './accountVoiceCredential';
 
@@ -420,12 +421,8 @@ export function createAccountVoiceOperationService(input: Readonly<{
     signal: AbortSignal;
   }>) => ReturnType<VoiceAccountOperationService['request']>;
 }>): VoiceAccountOperationAttemptService {
-  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const fetchImpl = input.fetch ?? runtimeFetch;
   const recipientContract = normalizeRecipientContractV1(input.recipientContract);
-  // `null` for a first-party bundled recipient: a release that changes its
-  // mediated operations must not revoke an approval Happier itself authored.
-  const requiredRecipientContractDigest =
-    resolveRequiredRecipientContractApprovalDigestV1(recipientContract);
   const credentialSlotId = recipientContract.credentialSlot.id;
   const credentialBindingPurpose = Object.freeze({
     consumer: input.contribution,
@@ -516,15 +513,6 @@ export function createAccountVoiceOperationService(input: Readonly<{
     }
     if (accountAuthority.source.selection.kind !== 'savedSecret' || !accountAuthority.secret) {
       throw operationError('credential_unavailable');
-    }
-    const requiredApprovalDigest = resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest,
-      savedSecret: accountAuthority.savedSecret,
-    });
-    if (requiredRecipientContractDigest
-      && (!requiredApprovalDigest
-        || accountAuthority.binding?.approvedRecipientContractDigest !== requiredApprovalDigest)) {
-      throw operationError('credential_access_review_required');
     }
     return authorization;
   };
@@ -643,16 +631,15 @@ export function createAccountVoiceOperationService(input: Readonly<{
         }
         const requestBody = materialized.body ? Uint8Array.from(materialized.body).buffer : null;
         mutationDispatched = operation.effect === 'mutation';
-        const response = await fetchImpl(materialized.url, {
+        const response = await fetchWithCredentialRedirectRefusal(materialized.url, {
           method: materialized.method,
           headers: {
             ...materialized.headers,
             ...credentialHeaders,
           },
           ...(requestBody ? { body: requestBody } : {}),
-          redirect: 'error',
           signal: operationSignal.signal,
-        });
+        }, fetchImpl);
         const httpFailure = classifyVoiceProviderHttpFailure(response.status);
         if (mutationDispatched && !response.redirected && httpFailure) {
           rejectedMutation = operationError(httpFailure, responseFailure(response, 'http_status'));

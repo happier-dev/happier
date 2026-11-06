@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createDeferred } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -9,9 +11,10 @@ import { disconnectActiveServerConnection, restoreConnectionToActiveServer } fro
 import {
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
-  resolveRequiredRecipientContractApprovalDigestV1,
+} from '@happier-dev/protocol/plugins/recipientContractV1';
+import {
   VoiceProviderContributionSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 import {
   captureActiveServerAccountScopeLifetime,
   retireActiveServerAccountScopeLifetime,
@@ -23,7 +26,7 @@ import {
   resetSavedSecretCatalogSnapshotsForTests,
   resolveSavedSecretReference,
 } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import { mutateScopedAccountVoiceCredentialSource, resolveAccountVoiceCredentialApprovalDigest } from './accountVoiceCredential';
+import { mutateScopedAccountVoiceCredentialSource } from './accountVoiceCredential';
 import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import {
   applyConnectedAccountCatalogSnapshot,
@@ -162,7 +165,10 @@ let accountScope = { serverId: 'server-1', accountId: 'account-1' };
 
 // The Home's authorized Saved Secret catalog read is the network boundary; the
 // catalog engine, snapshot store and resolver below it stay real.
-const catalogBoundary = { readMaterials: vi.fn(async () => Response.json({ resources: [] })) };
+const catalogBoundary = {
+  readMetadata: vi.fn(async () => Response.json({ resources: [] })),
+  readMaterials: vi.fn(async () => Response.json({ resources: [] })),
+};
 let accountRowBoundary: ((path: string, init?: RequestInit) => Response | null) | null = null;
 
 function createSettings(
@@ -478,7 +484,8 @@ await loadSyncSingletonForTests();
 describe('account Voice operation service', () => {
   beforeEach(async () => {
     accountRowBoundary = null;
-    catalogBoundary.readMaterials.mockClear();
+    catalogBoundary.readMetadata.mockReset();
+    catalogBoundary.readMaterials.mockReset();
     resetConnectedAccountCatalogSnapshotsForTests();
     resetSavedSecretCatalogSnapshotsForTests();
     retireActiveServerAccountScopeLifetime();
@@ -496,10 +503,12 @@ describe('account Voice operation service', () => {
           status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes',
             value: credentialFixture.settings.connectedPurposes ?? { v: 1, bindings: [] } } },
         });
+        if (path === '/v1/account/saved-secrets/resources') return catalogBoundary.readMetadata();
         if (path === '/v1/account/saved-secrets/resources/materials') return catalogBoundary.readMaterials();
         return Response.json({}, { status: 404 });
       },
     });
+    await sync.awaitBootstrapForegroundAcquisition();
     accountScope = { serverId: connection.home.id, accountId: 'account-1' };
     expect(storage.getState().profileScope).toEqual(accountScope);
     expect(captureActiveServerAccountScopeLifetime()).not.toBeNull();
@@ -576,13 +585,16 @@ describe('account Voice operation service', () => {
     const selectedRef = 'happier:shared-secret:v1:resource-voice-bound';
     let persistedSettings: Readonly<Record<string, unknown>> = {};
     let purposeRevision = 1;
+    const entry = {
+      ref: selectedRef, source: 'shared_resource', relationship: 'owner',
+      name: 'Voice key', kind: 'apiKey', revision: 7, materialStatus: 'ready',
+      capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+    };
+    catalogBoundary.readMetadata.mockImplementationOnce(async () => Response.json({ resources: [entry] }));
     catalogBoundary.readMaterials.mockImplementationOnce(async () => Response.json({ resources: [{
       resourceId: 'resource-voice-bound', encryptionMode: 'plain', recipientEnvelope: null,
       storedContent: { t: 'plain', v: { v: 1, name: 'Voice key', kind: 'apiKey', value: 'private-voice-key' } },
-      entry: { ref: selectedRef, source: 'shared_resource', relationship: 'owner',
-        name: 'Voice key', kind: 'apiKey', revision: 7, materialStatus: 'ready',
-        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
-      },
+      entry,
     }] }));
     accountRowBoundary = (path, init) => {
       if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: persistedSettings }, version: 1 });
@@ -745,16 +757,10 @@ describe('account Voice operation service', () => {
       }],
       observedAt: 1,
     });
-    const requiredApproval = resolveRequiredRecipientContractApprovalDigestV1(externalRecipientContract);
-    const approval = resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest: requiredApproval,
-      savedSecret: resolveSavedSecretReference(scope, [], ref),
-    });
-    if (!approval) throw new Error('expected shared approval');
     accountFixture.state = {
       ...accountFixture.state,
       settings: {
-        ...createSettings(ref, 7, approval),
+        ...createSettings(ref, 7, null),
         secrets: [],
       },
     };
@@ -805,14 +811,9 @@ describe('account Voice operation service', () => {
       }],
       observedAt: 1,
     });
-    const approval = resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest: resolveRequiredRecipientContractApprovalDigestV1(externalRecipientContract),
-      savedSecret: resolveSavedSecretReference(scope, [], ref),
-    });
-    if (!approval) throw new Error('expected shared approval');
     accountFixture.state = {
       ...accountFixture.state,
-      settings: { ...createSettings(ref, 3, approval), secrets: [] },
+      settings: { ...createSettings(ref, 3, null), secrets: [] },
     };
     // The owner removed the grant; the AccountChange that would have said so
     // never arrived, so the local catalog still holds a ready row.
@@ -1481,6 +1482,55 @@ describe('account Voice operation service', () => {
     expect(serialized).not.toContain('account-secret');
   });
 
+  it.each([302, 307, 308])('scopes credentials and secret-body replay on a %i provider redirect', async (status) => {
+    let secondHopRequests = 0;
+    let secondHopCredential = false;
+    let secondHopBody = false;
+    let redirect = true;
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += String(chunk);
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener port');
+      if (request.url === '/provider' && redirect) {
+        response.writeHead(status, { Location: `http://localhost:${address.port}/second-hop?secret=not-for-diagnostics` });
+        response.end();
+        return;
+      }
+      if (request.url?.startsWith('/second-hop')) {
+        secondHopRequests += 1;
+        secondHopCredential ||= Boolean(request.headers.authorization);
+        secondHopBody ||= body.length > 0;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"value":"ephemeral-response"}');
+    });
+    server.listen(0);
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener port');
+      const service = createAccountVoiceOperationService({
+        providerId: 'happier.voice.openai/realtime-openai', recipientContract,
+        signal: new AbortController().signal, isCurrent: () => true,
+        // Only the provider network boundary is redirected to our real local listener.
+        fetch: (url, init) => globalThis.fetch(String(url).startsWith('https://api.openai.com/')
+          ? `http://127.0.0.1:${address.port}/provider` : url, init),
+        materializeSecret: async () => 'synthetic-provider-credential',
+      });
+      if (status === 302) await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+      else await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+      expect(secondHopRequests).toBe(status === 302 ? 1 : 0);
+      expect(secondHopCredential).toBe(false);
+      expect(secondHopBody).toBe(false);
+      redirect = false;
+      await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('retains a bounded response failure diagnostic for a followed redirect', async () => {
     const response = new Response('{}', {
       status: 200,
@@ -1502,13 +1552,14 @@ describe('account Voice operation service', () => {
     });
   });
 
-  it('retains the selected secret but blocks use until recipient access is reviewed', async () => {
+  it('uses the selected own secret without a Voice recipient approval record', async () => {
     accountFixture.state = {
       ...accountFixture.state,
       settings: createSettings('secret-1', 1, null),
     };
     const materializeSecret = vi.fn(async () => 'account-secret');
-    const fetch = vi.fn();
+    const fetch = vi.fn(async () => new Response('{"value":"ephemeral"}',
+      { status: 200, headers: { 'content-type': 'application/json' } }));
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
       recipientContract: externalRecipientContract,
@@ -1518,12 +1569,11 @@ describe('account Voice operation service', () => {
       materializeSecret,
     });
 
-    await expect(requestClientAuth(service)).rejects.toMatchObject({
-      code: 'credential_access_review_required',
-      message: 'credential_access_review_required',
+    await expect(requestClientAuth(service)).resolves.toMatchObject({
+      status: 200,
     });
-    expect(materializeSecret).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(materializeSecret).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
     expect(accountFixture.state.settings.voiceSettingsV1.credentialBindings[0]?.credentialBindings.account.api_key)
       .toBe('secret-1');
   });

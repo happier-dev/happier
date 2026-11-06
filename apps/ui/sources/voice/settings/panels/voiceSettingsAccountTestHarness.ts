@@ -129,7 +129,7 @@ export function createElevenLabsSettingsRuntimeTestHarness() {
     });
     const fetch = vi.fn<RuntimeFetch>(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
-        if (url.origin !== 'https://api.elevenlabs.io' || init?.redirect !== 'error'
+        if (url.origin !== 'https://api.elevenlabs.io' || init?.redirect !== 'manual'
             || !new Headers(init.headers).get('xi-api-key')) throw new Error('Unexpected vendor HTTP authority');
         const method = init.method ?? 'GET';
         if (method === 'GET' && url.pathname === '/v1/convai/agents') return response({ agents: [], has_more: false, next_cursor: null });
