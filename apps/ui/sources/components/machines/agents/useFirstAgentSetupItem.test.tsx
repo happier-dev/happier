@@ -38,7 +38,7 @@ afterEach(() => {
 });
 afterAll(() => network.dispose());
 
-async function setup(machines: Machine[], draftMachineId?: string) {
+async function setup(machines: Machine[], draftMachineId?: string, onRender?: () => void) {
     const home = await network.addHome(`https://first-agent-${machines[0]!.id}.test`, 'account-setup');
     setActiveServerId(home.id);
     const scope = { serverId: home.id, accountId: 'account-setup' };
@@ -48,7 +48,10 @@ async function setup(machines: Machine[], draftMachineId?: string) {
             patch: { text: 'Review this change', authoring: { executionTarget: { kind: 'machine', target: { serverId: home.id, machineId: draftMachineId } } } }, materializationIntent: 'userEdit' });
         expect(readNewSessionDraftProjectionFromRepository({ scope, draftId: HOME_COMPOSER_DRAFT_ID })?.draft.selectedMachineId).toBe(draftMachineId);
     }
-    const hook = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(home.id).binding, item: useFirstAgentSetupItem({ phone: false }) }));
+    const hook = await renderHook(() => {
+        onRender?.();
+        return { binding: useServerCredentialAccountScopeBinding(home.id).binding, item: useFirstAgentSetupItem({ phone: false }) };
+    });
     await vi.waitFor(() => expect(hook.getCurrent().binding).toBeTruthy());
     const publishInventory = async () => {
         // Real retained inventory publication, as hydration and daemon observation use it.
@@ -62,6 +65,26 @@ async function setup(machines: Machine[], draftMachineId?: string) {
 }
 
 describe('Home first-agent setup target', () => {
+    it('renders only for the selected name or eligibility, not another Machine fact', async () => {
+        let renders = 0;
+        const rows = Array.from({ length: 196 }, (_, index) => createMachineFixture({ id: `setup-local-${index}`, activeAt: Date.now() }));
+        const { home, hook } = await setup(rows, rows[0]!.id, () => { renders++; });
+        const options = { sourceServerId: home.id };
+        renders = 0;
+        await act(async () => storage.getState().applyMachines([{ ...rows[195]!, metadataVersion: 2,
+            metadata: { ...rows[195]!.metadata!, displayName: 'Other machine' } }], false, options));
+        expect(renders).toBe(0);
+        await act(async () => storage.getState().applyMachines([{ ...rows[0]!, metadataVersion: 2,
+            metadata: { ...rows[0]!.metadata!, displayName: 'Chosen machine' } }], false, options));
+        expect(hook.getCurrent().item?.renderTile({ open: () => {} })).toMatchObject({ props: { machineName: 'Chosen machine' } });
+        expect(renders).toBeGreaterThan(0);
+        await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[rows[0]!.id]!,
+            availability: { kind: 'locked', reason: 'decryption_failed' } }], false, options));
+        expect(hook.getCurrent().item).toBeNull();
+        expect(network.requests).toEqual([]);
+        await hook.unmount();
+    });
+
     it('offers setup on the selectable fallback rather than retained locked or replaced machines', async () => {
         const now = Date.now();
         const { hook } = await setup([

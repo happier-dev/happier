@@ -10,7 +10,8 @@ import type { SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid'
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -29,7 +30,7 @@ export const FIRST_AGENT_SETUP_STEP_ID = 'setup:first-agent';
  * The machine Home's composer will start on: the one its draft names, else the first online machine of
  * the Home (what the composer falls back to). Null while there is none.
  */
-function useHomeComposerMachine(serverId: string) {
+function useHomeComposerMachineId(serverId: string) {
     const reachabilityRevision = useMachineReachabilityRevision();
     const { binding } = useServerCredentialAccountScopeBinding(serverId);
     const scope = binding?.isCurrent() ? binding.scope : null;
@@ -40,13 +41,12 @@ function useHomeComposerMachine(serverId: string) {
         scope ? readNewSessionDraftProjectionFromRepository({ scope, draftId: HOME_COMPOSER_DRAFT_ID })?.draft.selectedMachineId ?? null : null
     ), [scope]);
     const draftMachineId = React.useSyncExternalStore(subscribe, read, read);
-    const machines = useMachineListByServerId()[serverId] ?? null;
-    return React.useMemo(() => {
-        const live = (machines ?? []).filter((machine) => !machine.revokedAt);
-        return live.find((machine) => machine.id === draftMachineId)
-            ?? live.find((machine) => isMachineSelectableForFleet(scope, machine))
-            ?? null;
-    }, [draftMachineId, machines, reachabilityRevision, scope]);
+    const select = React.useCallback((machines: readonly Machine[]) => {
+        const machine = machines.find((candidate) => candidate.id === draftMachineId)
+            ?? machines.find((candidate) => isMachineSelectableForFleet(scope, candidate));
+        return machine && isMachineSelectableForFleet(scope, machine) ? machine.id : null;
+    }, [draftMachineId, reachabilityRevision, scope]);
+    return useMachineListForServerSelection(serverId, select);
 }
 
 /**
@@ -56,15 +56,12 @@ function useHomeComposerMachine(serverId: string) {
 export function useFirstAgentSetupItem(input: Readonly<{ phone: boolean }>): SetupBlockItem | null {
     const router = useRouter();
     const serverId = useActiveServerSnapshot().serverId;
-    const machine = useHomeComposerMachine(serverId);
-    const { binding } = useServerCredentialAccountScopeBinding(serverId);
-    const scope = binding?.isCurrent() ? binding.scope : null;
-    const machineId = machine && isMachineSelectableForFleet(scope, machine) ? machine.id : null;
+    const machineId = useHomeComposerMachineId(serverId);
     // A hub asks no machine anything (DESIGN.md "Hubs"): cached and last-known facts only; the composer
     // and the machine page own the probes that fill them.
     const inventory = useMachineAgents({ serverId, machineId, load: false });
     const { hidden, dismiss } = useHomeSetupDismissals();
-    const machineName = getMachineSentenceName(machine);
+    const machineName = useServerScopedMachine(serverId, machineId, getMachineSentenceName);
     const needed = machineId !== null
         && shouldOfferFirstAgentSetup(inventory)
         && !hidden.has(FIRST_AGENT_SETUP_STEP_ID);

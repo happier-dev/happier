@@ -212,7 +212,8 @@ import {
   type SessionMetadataLike,
 } from '../domains/session/listing/sessionListLookupState';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
-import { areMachineFactsEqual, areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
+import { areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
+import { machineInventoryPresentation } from './machineInventoryPresentation';
 import { isMachineVisibleForSelection, isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { SessionsDomainSlice, StorageState } from './types';
 import { createFriendRequestCountSelector } from './friendRequestCount';
@@ -2483,10 +2484,10 @@ function usePresentedMachineInventory<T>(select: (state: StorageState) => T, pre
 }
 
 export function useLaunchSelectionMachines(presented = true, enabled = true): Machine[] {
-  const reconcile = React.useMemo(createLaunchSelectionReconciler, []);
+  const owner = machineInventoryPresentation(getStorage());
   const select = React.useCallback((state: StorageState) => enabled
-    ? resolveVisibleMachinesForActiveServerFromState(state) : emptyArray as Machine[], [enabled]);
-  return usePresentedMachineInventory(select, presented || !enabled, reconcile);
+    ? owner.active(state, 'launch') : emptyArray as Machine[], [enabled, owner]);
+  return usePresentedMachineInventory(select, presented || !enabled);
 }
 
 function createLaunchSelectionReconciler() {
@@ -2514,16 +2515,6 @@ function createLaunchSelectionReconciler() {
       return projected;
     });
     return previous && previous.length === reconciled.length && reconciled.every((machine, index) => machine === previous[index]) ? previous : reconciled;
-  };
-}
-
-function createLaunchMachineListsReconciler() {
-  const reconcileMachines = createLaunchSelectionReconciler();
-  return (previous: Record<string, Machine[] | null> | undefined, next: Record<string, Machine[] | null>, state: StorageState): Record<string, Machine[] | null> => {
-    const entries = Object.entries(next).map(([key, machines]) => [key, machines
-      ? reconcileMachines(previous?.[key] ?? undefined, machines, state, key) : machines] as const);
-    return previous && entries.length === Object.keys(previous).length && entries.every(([key, machines]) => Object.hasOwn(previous, key) && machines === previous[key])
-      ? previous : Object.fromEntries(entries);
   };
 }
 
@@ -2560,22 +2551,19 @@ export function useMachineRecordListsByServerId(enabled = true): Record<string, 
   }, [machineListByServerId]);
 }
 
-/** Launch projections retain identity across resource-only publications; live resources have their own hooks. */
+/**
+ * Visible server-scoped Machine lists (tombstones removed). Rows have facts semantics: a row keeps its identity
+ * across publications that change only the daemon resource channel (`areMachineFactsEqual`), so a held row's
+ * `daemonStateVersion`, `seq`, `resources` and `managedActivity` can be older than the store's. `launch` keeps
+ * launch inputs instead (`areMachineLaunchInputsEqual`). Readers of the live daemon version or resources read the
+ * raw records (`useMachineRecordListsByServerId`, `useMachine`) or their own resource hooks.
+ * `presented: false` holds the last presented lists while a retained surface is hidden.
+ */
 export function useMachineListByServerId(presented = true, purpose: 'facts' | 'launch' = 'facts', enabled = true): Record<string, Machine[] | null> {
-  const reconcile = React.useMemo(() => purpose === 'launch' ? createLaunchMachineListsReconciler() : createMachineFactListsReconciler(), [purpose]);
+  const owner = machineInventoryPresentation(getStorage());
   const select = React.useCallback((state: StorageState) => enabled
-    ? state.machineListByServerId : EMPTY_MACHINE_LIST_BY_SERVER_ID, [enabled]);
-  const lists = usePresentedMachineInventory(select, presented || !enabled, reconcile) ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
-  return React.useMemo(() => {
-    let changed = false;
-    const visible: Record<string, Machine[] | null> = {};
-    for (const [serverId, machines] of Object.entries(lists)) {
-      const filtered = selectVisibleMachines(machines);
-      if (filtered !== machines) changed = true;
-      visible[serverId] = filtered;
-    }
-    return changed ? visible : lists;
-  }, [lists]);
+    ? owner.lists(state, purpose) : EMPTY_MACHINE_LIST_BY_SERVER_ID, [enabled, owner, purpose]);
+  return usePresentedMachineInventory(select, presented || !enabled);
 }
 
 /**
@@ -2593,44 +2581,16 @@ function readMachineListForServer(state: StorageState, serverId: string): Machin
 }
 
 export function useMachineListForServer(serverId: string, enabled = true, presented = true): Machine[] | null {
-  const reconcile = React.useMemo(() => {
-    const reconcileRows = createMachineFactsReconciler();
-    return (previous: Machine[] | null | undefined, next: Machine[] | null): Machine[] | null =>
-      next ? reconcileRows(previous ?? undefined, next) : next;
-  }, []);
-  const select = React.useCallback((state: StorageState) => enabled ? readMachineListForServer(state, serverId) : null, [enabled, serverId]);
-  const machines = usePresentedMachineInventory(select, presented || !enabled, reconcile);
-  return React.useMemo(() => selectVisibleMachines(machines), [machines]);
-}
-
-function createMachineFactsReconciler() {
-  return (previous: readonly Machine[] | undefined, next: Machine[]): Machine[] => {
-    const reconciled = next.map((machine, index) => {
-      const held = previous?.[index];
-      if (!held || held.id !== machine.id || !areMachineFactsEqual(held, machine)) return machine;
-      carryMachineActivity(held, machine);
-      return held;
-    });
-    return previous && previous.length === reconciled.length && reconciled.every((machine, index) => machine === previous[index])
-      ? previous as Machine[] : reconciled;
-  };
+  const owner = machineInventoryPresentation(getStorage());
+  const select = React.useCallback((state: StorageState) => enabled ? owner.home(state, serverId, 'facts') : null, [enabled, owner, serverId]);
+  return usePresentedMachineInventory(select, presented || !enabled);
 }
 
 export function useActiveMachineFacts(enabled = true, presented = true): Machine[] {
-  const reconcile = React.useMemo(createMachineFactsReconciler, []);
+  const owner = machineInventoryPresentation(getStorage());
   const select = React.useCallback((state: StorageState) => enabled
-    ? resolveVisibleMachinesForActiveServerFromState(state) : emptyArray as Machine[], [enabled]);
-  return usePresentedMachineInventory(select, presented || !enabled, reconcile);
-}
-
-function createMachineFactListsReconciler() {
-  const reconcileRows = createMachineFactsReconciler();
-  return (previous: Record<string, Machine[] | null> | undefined, next: Record<string, Machine[] | null>): Record<string, Machine[] | null> => {
-    const entries = Object.entries(next).map(([key, machines]) => [key, machines
-      ? reconcileRows(previous?.[key] ?? undefined, machines) : machines] as const);
-    return previous && entries.length === Object.keys(previous).length && entries.every(([key, machines]) => Object.hasOwn(previous, key) && machines === previous[key])
-      ? previous : Object.fromEntries(entries);
-  };
+    ? owner.active(state, 'facts') : emptyArray as Machine[], [enabled, owner]);
+  return usePresentedMachineInventory(select, presented || !enabled);
 }
 
 /**

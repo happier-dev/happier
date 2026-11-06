@@ -10,6 +10,7 @@ import {
     useAllMachines,
     useLaunchSelectionMachines,
     useMachineListByServerId,
+    useMachineRecordListsByServerId,
     useMachineListForServer,
     useMachineListStatusForServer,
     useSessionForkSupportSource,
@@ -73,7 +74,7 @@ describe('useAllMachines', () => {
             });
             const held = hook.getCurrent();
             const before = renders;
-            const full = await renderHook(() => useMachineListByServerId());
+            const full = await renderHook(() => useMachineRecordListsByServerId());
             let latest = machine;
             for (let tick = 1; tick <= 5; tick += 1) {
                 const at = now + tick * readMachineOnlineGraceMsFromEnv() / 2;
@@ -89,8 +90,8 @@ describe('useAllMachines', () => {
                 // held across the preceding resource replacement must follow that row too.
                 latest = { ...latest, activeAt: at + 1, updatedAt: at + 1 };
                 await act(async () => storage.getState().applyMachines([latest], false, { sourceServerId: serverId }));
-                expect(held.machines[0]?.activeAt).toBe(at + 1);
-                expect(held.lists[serverId]?.[0]?.activeAt).toBe(at + 1);
+                expect(readMachineActivity(held.machines[0]!).activeAt).toBe(at + 1);
+                expect(readMachineActivity(held.lists[serverId]![0]!).activeAt).toBe(at + 1);
             }
             expect(renders - before).toBe(0);
             expect(hook.getCurrent()).toBe(held);
@@ -110,10 +111,12 @@ describe('useAllMachines', () => {
                 expect(hook.getCurrent().lists[serverId]?.[0]).toEqual(storage.getState().machines[machine.id]);
             }
             const beforeRecovery = hook.getCurrent();
-            clock.mockReturnValue(latest.activeAt + readMachineOnlineGraceMsFromEnv() + 1);
-            await act(async () => storage.getState().applyMachines([{ ...latest, activeAt: Date.now(), updatedAt: Date.now() }], false,
+            clock.mockReturnValue(latest.activeAt + 1);
+            await act(async () => storage.getState().applyMachines([{ ...latest, active: false, activeAt: Date.now(), updatedAt: Date.now() }], false,
                 { sourceServerId: serverId }));
-            expect(hook.getCurrent()).not.toBe(beforeRecovery);
+            expect(hook.getCurrent()).toBe(beforeRecovery);
+            expect(readMachineActivity(hook.getCurrent().machines[0]!).active).toBe(false);
+            expect(readMachineActivity(hook.getCurrent().lists[serverId]![0]!).active).toBe(false);
             await full.unmount();
             await hook.unmount();
         } finally { clock.mockRestore(); storage.setState(previousState); }
