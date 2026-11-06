@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import childProcess, { execFileSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -410,6 +410,42 @@ test('current-source support versions are projected from the workspace SDK toolc
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('current-source install lets queued commands finish and preserves terminal process failures', async (t) => {
+  await fixtureHarness.withTemporaryExternalAuthoringRoot(async (temporaryRoot) => {
+    const consumerRoot = join(temporaryRoot, 'consumer');
+    await mkdir(consumerRoot);
+    const expired = Object.assign(new Error('Queued command was killed before admission'), { code: 'ETIMEDOUT' });
+    const failed = Object.assign(new Error('Canonical install failed'), { code: 'EEXIT', status: 1 });
+    let terminalFailure = false;
+    const subprocess = t.mock.method(childProcess, 'execFileSync', (_command, _args, options) => {
+      // Model the OS cutoff during a healthy admission wait without a ten-minute test.
+      if (options.timeout > 0) throw expired;
+      if (terminalFailure) throw failed;
+      for (const name of ['plugin-sdk', 'plugin-ui']) {
+        const packageRoot = join(consumerRoot, 'node_modules', '@happier-dev', name);
+        mkdirSync(packageRoot, { recursive: true });
+        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`, version: '0.0.0' }));
+        if (name === 'plugin-sdk') {
+          writeFileSync(join(packageRoot, 'API.md'), '> Generated from `api-surface.json`. Do not hand-edit.\n');
+        }
+      }
+    });
+    syncBuiltinESMExports();
+    try {
+      const installed = await fixtureHarness.installCurrentSourceExternalAuthoringPackages({ temporaryRoot, consumerRoot });
+      assert.deepEqual(installed.map(entry => entry.packageName), ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui']);
+      terminalFailure = true;
+      await assert.rejects(
+        () => fixtureHarness.installCurrentSourceExternalAuthoringPackages({ temporaryRoot, consumerRoot }),
+        error => error.cause === failed && error.message.includes('canonical-plugin-development-install'),
+      );
+    } finally {
+      subprocess.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
 });
 
 test('current-source install delegates to the canonical CLI dev build and stages a complete physical closure', async () => {

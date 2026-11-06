@@ -626,7 +626,6 @@ export async function installCurrentSourceExternalAuthoringPackages({
   ], {
     cwd: repositoryRoot,
     stage: 'canonical-plugin-development-install',
-    timeout: 600_000,
   });
 
   return await assertPackedTargetInstallations({
@@ -793,7 +792,7 @@ export async function withTemporaryExternalAuthoringRoot(run) {
   }
 }
 
-function runCommand(command, args, { cwd, env = {}, stage, timeout = 120_000 }) {
+function runCommand(command, args, { cwd, env = {}, stage, timeout }) {
   try {
     execFileSync(command, args, {
       cwd,
