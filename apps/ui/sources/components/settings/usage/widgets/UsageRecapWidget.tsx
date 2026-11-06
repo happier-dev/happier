@@ -2,7 +2,7 @@ import * as React from 'react';
 import { UsageAccountingMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { UsageRecapBody } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataValue, UsageRecapBody, type UsageRecapHighlight } from '@happier-dev/plugin-ui/presentation';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageExportFieldSchema, UsageFileResultSchema, type UsageExportInput } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -12,7 +12,7 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import type { UsageFilterState } from '@/sync/api/account/usageAnalytics';
 import { buildUsageRecapCardModels } from '@/sync/domains/usage/recap/buildUsageRecapCardModels';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { exportUsageTextDocument } from '../usageExportFile';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -106,8 +106,26 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       : shownQuery.session?.length === 1 ? shownQuery.session[0] : undefined;
   const highlights = React.useMemo(
     () => viewModel === null ? [] : buildUsageRecapCardModels({ viewModel, filters, query: shownQuery })
-      .map(highlight => ({ id: highlight.id, testID: highlight.testID, label: highlight.label,
-        value: formatIdentifierLabel(highlight.value), detail: highlight.subtitle })),
+      .map((highlight): UsageRecapHighlight => {
+        const base = { id: highlight.id, testID: highlight.testID, label: highlight.label,
+          value: formatIdentifierLabel(highlight.value), detail: highlight.subtitle };
+        const tokens = formatHappierDataValue(viewModel.overview.totalTokens, getPreferredLanguage());
+        const amount = viewModel.pageCost?.amountUsd;
+        if (highlight.id === 'usage') {
+          const money = amount === null || amount === undefined ? null : formatHappierDataValue(amount, getPreferredLanguage());
+          const value = filters.metric === 'cost' && money !== null ? `${viewModel.pageCost!.selection?.currency ?? viewModel.costPresentation.currency} ${money}`
+            : `${tokens} ${t('usage.tokens')}`;
+          const subtitle = `${tokens} ${t('usage.tokens')}`;
+          return (!`${highlight.value} ${highlight.subtitle}`.includes(tokens) || money !== null && !`${highlight.value} ${highlight.subtitle}`.includes(money))
+            ? { ...base, datum: { label: highlight.label, value, subtitle } } : base;
+        }
+        const count = highlight.id === 'model' ? viewModel.insights.favoriteModelChangeCount
+          : highlight.id === 'rhythm' && highlight.visual?.kind === 'rankBars' ? highlight.visual.rows[0]?.value : undefined;
+        const exact = count === undefined ? undefined : formatHappierDataValue(count, getPreferredLanguage());
+        return exact !== undefined && !highlight.subtitle.includes(exact)
+          ? { ...base, datum: { label: highlight.value, value: `${exact} ${t(highlight.id === 'model' ? 'usage.modelSwitches' : 'usage.events')}`, subtitle: highlight.label } }
+          : base;
+      }),
     [viewModel, filters, shownQuery],
   );
   useWidgetFrameBodyCaption(

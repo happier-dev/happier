@@ -14,6 +14,7 @@ import { UsageRecapWidget } from './UsageRecapWidget';
 import { Modal } from '@/modal';
 import { UsageRecapComposer } from './recap/UsageRecapComposer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import type { UsageBodyProps } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -31,7 +32,7 @@ afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetim
   vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function mount(denied = false, queryResponse?: () => Response | Promise<Response>, hasAccounting = true, requestedQuery = shownQuery,
-  accountingStatus: 'available' | 'pending' | 'error' = 'available') {
+  accountingStatus: 'available' | 'pending' | 'error' = 'available', shownAccounting = accounting) {
   // Load the real lazy Action entry before a short assertion wait; no internal owner is mocked.
   await import('@/sync/ops/actions/defaultActionExecutor');
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://table-export.test', accountId: 'a' }],
@@ -40,7 +41,7 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
   const server = home.homes.a!;
   const authority = { serverId: server.id, accountId: 'a' };
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-  const slice = { key: getUsageQueryKey(shownQuery), requestedQuery: shownQuery, shownQuery, ...(hasAccounting ? { accounting } : {}),
+  const slice = { key: getUsageQueryKey(shownQuery), requestedQuery: shownQuery, shownQuery, ...(hasAccounting ? { accounting: shownAccounting } : {}),
     pending: accountingStatus === 'pending', sources: [{ source: 'accounting', status: accountingStatus }] };
   const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice,
     model: { requestedQuery: { query: { ...shownQuery, period: { startMs: 1000, endMs: 1900 } }, authority },
@@ -50,6 +51,14 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
 }
 
 describe('Recap table/text controls through the admitted export Action', () => {
+  it('reveals exact summary money and token basis behind abbreviated recap highlights', async () => {
+    const precise = { ...accounting, totals: { ...accounting.totals,
+      tokens: { ...accounting.totals.tokens, total: 4186010 }, cost: { ...accounting.totals.cost, reportedUsd: 3.125 } } };
+    const screen = await mount(false, undefined, true, shownQuery, 'available', precise);
+    const datum = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'usage-recap-usage-card.detail');
+    expect(datum?.props.datum.value).toContain('3.125');
+    expect(datum?.props.datum.subtitle).toContain('4,186,010');
+  });
   it('prepares the private composer from the facts actually shown while a different scope is pending', async () => {
     const opened = vi.spyOn(Modal, 'show').mockReturnValue('recap-composer');
     const screen = await mount(false, undefined, true, normalizeUsageQuery({ agents: ['codex'], machines: ['different-machine'] }));
