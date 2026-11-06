@@ -19,6 +19,13 @@ type ChartTooltipProps = Readonly<{
     accessibilityLabel?: string;
     /** Select the neutral datum without adding a nested interactive control. */
     onSelect?: () => void;
+    keyboard?: boolean;
+    /** Existing chart controls retain their own keyboard navigation, selection and hit areas. */
+    renderTrigger?: (interaction: Readonly<{
+        onHoverChange: (hovered: boolean) => void;
+        onFocusChange: (focused: boolean) => void;
+        onPress: () => void;
+    }>) => React.ReactNode;
     /**
      * Layout style for the trigger wrapper — charts whose marks own their flex
      * sizing (e.g. 100%-stacked composition segments with `flexGrow`) pass it
@@ -38,14 +45,6 @@ const styles = StyleSheet.create((theme) => ({
         // width; fixed-size children are unaffected (they keep their own width,
         // stretch only governs the otherwise-auto cross size).
         alignSelf: 'stretch',
-    },
-    // Inner pressable fills the trigger wrapper so the hover/press target covers
-    // the whole mark area even when `triggerStyle` sizes the wrapper (flexGrow
-    // segments, full-height bar slots) beyond the visible fill.
-    triggerFill: {
-        minWidth: 0,
-        alignSelf: 'stretch',
-        flexGrow: 1,
     },
     tooltipContent: {
         minWidth: 156,
@@ -104,36 +103,56 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
     // never show" (D-R4-3 root cause #3). Touch devices emit no hover events,
     // so the ref stays false there and press keeps plain toggle semantics.
     const hoveredRef = React.useRef(false);
+    const focusedRef = React.useRef(false);
+    const openedByFocusRef = React.useRef(false);
     const resolvedTriggerTestID = triggerTestID ?? (testID ? `${testID}-trigger` : undefined);
 
     if (disabled) {
         return <>{children}</>;
     }
 
+    const interaction = {
+        onPress: () => {
+            props.onSelect?.();
+            // Touch on web may focus before pressing. That first press keeps its newly opened value visible.
+            const keepOpen = hoveredRef.current || openedByFocusRef.current;
+            openedByFocusRef.current = false;
+            setOpen((current) => keepOpen ? true : !current);
+        },
+        onFocusChange: (focused: boolean) => {
+            focusedRef.current = focused;
+            openedByFocusRef.current = focused;
+            if (focused) { props.onSelect?.(); setOpen(true); }
+            else if (!hoveredRef.current) setOpen(false);
+        },
+        onHoverChange: (hovered: boolean) => {
+            hoveredRef.current = hovered;
+            if (hovered) { props.onSelect?.(); setOpen(true); }
+            else if (!focusedRef.current) setOpen(false);
+        },
+    };
+
     return (
         <>
-            <View ref={anchorRef} collapsable={false} style={[styles.trigger, triggerStyle]}>
-                <Pressable
+            {props.renderTrigger ? <View ref={anchorRef} collapsable={false} pointerEvents="box-none" style={[styles.trigger, triggerStyle]}>
+                {props.renderTrigger(interaction)}
+            </View> : <Pressable
+                    ref={anchorRef}
+                    collapsable={false}
                     testID={resolvedTriggerTestID}
                     accessibilityRole="button"
+                    focusable={props.keyboard !== false}
+                    accessible={props.keyboard !== false}
                     accessibilityLabel={props.accessibilityLabel ?? `${title}: ${value}`}
-                    onPress={() => { props.onSelect?.(); setOpen((current) => (hoveredRef.current ? true : !current)); }}
-                    onFocus={() => { props.onSelect?.(); setOpen(true); }}
-                    onBlur={() => { if (!hoveredRef.current) setOpen(false); }}
-                    onHoverIn={() => {
-                        props.onSelect?.();
-                        hoveredRef.current = true;
-                        setOpen(true);
-                    }}
-                    onHoverOut={() => {
-                        hoveredRef.current = false;
-                        setOpen(false);
-                    }}
-                    style={styles.triggerFill}
+                    onPress={(event) => { event?.stopPropagation?.(); interaction.onPress(); }}
+                    onFocus={() => interaction.onFocusChange(true)}
+                    onBlur={() => interaction.onFocusChange(false)}
+                    onHoverIn={() => interaction.onHoverChange(true)}
+                    onHoverOut={() => interaction.onHoverChange(false)}
+                    style={[styles.trigger, triggerStyle]}
                 >
                     {children}
-                </Pressable>
-            </View>
+                </Pressable>}
             <Popover
                 open={open}
                 anchorRef={anchorRef}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { UsageChartInteractions } from '../usageChartInteractions';
 import { useUsageModelPricesAction } from './UsageModelPrices';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -93,11 +94,9 @@ export type UsageWidgetBodyInput = Readonly<{
 export function UsageWidgetBody(
   props: UsageWidgetBodyInput,
 ): React.ReactElement {
-  if (props.id === 'usage_sources')
-    return (
-      <UsageSourcesWidget input={props.input} serverId={props.serverId} testID={props.testID} />
-    );
-  return <UsageQueryWidgetBody {...props} id={props.id} />;
+  return <UsageChartInteractions>{props.id === 'usage_sources'
+    ? <UsageSourcesWidget input={props.input} serverId={props.serverId} testID={props.testID} />
+    : <UsageQueryWidgetBody {...props} id={props.id} />}</UsageChartInteractions>;
 }
 
 function UsageQueryWidgetBody(
