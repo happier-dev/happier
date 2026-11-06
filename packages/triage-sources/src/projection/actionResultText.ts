@@ -33,29 +33,39 @@ function fittingJsonStringPrefixLength(text: string, availableBytes: number): nu
 export function fitActionResultTextV1<TResult>(
   text: string,
   project: (text: string, truncated: boolean) => TResult,
+  budget?: Readonly<{ maxSerializedBytes: number; measureSerializedBytes(result: TResult): number }>,
 ): TResult {
+  const maximum = budget?.maxSerializedBytes ?? EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES;
+  const measure = budget?.measureSerializedBytes ?? measureExternalActionResultResponseEnvelopeUtf8BytesV1;
+  const fits = budget === undefined ? isExternalActionResultWithinResponseEnvelopeLimitV1 : (value: TResult) => measure(value) <= maximum;
+  if (!Number.isSafeInteger(maximum) || maximum <= 0) throw new RangeError('invalid_serialized_boundary');
   const complete = project(text, false);
-  if (isExternalActionResultWithinResponseEnvelopeLimitV1(complete)) return complete;
+  if (fits(complete)) return complete;
   const empty = project('', true);
-  const emptyBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(empty);
-  if (emptyBytes > EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) {
+  const emptyBytes = measure(empty);
+  if (emptyBytes > maximum) {
     throw new RangeError('action_result_base_exceeds_serialized_boundary');
   }
 
-  let end = fittingJsonStringPrefixLength(text, EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - emptyBytes);
+  let end = fittingJsonStringPrefixLength(text, maximum - emptyBytes);
   if (end === text.length && end > 0) {
     const last = text.charCodeAt(end - 1);
     end -= last >= 0xdc00 && last <= 0xdfff ? 2 : 1;
   }
   const fitted = project(text.slice(0, end), true);
-  if (isExternalActionResultWithinResponseEnvelopeLimitV1(fitted)) return fitted;
+  if (fits(fitted)) return fitted;
 
   let low = 0;
   let high = end;
   while (low < high) {
     const candidate = Math.ceil((low + high) / 2);
-    if (isExternalActionResultWithinResponseEnvelopeLimitV1(project(text.slice(0, candidate), true))) low = candidate;
+    const wholePoint = candidate > 0 && candidate < text.length
+      && text.charCodeAt(candidate - 1) >= 0xd800 && text.charCodeAt(candidate - 1) <= 0xdbff
+      && text.charCodeAt(candidate) >= 0xdc00 && text.charCodeAt(candidate) <= 0xdfff ? candidate - 1 : candidate;
+    if (fits(project(text.slice(0, wholePoint), true))) low = candidate;
     else high = candidate - 1;
   }
-  return project(text.slice(0, low), true);
+  const wholePoint = low > 0 && low < text.length && text.charCodeAt(low - 1) >= 0xd800 && text.charCodeAt(low - 1) <= 0xdbff
+    && text.charCodeAt(low) >= 0xdc00 && text.charCodeAt(low) <= 0xdfff ? low - 1 : low;
+  return project(text.slice(0, wholePoint), true);
 }

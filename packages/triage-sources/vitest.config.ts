@@ -24,6 +24,10 @@ const repoRoot = resolve(packageRoot, '../..');
  */
 const workspacePackages: readonly WorkspacePackageSpec[] = [
   {
+    packageName: '@happier-dev/cli-common',
+    packageSourceRoot: resolve(repoRoot, 'packages/cli-common/src'),
+  },
+  {
     packageName: '@happier-dev/plugin-sdk',
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
   },
