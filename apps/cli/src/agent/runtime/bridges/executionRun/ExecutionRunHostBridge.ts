@@ -303,6 +303,8 @@ async function prepareExecutionRunManagerStartParams(
 
 export type ExecutionRunHostBridgeOptions = Readonly<{
   admitStart?: () => Promise<void>;
+  /** Installed host Account, captured by composition rather than supplied by a Run request. */
+  runtimeAccountId?: string;
   parentProvider: ACPProvider;
   cwd: string;
   sendAcp: ExecutionRunTranscriptPublisher;
@@ -429,6 +431,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly reviewComments: ReviewRunCommentService | undefined;
   private readonly checkConnectedServicesGenerationCurrent: ExecutionRunHostBridgeOptions['checkConnectedServicesGenerationCurrent'];
   private readonly machineId: string | null;
+  private readonly runtimeAccountId: string | undefined;
   private readonly resolveProvidersFeatureEnabled: ExecutionRunHostBridgeOptions['resolveProvidersFeatureEnabled'];
   private readonly resolveAccountSettingsSnapshot: ExecutionRunHostBridgeOptions['resolveAccountSettingsSnapshot'];
   private readonly resolveAccountSettings: ExecutionRunHostBridgeOptions['resolveAccountSettings'];
@@ -1147,6 +1150,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.machineId = typeof opts.machineId === 'string' && opts.machineId.trim().length > 0
       ? opts.machineId.trim()
       : null;
+    this.runtimeAccountId = opts.runtimeAccountId;
     this.resolveProvidersFeatureEnabled = opts.resolveProvidersFeatureEnabled;
     this.resolveAccountSettingsSnapshot = opts.resolveAccountSettingsSnapshot;
     this.resolveAccountSettings = opts.resolveAccountSettings;
@@ -1611,6 +1615,27 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return this.runs.get(runId) ?? null;
   }
 
+  /** Request reads never expose detached work on the strength of Machine access alone. */
+  async getForRequest(runId: string, scopeSessionId: string | null, requester: ExecutionRunState['requesterWorkAttributionV1']): Promise<ExecutionRunState | null> {
+    if (!this.runs.has(runId)) await this.recoverRetainedRuns();
+    const run = this.runs.get(runId);
+    return run && this.isRunInRequestScope(run, scopeSessionId, requester) ? run : null;
+  }
+
+  private isRunInRequestScope(run: ExecutionRunState, scopeSessionId: string | null, requester: ExecutionRunState['requesterWorkAttributionV1']): boolean {
+    // 0.2 Run starts were same-Account RPCs; absent attribution belongs to the
+    // installed Account. Explicit starting ownership always takes precedence.
+    const ownerAccountId = run.requesterWorkAttributionV1?.accountId ?? this.runtimeAccountId;
+    return run.sessionId === scopeSessionId && (run.sessionId !== null
+      || Boolean(requester && ownerAccountId === requester.accountId));
+  }
+
+  /** Preserve Session scope-mismatch reporting without revealing detached Run existence. */
+  hasAttachedRun(runId: string): boolean {
+    const run = this.runs.get(runId);
+    return Boolean(run && run.sessionId !== null);
+  }
+
   private captureRetainedState(runId: string): ExecutionRunState | null {
     const run = this.runs.get(runId);
     if (!run) return null;
@@ -1801,7 +1826,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(requests.length === pending.length ? { requests } : {}) } : undefined;
   }
 
-  private buildPublicState(run: ExecutionRunState): ExecutionRunPublicState {
+  projectPublicState(run: ExecutionRunState): ExecutionRunPublicState {
     const ctrl = this.controllers.get(run.runId) ?? null;
     const inputTurns = this.projectInputTurns(run, ctrl ?? undefined);
     const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl, this.readRunProfileCatalog(run.runId));
@@ -1819,21 +1844,23 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
   getPublic(runId: string): ExecutionRunPublicState | null {
     const run = this.runs.get(runId);
-    return run ? this.buildPublicState(run) : null;
+    return run ? this.projectPublicState(run) : null;
   }
 
   listPublic(): readonly ExecutionRunPublicState[] {
     const out: ExecutionRunPublicState[] = [];
     for (const run of this.runs.values()) {
-      out.push(this.buildPublicState(run));
+      out.push(this.projectPublicState(run));
     }
     return out;
   }
 
   listPublicForRequest(
     request: ExecutionRunListRequest,
-    scopeSessionId?: string | null,
-  ): readonly ExecutionRunPublicState[] {
+    scopeSessionId: string | null,
+    requester?: ExecutionRunState['requesterWorkAttributionV1'],
+  ): readonly ExecutionRunPublicState[] | null {
+    if (scopeSessionId === null && !requester) return null;
     const requestedBackendId =
       typeof request.backendId === 'string' && request.backendId.trim().length > 0 ? request.backendId.trim() : null;
     const requestedBackendTargetKey =
@@ -1844,7 +1871,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
     const selected: ExecutionRunState[] = [];
     for (const run of this.runs.values()) {
-      if (scopeSessionId !== undefined && run.sessionId !== scopeSessionId) {
+      if (!this.isRunInRequestScope(run, scopeSessionId, requester)) {
         continue;
       }
       if (requestedBackendTargetKey && buildBackendTargetKeyV2(readBackendTargetRefV2(run.backendTarget)) !== requestedBackendTargetKey) {
@@ -1861,7 +1888,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
     const sorted = selected.sort(compareExecutionRunStatesForList);
     const bounded = requestedLimit === null ? sorted : sorted.slice(0, requestedLimit);
-    return bounded.map((run) => this.buildPublicState(run));
+    return bounded.map((run) => this.projectPublicState(run));
   }
 
   getDepthByRunId(runId: string): number | null {

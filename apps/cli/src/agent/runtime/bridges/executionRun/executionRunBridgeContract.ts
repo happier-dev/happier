@@ -20,6 +20,7 @@ import type {
   ExecutionRunState,
 } from './executionRunTypes';
 import type { ExecutionRunUserTranscriptDirective } from '@happier-dev/protocol';
+import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { RuntimePermissionResponseOutcome } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStore } from './executionRunPermissionResponseTarget';
@@ -41,6 +42,9 @@ export interface ExecutionRunHostBridgeContract {
   waitForOutput(runId: string, observation: import('@happier-dev/protocol/reviews/reviewNarration').ExecutionRunOutputObservation, signal?: AbortSignal): Promise<void>;
   recoverRetainedRuns(): Promise<void>;
   get(runId: string): ExecutionRunState | null;
+  getForRequest(runId: string, scopeSessionId: string | null, requester: RequesterWorkAttributionV1 | undefined): Promise<ExecutionRunState | null>;
+  hasAttachedRun(runId: string): boolean;
+  projectPublicState(run: ExecutionRunState): ExecutionRunPublicState;
   getRunningCount(): number;
   getStructuredMeta(runId: string): { kind: string; payload: unknown } | null;
   getLatestToolResult(runId: string): unknown | null;
@@ -60,8 +64,9 @@ export interface ExecutionRunHostBridgeContract {
   listPublic(): readonly ExecutionRunPublicState[];
   listPublicForRequest(
     request: ExecutionRunListRequest,
-    scopeSessionId?: string | null,
-  ): readonly ExecutionRunPublicState[];
+    scopeSessionId: string | null,
+    requester?: RequesterWorkAttributionV1,
+  ): readonly ExecutionRunPublicState[] | null;
   getDepthByRunId(runId: string): number | null;
   getDepthByCallId(callId: string, scopeSessionId?: string | null): number | null;
   start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult>;
@@ -147,3 +152,7 @@ export interface ExecutionRunHostBridgeContract {
     }>,
   ): Promise<ExecutionRunActionResult>;
 }
+
+/** Ingress can project an admitted record, but cannot read the host's unscoped store. */
+export type ExecutionRunRequestBridgeContract<T extends ExecutionRunHostBridgeContract = ExecutionRunHostBridgeContract> = Omit<T,
+  'get' | 'getPublic' | 'listPublic' | 'getStructuredMeta' | 'getLatestToolResult' | 'getDepthByRunId' | 'getDepthByCallId'>;

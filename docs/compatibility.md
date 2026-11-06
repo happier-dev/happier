@@ -79,6 +79,21 @@ continue to answer on material changes. The updated UI and daemon load together.
 Older strict development daemons reject the field. No released contract,
 persistence format, protocol epoch or migration changes.
 
+## Execution Run starting Account (0.2 → 0.3)
+
+The Run store owns requester-scoped ID reads and lists. A detached Run's stored
+starting Account takes precedence. If starting attribution is absent, the Run
+belongs to the daemon's captured installed Account. Missing installed identity
+does not grant access. Foreign requesters receive the existing not-found refusal
+for ID operations and cannot see the Run in lists. This rule adds no migration,
+backfill, version flag or special handling for earlier 0.3 development builds.
+
+The inspected 0.2 source at `512915f3ccf4a29a8454b74ad9db6ca72079d916`
+routes Run starts within one Account (`apps/server/sources/app/api/socket/resolveRpcCallTarget.ts:26`). Its only
+cross-Account RPC exception is the approval family, which excludes Run start
+(`packages/protocol/src/rpc.ts:331`). The installed identity is supplied by host
+composition; neither a Run request nor the requester chooses the fallback owner.
+
 ## Home-owned Machine presence (unreleased 0.3)
 
 Home stamps `presenceProtocolVersion: 1` on published Machine rows. This additive

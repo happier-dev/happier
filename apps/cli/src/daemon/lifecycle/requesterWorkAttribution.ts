@@ -9,15 +9,18 @@ export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1S
 
 /** Carry already-admitted requester facts into host-owned work, never public RPC input. */
 export function projectRpcRequesterWorkAttribution(context: Readonly<Partial<Pick<RpcHandlerContext,
-  'signal' | 'machineAdmission' | 'localActionContext' | 'requesterSessionBootstrap'>> & {
+  'signal' | 'machineAdmission' | 'callerInputAuthorization' | 'localActionContext' | 'requesterSessionBootstrap'>> & {
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
   }> | undefined, serverId?: string): RequesterWorkAttributionV1 | undefined {
   const admission = context?.machineAdmission;
+  const binding = context?.callerInputAuthorization?.binding;
   const localRoot = context?.authenticatedLocalRootCustody ?? context?.localActionContext?.authenticatedLocalRootCustody;
   // The authenticated Machine stamp wins over any in-process inherited context.
   const candidate = admission ? { serverId, accountId: admission.actorAccountId,
     machineId: admission.machineId, installationId: admission.installationId }
+    : binding ? { serverId: serverId ?? binding.serverIdentityId, accountId: binding.accountId,
+      machineId: binding.machineId, installationId: binding.installationId }
     : localRoot ? { serverId: serverId ?? localRoot.serverIdentityId, accountId: localRoot.accountId,
       machineId: localRoot.machineId, installationId: localRoot.installationId }
     : context?.requesterWorkAttributionV1 ?? context?.localActionContext?.requesterWorkAttributionV1

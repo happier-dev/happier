@@ -175,7 +175,9 @@ describe('execution lifecycle restart recovery', () => {
   });
 
   it.each([null, 'parent-session'])('restores resumable control state independently of marker visibility (%s)', async (sessionId) => {
-    const run = state(sessionId, 'resumable');
+    const run = { ...state(sessionId, 'resumable'), requesterWorkAttributionV1: {
+      serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation',
+    } };
     const runs = new Map([[run.runId, run]]);
     await finishExecutionRun({
       runId: run.runId, next: { status: 'succeeded', finishedAtMs: 2 }, toolResult: { output: 'Finished text' },
@@ -198,7 +200,7 @@ describe('execution lifecycle restart recovery', () => {
     });
     expect(restarted.getPublic(run.runId)?.lifecycle).toEqual({ v: 1, state: 'recoverable' });
     expect(JSON.stringify(restarted.get(run.runId))).not.toContain('future');
-    expect(restarted.listPublicForRequest({}, sessionId).map((item) => item.runId)).toEqual([run.runId]);
+    expect(restarted.listPublicForRequest({}, sessionId, run.requesterWorkAttributionV1)?.map((item) => item.runId)).toEqual([run.runId]);
     const restored = restarted.get(run.runId);
     if (!restored) throw new Error('Expected restored control state');
     let resumedThread: string | undefined;

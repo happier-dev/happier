@@ -3981,7 +3981,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         .toMatchObject({ status: 'failed', error: { code: 'VOICE_AGENT_START_FAILED' } });
       expect(disposed).toBe(true);
       expect(rpc.getInFlightRequestCount()).toBe(0);
-      expect(captured.manager?.listPublicForRequest({}, sessionId).some(run => run.status === 'running')).toBe(false);
+      expect(captured.manager?.listPublicForRequest({}, sessionId)?.some(run => run.status === 'running')).toBe(false);
     } finally {
       await native?.dispose();
       await captured.manager?.dispose();

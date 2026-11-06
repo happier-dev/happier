@@ -1,3 +1,4 @@
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { randomUUID } from 'node:crypto';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
@@ -147,6 +148,7 @@ import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createExecutionBudgetRegistry } from '@/daemon/executionBudget/createExecutionBudgetRegistry';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import type { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import type { ExecutionRunRequestBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
 import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
@@ -633,7 +635,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       : {}),
   });
   registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager });
-  let detachedExecutionRunManager: ExecutionRunHostBridge | null = null;
+  let detachedExecutionRunManager: ExecutionRunRequestBridgeContract<ExecutionRunHostBridge> | null = null;
   const executionBudgetRegistry = params.deps?.executionBudgetRegistry ?? createExecutionBudgetRegistry();
   const executionRunRegistration = registerExecutionRunHandlers(rpcHandlerManager, {
     sessionId: null,
@@ -699,6 +701,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     if (!detachedExecutionRunManager) {
       return { ok: false, errorCode: 'execution_run_target_unavailable', error: 'Execution-run target unavailable' };
     }
+    const run = await detachedExecutionRunManager.getForRequest(runId, null,
+      projectRpcRequesterWorkAttribution(context, params.deps?.currentServerId ?? configuration.activeServerId));
+    if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Execution run not found' };
     return await detachedExecutionRunManager.completePermissionRequest(runId, {
       requestId,
       ...(structuredAnswer?.success ? { answers: structuredAnswer.data } : { approved: input.approved as boolean }),

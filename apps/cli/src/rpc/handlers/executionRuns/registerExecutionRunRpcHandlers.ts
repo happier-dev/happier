@@ -8,6 +8,8 @@ import { ExecutionRunFollowFrontierRequestSchema, ExecutionRunFollowFrontierResp
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import type { ExecutionRunRequestBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ExecutionRunTranscriptPublisher } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import type {
@@ -290,7 +292,7 @@ export function registerExecutionRunRpcHandlers(
     : undefined;
 
   const budgetRegistry = ctx.budgetRegistry ?? createExecutionBudgetRegistry(policy.maxConcurrentRuns);
-  const manager = new ExecutionRunHostBridge({
+  const host = new ExecutionRunHostBridge({
     resolveVoicePromptPreparation: async ({ sessionId, signal, workingDirectory }) => {
       const credentials = await ctx.readPromptCredentials?.();
       return await resolveCliVoicePromptPreparation({ credentials, sessionId, signal,
@@ -298,6 +300,7 @@ export function registerExecutionRunRpcHandlers(
         directory: workingDirectory ?? ctx.cwd });
     },
     admitStart: admitDaemonExecutionRunStart,
+    ...(ctx.runtimeAccountId ? { runtimeAccountId: ctx.runtimeAccountId } : {}),
     parentProvider: ctx.parentProvider,
     cwd: ctx.cwd,
     sendAcp: ctx.sendAcp,
@@ -345,7 +348,8 @@ export function registerExecutionRunRpcHandlers(
     },
     ...profileCatalogOptions,
   });
-  ctx.onManagerCreated?.(manager);
+  ctx.onManagerCreated?.(host);
+  const manager: ExecutionRunRequestBridgeContract<ExecutionRunHostBridge> = host;
 
   function isExecutionRunsEnabled(): boolean {
     return resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled';
@@ -412,8 +416,8 @@ export function registerExecutionRunRpcHandlers(
       const parsed = ExecutionRunTurnStreamStartV2RequestSchema.safeParse(request);
       if (!parsed.success) return invalidParams();
       await manager.recoverRetainedRuns();
-      const run = manager.get(parsed.data.runId);
-      if (!run || run.sessionId !== ctx.sessionId) {
+      const run = await manager.getForRequest(parsed.data.runId, ctx.sessionId, projectRpcRequesterWorkAttribution(rpcContext, ctx.serverId));
+      if (!run) {
         return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
       }
       const refusal = admitExecutionRunCallerTurn(run, rpcContext?.callerAuthority);
@@ -442,8 +446,8 @@ export function registerExecutionRunRpcHandlers(
       const parsed = ExecutionRunUserTranscriptCommitRequestSchema.safeParse(request);
       if (!parsed.success) return invalidParams();
       await manager.recoverRetainedRuns();
-      const run = manager.get(parsed.data.runId);
-      if (!run || run.sessionId !== ctx.sessionId) {
+      const run = await manager.getForRequest(parsed.data.runId, ctx.sessionId, projectRpcRequesterWorkAttribution(rpcContext, ctx.serverId));
+      if (!run) {
         return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
       }
       const refusal = admitExecutionRunCallerTurn(run, rpcContext?.callerAuthority);

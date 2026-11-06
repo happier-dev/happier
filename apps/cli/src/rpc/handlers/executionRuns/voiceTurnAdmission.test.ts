@@ -24,6 +24,7 @@ describe('Voice run caller-turn admission', () => {
   let directory: string;
   const managers: ExecutionRunHostBridge[] = [];
   const scope = 'voice-session';
+  const requesterWorkAttributionV1 = { serverId: 'home', accountId: 'voice-owner', machineId: 'machine', installationId: 'installation' };
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'happier-voice-turn-admission-'));
@@ -43,6 +44,7 @@ describe('Voice run caller-turn admission', () => {
     const run: ExecutionRunState = {
       runId: 'voice-run', callId: 'voice-call', sidechainId: 'voice-sidechain',
       sessionId, depth: 0, intent,
+      requesterWorkAttributionV1,
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
       instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable',
       runClass: 'long_lived', ioMode: 'streaming', status: 'cancelled',
@@ -88,7 +90,7 @@ describe('Voice run caller-turn admission', () => {
     const send = vi.spyOn(manager, 'send');
     const action = vi.spyOn(manager, 'applyAction');
     const deps = createDeps(manager, sessionId);
-    const opts = { authority: 'account_automation' as const };
+    const opts = { authority: 'account_automation' as const, requesterWorkAttributionV1 };
     const result = input.kind === 'stream'
       ? await deps.executionRunStreamStart!(input.sessionId, { runId: 'voice-run', message: 'Agent input' }, opts)
       : input.kind === 'send'

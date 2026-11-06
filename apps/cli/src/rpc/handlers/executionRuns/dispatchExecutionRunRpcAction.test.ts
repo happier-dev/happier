@@ -35,10 +35,22 @@ function unusedBridgeMethod(): never {
   throw new Error('execution-run bridge should not be used for unavailable runtime action families');
 }
 
-function createUnusedExecutionRunBridge(): ExecutionRunHostBridgeContract {
+function createUnusedExecutionRunBridge(
+  overrides: Partial<ExecutionRunHostBridgeContract> = {},
+): ExecutionRunHostBridgeContract {
   return {
     recoverRetainedRuns: async () => {},
     get: () => null,
+    async getForRequest(runId, sessionId) {
+      const run = this.get(runId);
+      return run?.sessionId === sessionId ? run : null;
+    },
+    hasAttachedRun(runId) { return this.get(runId)?.sessionId != null; },
+    projectPublicState(run) {
+      const projected = this.getPublic(run.runId);
+      if (!projected) return unusedBridgeMethod();
+      return projected;
+    },
     getRunningCount: () => 0,
     getStructuredMeta: () => null,
     getLatestToolResult: () => null,
@@ -64,6 +76,7 @@ function createUnusedExecutionRunBridge(): ExecutionRunHostBridgeContract {
     respondToPermissionRequest: async () => unusedBridgeMethod(),
     completePermissionRequest: async () => unusedBridgeMethod(),
     applyAction: async () => unusedBridgeMethod(),
+    ...overrides,
   };
 }
 
@@ -403,14 +416,14 @@ describe('createExecutionRunRpcActionExecutor', () => {
       instructions: '', permissionMode: 'yolo', retentionPolicy: 'resumable', runClass: 'long_lived',
       ioMode: 'streaming', status: 'running', startedAtMs: 1 };
     const deps = createExecutionRunRpcActionDeps({
-      manager: { ...createUnusedExecutionRunBridge(), get: id => id === run.runId ? run : null,
+      manager: createUnusedExecutionRunBridge({ get: id => id === run.runId ? run : null,
         send: (id, params) => sendBackendLongLivedRun({ runId: id, params,
           runs: new Map([[run.runId, run]]), controllers: new Map(), budgetRegistry: null,
           createRuntime: () => { throw new Error('Refused input must not open a provider'); },
           maxTurns: null, getNowMs: () => 1, finishRun: async () => {}, sendAcp: async () => {},
           parentProvider: 'codex', streamedTranscriptSession: null, writeActivityMarker: async () => {},
         }),
-      }, context: { sessionId: null, cwd: '/workspace' },
+      }), context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true,
     });
@@ -461,11 +474,10 @@ describe('createExecutionRunRpcActionExecutor', () => {
       instructions: 'Continue the workflow.',
     } satisfies ExecutionRunState;
     const deps = createExecutionRunRpcActionDeps({
-      manager: {
-        ...createUnusedExecutionRunBridge(),
+      manager: createUnusedExecutionRunBridge({
         get: (runId) => runId === run.runId ? run : null,
         send,
-      },
+      }),
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
@@ -865,8 +877,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     const stop = vi.fn(async () => ({ ok: true }));
     const applyAction = vi.fn(async () => ({ ok: true }));
     const executor = createExecutionRunRpcActionExecutor({
-      manager: {
-        ...createUnusedExecutionRunBridge(),
+      manager: createUnusedExecutionRunBridge({
         start,
         get,
         send,
@@ -876,7 +887,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         cancelTurnStream,
         stop,
         applyAction,
-      },
+      }),
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
@@ -935,8 +946,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     const stop = vi.fn(async () => ({ ok: true }));
     const applyAction = vi.fn(async () => ({ ok: true }));
     const executor = createExecutionRunRpcActionExecutor({
-      manager: {
-        ...createUnusedExecutionRunBridge(),
+      manager: createUnusedExecutionRunBridge({
         get: (runId) => runId === foreignRun.runId ? foreignRun : null,
         start,
         send,
@@ -946,7 +956,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         cancelTurnStream,
         stop,
         applyAction,
-      },
+      }),
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
@@ -1444,14 +1454,13 @@ describe('createExecutionRunRpcActionExecutor', () => {
     } satisfies ExecutionRunState;
     const getPublic = vi.fn(() => publicRun);
     const executor = createExecutionRunRpcActionExecutor({
-      manager: {
-        ...createUnusedExecutionRunBridge(),
+      manager: createUnusedExecutionRunBridge({
         start,
         get: (runId) => runId === publicRun.runId ? runState : null,
         getPublic,
         // Terminal projection is published only after this fixture's custody has settled.
         waitForTerminal: async () => {},
-      },
+      }),
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
@@ -1526,8 +1535,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         instructions: 'Summarize the change.',
       } satisfies ExecutionRunState;
       const executor = createExecutionRunRpcActionExecutor({
-        manager: {
-          ...createUnusedExecutionRunBridge(),
+        manager: createUnusedExecutionRunBridge({
           start,
           stop,
           get: (runId) => runId === publicRun.runId ? runState : null,
@@ -1539,7 +1547,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
             signal.addEventListener('abort', onAbort, { once: true });
             if (signal.aborted) onAbort();
           }),
-        },
+        }),
         context: { sessionId: null, cwd: '/workspace' },
         policy: resolveExecutionRunPolicy({
           defaults: {
@@ -2231,6 +2239,10 @@ describe('createExecutionRunRpcActionExecutor', () => {
       backendId: 'codex',
       instructions: 'Inspect the change.',
       latestToolResult: false,
+      structuredMeta: {
+        kind: 'execution_result',
+        payload: { accepted: false, count: 0 },
+      },
     } satisfies ExecutionRunState;
     const manager: ExecutionRunHostBridgeContract = {
       ...createUnusedExecutionRunBridge(),
@@ -2238,11 +2250,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       get: (runId) => runId === run.runId ? runState : null,
       getPublic: (runId) => runId === run.runId ? run : null,
       waitForTerminal: async () => {},
-      getLatestToolResult: () => false,
-      getStructuredMeta: () => ({
-        kind: 'execution_result',
-        payload: { accepted: false, count: 0 },
-      }),
     };
     const deps = createExecutionRunRpcActionDeps({
       manager,
