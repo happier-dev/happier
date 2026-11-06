@@ -88,7 +88,7 @@ storage.setState = (partial: StorageState | Partial<StorageState> | ((state: Sto
 };
 
 registerStorageStateReader(() => storage.getState());
-registerStorageStateSubscribe((listener) => storage.subscribe(listener));
+registerStorageStateSubscribe((listener, scope) => storage.subscribe(listener, scope));
 registerStorageMachineUpdateSubscribe(subscribeMachineUpdates);
 
 export function getStorage() {
