@@ -117,6 +117,8 @@ export type HomeCredentialMutationEvent = Readonly<{
     serverId: string;
     serverUrl: string;
     credentials?: AuthCredentials;
+    /** The credential a `credentials_set` replaced, as read under the writer's scope lock. */
+    previousCredentials?: AuthCredentials | null;
 }>;
 
 /** The existing desktop notice carries routing facts, never credentials or keys. */
@@ -513,6 +515,7 @@ function emitHomeCredentialMutation(
     serverUrl: string,
     options: ServerCredentialLookupOptions,
     credentials?: AuthCredentials,
+    previousCredentials?: AuthCredentials | null,
 ): HomeCredentialMutationEvent | null {
     const target = resolveHomeCredentialMutationTarget(serverUrl, options);
     if (!target) return null;
@@ -523,6 +526,10 @@ function emitHomeCredentialMutation(
     if (credentials) {
         Object.defineProperty(event, 'credentials', {
             value: credentials,
+            enumerable: false,
+        });
+        Object.defineProperty(event, 'previousCredentials', {
+            value: previousCredentials ?? null,
             enumerable: false,
         });
     }
@@ -2840,7 +2847,7 @@ async function writeHomeCredentialsForServerScope(
     for (const legacyKey of keys.legacy) {
         await removeCredentialByKey(legacyKey);
     }
-    emitHomeCredentialMutation('credentials_set', serverUrl, options, effectiveCredentials);
+    emitHomeCredentialMutation('credentials_set', serverUrl, options, effectiveCredentials, currentCredentials);
 
     let rollbackCompleted = false;
     const rollback = async (): Promise<boolean> => {
