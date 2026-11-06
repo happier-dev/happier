@@ -12,6 +12,11 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('@/utils/web/reactDomCjs', () => ({ requireReactDOM: () => ({ createPortal: (children: React.ReactNode) => children }) }));
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 const navigatorBoundary = vi.hoisted(() => ({ rejectAmbient: false }));
+const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
+    useDeviceType: () => deviceState.type,
+}));
 vi.mock('expo-router', async () => {
     const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module;
     return { ...module, useRouter: () => {
@@ -44,6 +49,19 @@ describe('Browse surface workspace host', () => {
         </DestinationInstanceHost>);
         expect(screen.findByTestId('direct-sessions-browse-modal')).not.toBeNull();
         expect(screen.root.findAllByType(CustomModal)).toHaveLength(0);
+    });
+
+    // A phone opens it from More, with no tab bar and no native header: its head is the only way out (QA-J3-1106).
+    it('gives the phone destination its own Back, and the wide destination none', async () => {
+        const render = () => renderScreen(<DestinationInstanceHost tabId="browse"
+            ref={{ kind: 'browseExistingSessions', params: {} }} pathname="/external/browse" focused visible
+            navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <ExternalSessionsBrowseSurface lockScope={null} onRequestClose={() => {}} />
+        </DestinationInstanceHost>);
+        deviceState.type = 'phone';
+        expect((await render()).findHostByTestId('external-sessions-browse:back')).not.toBeNull();
+        deviceState.type = 'tablet';
+        expect((await render()).findHostByTestId('external-sessions-browse:back')).toBeNull();
     });
 
     it('keeps the web modal presentation outside a workspace destination', async () => {

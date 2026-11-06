@@ -19,8 +19,7 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
-import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -128,7 +127,7 @@ export function ArtifactsBrowser(props: Readonly<{
     const deviceType = useDeviceType();
     const phoneLayout = deviceType === 'phone';
     const inheritedBack = useNavigationBackControl();
-    const phoneBack = usePageBackControl('artifacts:back', () => safeRouterBack({ router, fallbackHref: '/' }));
+    const phoneBack = usePhoneDestinationBack('artifacts:back');
     const { artifacts, loaded, loadFailed, usage } = props;
     const [query, setQuery] = React.useState('');
     const [kind, setKind] = React.useState<ArtifactBrowserKind | 'all'>('all');
@@ -291,7 +290,7 @@ export function ArtifactsBrowser(props: Readonly<{
     );
 
     return (
-        <NavigationBackChromeProvider control={phoneLayout ? phoneBack : inheritedBack}>
+        <NavigationBackChromeProvider control={phoneBack ?? inheritedBack}>
         <View style={stylesheet.screen}>
         <DetailsPaneHost
             testID="artifacts:detailPane"

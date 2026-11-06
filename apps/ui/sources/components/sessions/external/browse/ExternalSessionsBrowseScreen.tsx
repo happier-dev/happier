@@ -71,6 +71,7 @@ import {
 } from './externalSessionBrowseErrorPresentation';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { PhoneDestinationBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useConversationSearch } from '@/sync/domains/search/useConversationSearch';
 import { hasConversationSearchScanFallback, isConversationSearchOnDemandOff } from '@/sync/domains/search/searchConversations';
@@ -130,6 +131,8 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const locked = Boolean(lockScope);
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
+    // Opened from a phone's More, the page has no tab bar and no native header; a modal or wide host owns close.
+    const phoneBack = usePhoneDestinationBack('external-sessions-browse:back');
     const paneContext = useOptionalAppPaneContext(value => ({
         fileFindSeedHandoff: value.fileFindSeedHandoff,
         fileFindSeedAccountBindings: value.fileFindSeedAccountBindings,
@@ -1028,6 +1031,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 // The band has no title; the dialog keeps its name.
                 accessibilityLabel={t('externalSessions.browseHeaderTitle')}
             >
+                {props.closeButton ? null : <PhoneDestinationBackLine control={phoneBack} />}
                 <ExternalSessionBrowseCandidatesList
                     candidates={candidates}
                     loading={loading}
