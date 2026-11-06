@@ -18,7 +18,7 @@ import { VoiceStatusCell } from './VoiceStatusCell';
 
 /**
  * After End, a request the conversation left waiting (lab `voice-moments` NX "ended while pending"):
- * "Voice ended. Approval is still needed in Inbox." and Review request, which opens that exact session
+ * "An approval is still waiting." (the glance already says Voice ended) and Review request, which opens that exact session
  * where the real card decides it by a tap. Ending Voice decided nothing.
  *
  * Reads only the ended attempt's captured addresses (its bound coding target, then its conversation),

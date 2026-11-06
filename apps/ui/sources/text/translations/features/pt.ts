@@ -13727,7 +13727,7 @@ const voiceMomentsTranslations = { pt: {
         setupDoneAction: 'Concluído',
         setupSettingsAction: 'Configurações de voz',
         setupClose: 'Fechar',
-        needsYouEnded: 'A voz terminou. A aprovação ainda aguarda na Caixa de entrada.',
+        needsYouEnded: 'Uma aprovação ainda aguarda.',
         needsYouReview: 'Revisar solicitação',
         needsYouTapToDecide: "Lido em voz alta · toque para decidir aqui",
         briefMe: 'Me atualize',

@@ -13386,7 +13386,7 @@ const voiceMomentsTranslations = { de: {
         setupDoneAction: 'Fertig',
         setupSettingsAction: 'Voice-Einstellungen',
         setupClose: 'Schließen',
-        needsYouEnded: 'Voice beendet. Die Freigabe wartet noch im Posteingang.',
+        needsYouEnded: 'Eine Freigabe wartet noch.',
         needsYouReview: 'Anfrage prüfen',
         needsYouTapToDecide: "Vorgelesen · hier per Tippen entscheiden",
         briefMe: 'Bring mich auf den Stand',

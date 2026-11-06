@@ -13714,7 +13714,7 @@ const voiceMomentsTranslations = { ja: {
         setupDoneAction: '完了',
         setupSettingsAction: '音声の設定',
         setupClose: '閉じる',
-        needsYouEnded: '音声は終了しました。承認はまだ受信箱で待っています。',
+        needsYouEnded: '承認待ちのリクエストがあります。',
         needsYouReview: 'リクエストを確認',
         needsYouTapToDecide: "読み上げ済み · ここでタップして決定",
         briefMe: '要点を教えて',

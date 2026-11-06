@@ -13746,7 +13746,7 @@ const voiceMomentsTranslations = { pl: {
         setupDoneAction: 'Gotowe',
         setupSettingsAction: 'Ustawienia głosu',
         setupClose: 'Zamknij',
-        needsYouEnded: 'Głos zakończony. Zatwierdzenie nadal czeka w skrzynce.',
+        needsYouEnded: 'Zatwierdzenie nadal czeka.',
         needsYouReview: 'Sprawdź prośbę',
         needsYouTapToDecide: "Przeczytane na głos · dotknij, aby zdecydować tutaj",
         briefMe: 'Wprowadź mnie',

@@ -13710,7 +13710,7 @@ const voiceMomentsTranslations = { 'zh-Hant': {
         setupDoneAction: '完成',
         setupSettingsAction: '語音設定',
         setupClose: '關閉',
-        needsYouEnded: '語音已結束。收件匣中仍有待核准的請求。',
+        needsYouEnded: '仍有待核准的請求。',
         needsYouReview: '檢視請求',
         needsYouTapToDecide: "已朗讀 · 在這裡點按決定",
         briefMe: '給我簡報',

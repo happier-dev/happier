@@ -114,7 +114,7 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupDoneAction: 'Done',
         setupSettingsAction: 'Voice settings',
         setupClose: 'Close',
-        needsYouEnded: 'Voice ended. Approval is still needed in Inbox.',
+        needsYouEnded: 'An approval is still waiting.',
         needsYouReview: 'Review request',
         needsYouTapToDecide: "Read aloud · tap to decide here",
         briefMe: 'Brief me',

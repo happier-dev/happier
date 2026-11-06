@@ -13758,7 +13758,7 @@ const voiceMomentsTranslations = { ru: {
         setupDoneAction: 'Готово',
         setupSettingsAction: 'Настройки голоса',
         setupClose: 'Закрыть',
-        needsYouEnded: 'Голос завершён. Подтверждение всё ещё ждёт во входящих.',
+        needsYouEnded: 'Подтверждение всё ещё ждёт.',
         needsYouReview: 'Просмотреть запрос',
         needsYouTapToDecide: "Прочитано вслух · коснитесь, чтобы решить здесь",
         briefMe: 'Введи в курс',

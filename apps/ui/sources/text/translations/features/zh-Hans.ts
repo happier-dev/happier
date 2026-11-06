@@ -13710,7 +13710,7 @@ const voiceMomentsTranslations = { 'zh-Hans': {
         setupDoneAction: '完成',
         setupSettingsAction: '语音设置',
         setupClose: '关闭',
-        needsYouEnded: '语音已结束。收件箱中仍有待批准的请求。',
+        needsYouEnded: '仍有待批准的请求。',
         needsYouReview: '查看请求',
         needsYouTapToDecide: "已朗读 · 在这里点按决定",
         briefMe: '给我简报',

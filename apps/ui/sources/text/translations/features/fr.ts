@@ -13775,7 +13775,7 @@ const voiceMomentsTranslations = { fr: {
         setupDoneAction: 'Terminé',
         setupSettingsAction: 'Réglages de la voix',
         setupClose: 'Fermer',
-        needsYouEnded: 'La voix est terminée. L’approbation attend toujours dans la boîte de réception.',
+        needsYouEnded: 'Une approbation attend toujours.',
         needsYouReview: 'Examiner la demande',
         needsYouTapToDecide: "Lu à voix haute · touche pour décider ici",
         briefMe: 'Fais-moi le point',

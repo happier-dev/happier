@@ -13750,7 +13750,7 @@ const voiceMomentsTranslations = { ca: {
         setupDoneAction: 'Fet',
         setupSettingsAction: 'Configuració de la veu',
         setupClose: 'Tanca',
-        needsYouEnded: 'La veu ha acabat. L’aprovació encara és pendent a la Safata.',
+        needsYouEnded: 'Encara hi ha una aprovació pendent.',
         needsYouReview: 'Revisa la sol·licitud',
         needsYouTapToDecide: "Llegit en veu alta · toca per decidir aquí",
         briefMe: 'Posa’m al dia',
