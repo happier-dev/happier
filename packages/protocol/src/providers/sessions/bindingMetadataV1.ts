@@ -226,7 +226,7 @@ export function createSessionProviderBindingFingerprintV1(
       agentTargetKey: basis.agentTargetKey,
       connectionId: basis.connectionId,
       // Model admission owns model changes; continuity compares their source and destination.
-      modelId: model.id,
+      modelId: purpose === 'continuity' ? 'continuity:v1' : model.id,
       modelCapabilities: purpose === 'continuity' ? {} : {
         ...(model.capabilities?.reasoningControls
           ? { reasoningControls: model.capabilities.reasoningControls }

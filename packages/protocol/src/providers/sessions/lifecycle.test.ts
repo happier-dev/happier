@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { compareSessionProviderBindingV1 } from './lifecycle.js';
-import { SessionProviderBindingMetadataV1Schema } from './bindingMetadataV1.js';
+import { SessionProviderBindingMetadataV1Schema, createSessionProviderBindingFingerprintV1 } from './bindingMetadataV1.js';
 import { createProviderBindingSecurityFingerprintV1 } from '../securityFingerprintsV1.js';
 
 function binding(overrides: Record<string, unknown> = {}) {
@@ -64,6 +64,10 @@ describe('compareSessionProviderBindingV1', () => {
     });
     // Retain the actual producer's declaration-sensitive hash from before the update.
     const previous = metadata(1);
+    const switchedModel = metadata(1, basis.endpoint.normalizedUrl, 'model-b');
+    expect(compareSessionProviderBindingV1(previous, switchedModel)).toBe('benign_change');
+    // Persisted binding identities remain model-sensitive; only continuity ignores admitted model intent.
+    expect(createSessionProviderBindingFingerprintV1(previous)).not.toBe(createSessionProviderBindingFingerprintV1(switchedModel));
     expect(compareSessionProviderBindingV1(previous, metadata(2))).toBe('benign_change');
     expect(compareSessionProviderBindingV1(previous, metadata(2, 'https://other.example/v1'))).toBe('security_change');
     const changedCredentialDestination = SessionProviderBindingMetadataV1Schema.parse({ ...metadata(2),

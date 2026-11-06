@@ -32,6 +32,8 @@ import {
 import { createAuthoritativeProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
+import { readPersistedProviderResumeState } from '../lifecycle/readPersistedResumeSelection';
+import { resolveSpawnBindingContinuity } from '../sessions/resolveSpawnBindingContinuity';
 
 type ExternalProviderSpawnAuthorization = Extract<
   ProviderSpawnAuthorization,
@@ -199,7 +201,9 @@ describe('provider spawn authorization lifecycle', () => {
       endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://gateway.example/v1',
         capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
       ...(credentialKind === 'apiKey' ? { credential: { kind: 'apiKey', required: true, transports: [transport] } } : {}),
-      catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'model-a', name: 'Model A' }] },
+      catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [
+        { id: 'model-a', name: 'Model A' }, { id: 'model-b', name: 'Model B' },
+      ] },
     });
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
       plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { providers: [definition] } }),
@@ -228,10 +232,21 @@ describe('provider spawn authorization lifecycle', () => {
       agentTargetKey: 'agent:happier.agent.codex/codex', support: adapter.support,
       adapterVersion: adapter.adapter.adapterVersion, model });
     if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental external Provider pairing');
-    const settings = setProviderExperimentalConfirmationV1(granted, { connectionId,
+    let settings = setProviderExperimentalConfirmationV1(granted, { connectionId,
       agentTargetKey: 'agent:happier.agent.codex/codex',
       modelId: compatibility.result.confirmationScope.kind === 'model' ? model.id : null,
       compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 });
+    // Mirror the explicit model confirmations performed before the live restart proposal.
+    for (const modelId of ['model-b', 'freeform-model']) {
+      const candidate = resolveProviderModelCompatibility({ record: connection.record, providerSettings: settings,
+        agentTargetKey: 'agent:happier.agent.codex/codex', support: adapter.support,
+        adapterVersion: adapter.adapter.adapterVersion, model: { id: modelId, name: modelId } });
+      if (candidate.result.status !== 'experimental') throw new Error('Expected experimental resume model');
+      settings = setProviderExperimentalConfirmationV1(settings, { connectionId,
+        agentTargetKey: 'agent:happier.agent.codex/codex',
+        modelId: candidate.result.confirmationScope.kind === 'model' ? modelId : null,
+        compatibilityFingerprint: candidate.compatibilityFingerprint, confirmedAt: 1 });
+    }
     const snapshot: ActiveAccountSettingsSnapshot = {
       source: 'network', settings: accountSettingsParse({ secrets: credentialKind === 'apiKey' ? [{ id: 'secret-a', name: 'Fixture key', encryptedValue: {
         _isSecretValue: true, encryptedValue: encryptSecretStringV1('fixture-key', new Uint8Array(32).fill(5),
@@ -255,6 +270,36 @@ describe('provider spawn authorization lifecycle', () => {
         if (materialized.ok) expect(materialized.materialization.launchMaterialization.kind).toBe('engineConfig');
       } finally {
         result.attempt.cleanupOnFailure();
+      }
+    }
+    if (!result.ok) return;
+    const previous = result.attempt.authorization.sessionBindingMetadata;
+    for (const modelId of ['model-a', 'model-b', 'freeform-model']) {
+      const restored = readPersistedProviderResumeState({ providerBindingV1: previous,
+        modelSelectionIntentV1: { v: 1, updatedAt: 2, selection: {
+          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId,
+        } },
+      });
+      if (!restored.selection) throw new Error('Expected persisted Resume intent');
+      const resumed = await createRuntimeProviderSpawnAuthorizationAttempt({
+        selection: restored.selection, machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+        lease: runtime.lease, getAccountSettingsSnapshot: () => snapshot,
+        materializationBaseDir: '/unused', sessionId: 'spawn-count', resolveAddresses: async () => ['8.8.8.8'],
+      });
+      expect(resumed.ok, `${credentialKind}/${modelId}: ${resumed.ok ? '' : resumed.error.code}`).toBe(true);
+      if (!resumed.ok) continue;
+      try {
+        const next = resumed.attempt.authorization.sessionBindingMetadata;
+        const continuity = resolveSpawnBindingContinuity({ previous: restored.binding, next, sessionId: 'spawn-count', confirmation: null });
+        expect.soft(continuity, `${credentialKind}/${modelId}: ${continuity.ok ? continuity.change : continuity.error.code}`)
+          .toMatchObject({ ok: true });
+        expect(next.model?.id).toBe(modelId);
+        if (!('materializeAfterHooks' in resumed.attempt)) throw new Error('Expected external Resume Provider attempt');
+        const materialized = await resumed.attempt.materializeAfterHooks();
+        expect(materialized.ok, materialized.ok ? undefined : materialized.error.code).toBe(true);
+        if (materialized.ok) expect(materialized.materialization.launchMaterialization.kind).toBe('engineConfig');
+      } finally {
+        resumed.attempt.cleanupOnFailure();
       }
     }
   });

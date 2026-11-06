@@ -2,8 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveResumeFailurePresentation } from './resolveResumeFailurePresentation';
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 describe('session resume failure presentation', () => {
+    it.each(['provider_binding_changed', 'provider_model_not_found', 'provider_authorization_changed'] as const)(
+        'shows the canonical Provider reason for %s instead of the generic Resume refusal', code => {
+            const providerError = createProviderErrorV1(code, { connectionId: 'pc_gateway' });
+            const message = resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed',
+                retryable: providerError.retryable, providerError });
+            expect(resolveResumeFailurePresentation({ errorCode: 'SPAWN_VALIDATION_FAILED',
+                errorMessage: 'Private validation details', details: { errorDetail: { kind: 'provider_error', providerError } },
+            }, 'Resume failed')).toEqual({ kind: 'alert', message, errorCode: code });
+            expect(message).not.toContain('Private validation details');
+        },
+    );
     it('offers the exact disabled plugin instead of repeating Resume, including configured Agents', () => {
         expect(resolveResumeFailurePresentation({ errorCode: 'plugin_disabled', errorMessage: 'Private diagnostic' }, 'Resume failed', {
             kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },

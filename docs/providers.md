@@ -1484,13 +1484,19 @@ At launch, Happier persists the structured model selection plus exact non-secret
 In 0.3 development, resume continuity uses the retained runtime binding basis
 and model to compare actual connection, endpoint, materialization and credential
 destination facts. Adapter-version or model-capability metadata drift alone is
-not a security change.
+not a security change. A model change admitted by the existing launch authority
+also preserves continuity when those source/destination facts are unchanged;
+the persisted next-launch intent supplies the requested model on Resume.
 Actual source/destination changes and hard incompatibility
 still refuse or require the existing recovery. Historical records without those
 retained facts keep their existing opaque-fingerprint comparison; no missing
 historical destination is inferred. Stored fingerprint formats are unchanged.
 
 In the development Session-creation Action path, a daemon Provider rejection retains its validated `ProviderErrorV1` in the `spawn_failed` result, including the Provider's retryability. The ordinary New Session composer uses that result for its existing inline recovery controls. Recovery stays bound to the original launch context; changing the Home, Machine, or Provider selection must not retry the previous request against the new target.
+
+Development Resume alerts use the same Provider-error presentation as Session
+creation and retain the specific Provider code in Technical details. Arbitrary
+private validation diagnostics remain outside the alert message.
 
 In 0.3 development, unexpected launch preparation, Agent activation and model
 projection failures use the existing `agent_error` result. They do not establish

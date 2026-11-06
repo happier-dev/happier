@@ -1,6 +1,7 @@
 import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { writePersistedBackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { t } from '@/text';
 
 export type ResumeFailurePresentation = Readonly<
@@ -26,6 +27,11 @@ export function resolveResumeFailurePresentation(result: Readonly<{
     }
     if (errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
         return { kind: 'directory_missing' };
+    }
+    if (detail?.kind === 'provider_error') {
+        return { kind: 'alert', errorCode: detail.providerError.code,
+            message: resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed',
+                retryable: detail.providerError.retryable, providerError: detail.providerError }) };
     }
     const causeMessage = presentSessionStartupFailureCause(cause);
     if (cause && causeMessage) return { kind: 'alert', errorCode: cause,
