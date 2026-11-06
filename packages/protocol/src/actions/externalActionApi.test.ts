@@ -224,6 +224,36 @@ it('admits only closed transport causes on an uncertain Action acknowledgement',
   expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload, code: 'target_unavailable' }).success).toBe(false);
 });
 
+it('preserves only closed Machine availability causes and matching remedies on target unavailability', () => {
+  const diagnostics = [
+    { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+    { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' },
+    { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' },
+    { reason: 'machine_replaced', requiredFact: 'current_machine', remedy: 'select_current_machine' },
+  ] as const;
+  for (const diagnostic of diagnostics) {
+    const payload = { error: 'invalid_request', code: 'target_unavailable', requestId: 'request', diagnostic };
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse(payload).success).toBe(true);
+    expect(externalActionApi.projectExternalActionHttpError('target_unavailable', 'request', undefined,
+      undefined, undefined, diagnostic)).toEqual({ statusCode: 409, payload });
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload,
+      managedAdmission: { managedId: 'waiting-row' } }).success).toBe(true);
+    for (const invalid of [{ ...diagnostic, message: 'private' }, { ...diagnostic, machineId: 'private' },
+      { ...diagnostic, requiredFact: 'arbitrary' }, { ...diagnostic, remedy: 'arbitrary' },
+      { ...diagnostic, reason: 'arbitrary' }, { ...diagnostic, remedy: 'reconnect_machine', requiredFact: 'current_machine' }]) {
+      expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload, diagnostic: invalid }).success).toBe(false);
+    }
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload, code: 'invalid_envelope' }).success).toBe(false);
+    expect(() => externalActionApi.projectExternalActionHttpError('invalid_envelope', 'request', undefined,
+      undefined, undefined, diagnostic)).toThrow();
+  }
+  const diagnostic = diagnostics[0];
+  const managedAdmission = { managedId: 'waiting-row' };
+  expect(externalActionApi.projectExternalActionHttpError('target_unavailable', 'request', managedAdmission,
+    undefined, undefined, diagnostic)).toEqual({ statusCode: 409,
+    payload: { error: 'invalid_request', code: 'target_unavailable', requestId: 'request', managedAdmission, diagnostic } });
+});
+
 it('carries an offline admitted row receipt only on target unavailability, never as execution authority', () => {
   const receipt = { managedId: 'waiting-row' };
   expect(externalActionApi.projectExternalActionHttpError('target_unavailable', 'request', receipt)).toEqual({

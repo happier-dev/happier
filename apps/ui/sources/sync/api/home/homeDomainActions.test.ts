@@ -458,6 +458,15 @@ describe('createHomeDomainActionExecutorForScope', () => {
 });
 
 describe('Home domain contributed-family failure decoding', () => {
+    it('preserves the Machine availability cause and remedy only for target unavailability', () => {
+        const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'target_unavailable', details }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'target_unavailable', details });
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'admission_unavailable', details }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'admission_unavailable' });
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'target_unavailable', details: { ...details, secret: 'private' } }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'target_unavailable' });
+    });
     it('preserves validated retained admission details without accepting unrelated error data', () => {
         const details = { error: 'invalid_request', code: 'target_unavailable', requestId: 'request-a',
             managedAdmission: { managedId: 'managed-a' } };

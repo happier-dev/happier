@@ -320,6 +320,17 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         let minted: unknown;
         try { minted = await mint.json(); } catch { return failure('admission_unavailable'); }
         account.assertCurrent();
+        if (!mint.ok) {
+            const refusal = ExternalActionHttpErrorSchema.safeParse(minted);
+            if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
+                && refusal.data.requestId !== envelope.requestId) return failure('admission_unavailable');
+            if ('code' in refusal.data && refusal.data.code === 'target_unavailable'
+                && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
+                return { ...failure(refusal.data.code), effectAttempted: false,
+                    details: 'managedAdmission' in refusal.data ? refusal.data : refusal.data.diagnostic };
+            }
+            return failure('admission_unavailable');
+        }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted);
         if (!mint.ok || !authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
         const root = authorization.data.binding;
@@ -411,6 +422,11 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         const result = code === 'action_not_admitted' || code === 'action_outcome_unknown'
             ? projectUnexpectedActionFailureV1(code === 'action_not_admitted' ? false : null,
                 'requestId' in refusal.data ? refusal.data.requestId : undefined) : failure(code);
+        if (code === 'target_unavailable' && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined
+            && !('managedAdmission' in refusal.data)
+            && (envelope.v === 1 || 'requestId' in refusal.data && refusal.data.requestId === envelope.requestId)) {
+            return { ...result, effectAttempted: false, details: refusal.data.diagnostic };
+        }
         return 'managedAdmission' in refusal.data
             && (envelope.v === 1 || refusal.data.requestId === envelope.requestId) ? { ...result, details: refusal.data } : result;
     }

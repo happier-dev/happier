@@ -71,7 +71,7 @@ import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/au
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
-import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectUnexpectedActionFailureV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExternalActionExecutionAuthorizationRequestV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { assertResolvedHomeTargetIdentity } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
@@ -448,7 +448,7 @@ export function dispatchOriginalAccountAction(input: OriginalAccountActionInput)
  * the incumbent disclosure and signed-requester-context admission.
  */
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
-  const fail = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
+  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
   const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
   input.signal?.throwIfAborted();
   const claims = decodeJwtPayload(input.credentials.token);
@@ -619,7 +619,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
       ...(input.signal ? { signal: input.signal } : {}) }));
-    if (!minted.ok) return fail(minted.code);
+    if (!minted.ok) return { ...fail(minted.code), ...(minted.diagnostic ? { details: minted.diagnostic } : {}) };
     const root = minted.authorization.binding;
     if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
       || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
@@ -718,6 +718,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (refusal.success && 'code' in refusal.data
         && (refusal.data.code === 'action_not_admitted' || refusal.data.code === 'action_outcome_unknown')) {
         return projectUnexpectedActionFailureV1(refusal.data.code === 'action_not_admitted' ? false : null, refusal.data.requestId);
+      }
+      if (refusal.success && 'code' in refusal.data && refusal.data.code === 'target_unavailable'
+        && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
+        return { ...fail(refusal.data.code), details: refusal.data.diagnostic };
       }
       return fail(refusal.success ? 'code' in refusal.data ? refusal.data.code : refusal.data.error : 'project_transport_unavailable');
     }
@@ -1327,7 +1331,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set'; serverId: string; targetMachineId: string;
   retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
 }>): Promise<ActionExecuteResult> {
-  const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+  const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
   const root = params.authorization.binding;
   const reviewedParent = readHostReviewedParentV1(params.context);
   const invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
@@ -1451,6 +1455,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
         && (error.data.code === 'action_not_admitted' || error.data.code === 'action_outcome_unknown')) {
         return { ...projectUnexpectedActionFailureV1(error.data.code === 'action_not_admitted' ? false : null, error.data.requestId),
           ...('diagnostic' in error.data ? { details: error.data } : {}) };
+      }
+      if (error.success && 'code' in error.data && error.data.code === 'target_unavailable'
+        && 'diagnostic' in error.data && error.data.diagnostic !== undefined) {
+        return { ...fail(error.data.code), details: error.data.diagnostic };
       }
       return fail(error.success ? 'code' in error.data ? error.data.code : error.data.error : 'target_unavailable');
     }

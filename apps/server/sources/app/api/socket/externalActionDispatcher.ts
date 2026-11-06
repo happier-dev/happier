@@ -1,3 +1,4 @@
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { randomUUID } from "node:crypto";
 
@@ -69,7 +70,8 @@ export type ExternalActionPlacementErrorCode =
 export type ExternalActionDaemonDispatchResult =
     | ParsedExternalActionDaemonDispatchResult
     | Readonly<{ kind: "submitted_unknown" }>
-    | Readonly<{ kind: "placement_error"; code: ExternalActionPlacementErrorCode; managedAdmission?: Readonly<{ managedId: string }> }>;
+    | Readonly<{ kind: "placement_error"; code: ExternalActionPlacementErrorCode; managedAdmission?: Readonly<{ managedId: string }>;
+        machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1 }>;
 
 export type ExternalActionDaemonDispatcher = (
     request: Readonly<{
@@ -90,6 +92,7 @@ type MachineResolution =
     | "available"
     | "not_owned"
     | "unavailable"
+    | Readonly<{ kind: 'unavailable'; diagnostic: MachineAvailabilityDiagnosticV1 }>
     | "external_action_update_required"
     | "session_input_update_required";
 
@@ -246,6 +249,7 @@ function createPlacementError(input: Readonly<{
     availability?: MachineResolution;
     phaseFailure?: DispatchPhaseFailure;
     managedAdmission?: Readonly<{ managedId: string }>;
+    machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
 }>): Extract<ExternalActionDaemonDispatchResult, { kind: 'placement_error' }> {
     emitDispatchPhaseWitness(input.phaseFailure ?? {
         phase: 'placement_refusal',
@@ -260,6 +264,9 @@ function createPlacementError(input: Readonly<{
         kind: 'placement_error',
         code: input.code,
         ...(input.managedAdmission === undefined ? {} : { managedAdmission: input.managedAdmission }),
+        ...(input.machineAvailabilityDiagnostic === undefined ? {} : {
+            machineAvailabilityDiagnostic: input.machineAvailabilityDiagnostic,
+        }),
     };
 }
 
@@ -332,7 +339,10 @@ async function resolveMachineFromServer(params: Readonly<{
         const admission = await resolveMachineAdmission({ actorAccountId: params.accountId,
             machineId: params.machineId, ...(handoff ? { requiredRole: 'use' as const } : { actionId: params.actionId }),
             requireOnline: params.requireOnline ?? true });
-        if (admission.kind !== 'admitted') return admission.code === 'machine_unavailable' ? 'unavailable' : 'not_owned';
+        if (admission.kind !== 'admitted') {
+            if (admission.code !== 'machine_unavailable') return 'not_owned';
+            return admission.diagnostic ? { kind: 'unavailable', diagnostic: admission.diagnostic } : 'unavailable';
+        }
         if (admission.custodianAccountId !== machine.accountId || admission.installationId !== machine.installationId) return 'unavailable';
     }
     if ((params.expectedCustodianAccountId !== undefined && machine.accountId !== params.expectedCustodianAccountId)
@@ -460,12 +470,15 @@ function createExactMachineDaemonGuard(params: Readonly<{
 }>): Readonly<{
     targetGuard: RpcForwardTargetGuard;
     readPhaseFailure: () => DispatchPhaseFailure | null;
+    readMachineAvailabilityDiagnostic: () => MachineAvailabilityDiagnosticV1 | undefined;
 }> {
     let phaseFailure: DispatchPhaseFailure | null = null;
+    let machineAvailabilityDiagnostic: MachineAvailabilityDiagnosticV1 | undefined;
     const current = async (): Promise<boolean> => {
+        machineAvailabilityDiagnostic = undefined;
         const result = await runDispatchPhase('target_currentness', params.machineId, async () => {
             if (params.isOriginCurrent && !await params.isOriginCurrent()) return false;
-            if (await params.resolveMachine({
+            const availability = await params.resolveMachine({
                 accountId: params.accountId,
                 machineId: params.machineId,
                 actionId: params.actionId,
@@ -478,7 +491,9 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 ...(params.requiredSessionInputAdmissionProtocolVersion === undefined
                     ? {}
                     : { requiredSessionInputAdmissionProtocolVersion: params.requiredSessionInputAdmissionProtocolVersion }),
-            }) !== "available") {
+            });
+            if (availability !== "available") {
+                if (typeof availability !== 'string') machineAvailabilityDiagnostic = availability.diagnostic;
                 return false;
             }
             if (params.sessionId === undefined) return true;
@@ -500,6 +515,7 @@ function createExactMachineDaemonGuard(params: Readonly<{
 
     return {
         readPhaseFailure: () => phaseFailure,
+        readMachineAvailabilityDiagnostic: () => machineAvailabilityDiagnostic,
         targetGuard: {
             filterTargets: async (targets) => {
                 if (!await current()) return [];
@@ -777,7 +793,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             return createPlacementError({ code: projectDispatchPhaseFailureCode(machine), refusalBranch: 'phase_exception',
                 requestId: request.envelope.requestId, machineId, phaseFailure: machine });
         }
-        const availability = machine.value;
+        const availability = typeof machine.value === 'string' ? machine.value : machine.value.kind;
+        const machineAvailabilityDiagnostic = typeof machine.value === 'string' ? undefined : machine.value.diagnostic;
         if (availability !== "available") {
             if (managedAdmission && availability === 'unavailable') {
                 return request.envelope.v === 1
@@ -786,7 +803,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                         execution: { ok: true, result: { managedId: managedAdmission.machine.id } } }) }
                     : createPlacementError({ code: 'target_unavailable',
                         refusalBranch: 'managed_machine_unavailable_after_admission', requestId: request.envelope.requestId,
-                        machineId, availability, managedAdmission: { managedId: managedAdmission.machine.id } });
+                        machineId, availability, managedAdmission: { managedId: managedAdmission.machine.id },
+                        machineAvailabilityDiagnostic });
             }
             if (availability === "external_action_update_required") {
                 return createPlacementError({ code: 'encrypted_action_unsupported',
@@ -801,7 +819,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             return createPlacementError({
                 code: target.kind === 'machine' && availability === 'not_owned' ? 'target_not_local' : 'target_unavailable',
                 refusalBranch: availability === 'not_owned' ? 'machine_not_owned' : 'machine_unavailable',
-                requestId: request.envelope.requestId, machineId, availability,
+                requestId: request.envelope.requestId, machineId, availability, machineAvailabilityDiagnostic,
             });
         }
         if (options.signal?.aborted) {
@@ -929,6 +947,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     refusalBranch: forwarded.kind === 'failed' || guardFailure ? 'phase_exception'
                         : options.signal?.aborted ? 'aborted' : 'daemon_forward_not_ok',
                     requestId: request.envelope.requestId, machineId,
+                    ...(forwarded.kind === 'ready' && !guardFailure
+                        ? { machineAvailabilityDiagnostic: exactDaemonTarget.readMachineAvailabilityDiagnostic() } : {}),
                     ...(forwarded.kind === 'failed'
                         ? { phaseFailure: forwarded }
                         : guardFailure ? { phaseFailure: guardFailure } : {}),

@@ -5,6 +5,7 @@ import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';
 import { UNEXPECTED_ACTION_FAILURE_CODES_V1 } from './actionExecutionResult.js';
 import { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
+import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnosticV1 } from '../machines/machineAccessV1.js';
 
 export const ExternalActionRequestIdV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), maxCodeUnits(EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1), z.refine((value) => value.trim() === value, 'requestId must not have outer whitespace')));
 
@@ -67,19 +68,31 @@ export const ExternalActionHttpErrorV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export type ExternalActionHttpErrorV1 = z.infer<typeof ExternalActionHttpErrorV1Schema>;
 
+/** Content-free refusal location supplied by the target admission owner. */
+export const ExternalActionTargetRefusalPhaseSchema = lazyZodSchema(() => z.enum([
+  'target_placement', 'target_cancelled', 'target_custodian', 'target_installation', 'target_requester_context',
+]));
+export type ExternalActionTargetRefusalPhase = z.infer<typeof ExternalActionTargetRefusalPhaseSchema>;
+
 const ExternalActionInvalidRequestHttpErrorSchema = lazyZodSchema(() => z.strictObject({
   error: z.literal('invalid_request'),
   code: ExternalActionPreOpenFailureCodeSchema,
   requestId: z.optional(ExternalActionRequestIdV1Schema),
 }));
+const ExternalActionTargetRefusalHttpErrorSchema = lazyZodSchema(() => z.strictObject({
+  ...ExternalActionInvalidRequestHttpErrorSchema.shape,
+  code: z.literal('target_not_local'),
+  phase: z.optional(ExternalActionTargetRefusalPhaseSchema),
+}));
 export const ExternalActionManagedAdmissionReceiptV1Schema = lazyZodSchema(() => z.strictObject({
   managedId: z.string().check(z.minLength(1), z.refine(value => value.trim() === value)),
 }));
 export type ExternalActionManagedAdmissionReceiptV1 = z.infer<typeof ExternalActionManagedAdmissionReceiptV1Schema>;
-const ExternalActionManagedWaitingHttpErrorSchema = lazyZodSchema(() => z.strictObject({
+const ExternalActionTargetUnavailableHttpErrorSchema = lazyZodSchema(() => z.strictObject({
   error: z.literal('invalid_request'), code: z.literal('target_unavailable'),
   requestId: z.optional(ExternalActionRequestIdV1Schema),
-  managedAdmission: ExternalActionManagedAdmissionReceiptV1Schema,
+  managedAdmission: z.optional(ExternalActionManagedAdmissionReceiptV1Schema),
+  diagnostic: z.optional(MachineAvailabilityDiagnosticV1Schema),
 }));
 
 const ExternalActionAuthenticationHttpErrorSchema = lazyZodSchema(() => z.strictObject({
@@ -125,7 +138,8 @@ export function readActionCredentialScopeDeniedHttpFailureV1(
 export const ExternalActionHttpErrorSchema = lazyZodSchema(() => z.union([
   ExternalActionSubmittedUnknownHttpErrorSchema,
   ExternalActionInvalidRequestHttpErrorSchema,
-  ExternalActionManagedWaitingHttpErrorSchema,
+  ExternalActionTargetRefusalHttpErrorSchema,
+  ExternalActionTargetUnavailableHttpErrorSchema,
   ExternalActionAuthenticationHttpErrorSchema,
   ExternalActionCredentialScopeHttpErrorSchema,
   z.strictObject({ error: z.literal('present_user_required') }),
@@ -172,19 +186,32 @@ export function projectExternalActionHttpError(
   requestId?: string,
   managedAdmission?: ExternalActionManagedAdmissionReceiptV1,
   credentialScopeDiagnostic?: ExternalActionCredentialScopeDiagnosticV1,
+  phase?: ExternalActionTargetRefusalPhase,
+  machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1,
 ): Readonly<{
   statusCode: 400 | 401 | 403 | 409 | 413 | 500 | 503;
   payload: ExternalActionHttpError;
 }> {
-  if (managedAdmission !== undefined) {
-    if (code !== 'target_unavailable') throw new TypeError('Managed admission receipt requires target unavailability');
-    return { statusCode: 409, payload: ExternalActionManagedWaitingHttpErrorSchema.parse({
-      error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }), managedAdmission,
-    }) };
+  if (phase !== undefined && code !== 'target_not_local') {
+    throw new TypeError('Target refusal phase requires target locality refusal');
+  }
+  if (managedAdmission !== undefined && code !== 'target_unavailable') {
+    throw new TypeError('Managed admission receipt requires target unavailability');
+  }
+  if (machineAvailabilityDiagnostic !== undefined && code !== 'target_unavailable') {
+    throw new TypeError('Machine availability diagnostic requires target unavailability');
   }
   if (credentialScopeDiagnostic !== undefined && code !== 'credential_scope_denied') {
     throw new TypeError('Credential scope diagnostic requires credential scope denial');
   }
+  if (code === 'target_unavailable') return { statusCode: 409, payload: ExternalActionTargetUnavailableHttpErrorSchema.parse({
+    error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }),
+    ...(managedAdmission === undefined ? {} : { managedAdmission }),
+    ...(machineAvailabilityDiagnostic === undefined ? {} : { diagnostic: machineAvailabilityDiagnostic }),
+  }) };
+  if (phase !== undefined) return { statusCode: 409, payload: ExternalActionTargetRefusalHttpErrorSchema.parse({
+    error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }), phase,
+  }) };
   if (code === 'present_user_required') return { statusCode: 403, payload: { error: code } };
   if (code === 'credential_scope_denied') return {
     statusCode: 403,

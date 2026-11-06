@@ -3,6 +3,16 @@ import type { ServerFetch } from '@/sync/http/client';
 import { executeApiTokenAction } from './apiTokenActionTransport';
 
 describe('API-token Action transport', () => {
+    it('preserves the Machine availability cause and remedy without adopting unrelated diagnostics', async () => {
+        const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        const request: ServerFetch = async () => Response.json({ error: 'invalid_request', code: 'target_unavailable', diagnostic }, { status: 409 });
+        expect(await executeApiTokenAction({ request }, 'session.stop', { sessionId: 'session-1' }))
+            .toMatchObject({ ok: false, errorCode: 'target_unavailable', details: diagnostic });
+        const malformed: ServerFetch = async () => Response.json({ error: 'invalid_request', code: 'target_unavailable',
+            diagnostic: { ...diagnostic, message: 'private' } }, { status: 409 });
+        expect(await executeApiTokenAction({ request: malformed }, 'session.stop', { sessionId: 'session-1' }))
+            .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+    });
     it('refuses next-prompt mode with Send guidance before requesting the Home', async () => {
         const request: ServerFetch = async () => { throw new Error('Refused timing must not reach the Home'); };
         expect(await executeApiTokenAction({ request }, 'session.permission_mode.set', {

@@ -1,5 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
+import fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
@@ -15,6 +16,8 @@ import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happi
 import { deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
+import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareExternalActionRequesterAccountAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
 import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -41,24 +44,89 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
+  it.each(['diagnosed', 'bare', 'unavailable'] as const)('preserves the Machine availability mint refusal through the daemon ingress (%s)', async reply => {
+    const diagnostic = { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' };
+    const requestId = 'daemon-machine-availability';
+    vi.spyOn(axios, 'post').mockResolvedValue(reply === 'unavailable'
+      ? { status: 503, data: { error: 'auth_unavailable' } }
+      : { status: 409, data: { error: 'invalid_request', code: 'target_unavailable', requestId,
+        ...(reply === 'diagnosed' ? { diagnostic } : {}) } });
+    // Session birth is the OS/process boundary; the real Action admission and dispatch stay in place.
+    const sessionSpawnNew = vi.fn(async () => ({ type: 'pending' as const, retryWithSameCreationKey: true, outcome: 'accepted' as const }));
+    const app = fastify();
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: target.machineId, currentServerId: 'bob-profile',
+      verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({ ok: true, ...principal, expiresAt: null }) }),
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
+      mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+        ...request, serverHttpBaseUrl: 'https://home.test',
+      }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/actions/session.spawn_new',
+        headers: { authorization: `Bearer hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}` },
+        payload: { v: 1, requestId, target, input: { creationKey: 'own-start', agentTarget: { kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } } } });
+      if (reply === 'diagnosed') {
+        expect([response.statusCode, response.json()]).toEqual([409, { error: 'invalid_request', code: 'target_unavailable', requestId, diagnostic }]);
+        expect(sessionSpawnNew).not.toHaveBeenCalled();
+      } else {
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ execution: { ok: true, result: { type: 'pending' } } });
+        expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+      }
+    } finally { await app.close(); }
+  });
+
+  it.each(['matching', 'mismatched', 'malformed'] as const)('preserves the Machine availability mint refusal through the original Account Action (%s)', async reply => {
+    const actionId = 'machines.vitals.get';
+    const requestId = 'machine-availability-mint';
+    const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+      installationId: 'installation', revokedAt: null, replacedByMachineId: null,
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      : url.endsWith(`/v1/machines/${machine.id}`) ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      expect(String(url)).toBe(`https://home.example/v1/actions/${actionId}/execution-authorization`);
+      return { status: 409, data: { error: 'invalid_request', code: 'target_unavailable',
+        requestId: reply === 'mismatched' ? 'another-request' : requestId,
+        diagnostic: reply === 'malformed' ? { ...diagnostic, machineId: 'private-identifier' } : diagnostic } };
+    });
+    const result = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId,
+      input: { machineId: target.machineId }, requestId, target,
+      credentials: { token: accountToken, encryption: null, credentialProvenance: 'stored_session' },
+      serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_bob_home' });
+    expect(result).toMatchObject(reply === 'matching'
+      ? { ok: false, errorCode: 'target_unavailable', details: diagnostic }
+      : { ok: false, errorCode: 'auth_unavailable' });
+    if (reply !== 'matching') expect(result).not.toHaveProperty('details');
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['action_not_admitted', 'action_outcome_unknown'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
-    const machine = { id: target.machineId, kind: 'persistent', active: true, installationId: 'installation',
+  it.each(['action_not_admitted', 'action_outcome_unknown', 'target_unavailable'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true, installationId: 'installation',
       revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
       access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
     vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
-      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } } : { status: 200, data: [machine] });
+      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      : url.endsWith(`/v1/machines/${machine.id}`) ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
     const response = (id: string) => {
       const refusal = projectExternalActionHttpError(code, id);
-      return { status: refusal.statusCode, data: refusal.payload };
+      return { status: refusal.statusCode, data: { ...refusal.payload,
+      ...(code === 'target_unavailable' ? { diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } } : {}) } };
     };
     vi.spyOn(axios, 'post').mockResolvedValueOnce(response(envelope.requestId)).mockResolvedValueOnce(response('other-request'));
     const request = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
       target, credentials: { token: accountToken, encryption: null, credentialProvenance: 'stored_session' as const },
       serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_bob_home' };
     expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
-      .toMatchObject({ ok: false, errorCode: code, details: { requestId: envelope.requestId } });
+      .toMatchObject({ ok: false, errorCode: code, details: code === 'target_unavailable'
+      ? { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } : { requestId: envelope.requestId } });
     expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
       .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });

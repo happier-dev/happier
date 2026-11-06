@@ -7,12 +7,14 @@ import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { refuseExternalActionPhase, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 type ExternalActionAuthorizationHttpFailure = Readonly<{
   ok: false;
   code: 'invalid_token' | 'credential_scope_denied' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable';
   /** Private preparation fact; HTTP adapters still project only their existing code. */
   retryable?: true;
+  diagnostic?: MachineAvailabilityDiagnosticV1;
 }>;
 
 export type ExternalActionAuthorizationHttpResult =
@@ -88,6 +90,12 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   if (response.status === 409) {
     const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
     if (refusal.success && refusal.data.error === 'invalid_request' && refusal.data.code === 'target_unavailable') {
+      if ('diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
+        if (refusal.data.requestId !== undefined && refusal.data.requestId !== input.envelope.requestId) {
+          return { ok: false, code: 'auth_unavailable' };
+        }
+        return { ok: false, code: 'target_unavailable', diagnostic: refusal.data.diagnostic };
+      }
       return { ok: false, code: 'target_unavailable' };
     }
   }

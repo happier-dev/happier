@@ -5,6 +5,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import {
     HomeGovernanceErrorCodeV1Schema,
@@ -122,9 +123,10 @@ export function homeDomainFailureFromActionFailure(
     })();
     const parsedDetails = readHomeDomainActionErrorV1(domainDetails);
     const externalDetails = ExternalActionHttpErrorSchema.safeParse(domainDetails);
+    const availability = code === 'target_unavailable' ? MachineAvailabilityDiagnosticV1Schema.safeParse(domainDetails) : null;
     const details = parsedDetails?.code === code ? parsedDetails.details
         : externalDetails.success && 'code' in externalDetails.data && externalDetails.data.code === code
-            ? externalDetails.data : undefined;
+            ? externalDetails.data : availability?.success ? availability.data : undefined;
     const withDetails = (value: HomeDomainFailure<string>): HomeDomainFailure<string> => Object.freeze({
         ...value,
         ...(details === undefined ? {} : { details }),

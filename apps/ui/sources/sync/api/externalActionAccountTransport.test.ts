@@ -50,6 +50,45 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each(['matching', 'receipt', 'mismatched', 'malformed'] as const)('preserves the Machine availability mint refusal through the UI logs Action (%s)', async reply => {
+        if (!account) throw new Error('Expected captured Account');
+        const actionId = 'machines.services.logs.read';
+        const input = { serverId, machineId: 'machine-1', serviceId: 'worker' };
+        const diagnostic = { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' };
+        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }), installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable',
+                requestId: reply === 'mismatched' ? 'another-request' : request.envelope.requestId,
+                ...(reply === 'receipt' ? { managedAdmission: { managedId: 'managed-machine' } } : {}),
+                diagnostic: reply === 'malformed' ? { ...diagnostic, machineId: 'private-identifier' } : diagnostic } };
+        } });
+        const result = await executeOriginalAccountMachineAction({ account, actionId, input,
+            requestId: 'ui-machine-availability-mint', machineId: input.machineId,
+            machineServiceLogsGeneration: { expectedGeneration: 'selected-native-generation' } });
+        expect(result).toMatchObject(reply === 'matching' || reply === 'receipt'
+            ? { ok: false, errorCode: 'target_unavailable', effectAttempted: false, details: reply === 'receipt'
+                ? { error: 'invalid_request', code: 'target_unavailable', requestId: 'ui-machine-availability-mint',
+                    managedAdmission: { managedId: 'managed-machine' }, diagnostic } : diagnostic }
+            : { ok: false, errorCode: 'admission_unavailable' });
+        if (reply === 'mismatched' || reply === 'malformed') expect(result).not.toHaveProperty('details');
+        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
+        expect(homes.requestsFor(actionPath)).toHaveLength(0);
+    });
+
+    it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
+        const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        const refusal = { error: 'invalid_request', code: 'target_unavailable',
+            requestId: correlation === 'matching' ? binding.requestId : 'other-request', diagnostic };
+        homes.answer(serverId, path, { status: 409, body: refusal });
+        expect(await execute()).toMatchObject(correlation === 'matching'
+            ? { ok: false, errorCode: 'target_unavailable', effectAttempted: false, details: diagnostic }
+            : { ok: false, errorCode: 'invalid_action_output' });
+    });
     it('mints retained managed follow-up authorization even for the requester own ordinary Machine', async () => {
         if (!account) throw new Error('Expected captured Account');
         answerOwnedMachine();

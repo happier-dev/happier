@@ -425,7 +425,15 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
             availability };
     }
     if (!resourceContentMatchesMode(row, access.encryptionMode)) return { kind: 'denied', code: 'encryption_material_unavailable' };
-    if (row.revokedAt || row.replacedByMachineId || !row.installationId || (input.requireOnline === true && !row.active)) return { kind: 'denied', code: 'machine_unavailable' };
+    const availability = classifyMachineAvailabilityState(row);
+    if (availability === 'revoked') return { kind: 'denied', code: 'machine_unavailable',
+        diagnostic: { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' } };
+    if (availability === 'replaced') return { kind: 'denied', code: 'machine_unavailable',
+        diagnostic: { reason: 'machine_replaced', requiredFact: 'current_machine', remedy: 'select_current_machine' } };
+    if (!row.installationId) return { kind: 'denied', code: 'machine_unavailable',
+        diagnostic: { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' } };
+    if (input.requireOnline === true && !row.active) return { kind: 'denied', code: 'machine_unavailable',
+        diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } };
     // A template creates the same requester-owned Session as ordinary New Session.
     // Keep its signed root while consuming the existing spawn role/isolation policy.
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;

@@ -1,3 +1,5 @@
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { ExternalActionCredentialScopeDiagnosticV1, ExternalActionTargetRefusalPhase } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { prepareManagedCredentialDeliveryForAction, readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
@@ -178,8 +180,12 @@ function sendExternalActionHttpError(
     code: ExternalActionHttpErrorCode,
     requestId?: string,
     managedAdmission?: Readonly<{ managedId: string }>,
+    credentialScopeDiagnostic?: ExternalActionCredentialScopeDiagnosticV1,
+    phase?: ExternalActionTargetRefusalPhase,
+    machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1,
 ): FastifyReply {
-    const error = projectExternalActionHttpError(code, requestId, managedAdmission);
+    const error = projectExternalActionHttpError(code, requestId, managedAdmission, credentialScopeDiagnostic, phase,
+        machineAvailabilityDiagnostic);
     return sendExternalActionJson(reply, error.statusCode, error.payload);
 }
 
@@ -741,7 +747,8 @@ export function registerExternalActionRoutes(
                     authentication: { authenticationAuthority: principal.authority,
                         authenticationEvidence: request.authTokenAuthenticationEvidence } });
             if (!admission || admission.kind !== 'admitted') {
-                return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
+                return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId,
+                    undefined, undefined, undefined, admission?.diagnostic);
             }
             const machine = await db.machine.findFirst({
                 where: { id: receivingMachineId, accountId: admission.custodianAccountId,
@@ -978,7 +985,8 @@ export function registerExternalActionRoutes(
             if (result.kind === "placement_error") {
                 if (result.code === "credential_scope_denied") return sendExternalActionHttpError(reply, result.code, envelope.data.requestId);
                 if (envelope.data.v === 2) {
-                    return sendExternalActionHttpError(reply, result.code, envelope.data.requestId, result.managedAdmission);
+                    return sendExternalActionHttpError(reply, result.code, envelope.data.requestId, result.managedAdmission,
+                        undefined, undefined, result.machineAvailabilityDiagnostic);
                 }
                 const response = projectExternalActionResponseEnvelopeV1({
                     v: 1,
@@ -990,6 +998,7 @@ export function registerExternalActionRoutes(
                         ok: false,
                         errorCode: result.code,
                         error: result.code,
+                        ...(result.machineAvailabilityDiagnostic ? { details: result.machineAvailabilityDiagnostic } : {}),
                     },
                 });
                 if (!response) {

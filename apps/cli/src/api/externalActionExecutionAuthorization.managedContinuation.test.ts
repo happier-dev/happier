@@ -180,16 +180,18 @@ describe('managed continuation through the ordinary public Action transport', ()
         } finally { await currentness.close(); }
     });
 
-    it.each(['action_not_admitted', 'action_outcome_unknown'] as const)('preserves managed child correlation for %s and refuses a mismatched reply', async code => {
+    it.each(['action_not_admitted', 'action_outcome_unknown', 'target_unavailable'] as const)('preserves managed child correlation for %s and refuses a mismatched reply', async code => {
         const response = (id: string) => {
             const refusal = projectExternalActionHttpError(code, id);
-            return { status: refusal.statusCode, data: refusal.payload };
+            return { status: refusal.statusCode, data: { ...refusal.payload,
+        ...(code === 'target_unavailable' ? { diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } } : {}) } };
         };
         vi.spyOn(axios, 'post').mockResolvedValueOnce(response(root.binding.requestId)).mockResolvedValueOnce(response('other-request'));
         const request = { input, continuation, authorization: root, material, installationId: 'installation',
             privateKey: keyPair.secretKey, serverHttpBaseUrl: 'https://home.example', targetMachineId: 'guest' };
         expect(await dispatchManagedSessionStart(request))
-            .toMatchObject({ ok: false, errorCode: code, details: { requestId: root.binding.requestId } });
+            .toMatchObject({ ok: false, errorCode: code, details: code === 'target_unavailable'
+        ? { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } : { requestId: root.binding.requestId } });
         expect(await dispatchManagedSessionStart(request)).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
     });
 

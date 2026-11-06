@@ -98,10 +98,19 @@ export const MachineKeyPreparationResultV1Schema = lazyZodSchema(() => z.discrim
 ]));
 export type MachineKeyPreparationResultV1 = z.infer<typeof MachineKeyPreparationResultV1Schema>;
 
+/** Content-free availability facts decided by Machine admission, with matching recovery. */
+export const MachineAvailabilityDiagnosticV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ reason: z.literal('machine_offline'), requiredFact: z.literal('machine_online'), remedy: z.literal('reconnect_machine') }),
+  z.strictObject({ reason: z.literal('machine_installation_missing'), requiredFact: z.literal('machine_installation'), remedy: z.literal('register_machine') }),
+  z.strictObject({ reason: z.literal('machine_revoked'), requiredFact: z.literal('machine_registration'), remedy: z.literal('register_machine') }),
+  z.strictObject({ reason: z.literal('machine_replaced'), requiredFact: z.literal('current_machine'), remedy: z.literal('select_current_machine') }),
+]));
+export type MachineAvailabilityDiagnosticV1 = z.infer<typeof MachineAvailabilityDiagnosticV1Schema>;
+
 /** Internal result only; no public parser can mint an admission. */
 export type MachineAdmission =
   | Readonly<{ kind: 'admitted'; actorAccountId: string; custodianAccountId: string; machineId: string; installationId: string; role: MachineAccessRoleV1; encryptionMode: 'plain' | 'e2ee' }>
-  | Readonly<{ kind: 'denied'; code: MachineAccessRefusalCode }>;
+  | Readonly<{ kind: 'denied'; code: MachineAccessRefusalCode; diagnostic?: MachineAvailabilityDiagnosticV1 }>;
 
 export const MachineRecipientKeyEnvelopeInputV1Schema = lazyZodSchema(() => z.strictObject({
   recipientAccountId: z.string().check(z.minLength(1)), encryptedDataKey: SessionDataKeyEnvelopeBytesV1Schema,

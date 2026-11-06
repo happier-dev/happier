@@ -1,13 +1,13 @@
-import { ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionHttpErrorSchema, ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ServerFetch } from '@/sync/http/client';
 import { safeParse, type core } from 'zod/mini';
 export type ApiTokenActionTransport = Readonly<{ request: ServerFetch; target?: ExternalActionTargetV1 }>;
 export async function executeApiTokenAction(transport: ApiTokenActionTransport, actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> {
-    const refused = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+    const refused = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
     const publicId = PublicActionIdSchema.safeParse(actionId);
     if (!publicId.success) return refused('unsupported_action');
     let body: unknown;
@@ -28,6 +28,16 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
     }, { retry: 'none' });
     let raw: unknown;
     try { raw = await response.json(); } catch { return refused('invalid_action_output'); }
+    if (!response.ok) {
+        const failure = ExternalActionHttpErrorSchema.safeParse(raw);
+        if (!failure.success || ('requestId' in failure.data && failure.data.requestId !== undefined)) {
+            return refused('invalid_action_output');
+        }
+        if ('code' in failure.data && failure.data.code === 'target_unavailable'
+            && 'diagnostic' in failure.data && failure.data.diagnostic !== undefined) {
+            return { ...refused(failure.data.code), details: 'managedAdmission' in failure.data ? failure.data : failure.data.diagnostic };
+        }
+    }
     const parsed = parseExternalActionResponseEnvelopeV1(raw);
     if (!parsed || parsed.actionId !== actionId || parsed.requestId !== undefined) return refused('invalid_action_output');
     if (!parsed.execution.ok) return parsed.execution;

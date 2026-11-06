@@ -164,6 +164,17 @@ last-active time. Opening a Machine page or popover pulls that timestamp once;
 periodic heartbeats cause no current-client UI work. The existing keyed activity owner publishes
 presence transitions without replacing inventory rows or lists.
 
+Machine admission retains a content-free availability diagnostic when the
+requester has access: its closed `reason`, `requiredFact`, and `remedy` distinguish
+an offline Machine, a missing installation, revocation, and replacement. External
+Actions keep `target_unavailable` as the failure code and carry this diagnostic in
+V1 execution `details` or pre-open HTTP `diagnostic`, including authorization
+minting. Current clients retain
+those fields through their Action failure projection. This unreleased 0.3 contract
+requires matching Protocol, Home, and client readers; it adds no admission checks,
+presence timers, retries, or persisted fields.
+
+
 A 0.2 Home omits the projection marker, retaining its existing UI heartbeat grace
 and shared runtime clock. Its ten-minute default Machine timeout accommodates a
 0.3 daemon's 50-second cadence. A 0.2 UI connected to a 0.3 Home receives the real
