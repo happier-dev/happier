@@ -58,6 +58,7 @@ describe('ApprovalRequesterConfirmationSection operation actor', () => {
     const screen = await renderScreen(
       <ApprovalRequesterConfirmationSection
         subject={subject()}
+        serverId="server-1"
         open={false}
         decision={decision}
         operationCredentialUses={[use]}
@@ -79,6 +80,7 @@ describe('ApprovalRequesterConfirmationSection operation actor', () => {
       const screen = await renderScreen(
         <ApprovalRequesterConfirmationSection
           subject={subject()}
+          serverId="server-1"
           open
           decision={null}
           operationCredentialUses={operationCredentialUses}

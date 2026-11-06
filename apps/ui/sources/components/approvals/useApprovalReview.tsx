@@ -269,7 +269,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       || parsed?.kind === 'built_in' && parsed.request.v === 2 ? parsed.request.requesterConfirmation : undefined);
     return subject.success ? subject.data : null;
   }, [parsed]);
-  const requesterMayDecide = useApprovalRequesterViewer(requesterConfirmation);
+  const requesterMayDecide = useApprovalRequesterViewer(requesterConfirmation, approvalServerId);
   const requesterOperationCredentialUses = React.useMemo(() => readApprovalOperationCredentialUses(
     parsed?.kind === 'target' ? parsed.request.execution
       : parsed?.kind === 'built_in' && parsed.request.v === 2 ? parsed.request.execution : undefined), [parsed]);
@@ -703,6 +703,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const requesterConfirmationSection = requesterConfirmation ? (
         <ApprovalRequesterConfirmationSection
           subject={requesterConfirmation}
+      serverId={approvalServerId}
           open={parsed.request.status === 'open' && !answeredWhileOpen}
           operationCredentialUses={requesterOperationCredentialUses}
           decision={parsed.request.decision

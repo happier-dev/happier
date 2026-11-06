@@ -55,7 +55,7 @@ export const ApprovalRequesterThreadCard = React.memo(
       'approve' | 'reject' | null
     >(null);
     const state = resolveApprovalRequesterThreadState(parsed, recordedDecision);
-    const entitled = useApprovalRequesterViewer(subject);
+    const entitled = useApprovalRequesterViewer(subject, props.serverId);
     const viewerName = t('session.collaboration.discussion.attribution.you');
     const requester =
       useApprovalAccountLabel(

@@ -8,6 +8,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useKnownAccountActor } from '@/components/account/useKnownAccountActor';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
 import { ApprovalOperationActorLine } from './ApprovalOperationActorLine';
@@ -24,20 +25,22 @@ export function isApprovalRequesterViewer(
   return Boolean(subject && viewerScope && viewerScope.accountId === subject.requesterAccountId);
 }
 
-/** The viewer's own scope on the Home that asked; the page uses it to offer or withhold Confirm. */
+/** The viewer's current credential scope on the Home that asked; retained identity never grants Confirm. */
 export function useApprovalRequesterViewer(
   subject: ApprovalRequesterConfirmationV1 | null | undefined,
+  /** This device's resolved profile id for the approval Home, never the creator device's saved id. */
+  viewerServerId: string | null,
 ): boolean {
-  const { viewerScope } = useKnownAccountActor(
-    subject?.personaSessionRef.serverId ?? null,
-    null,
+  const { binding } = useServerCredentialAccountScopeBinding(
+    subject ? viewerServerId : null,
   );
+  const viewerScope = binding?.isCurrent() ? binding.scope : null;
   return isApprovalRequesterViewer(subject, viewerScope);
 }
 
 /** One Account named as this viewer may see it: You, a known name, or a generic person. Never guessed. */
 export function useApprovalAccountLabel(
-  serverId: string,
+  serverId: string | null,
   accountId: string | undefined,
   /** The viewer named inside a sentence ("confirmed by you") instead of as a row value ("You"). */
   form: 'value' | 'sentence' = 'value',
@@ -64,6 +67,8 @@ export const ApprovalRequesterConfirmationSection = React.memo(
   function ApprovalRequesterConfirmationSection(
     props: Readonly<{
       subject: ApprovalRequesterConfirmationV1;
+      /** This device's resolved profile id for the approval Home. */
+      serverId: string | null;
       open: boolean;
       decision: Readonly<{
         kind: 'approve' | 'reject';
@@ -73,8 +78,8 @@ export const ApprovalRequesterConfirmationSection = React.memo(
       operationCredentialUses?: readonly ActionOperationCredentialUseV1[];
     }>,
   ) {
-    const serverId = props.subject.personaSessionRef.serverId;
-    const entitled = useApprovalRequesterViewer(props.subject);
+    const serverId = props.serverId;
+    const entitled = useApprovalRequesterViewer(props.subject, serverId);
     const requester = useApprovalAccountLabel(
       serverId,
       props.subject.requesterAccountId,
@@ -132,7 +137,7 @@ export const ApprovalRequesterConfirmationSection = React.memo(
           <SectionContentRow>
             <ApprovalOperationActorLine
               uses={props.operationCredentialUses}
-              serverId={serverId}
+              serverId={serverId ?? props.subject.personaSessionRef.serverId}
             />
           </SectionContentRow>
         ) : null}
