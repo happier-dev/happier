@@ -3,7 +3,7 @@ import { getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ModelPackManifest } from '@happier-dev/protocol';
+import type { ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import {
   deriveModelPackStagingPlan,
   installModelPackWithHost,

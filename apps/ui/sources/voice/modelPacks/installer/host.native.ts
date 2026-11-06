@@ -46,7 +46,7 @@ import type {
   ModelPackStagingHandle,
   ModelPackCoreProgress,
 } from '@happier-dev/voice-modelpacks';
-import type { ModelPackManifest } from '@happier-dev/protocol';
+import type { ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import {
   createSha256Hasher,
   isLegacyModelPackPromotionIntent,

@@ -1,4 +1,4 @@
-import type { ModelPackManifest } from '@happier-dev/protocol';
+import type { ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 
 export function formatModelPackBuildLabel(
   manifest: Pick<ModelPackManifest, 'buildId' | 'publishedAt'> | null | undefined,
