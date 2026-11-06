@@ -17,7 +17,8 @@ export { ApprovalPendingNotice, type ApprovalPendingNoticeProps } from './Approv
 export { ApprovalPrompt, type ApprovalPromptProps } from './ApprovalPrompt.js';
 export * from './Button.js';
 export * from './Collection.js';
-export * from './CollectionRowNeedsYouHighlight.js';
+export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
+  type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
 export {
   useCollectionSavedViewsControl,
   useCollectionSavedViewsSelection,

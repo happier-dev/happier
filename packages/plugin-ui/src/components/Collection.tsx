@@ -84,7 +84,7 @@ import { CollectionKeyCap, ListCollectionHeader, useListCollectionSearch, useLis
 import { ListMultiSelectionProvider, useListMultiSelectionStoreSnapshot } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
 import { DetailsPane, DetailsPaneBody, PushedDetailHeader, useDetailsPanePlacement, useDetailsPaneHostInstalled } from './DetailsPane.js';
-import { CollectionRowNeedsYouHighlight } from './CollectionRowNeedsYouHighlight.js';
+import { CollectionRowNeedsYouHighlightInViewport } from './CollectionRowNeedsYouHighlight.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
@@ -1446,7 +1446,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       {rowContents}
     </List.Item>
   );
-  // A mounted row of a virtualized list is on screen; the highlight adds the host's own presentation fact.
+  // Page rows and virtualizer overscan stay mounted offscreen; the highlight reads physical visibility.
   const needsYou = anatomy.needsYou?.(item) ?? null;
   const destinationRow = (
     <HappierCollectionTableRowContext.Provider value={stage.wrapTitles && stage.ruledInsetPx === null ? RESTING_LIST_ROW : RULED_ROW}>
@@ -1461,7 +1461,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       tracks={travel === null ? NO_TRACKS : happierCollectionTravelTrack(offset)}
       {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:cell` })}
     >
-      {needsYou === null ? null : <CollectionRowNeedsYouHighlight unopened={needsYou.unopened} visible
+      {needsYou === null ? null : <CollectionRowNeedsYouHighlightInViewport unopened={needsYou.unopened}
         {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:needs-you` })} />}
       {destinationRow}
     </AnimatedView>
