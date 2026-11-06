@@ -11820,6 +11820,11 @@
       "types": "./dist/sessions/organization/accountEncryptionMigrationInventory.d.ts",
       "default": "./dist/sessions/organization/accountEncryptionMigrationInventory.js"
     },
+    "./sessions/organization/appearances": {
+      "happier-source": "./src/sessions/organization/appearances.ts",
+      "types": "./dist/sessions/organization/appearances.d.ts",
+      "default": "./dist/sessions/organization/appearances.js"
+    },
     "./sessions/organization/attentionAction": {
       "happier-source": "./src/sessions/organization/attentionAction.ts",
       "types": "./dist/sessions/organization/attentionAction.d.ts",
