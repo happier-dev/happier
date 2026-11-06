@@ -117,6 +117,8 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdin?: Uint8Array;
+    /** Host-private launch frame, ordered before all provider input. */
+    stdinPreamble?: Uint8Array;
     timeoutMs?: number;
     descendantDisposition?: NonNullable<Parameters<ExecService['spawn']>[1]>['descendantDisposition'];
     signals?: readonly AbortSignal[];
@@ -557,6 +559,9 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             void requestTermination({ kind: 'timeout' }).catch(() => undefined);
         }, Math.max(0, input.timeoutMs));
         timeout.unref?.();
+    }
+    if (input.stdinPreamble !== undefined) {
+        child.stdin.write(input.stdinPreamble);
     }
     if (input.stdin !== undefined) {
         child.stdin.end(input.stdin);

@@ -1,3 +1,4 @@
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -7288,6 +7289,70 @@ describe("external Action execution authorization", () => {
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
             expect((await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } })).statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
+    it.each(['machines.agents.signIn.status', 'machines.agents.list'] as const)(
+        'admits the public %s read for Use through its existing RPC policy', async actionId => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            accountId: custodian.id, active: true,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        // Persisted grants are the database boundary; admission and HTTP proof
+        // issuance below run through their actual owners without substitutes.
+        await db.machineAccountGrant.create({ data: { machineId: fixture.machine.id,
+            accountId: fixture.account.id, accessLevel: 'view', createdByAccountId: custodian.id } });
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({
+                v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: fixture.machine.id },
+                input: { machineId: fixture.machine.id,
+                    ...(actionId === 'machines.agents.signIn.status' ? { agentId: 'codex' } : {}) },
+            });
+            const mint = async (accountId: string) => app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${await auth.createToken(accountId, undefined,
+                    { kind: 'account', authority: 'present_user' })}` },
+                payload: { v: 1, machineId: fixture.machine.id, envelope },
+            });
+            const use = await mint(fixture.account.id);
+            expect(use.statusCode, use.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(use.json());
+            expect(authorization.binding).toMatchObject({
+                actionId, accountId: fixture.account.id, custodianAccountId: custodian.id,
+                admittedMachineRole: 'use', machineId: fixture.machine.id,
+            });
+            const phases = actionId === 'machines.agents.signIn.status'
+                ? [{ method: AGENT_SIGN_IN_STATUS_RPC_METHOD, params: { agentId: 'codex' } }]
+                : [{ method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, params: {} },
+                    { method: RPC_METHODS.CAPABILITIES_DETECT, params: { requests: [{ id: 'cli.codex' }] } }];
+            for (const phase of phases) {
+                const method = `${fixture.machine.id}:${phase.method}`;
+                const requestId = crypto.randomUUID();
+                const execution = { v: 1 as const, authorization, effectActionId: actionId,
+                    target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: actionId, target: authorization.binding.target,
+                        installationId: authorization.binding.installationId, method, requestId, params: phase.params,
+                        privateKey: fixture.keyPair.secretKey }) };
+                expect(await verifyExternalActionMachineRpcExecution(execution,
+                    { method, requestId, params: phase.params, originalActionEnvelope: envelope }))
+                    .toMatchObject({ binding: authorization.binding, effectActionId: actionId });
+            }
+            const owner = await mint(custodian.id);
+            expect(owner.statusCode, owner.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(owner.json()).binding.admittedMachineRole).toBe('manage');
+            await db.machineAccountGrant.update({ where: { machineId_accountId: {
+                machineId: fixture.machine.id, accountId: fixture.account.id,
+            } }, data: { accessLevel: 'admin' } });
+            const manage = await mint(fixture.account.id);
+            expect(manage.statusCode, manage.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(manage.json()).binding.admittedMachineRole).toBe('manage');
+            expect((await mint(outsider.id)).statusCode).toBe(409);
         } finally { await app.close(); }
     });
 

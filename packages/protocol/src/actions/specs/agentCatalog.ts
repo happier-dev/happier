@@ -1,3 +1,4 @@
+import { RPC_METHODS } from '../../rpc/methods.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../scm/diffSummary.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -5,7 +6,7 @@ import { readRegistryAgentCliLocatorV1 } from './registries.js';
 import { AgentsAcpBackendsInstallFromRegistryInputV1Schema, AgentsAcpBackendsInstallFromRegistryOutputV1Schema } from '../../acp/catalog/registry/registryInstallActionV1.js';
 import { AgentsAcpBackendsDeleteInputV1Schema, AgentsAcpBackendsDeleteOutputV1Schema, AgentsAcpBackendsGetInputV1Schema, AgentsAcpBackendsGetOutputV1Schema, AgentsAcpBackendsUpsertInputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema } from '../../acp/catalog/catalogMutationsV1.js';
 import { z } from 'zod/mini';
-import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD, MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../../capabilities/machineAgentInventory.js';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
 import { AcpBackendApprovalInputSchema, projectAcpBackendApprovalInput } from './acpBackendApproval.js';
@@ -207,7 +208,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     id: 'machines.agents.signIn.status', executionPlacement: 'machine', approval: {result: 'none'},
     originalExecution: { requesterCredentials: 'none' },
     title: 'Check agent sign-in', sideEffectClass: 'read', safety: 'safe', placements: [],
-    bindings: { mcpToolName: 'machines_agents_sign_in_status', voiceClientToolName: 'machines_agents_sign_in_status' },
+    bindings: { rpcMethod: AGENT_SIGN_IN_STATUS_RPC_METHOD, mcpToolName: 'machines_agents_sign_in_status', voiceClientToolName: 'machines_agents_sign_in_status' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: MachinesAgentsSignInStatusInputSchema, outputSchema: AgentSignInStatusResponseSchema,
     inputHints: { description: 'See whether an agent is signed in on a machine, or still waiting for you to finish.', title: 'Check agent sign-in', fields: [
@@ -581,7 +582,7 @@ export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
     description: 'Read daemon-owned Agent installation, sign-in, platform and update facts for a machine.',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'machines_agents_list' },
+    bindings: { rpcMethod: RPC_METHODS.CAPABILITIES_DETECT, mcpToolName: 'machines_agents_list' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'agents', 'list'], visibility: 'canonical' }] },
     inputHints: {

@@ -14,6 +14,14 @@ export type CliAuthStatus = AgentCliAuthStatusV1 & Readonly<{
 
 export type CliAuthStatusDraft = AgentCliAuthStatusV1;
 
+/** Host-private placement for a native probe; never passed to Agent callbacks. */
+export type CliAuthNativeExecution = Readonly<{
+  agentIsolation: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+  cwd: string;
+  processEnv: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+}>;
+
 export type CliAuthSpec = Readonly<{
   binaryNames: ReadonlyArray<string>;
   /**
@@ -25,6 +33,7 @@ export type CliAuthSpec = Readonly<{
     resolvedPath: string;
     /** Host-private final child environment; never forwarded to Agent callbacks. */
     processEnv?: NodeJS.ProcessEnv;
+    nativeExecution?: CliAuthNativeExecution;
     /** Host-owned containing probe budget; never exposed to Agent callbacks. */
     timeoutMs?: number;
   }>) => Promise<CliAuthStatusDraft>;

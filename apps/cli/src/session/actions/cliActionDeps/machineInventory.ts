@@ -109,12 +109,13 @@ export function createCliMachineInventoryActionDeps(
       }
       return startMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal }));
     },
-    machineAgentSignInStatus: async ({ machineId, signal, serverId, agentId }) => {
+    machineAgentSignInStatus: async ({ machineId, signal, serverId, agentId }, context) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         throw Object.assign(new Error('An authenticated machine transport is required.'), { code: 'sign_in_unavailable' });
       }
       return AgentSignInStatusResponseSchema.parse(await callMachineAction({
         machineId, serverId, method: AGENT_SIGN_IN_STATUS_RPC_METHOD, request: { agentId }, signal,
+        context, effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.signIn.status',
       }));
     },
     machineAgentSignInCancel: async ({ machineId, serverId, signal, ...request }) => {

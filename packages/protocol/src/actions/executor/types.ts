@@ -1996,7 +1996,7 @@ export type ActionExecutorDeps = Readonly<{
   }> | null;
   agentsBackendsList?: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
   machineAgentSignInStart?: (args: MachinesAgentsSignInStartInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
-  machineAgentSignInStatus?: (args: MachinesAgentsSignInStatusInput & { serverId?: string; signal?: AbortSignal }) => Promise<AgentSignInStatusResponse>;
+  machineAgentSignInStatus?: (args: MachinesAgentsSignInStatusInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<AgentSignInStatusResponse>;
   machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInCancelOutput>;
   machineAgentSignInRestart?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
   machinesAgentsList?: (args: MachinesAgentsListInput & Readonly<{ draftDefinitions?: readonly MachineAcpInventoryDefinition[] }>, context: ActionExecutorContext) => Promise<MachinesAgentsListOutput | ActionExecuteFailure>;

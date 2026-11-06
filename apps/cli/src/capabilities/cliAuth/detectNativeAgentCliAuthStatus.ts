@@ -1,7 +1,7 @@
 import { readCurrentCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { resolveCliSnapshotProbeTimeoutMs } from '@/capabilities/snapshots/cliSnapshotProbeTimeout';
 import { normalizeCliAuthStatusDraft } from './normalizeCliAuthStatusDraft';
-import type { CliAuthSpec, CliAuthStatus } from './types';
+import type { CliAuthNativeExecution, CliAuthSpec, CliAuthStatus } from './types';
 
 /** Native, non-interactive auth facts from the admitted Agent's existing probe. */
 export async function detectNativeAgentCliAuthStatus(params: Readonly<{
@@ -9,6 +9,7 @@ export async function detectNativeAgentCliAuthStatus(params: Readonly<{
     resolvedPath: string;
     authSpec?: CliAuthSpec | null;
     processEnv?: NodeJS.ProcessEnv;
+    nativeExecution?: CliAuthNativeExecution;
     timeoutMs?: number;
 }>): Promise<CliAuthStatus | null> {
     try {
@@ -19,6 +20,7 @@ export async function detectNativeAgentCliAuthStatus(params: Readonly<{
                 await spec.detectAuthStatus({
                     resolvedPath: params.resolvedPath,
                     processEnv: params.processEnv,
+                    nativeExecution: params.nativeExecution,
                     timeoutMs: params.timeoutMs ?? resolveCliSnapshotProbeTimeoutMs(true),
                 }),
             );

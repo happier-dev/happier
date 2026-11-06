@@ -19,6 +19,8 @@ export type PrepareRequesterNativeOperationInput = Readonly<{
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
   ingress?: RpcHandlerContext;
   signal: AbortSignal;
+  /** A status read consumes an existing native binding without provisioning. */
+  allowMemberPreparation?: false;
 }>;
 
 /** Finite native effects consume admitted requester custody. Shared-user
@@ -37,7 +39,9 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   }), { rpcErrorCode: 'agent_isolation_unavailable' });
   input.signal.throwIfAborted();
   const selected = input.requesterIdentity;
-  const { machine, homeServerIdentityId } = host;
+  const { homeServerIdentityId } = host;
+  const machine = input.allowMemberPreparation === false && host.machine
+    ? { ...host.machine, prepareMember: undefined } : host.machine;
   if (selected.kind !== 'isolated'
     || !machine || !homeServerIdentityId || selected.requester.machineId !== host.machineId
     || selected.requester.installationId !== host.installationId) throw unavailable();

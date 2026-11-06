@@ -5,6 +5,8 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { createCapabilitiesService } from '@/capabilities/service';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 const facts = {
   installed: false, version: null, latestVersion: null,
@@ -16,6 +18,55 @@ const facts = {
 } as const;
 
 describe('CLI machine Agent inventory Action transport', () => {
+  const admittedListContext = (role: 'use' | 'manage') => {
+    const actionId = 'machines.agents.list';
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admitted-root', binding: {
+      accountId: role === 'use' ? 'guest' : 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home-1', actionId, requestId: 'list-read',
+      machineId: 'machine-1', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    return { surface: 'cli', authority: 'present_user', serverId: 'home-1', actionRequestId: 'list-read',
+      machineAdmission: { actorAccountId: authorization.binding.accountId, custodianAccountId: 'owner', machineId: 'machine-1',
+        installationId: 'installation', role, encryptionMode: 'plain' },
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target } satisfies RpcActionExecutorContext;
+  };
+  it.each(['use', 'manage'] as const)('finishes both phases of an admitted %s list without requester Account credentials', async role => {
+    const context = admittedListContext(role);
+    const executor = createActionExecutor(createCliActionDeps({ token: '', sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'home-1', serverHttpBaseUrl: 'http://home-1.test', serverIdentityId: 'home-1', externalActionMachineInstallationId: 'installation',
+      externalActionMachineRequestPrivateKey: new Uint8Array(64),
+      // Machine RPC is the boundary; keep the real Action, inventory projector,
+      // admitted local transport selection and phase mapping below it.
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async method => {
+        if (method === 'daemon.extensions.contributionRegistryProjection.describe') return {
+          protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+            'acme/helper': { id: 'helper', title: 'Remote Helper', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+          } },
+        };
+        if (method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        return { protocolVersion: 1, results: { 'cli.acme/helper': { ok: true, checkedAt: 1, data: facts } } };
+      } },
+    }));
+    expect(await executor.execute('machines.agents.list', { machineId: 'machine-1', agentId: 'acme/helper' }, context)).toMatchObject({
+      ok: true, result: { items: [{ agentId: 'acme/helper', title: 'Remote Helper', ...facts }] },
+    });
+  });
+
+  it('reports a typed authentication refusal when an admitted local root cannot use this installation and has no network credentials', async () => {
+    const executor = createActionExecutor(createCliActionDeps({ token: '', sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'home-1', serverHttpBaseUrl: 'http://home-1.test', serverIdentityId: 'home-1', externalActionMachineInstallationId: 'another-installation',
+      externalActionMachineRequestPrivateKey: new Uint8Array(64),
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => {
+        throw new Error('A root for another installation cannot invoke this local Machine');
+      } },
+    }));
+    const result = await executor.execute('machines.agents.list', { machineId: 'machine-1', agentId: 'acme/helper' },
+      admittedListContext('use'));
+    expect(result).toMatchObject({ ok: false, errorCode: 'not_authenticated',
+      failureCause: { phase: 'dispatch', errorCode: 'not_authenticated' } });
+  });
+
   it('observes a normalized draft through the registered remote capability without an Account catalog read', async () => {
     const service = createCapabilitiesService({ capabilities: [createAcpAgentInventoryCapability({ accountId: 'alice' })],
       checklists: { 'machine-details': [], 'new-session': [] }, buildContext: async () => ({ cliSnapshot: null }) });

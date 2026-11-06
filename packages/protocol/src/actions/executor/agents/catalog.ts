@@ -41,7 +41,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
           return completeActionResult(await deps.machineAgentSignInStatus({
             ...MachinesAgentsSignInStatusInputSchema.parse(parsed.data),
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
-          }));
+          }, ctx));
         }
         if (actionId === 'machines.agents.signIn.cancel' || actionId === 'machines.agents.signIn.restart') {
           const operation = actionId === 'machines.agents.signIn.cancel' ? deps.machineAgentSignInCancel : deps.machineAgentSignInRestart;

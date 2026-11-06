@@ -64,7 +64,7 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
     try {
       const result = await checkAgentSignInRpc({ ...target, signal: abort.signal }, target.agentId);
       if (abort.signal.aborted || !target.lifetime.isCurrent()) return null;
-      entry.accountLabel = result.accountLabel;
+      entry.accountLabel = result.accountLabel ?? null;
       if (result.status === 'signedIn') {
         const wasSignedIn = entry.state.phase === 'signedIn';
         publish(entry, { phase: 'signedIn', failure: null }); stopPolling(entry);

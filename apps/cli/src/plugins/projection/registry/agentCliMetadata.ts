@@ -97,8 +97,9 @@ export function createNativeAgentCliAuthSpec(cli: PluginAgentCliMetadata): CliAu
         isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(cli),
         ...(staticProbe
             ? {
-                detectAuthStatus: async ({ processEnv }) => (
-                    staticProbe.readPresentCredential(processEnv) ?? staticProbe.missingCredentialStatus()
+                detectAuthStatus: async ({ processEnv, nativeExecution }): Promise<CliAuthStatusDraft> => (
+                    nativeExecution ? { state: 'unknown', reason: 'unsupported' }
+                        : staticProbe.readPresentCredential(processEnv) ?? staticProbe.missingCredentialStatus()
                 ),
             }
             : {}),

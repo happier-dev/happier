@@ -1,3 +1,4 @@
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -58,6 +59,51 @@ function deferred<T>() {
 }
 
 describe("Session RPC final access admission on SQLite", () => {
+    it('admits shared Machine sign-in status with the granted role and refuses an unrelated Account', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'sign-in-worker',
+                platform: 'linux', happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.machineAccountGrant.createMany({ data: [
+            { machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id },
+            { machineId: machine.id, accountId: manager.id, accessLevel: 'admin', createdByAccountId: owner.id },
+        ] });
+        const method = `${machine.id}:${AGENT_SIGN_IN_STATUS_RPC_METHOD}`;
+        // Only Socket.IO is substituted: token issuance, grant reads, admission
+        // and relay use their production owners. The daemon consumes this stamp.
+        const received: SocketRpcRequestPayload[] = [];
+        const target = { id: 'sign-in-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
+            timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => {
+                received.push(request);
+                return { status: 'signedIn' };
+            } }) };
+        const io = createSocketRoomDiscoveryHarness(async room =>
+            room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+        for (const [account, role] of [[guest, 'use'], [manager, 'manage'], [owner, 'manage'], [stranger, null]] as const) {
+            const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+            const caller = Object.assign(createAuthenticatedFakeSocket({ id: `sign-in-${account.id}`, data: {
+                clientType: 'user-scoped', accountStoredContentCompatibility,
+            } }), { handshake: { auth: { token } } });
+            registerSocketRpcHandlers({ userId: account.id, socket: caller as unknown as Socket, io });
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { agentId: 'cursor' } }, callback);
+            if (role) {
+                expect(callback).toHaveBeenCalledWith({ ok: true, result: { status: 'signedIn' } });
+                expect(received.at(-1)?.machineAdmission).toMatchObject({ actorAccountId: account.id,
+                    custodianAccountId: owner.id, role, machineId: machine.id, installationId: machine.installationId });
+            } else {
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            }
+        }
+        expect(received).toHaveLength(3);
+    });
+
+
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {

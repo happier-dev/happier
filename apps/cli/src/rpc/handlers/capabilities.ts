@@ -5,6 +5,7 @@ import type { InstalledPluginCapabilityEntryV1 } from '@happier-dev/protocol/cap
 import { createCapabilityChecklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
+import { projectIdentityFreeDetectedCapability, projectIdentityFreeSystemTaskResponse } from '@/capabilities/cliAuth/identityFreeSignIn';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
 import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
@@ -37,8 +38,8 @@ import { resolvePreflightSessionControlsProbeAdapter } from '@/capabilities/prob
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { invokeAgentCliInstallCapability } from '@/capabilities/cliUpdate/invokeAgentCliInstallCapability';
 import { withAgentCliUpdateFacts } from '@/capabilities/cliUpdate/agentCliUpdates';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
     readInstalledPluginCatalogEntry,
     type PluginCatalogEntry,
@@ -594,8 +595,13 @@ export function registerCapabilitiesHandlers(
     rpcHandlerManager.registerHandler<CapabilitiesDetectRequest, CapabilitiesDetectResponse>(RPC_METHODS.CAPABILITIES_DETECT, async (data, ingress) => {
         const service = await getService();
         try {
-            return await service.detect(data, { accountId: ingress?.machineAdmission?.actorAccountId,
+            const response = await service.detect(data, { accountId: ingress?.machineAdmission?.actorAccountId,
                 executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_DETECT, data, ingress) });
+            if (ingress?.machineAdmission?.role !== 'use') return response;
+            return { ...response, results: Object.fromEntries(Object.entries(response.results).map(([id, result]) => [id,
+                result?.ok
+                    ? { ...result, data: projectIdentityFreeDetectedCapability(id, result.data) } : result,
+            ])) };
         } catch (error) {
             if (error instanceof CapabilityError && error.code !== undefined) throw new RpcError(error.message, error.code);
             throw error;
@@ -605,7 +611,7 @@ export function registerCapabilitiesHandlers(
     rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data, context) => {
         const service = await getService();
         const managed = ManagedInstallationServerOriginV1Schema.safeParse(context?.authorization);
-        return await service.invoke(
+        const response = await service.invoke(
             data,
             { ...(context?.signal ? { signal: context.signal } : {}),
                 executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_INVOKE, data, context),
@@ -616,6 +622,8 @@ export function registerCapabilitiesHandlers(
                 } : {}),
                 ...(managed.success ? { managedInstallationAuthorization: managed.data } : {}) },
         );
+        return context?.machineAdmission?.role === 'use' && data?.id === 'tool.systemTasks'
+            ? projectIdentityFreeSystemTaskResponse(response, data.method) : response;
     });
 
     function effectExecution(method: string, data: unknown,

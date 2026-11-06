@@ -1,3 +1,4 @@
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
@@ -21,7 +22,8 @@ export type MachineRpcMethod =
   | (typeof ACTION_OPERATION_RPC_METHODS_V1)[keyof typeof ACTION_OPERATION_RPC_METHODS_V1]
   | (typeof ACTION_OPERATION_RPC_METHODS_V2)[keyof typeof ACTION_OPERATION_RPC_METHODS_V2]
   | typeof CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD
-  | typeof CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD;
+  | typeof CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD
+  | typeof AGENT_SIGN_IN_STATUS_RPC_METHOD;
 
 export type EphemeralRunnerMachineRpcAuthority =
   | 'readTranscript'
@@ -970,6 +972,9 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
   ], 'auth', 'Native connected-account commands use the custodian Account credentials, secrets and connection persistence; shared Machine grants do not confer that Account authority.')
     .map(policy => ({ ...policy, sharedMachineAccess: 'custodian_only' as const })),
+  actionSpecServerRequired(AGENT_SIGN_IN_STATUS_RPC_METHOD, 'auth',
+    'Shared Machine Use reads native sign-in state; the daemon projects identity from the admitted role before encrypting its reply.',
+    'machines.agents.signIn.status'),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_AGENTS_INSTALL_START, RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
     RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST,
@@ -1151,6 +1156,7 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
     ...Object.values(RPC_METHODS),
     ...Object.values(SESSION_RPC_METHODS),
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    AGENT_SIGN_IN_STATUS_RPC_METHOD,
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
     ...Object.values(ACTION_OPERATION_RPC_METHODS_V1), ...Object.values(ACTION_OPERATION_RPC_METHODS_V2),

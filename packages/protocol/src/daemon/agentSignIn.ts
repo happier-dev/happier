@@ -15,7 +15,8 @@ export const AgentSignInPrepareRequestSchema = lazyZodSchema(() => (<T extends z
 })));
 export const AgentSignInStatusResponseSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['signedIn', 'signedOut', 'unknown']),
-  accountLabel: z.nullable(z.string()),
+  accountLabel: z.optional(z.nullable(z.string())),
+  signInScope: z.optional(z.enum(['machineOwner', 'member', 'sharedAgent'])),
   checkedAt: z.number(),
   nativeLogin: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
   connectedServices: z.array(z.strictObject({ serviceId: z.string(), title: z.string() })),

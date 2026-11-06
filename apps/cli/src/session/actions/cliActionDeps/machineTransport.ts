@@ -210,7 +210,7 @@ export function createCliMachineActionTransport(
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId
       && (listActionSpecs().find(spec => spec.id === managedBinding.actionId)?.bindings?.rpcMethod === input.method
-        || input.method === 'machines.agentIsolation.preview'
+        || (input.method === 'machines.agentIsolation.preview' || input.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
           && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
     const admittedProcessRead = admittedLocalRequester && input.processEnvironmentRead !== undefined
       && [RPC_METHODS.MACHINES_PROCESSES_LIST, RPC_METHODS.MACHINES_PROCESSES_GET, RPC_METHODS.MACHINES_PROCESSES_CHECK]
@@ -289,8 +289,10 @@ export function createCliMachineActionTransport(
       && requester?.authorization.binding.actionId === 'discussion.second_opinion.start';
     const reviewedSetupPlanRead = input.method === RPC_METHODS.MACHINE_SETUP_PLAN && input.effectActionId === 'machines.setup.plan'
       && (requester?.authorization.binding.actionId === 'machines.setup.plan' || requester?.authorization.binding.actionId === 'machines.setup.apply');
+    const credentials = reviewedOpinionDirectoryRead || reviewedSetupPlanRead ? requester!.credentials : params.credentials;
+    if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
-      credentials: reviewedOpinionDirectoryRead || reviewedSetupPlanRead ? requester!.credentials : params.credentials!,
+      credentials,
       machineId: input.machineId,
       method: input.method,
       request: input.request,

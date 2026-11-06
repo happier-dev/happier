@@ -790,7 +790,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     { actionId: 'machines.agents.signIn.status' as const, input: { machineId: 'alice-machine', agentId: 'codex' },
       result: { status: 'signedIn', checkedAt: 1, nativeLogin: 'status_only', connectedServices: [], signInScope: 'machineOwner' } },
     { actionId: 'machines.agents.list' as const, input: { machineId: 'alice-machine' }, result: { items: [] } },
-  ].flatMap(read => (['plain', 'e2ee'] as const).map(mode => ({ ...read, mode }))))('delivers the Use identity-free $actionId read without requester credential disclosure ($mode)', async ({ actionId, input, result, mode }) => {
+  ].flatMap(read => (['plain', 'e2ee'] as const).flatMap(mode => [false, true].map(disclosureCallback => ({ ...read, mode, disclosureCallback })))))('delivers the Use identity-free $actionId read without requester credential disclosure ($mode, callback: $disclosureCallback)', async ({ actionId, input, result, mode, disclosureCallback }) => {
     const events: string[] = [];
     const execution = { ok: true as const, result };
     const target = await home(mode, events, { originalOwnAction: actionId, ownExecution: execution });
@@ -798,7 +798,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
       serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; } });
+      ...(disclosureCallback ? { onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; } } : {}) });
     await expect(executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1' })).resolves.toEqual(execution);
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', machineId: 'alice-machine', actionId });

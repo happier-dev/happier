@@ -38,7 +38,6 @@ import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugi
 import { probeAcpCatalogs, probeAcpSessionControls } from '@/capabilities/probes/probeAcpCatalogs';
 import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
-import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import type {
     CatalogAgentId,
     ConnectedServiceStateSharingDescriptor,
@@ -657,11 +656,11 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                 ...(params.cli.executable.alternativeBinaryNames ?? []),
             ],
             isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
-            detectAuthStatus: async ({ processEnv = process.env, timeoutMs: probeTimeoutMs }): Promise<CliAuthStatusDraft> => {
+            detectAuthStatus: async ({ processEnv = process.env, timeoutMs: probeTimeoutMs, nativeExecution }): Promise<CliAuthStatusDraft> => {
                 if (!params.isCurrent()) {
                     return { state: 'unknown', reason: 'probe_failed' };
                 }
-                const staticCredential = staticProbe?.readPresentCredential(processEnv);
+                const staticCredential = nativeExecution ? null : staticProbe?.readPresentCredential(processEnv);
                 // A native status command owns file/keychain readiness, including
                 // Agent-specific home overrides. Default-home file presence cannot
                 // override its result for the final launch environment.
@@ -672,7 +671,8 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                     ),
                 ));
                 const systemToolExec = createProviderScopedStableExecService({
-                    cwd: process.cwd(),
+                    ...(nativeExecution ? { agentIsolation: nativeExecution.agentIsolation, signal: nativeExecution.signal } : {}),
+                    cwd: nativeExecution?.cwd ?? process.cwd(),
                     environment: executableEnvironment,
                     systemTools: admittedSystemTools,
                     agentId: params.agentId,
@@ -689,17 +689,17 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                     const status = await params.cliAuth.detectAuthStatus({
                         runDeclaredSystemToolCommand: async ({ toolId, args, timeoutMs }) => {
                             try {
-                                const resolved = await systemToolExec.systemTools.resolve({
-                                    toolId,
-                                    purpose: `Probe ${params.agentId} CLI authentication`,
-                                });
-                                const result = await runCliCommandBestEffort({
-                                    resolvedPath: resolved.executablePath,
+                                const execution = await systemToolExec.run({
+                                    executable: { kind: 'systemTool', id: toolId },
                                     args: [...args],
+                                    env: executableEnvironment,
                                     timeoutMs: timeoutMs ?? probeTimeoutMs,
-                                    processEnv: executableEnvironment,
                                 });
-                                return params.isCurrent() ? result : unavailable();
+                                const result = readPreflightCommandResult(execution);
+                                return params.isCurrent() ? {
+                                    ...result,
+                                    ok: result.ok && execution.termination.requestedBy.kind === 'none',
+                                } : unavailable();
                             } catch {
                                 return unavailable();
                             }
@@ -1660,6 +1660,7 @@ export function createCliSessionCommandHandler(
 }
 
 function createProviderScopedStableExecService(params: Readonly<{
+    agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     cwd: string;
     environment: Readonly<Record<string, string>>;
     additionalAllowedEnvironmentKeys?: readonly string[];
@@ -1675,6 +1676,7 @@ function createProviderScopedStableExecService(params: Readonly<{
     const workspaceRoot = resolve(params.cwd);
     const systemTools = createProviderScopedSystemToolResolver(params);
     return createStablePluginExecService({
+        ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
 
 
         environment: Object.freeze({}),

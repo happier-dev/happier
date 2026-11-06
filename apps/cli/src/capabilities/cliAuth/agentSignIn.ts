@@ -5,6 +5,7 @@ import { readAgentCatalogSnapshot, readCurrentContributionRegistry } from '@/age
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { detectNativeAgentCliAuthStatus } from './detectNativeAgentCliAuthStatus';
+import type { CliAuthNativeExecution } from './types';
 
 /** Manifest order is recommendation order; no host-maintained Agent/service table. */
 export function getAgentSignInServices(agentId: string) {
@@ -19,10 +20,13 @@ export function getAgentSignInServices(agentId: string) {
 }
 
 /** Fresh native facts, using exactly the same admitted probe as the inventory. */
-export async function probeAgentSignInStatus(agentId: string): Promise<AgentSignInStatusResponse> {
+export async function probeAgentSignInStatus(agentId: string, nativeExecution?: CliAuthNativeExecution | null): Promise<AgentSignInStatusResponse> {
   const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(agentId);
   const launch = agent?.runtimeSpec ? resolveAgentCliLaunchSpecForRuntime(agent.runtimeSpec) : null;
-  const auth = launch ? await detectNativeAgentCliAuthStatus({ agentId, resolvedPath: launch.resolvedPath }) : null;
+  // null means this execution user's native probe is unavailable, never a
+  // request to retry using the daemon's credentials.
+  const auth = launch && nativeExecution !== null ? await detectNativeAgentCliAuthStatus({ agentId,
+    resolvedPath: launch.resolvedPath, ...(nativeExecution ? { nativeExecution, processEnv: nativeExecution.processEnv } : {}) }) : null;
   return {
     status: auth?.state === 'logged_in' ? 'signedIn' : auth?.state === 'logged_out' ? 'signedOut' : 'unknown',
     accountLabel: auth?.accountLabel ?? null,

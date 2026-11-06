@@ -1770,6 +1770,29 @@ environment; on-demand sign-in status and machine inventory use the same native
 probe owner. A startup manifest-only entry is not executable auth authority,
 and inventory does not retain an auth hook across runtime generations.
 
+Shared-Machine sign-in status uses the existing Machine RPC admission policy:
+Use may read `daemon.agents.signIn.status`, while sign-in preparation retains its
+existing custodian-only policy. The public `machines.agents.signIn.status` and
+`machines.agents.list` Actions bind to that status RPC and capability detection,
+respectively, so Action target admission consumes the same Machine policy.
+Status and inventory read phases spend that admitted Action's signed root.
+The daemon projects the response before transport
+encryption. Use receives `signedIn`, `signedOut` (needs sign-in), or `unknown`,
+plus `signInScope` identifying `machineOwner`, `member`, or `sharedAgent` execution;
+it receives no `accountLabel` or other Account identity. Owner and Manage retain
+the full existing response. Native member/shared-user probes use the existing
+requester native-operation launcher with empty selected material and no borrowed
+owner environment. A missing member binding or unavailable native probe reports
+unknown without falling back to the owner or provisioning from a status read.
+The same identity-free projection applies to `cli.*` capability detection
+(including `machines.agents.list`), both its `signIn` and `authStatus` facts,
+Azure CLI dependency detection and daemon-service task results. Azure dependency
+results retain install and login state while omitting the native account name
+and tenant ID. Use task completion data keeps only fixed technical fields; new
+fields do not become disclosures automatically. These projections consume the
+admitted role without another permission evaluation; owner/Manage output and
+native execution placement stay unchanged.
+
 Inventory passes its existing login-status probe budget to the native command
 boundary. On-demand sign-in uses the same budget policy; an omitted command
 timeout does not introduce a shorter cutoff. A valid Claude `loggedIn: false`

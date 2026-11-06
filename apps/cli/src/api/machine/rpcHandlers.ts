@@ -753,7 +753,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
   });
 
-  registerMachineAgentSignInRpcHandlers({ rpcHandlerManager });
+  registerMachineAgentSignInRpcHandlers({ rpcHandlerManager, deps: params.deps });
   const operationRuntime = params.deps?.actionOperations;
   const operationStore = operationRuntime?.store;
   const operationRunner = operationRuntime?.runner;

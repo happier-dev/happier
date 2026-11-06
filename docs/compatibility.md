@@ -11,6 +11,18 @@ are required for omission; older owners refuse the missing Machine. The request
 envelope remains closed. No persisted format, route, error code, ABI or epoch is
 added.
 
+
+## Shared-Machine native Agent sign-in status (unreleased 0.3)
+
+Machine Use can read the existing sign-in status RPC. The daemon omits identity
+fields for Use and adds optional `signInScope`; owner/Manage responses retain
+their prior shape. Load matching Home, Protocol, daemon and app together: an old
+development daemon does not perform this privacy projection, and an old strict
+app reader rejects the projected response. Do not enable the wider Home policy
+against an old development daemon. No persistence, migration or protocol epoch
+changes. The inspected `../0.2` checkout at `4aa70a37c4` has no
+`packages/protocol/src/daemon/agentSignIn.ts` contract.
+
 ## Credential-free Machine Agent reads (unreleased 0.3)
 
 The host-private Action declaration may set
