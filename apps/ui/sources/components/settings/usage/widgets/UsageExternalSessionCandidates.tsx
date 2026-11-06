@@ -8,7 +8,6 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { resolveExternalSessionBrowseTargetForQualifiedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
 import { useExternalSessionBrowseCandidates, readExternalSessionBrowseCandidateKey } from '@/components/sessions/external/browse/useExternalSessionBrowseCandidates';
 import { cancelExternalSessionCandidateOpen, openExternalSessionCandidate, type ExternalSessionCandidateOpenState } from '@/components/sessions/external/browse/openExternalSessionCandidate';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -80,7 +79,6 @@ export function UsageExternalSessionCandidates(props: Readonly<{
         setLinking(null);
         return () => { cancelExternalSessionCandidateOpen(state.current); };
     }, [browseScope, historyAllowed, presentationActive]);
-    const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const router = useRouter();
     // The page's explicit Browse still reaches offscreen Sources; only their drawn controls defer.
     const render = (candidates: React.ReactNode) => props.children ? props.children(candidates) : candidates;
@@ -109,7 +107,7 @@ export function UsageExternalSessionCandidates(props: Readonly<{
                         accountCurrentness: props.lifetime,
                         resolveCurrentTarget: () => props.lifetime.isCurrent() ? { machineId: props.source.machineId,
                             serverId: props.lifetime.scope.serverId, accountId: props.lifetime.scope.accountId } : null,
-                        state: state.current, onLinkingChange: setLinking, linkActionExecute: execute,
+                        state: state.current, onLinkingChange: setLinking,
                         openSession: sessionId => { router.push(buildScopedSessionRouteHref({ sessionId,
                             serverId: props.lifetime.scope.serverId }) as Parameters<typeof router.push>[0]); },
                     }); }} />

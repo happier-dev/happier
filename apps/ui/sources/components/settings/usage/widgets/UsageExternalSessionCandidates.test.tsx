@@ -79,6 +79,29 @@ afterEach(async () => { standardCleanup(); restoreExecutorModuleLoader?.(); rest
     resetRuntimeFetch(); publishAppliedActiveServerRuntimeAvailability(false); vi.restoreAllMocks(); await homes.reset(); });
 
 describe('Usage shared outside-session candidates', () => {
+    it('links one human choice through the Machine owner while the agent link Action is disabled', async () => {
+        restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'sessions.external.link.ensure': { enabled: false } },
+        }) } }));
+        const originalRpc = rpc.getMockImplementation();
+        rpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE
+            ? { ok: true, sessionId: 'continued', created: true } : originalRpc?.(call));
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
+            externalSessionSource: { kind: 'archive' }, root: { kind: 'default' as const, path: '/root' },
+            consent: 'disabled' as const, status: 'found' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
+        const screen = await renderScreen(<UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" />);
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.browse')).toBeTruthy(); });
+        await screen.pressByTestIdAsync('outside.browse');
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
+        await screen.pressByTestIdAsync('outside.continue.outside');
+        await waitForHomeGovernance(() => expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE))
+            .toMatchObject([[{ serverId, accountId: 'usage-account', machineId: 'machine-1', payload: { remoteSessionId: 'outside' } }]]));
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(1);
+        expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
+    });
     it('withdraws Work source discovery after a machine request failure', async () => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
         recordMachineRequestFailed({ serverId, accountId: 'usage-account', machineId: 'machine-1' });
