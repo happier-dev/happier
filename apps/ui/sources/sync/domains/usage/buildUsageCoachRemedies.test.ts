@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { UsageCoachFindingSchema } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { UsagePromptCompositionSchema } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { buildUsageCoachRemedies } from './buildUsageCoachRemedies';
+import { buildUsageCoachRemedies as buildProjectedRemedies } from './buildUsageCoachRemedies';
+import { projectUsageSessionInput } from './usageWorkEvidence';
 import { evaluateUsageCoach } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import { UsageMcpBindingUsageSchema } from '@happier-dev/protocol/usage/coach/usageMcpBindingUsage';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
@@ -17,20 +18,21 @@ const findings = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100,
     currentness: 'current', composition: [composition] }).findings;
 const session = createSessionFixture({ id: 'session', serverId: 'home', metadata: { path: '/workspace/project', host: 'host',
     machineId: 'machine', agent: 'codex', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } });
+const buildUsageCoachRemedies = (input: Omit<Parameters<typeof buildProjectedRemedies>[0], 'sessions'>
+    & { sessions: readonly typeof session[] }) => buildProjectedRemedies({ ...input,
+        sessions: input.sessions.map(projectUsageSessionInput) });
 
 describe('Coach repository remedy preparation', () => {
-    it('opens metadata and resolves an Agent target only for the finding\'s admitted Session', () => {
-        let unrelatedReads = 0;
-        const unrelated = Array.from({ length: 100 }, (_, index) => {
-            const value = { ...session, id: `unrelated-${index}` };
-            Object.defineProperty(value, 'metadata', { enumerable: true, get() { unrelatedReads++; return session.metadata; } });
-            return value;
-        });
-        const proposals = buildUsageCoachRemedies({ findings, composition: [composition], sessions: [...unrelated, session], serverId: 'home' });
+    it('prepares remedies from compact admitted facts without retaining or rereading full owner content', () => {
+        const privateText = 'unconsumed owner content'.repeat(20_000);
+        const opened = { ...session, metadata: { ...session.metadata!, host: privateText } };
+        const projected = projectUsageSessionInput(opened);
+        Object.defineProperty(opened, 'metadata', { get() { throw new Error('Released full owner content'); } });
+        const proposals = buildProjectedRemedies({ findings, composition: [composition], sessions: [projected], serverId: 'home' });
         expect(proposals).toMatchObject([{ remedy: { kind: 'prepared_session', input: { executionTarget: { machineId: 'machine' } } } }]);
-        expect(unrelatedReads, 'unrelated Sessions cannot repeat stored-metadata schema admission').toBe(0);
-        expect(buildUsageCoachRemedies({ findings: [], composition: [], sessions: unrelated, serverId: 'home' })).toEqual([]);
-        expect(unrelatedReads).toBe(0);
+        expect(projected).toEqual(projectUsageSessionInput(session));
+        expect(JSON.stringify(projected)).not.toContain(privateText);
+        expect(buildProjectedRemedies({ findings: [], composition: [], sessions: [projected], serverId: 'home' })).toEqual([]);
     });
     it('proposes disabling only the current witnessed enabled binding with the actual catalog row revision', () => {
         const usage = UsageMcpBindingUsageSchema.parse({ v: 2, evidenceId: 'mcp-window', sessionId: 'session', turnId: 'turn',
@@ -46,6 +48,9 @@ describe('Coach repository remedy preparation', () => {
             composition: [], mcpUsage: [usage], mcpCatalog, sessions: [session], serverId: 'home' });
         expect(read(current)).toEqual([{ detectorId: 'mcp_overhead', evidenceIds: ['mcp-window'],
             remedy: { kind: 'mcp_binding', bindingId: 'binding', serverId: 'server', target: { t: 'allMachines' }, enabled: false, expectedRevision: 40 } }]);
+        expect(buildUsageCoachRemedies({ findings: evaluation.findings, composition: [], mcpUsage: [usage], mcpCatalog: current,
+            sessions: [{ ...session, metadata: { ...session.metadata!, mcpSelectionV1: { v: 1, managedServersEnabled: true,
+                forceIncludeServerIds: ['server'], forceExcludeServerIds: [] } } }], serverId: 'home' })).toEqual([]);
         const retainedUsage = { ...usage, retiredUsageField: true,
             window: { ...usage.window, retiredWindowField: true },
             bindings: [{ ...usage.bindings[0]!, retiredBindingField: true }] };
@@ -80,7 +85,7 @@ describe('Coach repository remedy preparation', () => {
                 modelCost: 4, candidateCost: 1, currency: 'USD', costKind: 'reported' } });
         const target = { ...session, active: false, metadata: { ...session.metadata!,
             modelSelectionIntentV1: { v: 1 as const, selection, updatedAt: 140 } } };
-        const read = (value = target) => buildUsageCoachRemedies({ findings: [finding], composition: [],
+        const read = (value: typeof session = target) => buildUsageCoachRemedies({ findings: [finding], composition: [],
             sessions: [value], serverId: 'home', accountId: 'account' });
         expect(read()).toMatchObject([{ detectorId: 'model_misfit', evidenceIds: ['heavy-request', 'light-request'],
             remedy: { kind: 'model', sessionId: 'session', modelId: 'light', providerConnectionId: null,
@@ -92,12 +97,15 @@ describe('Coach repository remedy preparation', () => {
         } } };
         expect(read(retainedTarget)).toEqual(read());
         expect(read({ ...target, active: true })).toEqual([]);
+        expect(read({ ...target, metadata: { ...target.metadata, modelSelectionIntentV2: { v: 2 } } })).toEqual([]);
         expect(read({ ...target, metadata: { ...target.metadata, modelSelectionIntentV1: {
             ...target.metadata.modelSelectionIntentV1, selection: { ...selection, modelId: 'intervening' } } } })).toEqual([]);
         expect(read({ ...target, access: createSessionAccessFixture('view') })).toEqual([]);
     });
-    it('prepares a review-prompt Session on the exactly witnessed source and delegates all repository work', () => {
-        const proposals = buildUsageCoachRemedies({ findings, composition: [composition], sessions: [session], serverId: 'home' });
+    it.each([0, 1] as const)('prepares a review-prompt Session from the admitted owner at layout %s', metadataLayoutVersion => {
+        const source = metadataLayoutVersion === 0 ? session : { ...session, metadataLayoutVersion,
+            ownerMetadataView: session.metadata, metadata: { path: '/shared/wrong', host: '', machineId: 'wrong-machine' } };
+        const proposals = buildProjectedRemedies({ findings, composition: [composition], sessions: [projectUsageSessionInput(source)], serverId: 'home' });
         expect(proposals).toMatchObject([{ detectorId: 'duplicated_instructions', evidenceIds: ['composition'],
             remedy: { kind: 'prepared_session', input: { executionTarget: { serverId: 'home', machineId: 'machine' },
                 directory: { kind: 'path', path: '/workspace/project' }, initialInput: { text: expect.any(String) } } } }]);
@@ -108,6 +116,9 @@ describe('Coach repository remedy preparation', () => {
             findings, composition: records, sessions, serverId: 'home' });
         expect(read([{ ...session, serverId: 'other-home' }])).toEqual([]);
         expect(read([{ ...session, access: createSessionAccessFixture('view') }])).toEqual([]);
+        expect(read([{ ...session, access: null }])).toEqual([]);
+        expect(read([{ ...session, metadata: null }])).toEqual([]);
+        expect(read([{ ...session, metadataLayoutVersion: 1, ownerMetadataView: null }])).toEqual([]);
         expect(read([session], [{ ...composition, sessionId: 'unknown' }])).toEqual([]);
         expect(read([session, { ...session }])).toEqual([]);
     });

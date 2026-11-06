@@ -135,7 +135,12 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
         command: ConnectedAccountDaemonControlCommand): Promise<ConnectedAccountDaemonControlResponse> => {
         if (command.operation === 'listPendingAttempts') return { status: 'pendingAttempts',
             attempts: await api.listPending({ service: command.service, ...(machineId ? { machineId } : {}) }) };
-        if (command.operation === 'describeService') return (await describeService(command.service, machineId)).description;
+        if (command.operation === 'describeService') {
+            // Operation admission belongs to the selected Machine; an authentication
+            // description cannot replace the Action's requested operation.
+            if (machineId && command.requiredOperation) return nativeControl(machineId, command);
+            return (await describeService(command.service, machineId)).description;
+        }
         if (command.operation === 'readConfiguration' || command.operation === 'replaceConfiguration') {
             try {
                 const requested = command.target;

@@ -84,13 +84,14 @@ export async function getConnectedServiceQuotaSnapshotSealed(
       throw new Error(`Invalid quota snapshot response for ${params.serviceId}`);
     }
     return parsed.data;
-  });
+  }, { signal: opts?.signal });
 }
 
 export async function requestConnectedServiceQuotaSnapshotRefresh(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
   opts?: Readonly<{
+    signal?: AbortSignal;
     expectedActiveServer?: ExpectedActiveServerFetchBasis;
   }>,
 ): Promise<boolean> {
@@ -100,6 +101,7 @@ export async function requestConnectedServiceQuotaSnapshotRefresh(
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas/refresh`,
       {
         method: 'POST',
+        signal: opts?.signal,
         headers: {
           Authorization: `Bearer ${credentials.token}`,
           'Content-Type': 'application/json',
@@ -130,5 +132,5 @@ export async function requestConnectedServiceQuotaSnapshotRefresh(
     }
 
     return true;
-  });
+  }, { signal: opts?.signal });
 }

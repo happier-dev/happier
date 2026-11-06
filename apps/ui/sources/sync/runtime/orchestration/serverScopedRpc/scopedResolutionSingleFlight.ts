@@ -75,11 +75,12 @@ export type ScopedResolutionSingleFlight<T> = Readonly<{
         onPhysicalResolved?: (value: T, borrowers: number) => void;
     }>) => Promise<T>;
     /** Forget joins after a write/wake without cancelling incumbent operations or their publication fences. */
-    invalidate: (scope?: ReadPartitionScope) => void;
+    invalidate: (scope?: ReadPartitionScope, affected?: (key: string) => boolean) => void;
     reset: () => void;
 }>;
 
-export function createScopedResolutionSingleFlight<T>(): ScopedResolutionSingleFlight<T> {
+/** An explicit owner signal retains physical work independently of borrower demand. */
+export function createScopedResolutionSingleFlight<T>(ownerSignal?: AbortSignal): ScopedResolutionSingleFlight<T> {
     type Flight = { result: Promise<T>; abort: AbortController; waiters: number; settled: boolean;
         issued: boolean; issuanceListeners?: Set<() => void>; resolutionListeners?: Set<() => void> };
     const defaultScope = {};
@@ -103,19 +104,20 @@ export function createScopedResolutionSingleFlight<T>(): ScopedResolutionSingleF
             };
             if (!flight) {
                 const abort = new AbortController();
+                const physicalSignal = ownerSignal ?? abort.signal;
                 let dispose: (() => void | Promise<void>) | void;
                 try {
-                    dispose = options.onPhysicalAcquire?.(abort.signal);
+                    dispose = options.onPhysicalAcquire?.(physicalSignal);
                 } catch (error) {
                     if (partition.size === 0) partitions.forget(scope, partition);
                     throw error;
                 }
                 const operation = Promise.resolve().then(() => {
-                    throwIfAborted(abort.signal);
-                    return resolve(abort.signal, () => {
+                    throwIfAborted(physicalSignal);
+                    return resolve(physicalSignal, () => {
                         created.issued = true;
                         for (const listener of [...(created.issuanceListeners ?? [])]) listener();
-                        throwIfAborted(abort.signal);
+                        throwIfAborted(physicalSignal);
                     });
                 });
                 // Also disposes a selected capture when its final borrower
@@ -145,7 +147,7 @@ export function createScopedResolutionSingleFlight<T>(): ScopedResolutionSingleF
                     if (expectResolution) read.resolutionListeners?.delete(expectResolution);
                     options.signal?.removeEventListener('abort', onAbort);
                     read.waiters -= 1;
-                    if (read.waiters === 0 && !read.settled) {
+                    if (!ownerSignal && read.waiters === 0 && !read.settled) {
                         forget(read);
                         read.abort.abort(options.signal?.reason);
                     }
@@ -180,8 +182,12 @@ export function createScopedResolutionSingleFlight<T>(): ScopedResolutionSingleF
                 });
             });
         },
-        invalidate(scope = defaultScope) {
-            partitions.invalidate(scope);
+        invalidate(scope = defaultScope, affected) {
+            if (affected) {
+                const reads = partitions.get(scope);
+                if (reads) for (const key of reads.keys()) if (affected(key)) reads.delete(key);
+                if (reads?.size === 0) partitions.forget(scope, reads);
+            } else partitions.invalidate(scope);
         },
         reset() {
             partitions.clear();
@@ -244,12 +250,12 @@ export type ScopedBatchResolutionSingleFlight<T> = Readonly<{
     run: (groupKey: string, ids: readonly string[],
         read: BatchRead<T>,
         options?: ScopedReadOptions) => Promise<ReadonlyMap<string, T>>;
-    invalidate: (scope?: ReadPartitionScope) => void;
+    invalidate: (scope?: ReadPartitionScope, affected?: (id: string) => boolean) => void;
     reset: () => void;
 }>;
 
 /** Gathers ids at the same pending owner; each typed adapter keeps its existing wire/body budget. */
-export function createScopedBatchResolutionSingleFlight<T>(configuration: Readonly<{ materializePhysicalChunks?: true }> = {}): ScopedBatchResolutionSingleFlight<T> {
+export function createScopedBatchResolutionSingleFlight<T>(configuration: Readonly<{ materializePhysicalChunks?: true; ownerSignal?: AbortSignal }> = {}): ScopedBatchResolutionSingleFlight<T> {
     // Session opening needs finite borrower completion. Other resource readers
     // retain ordinary raw delivery without allocating materialization contexts.
     const materializePhysicalChunks = configuration.materializePhysicalChunks === true;
@@ -258,7 +264,7 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
     type ItemResult = T | Resolved;
     type Item = { id: string; signal: AbortSignal; read: BatchRead<T>; accept: (value: ItemResult) => void; reject: (error: unknown) => void };
     type Batch = { items: Item[]; preparations: number; scheduled: boolean };
-    type Partition = { reads: ScopedResolutionSingleFlight<ItemResult>; groups: Map<string, Batch>; users: number };
+    type Partition = { reads: ScopedResolutionSingleFlight<ItemResult>; groups: Map<string, Batch>; users: number; physical: number };
     const partitions = createReadPartitions<Partition>();
 
     function acquire(options: ScopedReadOptions) {
@@ -266,16 +272,16 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
         const scope = options.fresh ? {} : options.scope ?? defaultScope;
         let partition = partitions.get(scope);
         if (!partition) {
-            partition = { reads: createScopedResolutionSingleFlight<ItemResult>(), groups: new Map(), users: 0 };
+            partition = { reads: createScopedResolutionSingleFlight<ItemResult>(configuration.ownerSignal), groups: new Map(), users: 0, physical: 0 };
             partitions.set(scope, partition);
         }
         const captured = partition;
         captured.users += 1;
         return { partition: captured, release: () => {
             captured.users -= 1;
-            if (captured.users === 0 && captured.groups.size === 0) partitions.forget(scope, captured);
+            if (captured.users === 0 && captured.physical === 0 && captured.groups.size === 0) partitions.forget(scope, captured);
         }, forgetIfIdle: () => {
-            if (captured.users === 0 && captured.groups.size === 0) partitions.forget(scope, captured);
+            if (captured.users === 0 && captured.physical === 0 && captured.groups.size === 0) partitions.forget(scope, captured);
         } };
     }
 
@@ -396,6 +402,12 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
                         // resolver runs; dispatch still settles its queued item.
                         void selected.catch(() => {});
                         flushWhenPrepared(acquisition, groupKey, batch);
+                        // An explicit resource owner keeps the pending partition
+                        // joinable even when its last visible borrower leaves.
+                        if (configuration.ownerSignal) {
+                            acquisition.partition.physical++;
+                            return () => { acquisition.partition.physical--; acquisition.forgetIfIdle(); };
+                        }
                     },
                 });
                 throwIfAborted(cancellation.signal);
@@ -449,10 +461,11 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
             const acquisition = acquire(options);
             return await run(acquisition, groupKey, batchFor(acquisition.partition, groupKey), ids, read, options);
         },
-        invalidate(scope = defaultScope) {
+        invalidate(scope = defaultScope, affected) {
             // Incumbents keep their own pending owner; preparations may not
             // join or delay the successor partition after invalidation.
-            partitions.invalidate(scope);
+            if (affected) partitions.get(scope)?.reads.invalidate(undefined, key => affected((JSON.parse(key) as [string, string])[1]));
+            else partitions.invalidate(scope);
         },
         reset() {
             partitions.clear();

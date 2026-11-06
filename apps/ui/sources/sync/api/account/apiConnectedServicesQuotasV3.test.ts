@@ -67,17 +67,19 @@ describe('apiConnectedServicesQuotasV3', () => {
               ] },
             },
           },
-          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+          // A predecessor can retain a valid snapshot but disable healthy rereads.
+          metadata: { fetchedAt: 1, staleAfterMs: 0, status: 'ok', refreshRequestedAt: 1 },
       });
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
     const res = await getConnectedServiceQuotaSnapshotPlain(credentials, { serviceId: 'openai-codex', profileId: 'work' });
-    expect(res?.serviceId).toBe('openai-codex');
-    expect(res?.recoveryCredits).toEqual({ availableCount: 1, credits: [{ kind: 'quota_reset', status: 'available',
+    expect(res?.snapshot.serviceId).toBe('openai-codex');
+    expect(res?.snapshot.recoveryCredits).toEqual({ availableCount: 1, credits: [{ kind: 'quota_reset', status: 'available',
       ...(shape === 'predecessor' ? { id: 'credit-a' } : {}) }] });
-    expect(res).not.toHaveProperty('retired');
+    expect(res?.snapshot).not.toHaveProperty('retired');
+    expect(res?.metadata).toEqual({ fetchedAt: 1, staleAfterMs: 0, status: 'ok', refreshRequestedAt: 1 });
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.test/v3/connect/openai-codex/profiles/work/quotas',
       expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),

@@ -1,10 +1,13 @@
-import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
+import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceStore, type PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
 import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
-import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
-import { resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsageHowYouWorkSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -17,27 +20,33 @@ import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serve
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { parseToken } from '@/utils/auth/parseToken';
 import { queryUsageAnalytics } from './apiUsage';
-import { getAccountEncryptionModeCacheRevision } from './apiAccountEncryptionMode';
+import { createUsageAccountingReader, getUsageAccountingReadKey } from './usageAccountingReader';
+import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode';
+import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import { runSessionScmRpc } from '@/sync/ops/sessionScm';
 import { readMachineControlTargetForSession, resolveMachineControlTargetForSessionFromState, resolveDisplayMachineIdForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
-import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectSessionUsageWorkEvidence } from '@/sync/domains/usage/usageWorkEvidence';
-import { buildUsageCoachRemedies } from '@/sync/domains/usage/buildUsageCoachRemedies';
-import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
+import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
+import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connectedMetadataCatalogEngine';
+import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence,
+    type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, getUsageSessionEvidenceDemandKey,
+    createUsageSessionEvidenceStreamDecoder,
+    type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
-import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { ConnectedServiceQuotaGetInputV1Schema, projectProviderAccountUsageQuotaReadV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
-import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
+import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache, type ProviderAccountUsageCacheEntry } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, subscribeQualifiedQuotaSnapshotEntry, type QualifiedQuotaSnapshotStoreEntry } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { getProviderAccountUsageDerivationInterval } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { isConnectedServiceUsageCapable } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { getCachedServerFeaturesSnapshot, subscribeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -47,13 +56,20 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryPoolMachineSelection, isUsageProjectionHomeAccountChange, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries } from './usageQueryInvalidation';
 import type { ProviderAccountUsageProjectionDocuments } from './apiProviderAccountUsage';
-import { encodeUsageQueryResource } from './usageQueryResourceEncoding';
+import { createUsageQueryResourceContent, encodeUsageQueryResource } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
+import { createUsageQuerySessionInputs, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader } from './usageQuerySessionInputs';
+import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
+import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
+import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
+import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 
+import { projectUsageQueryBatch, projectUsageEnteredPrices, type HowYouWorkEvidenceSnapshot, type HowYouWorkReadSnapshot,
+    type OpenedQuotaRead, type UsageQueryReprojection, type PreparedUsageAccountingSnapshot } from './usageQueryProjection';
 function readOpenedQuotaScope(context: UsageQueryAccountContext) {
     const state = readRegisteredStorageState();
     const scope = context.accountLifetime.scope;
@@ -77,6 +93,91 @@ function canRetainQuotaRead(admitted: Pick<QualifiedQuotaSnapshotStoreEntry, 'su
     read: ConnectedServiceQuotaGetResultV1): boolean {
     return admitted.supported !== false
         && (admitted.usageRecordId === null || admitted.usageRecordId === read.current?.recordId);
+}
+
+/** Reconcile B once, whether its revision came from cache, read progress or a sibling. */
+function reconcileQuotaRead(input: Readonly<{
+    admitted: Pick<QualifiedQuotaSnapshotStoreEntry, 'supported' | 'usageRecordId' | 'loading' | 'error'>;
+    source: ConnectedServiceQuotaGetInputV1['source'];
+    previous?: ConnectedServiceQuotaGetResultV1;
+    previousState?: UsageQuerySourceState;
+    revision: Readonly<{ kind: 'cache'; row: ProviderAccountUsageCacheEntry | undefined; nowMs: number;
+        targets: Parameters<typeof projectProviderAccountUsageQuotaReadV1>[0]['targets'] }>
+        | Readonly<{ kind: 'progress'; value: ConnectedServiceQuotaGetResultV1 | null; settled: boolean; errorCode?: string }>
+        | Readonly<{ kind: 'sibling'; state: UsageQuerySourceState }>;
+}>): Readonly<{ value: ConnectedServiceQuotaGetResultV1 | null; state?: UsageQuerySourceState;
+    pending?: boolean; unavailable?: boolean; stale?: boolean }> {
+    const { admitted, source: quotaSource, previousState, revision } = input;
+    const source = `quota:${createCanonicalJsonSigningInput(quotaSource)}`;
+    // Progress already carries the admission made at this finite read's entry.
+    // Cache and sibling observations must still match that admitted record.
+    const retained = input.previous && (revision.kind === 'progress' || canRetainQuotaRead(admitted, input.previous))
+        ? input.previous : undefined;
+    const settledState = previousState && previousState.status !== 'pending' && previousState.status !== 'not_loaded'
+        ? previousState : undefined;
+    if (revision.kind === 'sibling') {
+        return ['pending', 'not_loaded'].includes(revision.state.status) && settledState && retained
+            ? { value: retained, state: settledState } : { value: null, state: revision.state };
+    }
+    if (revision.kind === 'cache') {
+        const { row, nowMs, targets } = revision;
+        // A current-only cache observation cannot replace settled history.
+        if (retained?.current && settledState && admitted.error === null && !row?.hadError
+            && (!row?.snapshot || row.snapshot.recordId === retained.current.recordId)) {
+            return { value: retained, state: settledState, stale: settledState.status !== 'available' };
+        }
+        const pending = (admitted.loading || row?.loading === true)
+            && (!row?.snapshot || !wasConnectedServiceQuotaObserved(row.snapshot));
+        if (!row?.snapshot || row.snapshot.recordId !== admitted.usageRecordId) {
+            return { value: retained ?? null, ...(retained && previousState ? { state: previousState } : {}),
+                pending, unavailable: true, stale: !!retained };
+        }
+        const stale = admitted.error !== null || row.hadError || nowMs >= row.snapshot.fetchedAtMs + row.snapshot.staleAfterMs;
+        return { value: projectProviderAccountUsageQuotaReadV1({ input: { source: quotaSource }, current: row.snapshot, nowMs,
+            targets, waitingWork: { status: 'unavailable', reason: 'read_failed' } }),
+            state: wasConnectedServiceQuotaObserved(row.snapshot) ? { source, status: stale ? 'stale' : 'available', asOfMs: row.snapshot.fetchedAtMs }
+                : previousState ?? { source, status: 'not_loaded' }, pending, stale };
+    }
+    let { value } = revision;
+    const { settled, errorCode } = revision;
+    if (!settled && !errorCode && retained && settledState) return { value: retained, state: settledState };
+    if (errorCode) {
+        if (!canRetainUsageReadFailure(errorCode)) value = null;
+        else if ((retained?.history || retained?.pageProjection || retained?.pageFacts) && settledState
+            && (!value?.current || value.current.recordId === retained.current?.recordId)) value = retained;
+        else {
+            const accepted = value;
+            const projected = accepted?.pageFacts ? accepted : accepted ? projectProviderAccountUsageQuotaReadV1({ input: { source: accepted.source },
+                current: accepted.current, history: accepted.history, pageProjection: accepted.pageProjection, pageFacts: accepted.pageFacts,
+                targets: accepted.targets, waitingWork: accepted.waitingWork, nowMs: Date.now() }) : retained;
+            value = projected ? accepted?.history || accepted?.pageProjection || accepted?.pageFacts ? projected
+                : { ...projected, unusedCapacity: { historyStatus: 'unavailable', windows: [] } } : null;
+        }
+    }
+    const unobservedReplacement = value?.current && !wasConnectedServiceQuotaObserved(value.current)
+        && retained?.current && wasConnectedServiceQuotaObserved(retained.current)
+        && retained.current.recordId === value.current.recordId && canRetainQuotaRead(admitted, retained);
+    if (unobservedReplacement) value = retained;
+    let retainedPace = false;
+    if (value?.current && retained?.current && sameStrictJsonValue(value.current, retained.current) && canRetainQuotaRead(admitted, retained)) {
+        const previousPaces = new Map(retained.pace.map(row => [row.meterId, row.value]));
+        const pace = value.pace.map(row => {
+            const prior = previousPaces.get(row.meterId);
+            if (row.value.status !== 'unavailable' || row.value.reason !== 'stale' || prior?.status !== 'available'
+                || prior.window.resetAtMs <= Date.now()) return row;
+            retainedPace = true;
+            return { ...row, value: prior };
+        });
+        if (retainedPace) value = { ...value, pace };
+    }
+    return { value, state: { source,
+        status: errorCode ? value ? 'stale' : 'error' : unobservedReplacement || retainedPace ? 'stale'
+            : settled || value?.pageFacts?.historyStatus === 'complete' || value?.pageProjection || value?.history?.nextCursor === null
+                ? value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'available' : 'partial'
+                : value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'stale' : 'pending',
+        ...(value?.current && wasConnectedServiceQuotaObserved(value.current) ? { asOfMs: value.current.fetchedAtMs } : {}),
+        ...(errorCode ? { errorCode } : {}),
+    } };
 }
 
 /** Observe already-admitted B; this path never probes, decrypts or refreshes a provider. */
@@ -104,46 +205,15 @@ function readOpenedQuota(context: UsageQueryAccountContext, previous?: UsageQuer
         const admitted = getQualifiedQuotaSnapshotEntry(key);
         const row = admitted.supported === true && admitted.usageRecordId ? rows[admitted.usageRecordId] : undefined;
         const sourceKey = `quota:${createCanonicalJsonSigningInput(source)}`;
-        const candidate = retainedBySource.get(createCanonicalJsonSigningInput(source));
-        const retained = candidate && canRetainQuotaRead(admitted, candidate) ? candidate : undefined;
-        const previousState = previousBySource.get(sourceKey);
-        const settled = previousState && previousState.status !== 'pending' && previousState.status !== 'not_loaded' ? previousState : undefined;
-        // The initial cache observation is a revision of the same Resource too.
-        // A vendor reread cannot replace its settled history or qualified state
-        // with a current-only projection before the admitted history read answers.
-        // The Action may settle before this independent cache has hydrated at all.
-        if (retained?.current && settled && admitted.error === null && !row?.hadError
-            && (!row?.snapshot || row.snapshot.recordId === retained.current.recordId)) {
-            value.push(retained);
-            sources.push(settled);
-            stale ||= settled.status !== 'available';
-            continue;
-        }
-        pending ||= (admitted.loading || row?.loading === true) && (!row?.snapshot || !wasConnectedServiceQuotaObserved(row.snapshot));
-        if (!row?.snapshot || row.snapshot.recordId !== admitted.usageRecordId) {
-            unavailable = true;
-            if (retained) {
-                value.push(retained);
-                // The Action may already have current facts while its history
-                // is still pending and the independent cache is unhydrated.
-                // Retaining those facts must retain their source state too:
-                // omitting it fabricates a settled headline until the next page.
-                if (previousState) sources.push(previousState);
-                stale = true;
-            }
-            continue;
-        }
-        const rowStale = admitted.error !== null || row.hadError || nowMs >= row.snapshot.fetchedAtMs + row.snapshot.staleAfterMs;
-        stale ||= rowStale;
-        // A newly batched Usage entry may have no previous result of its own,
-        // but this Account-scoped cache has already witnessed the allowance.
-        if (wasConnectedServiceQuotaObserved(row.snapshot)) sources.push({ source: sourceKey,
-            status: rowStale ? 'stale' : 'available', asOfMs: row.snapshot.fetchedAtMs });
-        else sources.push(previousState ?? { source: sourceKey, status: 'not_loaded' });
-        value.push(projectProviderAccountUsageQuotaReadV1({ input: { source }, current: row.snapshot, nowMs,
-            targets: areServerAccountScopesEqual(scope.state.settingsScope, context.accountLifetime.scope)
-                ? scope.state.settings.usagePacingTargetsV1 : undefined,
-            waitingWork: { status: 'unavailable', reason: 'read_failed' } }));
+        const reconciled = reconcileQuotaRead({ admitted, source,
+            previous: retainedBySource.get(createCanonicalJsonSigningInput(source)), previousState: previousBySource.get(sourceKey),
+            revision: { kind: 'cache', row, nowMs, targets: areServerAccountScopesEqual(scope.state.settingsScope, context.accountLifetime.scope)
+                ? scope.state.settings.usagePacingTargetsV1 : undefined } });
+        if (reconciled.value) value.push(reconciled.value);
+        if (reconciled.state) sources.push(reconciled.state);
+        pending ||= reconciled.pending === true;
+        unavailable ||= reconciled.unavailable === true;
+        stale ||= reconciled.stale === true;
     }
     if (value.length) {
         const clocks = value.flatMap(row => row.current && wasConnectedServiceQuotaObserved(row.current) ? [row.current.fetchedAtMs] : []);
@@ -267,46 +337,62 @@ function readOpenedUsagePools(context: UsageQueryAccountContext, queries: readon
 }
 
 async function readUiUsagePools(context: UsageQueryAccountContext, opened: readonly UsagePoolSourceSnapshot[], signal: AbortSignal | undefined,
-    onProgress: (pools: UsagePoolSourceSnapshot[]) => void): Promise<UsagePoolSourceSnapshot[]> {
+    onProgress: (pools: UsagePoolSourceSnapshot[]) => void): Promise<readonly UsagePoolSourceSnapshot[]> {
+    if (!opened.some(snapshot => snapshot.value.some(pool => pool.selection.status === 'pending'))) return opened;
     const reads = new Map<string, Promise<UsageQueryPoolSnapshot['selection']>>();
     const values = opened.map(snapshot => ({ query: snapshot.query, value: [...snapshot.value] }));
-    await Promise.all(values.flatMap(snapshot => snapshot.value.map(async (pool, index) => {
-        const machineId = pool.selection.machineId;
-        if (!machineId) return;
-        const key = JSON.stringify([machineId, pool.group]);
-        let read = reads.get(key);
-        if (!read) {
-            read = (async (): Promise<UsageQueryPoolSnapshot['selection']> => {
-                try {
-                    const value = await withUiConnectedServiceReader(context, signal, async (_quota, readSelection) =>
-                        readSelection({ machineId, group: pool.group }));
-                    requireCurrent(context, signal);
-                    return 'status' in value ? { status: value.code === 'unsupported' ? 'unsupported' : 'error', machineId, errorCode: value.code }
-                        : { status: 'available', machineId, asOfMs: value.observedAtMs, value };
-                } catch (error) {
-                    requireCurrent(context, signal);
-                    return { status: 'error', machineId, errorCode: error && typeof error === 'object' && 'code' in error
-                        && typeof error.code === 'string' ? error.code : 'connected_service_request_failed' };
+    try {
+        await withUiConnectedServiceReader(context, signal, async (_quota, readSelection) => {
+            await Promise.all(values.flatMap(snapshot => snapshot.value.map(async (pool, index) => {
+                const machineId = pool.selection.machineId;
+                if (!machineId || pool.selection.status !== 'pending') return;
+                const key = JSON.stringify([machineId, pool.group]);
+                let read = reads.get(key);
+                if (!read) {
+                    read = (async (): Promise<UsageQueryPoolSnapshot['selection']> => {
+                        try {
+                            const value = await readSelection({ machineId, group: pool.group });
+                            requireCurrent(context, signal);
+                            return 'status' in value ? { status: value.code === 'unsupported' ? 'unsupported' : 'error', machineId, errorCode: value.code }
+                                : { status: 'available', machineId, asOfMs: value.observedAtMs, value };
+                        } catch (error) {
+                            requireCurrent(context, signal);
+                            return { status: 'error', machineId, errorCode: readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
+                                && typeof error.code === 'string' ? error.code : 'connected_service_request_failed') };
+                        }
+                    })();
+                    reads.set(key, read);
                 }
-            })();
-            reads.set(key, read);
-        }
-        snapshot.value[index] = { ...pool, selection: await read };
+                snapshot.value[index] = { ...pool, selection: await read };
+                requireCurrent(context, signal);
+                onProgress(values);
+            })));
+        });
+    } catch (error) {
         requireCurrent(context, signal);
+        const errorCode = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
+            && typeof error.code === 'string' ? error.code : 'connected_service_request_failed');
+        for (const snapshot of values) {
+            snapshot.value = snapshot.value.map(pool => pool.selection.machineId
+                ? { ...pool, selection: { status: 'error', machineId: pool.selection.machineId, errorCode } } : pool);
+        }
         onProgress(values);
-    })));
+    }
     return values;
 }
 
-type OpenedQuotaRead = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']> & Readonly<{
-    sources?: readonly UsageQuerySourceState[];
-}>;
+
+/** The opened quota sources an allowance history read acquires, or null when it reads nothing. */
+function readOpenedQuotaHistoryScope(context: UsageQueryAccountContext) {
+    const scope = readOpenedQuotaScope(context);
+    return scope?.sources.length && readQuotaFeatureDecision(context, scope)?.state === 'enabled' ? scope : null;
+}
 
 async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods: readonly NonNullable<UsageAccountingSourceSnapshot['period']>[], nowMs: number, signal?: AbortSignal,
-    onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult): Promise<OpenedQuotaRead> {
-    const opened = readOpenedQuota(context, previous);
-    const scope = readOpenedQuotaScope(context);
-    if (!scope?.sources.length || readQuotaFeatureDecision(context, scope)?.state !== 'enabled') return opened;
+    onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
+    opened: OpenedQuotaRead = readOpenedQuota(context, previous)): Promise<OpenedQuotaRead> {
+    const scope = readOpenedQuotaHistoryScope(context);
+    if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
     // subsequent pages and publishes their accepted change points progressively.
     const range = periods.length ? { startAtMs: Math.min(...periods.map(period => period.startMs ?? 0)),
@@ -345,47 +431,12 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
     };
     const publishProgress = (index: number, value: ConnectedServiceQuotaGetResultV1 | null, settled = false): void => {
         requireCurrent(context, signal);
-        // Warm reads retain their last settled facets until this source answers. Cold
-        // reads still publish each admitted page; denials/errors take the path below.
-        if (!settled && !failures.has(index) && retainedBySource.has(createCanonicalJsonSigningInput(scope.sources[index]!.source))
-            && settledBySource.has(sources[index]!.source)) {
-            onProgress?.(projectQuota('partial'));
-            return;
-        }
-        const retained = retainedBySource.get(createCanonicalJsonSigningInput(scope.sources[index]!.source));
-        const unobservedReplacement = value?.current && !wasConnectedServiceQuotaObserved(value.current)
-            && retained?.current && wasConnectedServiceQuotaObserved(retained.current)
-            && retained.current.recordId === value.current.recordId
-            && canRetainQuotaRead(getQualifiedQuotaSnapshotEntry(scope.sources[index]!.key), retained);
-        if (unobservedReplacement) value = retained;
-        let retainedPace = false;
-        if (value?.current && retained?.current && sameStrictJsonValue(value.current, retained.current)
-            && canRetainQuotaRead(getQualifiedQuotaSnapshotEntry(scope.sources[index]!.key), retained)) {
-            const previousPaces = new Map(retained.pace.map(row => [row.meterId, row.value]));
-            const pace = value.pace.map(row => {
-                const prior = previousPaces.get(row.meterId);
-                // The same observation aging is not a replacement projection.
-                // Keep its witnessed pace, marked stale, within that reset window.
-                if (row.value.status !== 'unavailable' || row.value.reason !== 'stale' || prior?.status !== 'available'
-                    || prior.window.resetAtMs <= Date.now()) return row;
-                retainedPace = true;
-                return { ...row, value: prior };
-            });
-            if (retainedPace) value = { ...value, pace };
-        }
-        progressValues[index] = value;
-        const failure = failures.get(index);
-        sources[index] = { source: sources[index]!.source,
-            // Admitted current/history facts remain usable during the read.
-            // Incompleteness alone cannot say whether its producer is still running.
-            // Allowance/history has answered at its last page, independently of
-            // the Pending-work and price facets that may still be reading.
-            status: failure ? value ? 'stale' : 'error' : unobservedReplacement || retainedPace ? 'stale' : settled || value?.pageFacts?.historyStatus === 'complete' || value?.pageProjection || value?.history?.nextCursor === null
-                ? value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'available' : 'partial'
-                : value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'stale' : 'pending',
-            ...(value?.current && wasConnectedServiceQuotaObserved(value.current) ? { asOfMs: value.current.fetchedAtMs } : {}),
-            ...(failure ? { errorCode: failure } : {}),
-        };
+        const { source, key } = scope.sources[index]!;
+        const reconciled = reconcileQuotaRead({ admitted: getQualifiedQuotaSnapshotEntry(key), source,
+            previous: retainedBySource.get(createCanonicalJsonSigningInput(source)), previousState: settledBySource.get(sources[index]!.source),
+            revision: { kind: 'progress', value, settled, errorCode: failures.get(index) } });
+        progressValues[index] = reconciled.value;
+        sources[index] = reconciled.state!;
         onProgress?.(projectQuota('partial'));
     };
     // A cold admitted read is pending, not an unissued cache observation. Every
@@ -398,23 +449,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : 'quota_read_failed';
         failures.set(index, code);
-        if (!canRetainUsageReadFailure(code)) { publishProgress(index, null); return; }
-        const accepted = acceptedBySource.get(index);
-        const retained = retainedBySource.get(createCanonicalJsonSigningInput(scope.sources[index]!.source));
-        // A failed replacement has not supplied a newer complete history. Keep
-        // the same settled allowance and pace, with the source marked stale.
-        if ((retained?.history || retained?.pageProjection || retained?.pageFacts) && settledBySource.has(sources[index]!.source)
-            && (!accepted?.current || accepted.current.recordId === retained.current?.recordId)) {
-            publishProgress(index, retained);
-            return;
-        }
-        const projected = accepted?.pageFacts ? accepted : accepted ? projectProviderAccountUsageQuotaReadV1({ input: { source: scope.sources[index]!.source },
-            current: accepted.current, history: accepted.history, pageProjection: accepted.pageProjection, pageFacts: accepted.pageFacts, targets: accepted.targets,
-            waitingWork: accepted.waitingWork, nowMs: Date.now() })
-            : retainedBySource.get(createCanonicalJsonSigningInput(scope.sources[index]!.source));
-        const value = projected ? accepted?.history || accepted?.pageProjection || accepted?.pageFacts ? projected
-            : { ...projected, unusedCapacity: { historyStatus: 'unavailable' as const, windows: [] } } : null;
-        publishProgress(index, value);
+        publishProgress(index, acceptedBySource.get(index) ?? null);
     };
     // The batch has one captured Home/Account lifetime. Share its existing
     // mode promise and live catalog reads instead of recapturing per source.
@@ -441,17 +476,6 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
         : progressValues.some(value => value !== null) ? 'partial' : 'error');
 }
 
-type SessionInputEvidence = Readonly<{
-    session: Omit<Session, 'presence'> & { presence?: Session['presence'] };
-    callerDataKeyEnvelope: string | null;
-    detail: ReturnType<typeof projectSessionUsageWorkEvidence>;
-    messageEvidence?: UsageSessionMessageEvidence;
-    completeMessageCoverage: boolean;
-}>;
-type SessionInputReader = (sessionId: string, readTranscript: boolean,
-    load: (assertCurrent: () => void, signal: AbortSignal, retained: SessionInputEvidence | undefined,
-        onProgress: (value: SessionInputEvidence) => void) => Promise<SessionInputEvidence | null>,
-    onProgress?: (value: SessionInputEvidence) => void) => Promise<SessionInputEvidence | null>;
 type SessionAccountCurrentnessSource = ReturnType<typeof import('@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope').createOperationAccountCurrentnessSource>;
 
 type SessionInputLoadRequest = Readonly<{
@@ -466,22 +490,22 @@ type SessionInputLoadRequest = Readonly<{
 
 /** Collect only this finite phase's cache misses; the existing reader owns reuse and retirement. */
 async function readSessionInputPhase(ids: readonly string[], readTranscript: boolean, readSession: SessionInputReader,
+    onFailure: (error: SessionPartsHttpError) => void,
     loadBatch: (requests: readonly SessionInputLoadRequest[]) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
-    onSuperseded?: (id: string) => void) {
+    admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: (sessionId: string) => string, sourceReferenceKey?: string,
+    isAdmissionCurrent?: () => boolean) {
     const requests: SessionInputLoadRequest[] = [];
     const reads = ids.map(sessionId => readSession(sessionId, readTranscript,
         (assertCurrent, signal, retained, publish) => new Promise((resolve, reject) => {
             requests.push({ sessionId, assertCurrent, signal, retained, publish, resolve, reject });
-        }), onProgress ? value => onProgress(sessionId, value) : undefined,
-    ).then(value => { onValue(sessionId, value); return [sessionId, value] as const; }, error => {
-        if (!onSuperseded || !isSessionEvidenceSuperseded(error)) throw error;
-        // Content changed for this Session, not its independent siblings. Let
-        // every selected read finish before projecting the witnessed subset.
-        onSuperseded(sessionId);
-        return [sessionId, null] as const;
-    }));
+        }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey?.(sessionId), sourceReferenceKey, isAdmissionCurrent,
+    ).catch(error => {
+        if (!(error instanceof SessionPartsHttpError)) throw error;
+        onFailure(error);
+        return null;
+    }).then(value => { onValue(sessionId, value); return [sessionId, value] as const; }));
     const loading = requests.length ? loadBatch(requests).catch(error => {
         for (const request of requests) request.reject(error);
     }) : Promise.resolve();
@@ -500,29 +524,180 @@ function sessionEvidenceReadError(error: unknown): unknown {
         ? new RetryableServerResponseError(error.httpStatus, 'Session input evidence unavailable') : error;
 }
 
-function isSessionEvidenceSuperseded(error: unknown): boolean {
-    return error instanceof Error && 'code' in error && error.code === 'usage_session_evidence_changed';
-}
-
-async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries: readonly UsageQuery[],
-    accounting: readonly UsageAccountingSourceSnapshot[], readSession: SessionInputReader,
+async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: UsageQuery,
+    accounting: readonly UsageAccountingSourceSnapshot[], readSession: SessionInputReader, readSelection: SessionInputSelectionReader,
     readAccountCurrentnessSource: () => Promise<SessionAccountCurrentnessSource>,
-    signal?: AbortSignal, onProgress?: (snapshots: readonly HowYouWorkEvidenceSnapshot[], sources: readonly UsageQuerySourceState[]) => void) {
+    nowMs: number,
+    isAdmissionCurrent: () => boolean, signal?: AbortSignal,
+    onProgress?: (snapshots: readonly HowYouWorkReadSnapshot[], sources: readonly UsageQuerySourceState[]) => void): Promise<HowYouWorkReadSnapshot[]> {
+    const queries = [query];
     const active = captureActiveServerAccountScopeLifetime();
-    const loadedState = active?.isCurrent() && areServerAccountScopesEqual(active.scope, context.accountLifetime.scope)
-        ? readRegisteredStorageState() : null;
-    const state = loadedState && areServerAccountScopesEqual(loadedState.profileScope, context.accountLifetime.scope) ? loadedState : null;
-    const candidates = Object.values(state?.sessions ?? {}).filter(session => !session.serverId
-        || areServerProfileIdentifiersEquivalent(session.serverId, context.accountLifetime.scope.serverId));
-    const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value?.contributions]));
-    const idsByQuery = new Map(queries.map(query => [getUsageQueryKey(query), selectUsageQueryWorkEvidenceSessionIds({ query,
-        sessions: candidates, contributions: byQuery.get(getUsageQueryKey(query)) })]));
+    const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
+    const idsByQuery = new Map(queries.filter(query => !usageQueryNeedsSessionCandidates(query)).map(query => [getUsageQueryKey(query), selectUsageQueryWorkEvidenceSessionIds({ query,
+        sessions: [],
+        contributions: byQuery.get(getUsageQueryKey(query))?.contributions,
+        sessionMembership: readUsageAccountingSessionMembership(byQuery.get(getUsageQueryKey(query))) })]));
+    const readProjected = async (query: UsageQuery, sessionIds: readonly string[] | undefined,
+        phaseSignal = signal,
+        consumeResult?: (row: UsageSessionEvidenceResponse['results'][number]) => Promise<void>): Promise<UsageSessionEvidenceResponse> => {
+        const currentness = await readAccountCurrentnessSource();
+        const input = UsageSessionEvidenceRequestSchema.parse({ nowMs, requests: [{ query, ...(sessionIds ? { sessionIds } : {}) }] });
+        const init = { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+            body: JSON.stringify(input), signal: phaseSignal };
+        const consume = async (response: Response) => {
+            requireCurrent(context, phaseSignal);
+            currentness.assertCurrent();
+            if (!response.ok) {
+                const payload: unknown = await response.json().catch(() => null);
+                const requirement = OperationUpdateRequiredV1Schema.safeParse(payload);
+                throw new SessionPartsHttpError(response.status, payload, requirement.success ? requirement.data
+                    : response.status === 404 ? { kind: 'update_required', operation: 'usage.query', component: 'server',
+                        reason: 'usage_session_evidence_unsupported' } : undefined);
+            }
+            let body: UsageSessionEvidenceResponse = { requests: [], results: [] };
+            let expected: Set<string> | undefined;
+            const admitSelection = (requests: UsageSessionEvidenceResponse['requests']) => {
+                const selection = requests[0];
+                const ids = new Set(selection?.sessionIds);
+                if (requests.length !== 1 || !selection || getUsageQueryKey(selection.query) !== getUsageQueryKey(query)
+                    || ids.size !== selection.sessionIds.length
+                    || sessionIds && (sessionIds.length !== selection.sessionIds.length || sessionIds.some(id => !ids.has(id)))) {
+                    throw new SessionPartsInvalidResponseError();
+                }
+                body.requests = requests;
+                expected = ids;
+            };
+            const admitRow = (row: UsageSessionEvidenceResponse['results'][number]) => {
+                if (!expected?.delete(row.sessionId) || !row.detail
+                    || row.detail.status === 200 && (row.detail.body.session.id !== row.sessionId || !row.turns)
+                    || row.turns?.status === 200 && row.turns.body.sessionId !== row.sessionId) throw new SessionPartsInvalidResponseError();
+            };
+            if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
+                const pending: UsageSessionEvidenceResponse['results'] = [];
+                const decoder = createUsageSessionEvidenceStreamDecoder({
+                    onRequests: admitSelection,
+                    onResult: result => { admitRow(result); (consumeResult ? pending : body.results).push(result); },
+                });
+                const write = (text: string) => {
+                    try { decoder.write(text); } catch { throw new SessionPartsInvalidResponseError(); }
+                };
+                const consumePending = async () => {
+                    for (const row of pending) await consumeResult!(row);
+                    pending.length = 0;
+                };
+                const reader = typeof response.body?.getReader === 'function' ? response.body.getReader() : undefined;
+                if (!reader) { write(await response.text()); await consumePending(); }
+                else {
+                    const text = new TextDecoder();
+                    try {
+                        while (true) {
+                            const chunk = await reader.read();
+                            requireCurrent(context, phaseSignal);
+                            write(text.decode(chunk.value, { stream: !chunk.done }));
+                            await consumePending();
+                            if (chunk.done) break;
+                        }
+                    } finally {
+                        await reader.cancel().catch(() => {});
+                        reader.releaseLock();
+                    }
+                }
+                try { decoder.finish(); } catch { throw new SessionPartsInvalidResponseError(); }
+                await consumePending();
+            } else {
+                const payload: unknown = await response.json().catch(() => null);
+                const parsed = UsageSessionEvidenceResponseSchema.safeParse(payload);
+                if (!parsed.success) throw new SessionPartsInvalidResponseError();
+                admitSelection(parsed.data.requests);
+                for (const row of parsed.data.results) {
+                    admitRow(row);
+                    if (consumeResult) await consumeResult(row);
+                    else body.results.push(row);
+                }
+            }
+            if (!expected || expected.size) throw new SessionPartsInvalidResponseError();
+            requireCurrent(context, phaseSignal);
+            currentness.assertCurrent();
+            return body;
+        };
+        // The Resource already captured this Home authority at admission.
+        // Projected phases borrow its transport and finite identity source.
+        return context.readTransport ? await context.readTransport.read(USAGE_SESSION_EVIDENCE_PATH, init, undefined, consume)
+            : await consume(await context.request(USAGE_SESSION_EVIDENCE_PATH, init));
+    };
+    const readSummary = async (query: UsageQuery, sessionIds: readonly string[] | undefined, ownerSignal?: AbortSignal) => {
+        const [{ captureServerRequestAuthorityForServerAccountScope }, { readSessionSnapshotsForAuthority },
+            { readSessionDetailAccessProjectionVersion }, accountCurrentnessSource] = await Promise.all([
+            import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
+            import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority'),
+            import('@/sync/api/session/sessionDetailAccessProjection'), readAccountCurrentnessSource(),
+        ]);
+        const inputs = new Map<string, { value: SessionInputEvidence } | { error: unknown }>();
+        let authority: Awaited<ReturnType<typeof captureServerRequestAuthorityForServerAccountScope>> | undefined;
+        try {
+            const body = await readProjected(query, sessionIds, ownerSignal, async row => {
+                // An empty discovered cohort has no Session content to open.
+                // Capture the finite opening authority once, only for actual rows.
+                authority ??= await captureServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope,
+                    activeRequest: context.request, signal: ownerSignal });
+                const snapshots = await readSessionSnapshotsForAuthority({ authority, sessionIds: [row.sessionId],
+                    prefetched: new Map([[row.sessionId, { detail: row.detail!, turns: row.turns,
+                        accessProjectionVersion: readSessionDetailAccessProjectionVersion(authority.scope.serverId) }]]),
+                    requireTurns: true, includeMetadataTupleMutationSnapshot: false,
+                    accountCurrentnessSource, isCurrent: context.accountLifetime.isCurrent, signal: ownerSignal });
+                const result = snapshots.get(row.sessionId)!;
+                if (!result.ok) { inputs.set(row.sessionId, { error: result.error }); return; }
+                try {
+                    const session = projectUsageSessionInput(result.snapshot.session.encryptionMode === 'plain'
+                        ? { ...result.snapshot.session, stateEvidence: row.stateEvidence } : result.snapshot.session);
+                    inputs.set(row.sessionId, { value: { session, callerDataKeyEnvelope: result.snapshot.callerDataKeyEnvelope,
+                        detail: projectSessionUsageWorkEvidence(session), completeMessageCoverage: false } });
+                } catch (error) { inputs.set(row.sessionId, { error }); }
+            });
+            return { body, inputs };
+        } finally { await authority?.release(); }
+    };
+    const discovered = new Map<string, Awaited<ReturnType<typeof readSummary>> & { isInputCurrent(sessionId: string): boolean }>();
+    for (const query of queries) {
+        const key = getUsageQueryKey(query);
+        if (idsByQuery.has(key)) continue;
+        try {
+            const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
+            const discoveredIds = await readSelection(getUsageSessionEvidenceDemandKey(summaryQuery, nowMs), async (isInputCurrent, ownerSignal) => {
+                const summary = await readSummary(summaryQuery, undefined, ownerSignal);
+                discovered.set(key, { ...summary, isInputCurrent });
+                return summary.body.requests[0]!.sessionIds;
+            }, isAdmissionCurrent);
+            const selectedIds = selectUsageQueryWorkEvidenceSessionIds({ query,
+                sessions: discoveredIds.map(id => ({ id })),
+                contributions: byQuery.get(key)?.contributions,
+                sessionMembership: readUsageAccountingSessionMembership(byQuery.get(key)) });
+            idsByQuery.set(key, selectedIds);
+        } catch (error) {
+            if (!(error instanceof SessionPartsHttpError)) throw error;
+            const errorCode = error.updateRequired ? 'update_required' : 'usage_session_evidence_read_failed';
+            const snapshot = { query, asOfMs: nowMs,
+                errorCode, ...(error.updateRequired ? { updateRequired: error.updateRequired } : {}) };
+            onProgress?.([snapshot], [{ source: 'how_you_work:sessions', status: 'error', errorCode,
+                ...(error.updateRequired ? { updateRequired: error.updateRequired } : {}) },
+            { source: 'how_you_work:transcripts', status: query.includeTranscriptEvidence ? 'error' : 'not_loaded' }]);
+            return [snapshot];
+        }
+    }
     const selectedIds = [...new Set([...idsByQuery.values()].flat())];
+    const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
+    const summaryDemandKey = (sessionId: string) => getUsageSessionEvidenceDemandKey(summaryQuery, nowMs, [sessionId]);
+    const transcriptDemandKey = (sessionId: string) => getUsageSessionEvidenceDemandKey(query, nowMs, [sessionId]);
     const readTranscript = queries.some(query => query.includeTranscriptEvidence);
+    let updateRequired: UsageQuerySourceState['updateRequired'];
+    let projectedReadFailure: SessionPartsHttpError | undefined;
+    const recordReadFailure = (error: unknown) => {
+        if (error instanceof SessionPartsHttpError) updateRequired ??= error.updateRequired;
+    };
     const loadTranscript = async (sessionId: string, assertCurrent: () => void, signal: AbortSignal,
         retained: SessionInputEvidence | undefined, publish: (value: SessionInputEvidence) => void,
         admitted: SessionInputEvidence,
-        readMessagePage: () => Promise<Readonly<{ status: number; body: unknown }> | undefined>): Promise<SessionInputEvidence | null> => {
+        readMessagePage: () => Promise<UsageSessionEvidenceResponse['results'][number] | undefined>): Promise<SessionInputEvidence | null> => {
         try {
             const [{ runWithServerRequestAuthorityForServerAccountScope }, { fetchSessionMessagesPage }, { readStoredSessionMessage }, accountCurrentnessSource] = await Promise.all([
                 import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
@@ -546,14 +721,28 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
                     completeMessageCoverage = retained!.completeMessageCoverage;
                     detail = projectSessionUsageWorkEvidence(session, undefined, { messagesComplete: completeMessageCoverage, messageEvidence });
                   } else {
+                    const projected = await readMessagePage();
+                    if (projected?.detail && projected.detail.status !== 200) {
+                        const requirement = OperationUpdateRequiredV1Schema.safeParse(projected.detail.body);
+                        throw new SessionPartsHttpError(projected.detail.status, projected.detail.body, requirement.success ? requirement.data : undefined);
+                    }
+                    if (session.encryptionMode === 'plain' && projected?.messageEvidence !== undefined) {
+                        messageEvidence = projected.messageEvidence;
+                        completeMessageCoverage = projected.messagesComplete === true;
+                        detail = projectSessionUsageWorkEvidence(session, undefined, { messageEvidence, messagesComplete: completeMessageCoverage });
+                    } else if (projected?.messages && (session.encryptionMode === 'e2ee' || projected.messages.status !== 200)) {
                     let page: Awaited<ReturnType<typeof fetchSessionMessagesPage>> | null = null;
                     try {
                         page = await fetchSessionMessagesPage({ sessionId, scope: 'all', roles: ['user', 'agent', 'event'], signal,
                             requestJson: async (_path, pageSignal) => {
                                 requireCurrent(context, pageSignal);
-                                const response = await readMessagePage();
+                                const response = projected?.messages;
                                 if (!response || response.status !== 200) {
+                                    if (response && 'kind' in response.body && response.body.kind === 'update_required') {
+                                        throw new SessionPartsHttpError(response.status, response.body, response.body);
+                                    }
                                     if (response && response.status >= 500) throw new RetryableServerResponseError(response.status, 'Session input evidence unavailable');
+                                    if (response) throw new SessionPartsHttpError(response.status, response.body);
                                     throw new Error('Session input evidence unavailable');
                                 }
                                 requireCurrent(context, pageSignal);
@@ -566,20 +755,19 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
                         // quarantine them; no previously loaded content is revived.
                         if (!isTransientConnectivityError(error)) throw error;
                     }
-                    if (page !== null) {
+                    if (page !== null && session.encryptionMode === 'e2ee') {
                         // Summary admission and transcript demand can use different
                         // scoped Account owners. Hydrate this operation's reader
                         // from the admitted envelope, without reacquiring the Session.
-                        const encryption = session.encryptionMode === 'plain' ? null
-                            : await (await import('@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey'))
-                                .resolveScopedSessionEncryption({ context: authority.context, sessionId, admittedSession: {
-                                    id: session.id, encryptionMode: 'e2ee', dataEncryptionKey: callerDataKeyEnvelope,
-                                    viewerRole: session.access?.role ?? 'recipient',
-                                    isCurrent: () => { assertCurrent(); return accountCurrentnessSource.isCurrent(); },
-                                } });
+                        const encryption = await (await import('@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey'))
+                            .resolveScopedSessionEncryption({ context: authority.context, sessionId, admittedSession: {
+                                id: session.id, encryptionMode: 'e2ee', dataEncryptionKey: callerDataKeyEnvelope,
+                                viewerRole: session.access?.role ?? 'recipient',
+                                isCurrent: () => { assertCurrent(); return accountCurrentnessSource.isCurrent(); },
+                            } });
                         const decryptedMessages = encryption ? await encryption.decryptMessages(page.messages, { signal }) : null;
                         const messages = await Promise.all(page.messages.map((message, index) => readStoredSessionMessage({ message,
-                            sessionEncryptionMode: session.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+                            sessionEncryptionMode: 'e2ee',
                             ...(encryption ? { decryptMessage: async () => decryptedMessages?.[index] ?? null } : {}),
                         })));
                         const readableMessages = messages.filter((message): message is NonNullable<typeof message> => message !== null && message.content !== null);
@@ -592,6 +780,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
                                 collaboration: detail.collaboration };
                         }
                     }
+                    }
                   }
                 }
                 await accountCurrentnessSource.ensureCurrent();
@@ -599,15 +788,15 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
                 assertCurrent();
                 return { session, callerDataKeyEnvelope, detail, messageEvidence, completeMessageCoverage };
             });
-        } catch {
+        } catch (error) {
             requireCurrent(context, signal);
             assertCurrent();
+            if (error instanceof SessionPartsHttpError || error instanceof SessionPartsInvalidResponseError) throw error;
             return null;
         }
     };
     const selected = new Map<string, SessionInputEvidence | null>();
     const settled = new Set<string>();
-    const superseded = new Set<string>();
     let publishedPhase: string | undefined;
     const project = (): HowYouWorkEvidenceSnapshot[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
@@ -617,18 +806,17 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
         const detail = projectUsageQueryWorkEvidence({ query, scope: context.accountLifetime.scope,
             currentScope: query.session === null ? active?.scope ?? null : context.accountLifetime.scope,
             isCurrent: context.accountLifetime.isCurrent() && (query.session !== null || active?.isCurrent() === true), sessions, sessionEvidence,
-            contributions: byQuery.get(getUsageQueryKey(query)) });
+            contributions: byQuery.get(getUsageQueryKey(query))?.contributions,
+            sessionMembership: readUsageAccountingSessionMembership(byQuery.get(getUsageQueryKey(query))) });
         // The projection admits only readable Sessions and marks their observed
         // subset partial. A failed sibling must not erase those witnessed facts;
         // sessionCoverage and the source status keep the missing population explicit.
         const sessionCoverage = { selected: (idsByQuery.get(getUsageQueryKey(query)) ?? []).length,
             admitted: sessions.filter(session => session.access?.capabilities.readTranscript !== false
                 && isSessionContentReadable(readSessionContentAvailability(session))).length };
-        const refused = [...selected].some(([id, entry]) => !superseded.has(id) && (!entry
-            || entry.session.access?.capabilities.readTranscript === false
-            || !isSessionContentReadable(readSessionContentAvailability(entry.session))));
         return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail,
-            ...(superseded.size && !refused ? { errorCode: 'usage_session_evidence_changed' } : {}) };
+            ...(updateRequired ? { errorCode: 'update_required', updateRequired }
+                : projectedReadFailure ? { errorCode: 'usage_session_evidence_read_failed' } : {}) };
     });
     const publish = () => {
         if (signal?.aborted || !context.accountLifetime.isCurrent()) return;
@@ -640,11 +828,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
         });
         const refused = [...selected.values()].some(value => value === null);
         const sources: UsageQuerySourceState[] = [
-            { source: 'how_you_work:sessions', status: !admitted ? 'pending' : readable && !superseded.size ? 'available' : 'partial',
-                ...(superseded.size ? { errorCode: 'usage_session_evidence_changed' } : {}) },
+            { source: 'how_you_work:sessions', status: !admitted ? 'pending' : readable ? 'available' : 'partial' },
             { source: 'how_you_work:transcripts', status: !readTranscript ? 'not_loaded' : settled.size < selectedIds.length ? 'pending'
-                : readable && !superseded.size && selectedIds.every(id => selected.get(id)?.completeMessageCoverage) ? 'available' : 'partial',
-                ...(readTranscript && superseded.size ? { errorCode: 'usage_session_evidence_changed' } : {}) },
+                : readable && selectedIds.every(id => selected.get(id)?.completeMessageCoverage) ? 'available' : 'partial' },
         ];
         // Publish the admitted interval phase before held transcript I/O, then
         // the completed input phase. Individual unfinished Session completions
@@ -667,41 +853,38 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
         // identical completion turns one refresh into N full-corpus passes.
         if (changed || settled.size === selectedIds.length) publish();
     };
-    const onSuperseded = (sessionId: string) => {
-        requireCurrent(context, signal);
-        superseded.add(sessionId);
-        // A later content version does not revoke a summary already admitted
-        // in this read. Keep its witnesses; only its unfinished detail is stale.
-        if (!selected.has(sessionId)) selected.set(sessionId, null);
-        settled.add(sessionId);
-        publish();
-    };
-    const summaries = await readSessionInputPhase(selectedIds, false, readSession, async requests => {
+    const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordReadFailure, async requests => {
         const ownerSignal = requests[0]!.signal;
         try {
-            const [{ runWithServerRequestAuthorityForServerAccountScope }, { readSessionSnapshotsForAuthority }, accountCurrentnessSource] = await Promise.all([
-                import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
-                import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority'), readAccountCurrentnessSource(),
-            ]);
-            await runWithServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope, activeRequest: context.request }, async authority => {
-                const snapshots = await readSessionSnapshotsForAuthority({ authority, sessionIds: requests.map(request => request.sessionId),
-                    requireTurns: true, accountCurrentnessSource, isCurrent: context.accountLifetime.isCurrent, signal: ownerSignal });
-                for (const request of requests) {
-                    try {
-                        request.assertCurrent();
-                        const result = snapshots.get(request.sessionId);
-                        if (result && !result.ok && request.retained && isTransientConnectivityError(sessionEvidenceReadError(result.error))) {
-                            request.reject(sessionEvidenceReadError(result.error));
+            const discovery = discovered.get(getUsageQueryKey(query));
+            const inputs = new Map(discovery ? [...discovery.inputs].filter(([id]) => discovery.isInputCurrent(id)) : []);
+            // Accounting can witness historical Sessions absent from current discovery.
+            // Hydrate them only when their existing private input needs admission.
+            const missingIds = requests.map(request => request.sessionId).filter(id => !inputs.has(id));
+            if (missingIds.length) {
+                try {
+                    const acquired = await readSummary(summaryQuery, missingIds, ownerSignal);
+                    for (const [id, result] of acquired.inputs) inputs.set(id, result);
+                }
+                catch (error) {
+                    if (error instanceof SessionPartsHttpError) projectedReadFailure = error;
+                    throw error;
+                }
+            }
+            for (const request of requests) {
+                try {
+                    request.assertCurrent();
+                    const result = inputs.get(request.sessionId);
+                    if (result && 'error' in result) {
+                        const failure = sessionEvidenceReadError(result.error);
+                        if (failure instanceof SessionPartsHttpError || request.retained && isTransientConnectivityError(failure)) {
+                            request.reject(failure);
                             continue;
                         }
-                        request.resolve(result?.ok ? { ...result.snapshot, detail: projectSessionUsageWorkEvidence(result.snapshot.session),
-                            completeMessageCoverage: false } : null);
-                    } catch (error) {
-                        if (isSessionEvidenceSuperseded(error)) request.reject(error);
-                        else request.resolve(null);
                     }
-                }
-            });
+                    request.resolve(result && 'value' in result ? result.value : null);
+                } catch { request.resolve(null); }
+            }
         } catch (error) {
             requireCurrent(context, ownerSignal);
             const failure = sessionEvidenceReadError(error);
@@ -709,55 +892,51 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, queries
                 // Failed replacement is not a new empty admission. Let the
                 // Resource retain its admitted snapshot and expose the failure;
                 // cold reads and actual refusals still withdraw unavailable facts.
-                if (isSessionEvidenceSuperseded(failure) || request.retained && isTransientConnectivityError(failure)) request.reject(failure);
+                if (failure instanceof SessionPartsHttpError || failure instanceof SessionPartsInvalidResponseError
+                    || isTransientConnectivityError(failure)) request.reject(failure);
                 else request.resolve(null);
             }
         }
-    }, (id, value) => onValue(id, value, !readTranscript || !value), undefined, onSuperseded);
-    // Transcript demand adds one messages-only transport batch to the same
-    // admitted summaries. Held pages never hold interval publication.
-    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => summaries.get(id)), true, readSession, async requests => {
+    }, (id, value) => onValue(id, value, !readTranscript || !value), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), isAdmissionCurrent);
+    // Private facts follow the same Usage window and admitted population.
+    // Held private evidence never holds interval publication.
+    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => summaries.get(id)), true, readSession, recordReadFailure, async requests => {
         const ownerSignal = requests[0]!.signal;
-        const [{ runWithServerRequestAuthorityForServerAccountScope }, { readSessionBatchForAuthority }, accountCurrentnessSource] = await Promise.all([
-            import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
-            import('@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority'), readAccountCurrentnessSource(),
-        ]);
-        await runWithServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope, activeRequest: context.request }, async authority => {
-            const messageIds = requests.filter(request => {
+        const messageIds = requests.filter(request => {
                 const admitted = summaries.get(request.sessionId)!;
                 return admitted.session.access?.capabilities.readTranscript !== false
                     && isSessionContentReadable(readSessionContentAvailability(admitted.session))
                     && !canReuseSessionMessageEvidence(request.retained, admitted);
-            }).map(request => request.sessionId);
-            const pages = readSessionBatchForAuthority({ authority, sessionIds: messageIds, includeSnapshot: false, includeMessages: true,
-                signal: ownerSignal, assertCurrent: () => { requireCurrent(context, ownerSignal); accountCurrentnessSource.assertCurrent(); } })
-                .then(rows => ({ ok: true as const, rows }), error => ({ ok: false as const, error }));
-            await Promise.all(requests.map(async request => {
-                const value = await loadTranscript(request.sessionId, request.assertCurrent, request.signal, request.retained, request.publish,
-                    summaries.get(request.sessionId)!, async () => {
-                        const result = await pages;
-                        if (result.ok) return result.rows.get(request.sessionId)?.messages;
-                        requireCurrent(context, ownerSignal);
-                        throw sessionEvidenceReadError(result.error);
-                    });
-                request.resolve(value);
-            }));
-            await pages;
-        });
-    }, (id, value) => onValue(id, value, true), (id, value) => { selected.set(id, value); publish(); }, onSuperseded);
+        }).map(request => request.sessionId);
+        const byId = new Map(requests.map(request => [request.sessionId, request]));
+        const completed = new Map<string, { value: SessionInputEvidence | null } | { error: unknown }>();
+        const open = async (request: SessionInputLoadRequest, row?: UsageSessionEvidenceResponse['results'][number]) => {
+            try {
+                completed.set(request.sessionId, { value: await loadTranscript(request.sessionId, request.assertCurrent,
+                    request.signal, request.retained, request.publish, summaries.get(request.sessionId)!, async () => row) });
+            } catch (error) { completed.set(request.sessionId, { error }); }
+        };
+        try {
+            // Each opaque row is opened and projected before reading the next
+            // chunk. Only its facts survive; the complete cohort must still
+            // validate before any transcript result enters the input owner.
+            if (messageIds.length) await readProjected(query, messageIds, ownerSignal, async row => {
+                await open(byId.get(row.sessionId)!, row);
+            });
+            await Promise.all(requests.filter(request => !completed.has(request.sessionId)).map(request => open(request)));
+            for (const request of requests) {
+                const result = completed.get(request.sessionId)!;
+                if ('error' in result) request.reject(result.error);
+                else request.resolve(result.value);
+            }
+        } catch (error) {
+            requireCurrent(context, ownerSignal);
+            for (const request of requests) request.reject(sessionEvidenceReadError(error));
+        }
+    }, (id, value) => onValue(id, value, true), (id, value) => { selected.set(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), isAdmissionCurrent);
     requireCurrent(context, signal);
     return project();
 }
-
-type HowYouWorkEvidenceSnapshot = Readonly<{
-    query: UsageQuery; asOfMs: number;
-    sessions: readonly SessionInputEvidence['session'][];
-    sessionCoverage: NonNullable<UsageHowYouWorkSourceSnapshot['sessionCoverage']>;
-    detail: ReturnType<typeof projectUsageQueryWorkEvidence>;
-    errorCode?: string;
-}>;
-type HowYouWorkReadSnapshot = HowYouWorkEvidenceSnapshot
-    | Readonly<{ query: UsageQuery; errorCode: string; detail?: undefined; sessions?: undefined }>;
 
 type SessionWorkSourceResult = import('@happier-dev/protocol/usage/usageWorkSources').SessionWorkSourceResult;
 
@@ -803,35 +982,65 @@ export async function readUiUsageQueryBatch(
     input: UsageQueryBatchInput,
     signal?: AbortSignal,
     previous?: UsageQueryBatchResult,
-    options?: Readonly<{ onProgress?: (value: UsageQueryBatchResult) => void }>,
+    options?: Readonly<{
+        /** Async consumers return their existing progress drain so settlement can reuse its projection. */
+        onProgress?: (reproject: UsageQueryReprojection) => void | Promise<void>;
+        /** A wake of another Usage input does not demand replacement allowance acquisition. */
+        retainAllowance?: boolean;
+    }>,
 ): Promise<UsageQueryBatchResult> {
     requireCurrent(context, signal);
     const { queries } = normalizeUsageQueryBatchInput(input);
     const calendarQueryKeys = new Set(queries.filter(query => query.includeAccounting && (query.includeActivity || query.includeModelTimeline))
         .map(query => getUsageQueryKey(query)));
-    const accountingNowMs = Date.now();
-    const reads = resolveUsagePageAccountingReads(queries, accountingNowMs);
+    getUsageQueryResourceStore(context);
+    const accountOwner = accountStores.get(resolveUsageOwnerLifetime(context))!;
+    const accountingInstants = new Map(queries.map(query => [getUsageQueryKey(query), accountOwner.readAccountingInstant(query)]));
+    const isSessionAdmissionCurrent = accountOwner.captureSessionEvidenceAdmission();
+    const accountingNowMs = Math.max(...accountingInstants.values());
+    const reads = [...new Map(queries.flatMap(query => resolveUsagePageAccountingReads([query], accountingInstants.get(getUsageQueryKey(query))!)
+        .map(read => [getUsageQueryKey(read.query), read] as const))).values()];
     const requests = reads.map(read => read.query);
-    const periods = new Map([...queries.map(query => [getUsageQueryKey(query), resolveUsageQueryPeriod(query, accountingNowMs)] as const),
+    const periods = new Map([...queries.map(query => [getUsageQueryKey(query), resolveUsageQueryPeriod(query, accountingInstants.get(getUsageQueryKey(query))!)] as const),
         ...reads.map(read => [getUsageQueryKey(read.query), read.period] as const)]);
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
         [slice.key, { value: slice.accounting, asOfMs: slice.sources.find(source => source.source === 'accounting')?.asOfMs }] as const,
         ...(slice.comparison ? [[getUsageQueryKey(slice.comparison.query), { value: slice.comparison.accounting,
             asOfMs: slice.comparison.source.asOfMs }] as const] : []),
     ]));
+    const accountingAnswers = new Map<string, UsageAccountingAnswer>();
+    const accountingReads = new Map<string, UsageAccountingAnswer | Promise<UsageAccountingAnswer>>();
+    const snapshotForAnswer = (query: UsageQuery, answer: UsageAccountingAnswer): UsageAccountingSourceSnapshot => {
+        const asOfMs = resolveUsageAccountingAsOfMs(answer.value);
+        return { query, period: periods.get(getUsageQueryKey(query)), value: answer.value, status: 'available',
+            ...(asOfMs === undefined ? {} : { asOfMs }) };
+    };
     const accounting = new Map<string, UsageAccountingSourceSnapshot>(requests.map(query => {
-        const retained = priorAccounting.get(getUsageQueryKey(query));
-        return [getUsageQueryKey(query), { query, period: periods.get(getUsageQueryKey(query)), status: 'pending' as const,
+        const key = getUsageQueryKey(query);
+        const request = usageQueryToAnalyticsRequest({ ...query, period: periods.get(key)! });
+        const needsRows = usageQueryNeedsContributionRows(query);
+        const needsMembership = !needsRows && (query.includeSessionEvidence || query.includeWorkEvidence);
+        const workOnly = needsRows && query.includeWorkEvidence && !query.includeContributions
+            && !query.includeTranscriptEvidence && !query.includeSessionEvidence;
+        const read = accountOwner.readAccounting(request, query, signal, needsRows, needsMembership, workOnly);
+        accountingReads.set(key, read);
+        // The Account owner already admitted this exact answer. Only actual
+        // acquisition starts pending when unrelated sources need another read.
+        if (!(read instanceof Promise)) {
+            accountingAnswers.set(key, read);
+            return [key, snapshotForAnswer(query, read)] as const;
+        }
+        const retained = priorAccounting.get(key);
+        return [key, { query, period: periods.get(key), status: 'pending' as const,
             ...(retained?.value ? { value: retained.value } : {}),
             ...(retained?.asOfMs === undefined ? {} : { asOfMs: retained.asOfMs }) } satisfies UsageAccountingSourceSnapshot] as const;
     }));
     const evidenceQueries = queries.filter(query => query.includeAccounting && query.includeSessionEvidence);
+    let coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     let work: readonly UsageWorkSourceSnapshot[] = queries.map(query => ({ query, status: query.includeAccounting && query.includeWorkEvidence ? 'pending' : 'not_loaded' }));
     const sessionWorkReads = new Map<string, Promise<SessionWorkSourceResult>>();
-    getUsageQueryResourceStore(context);
-    const accountOwner = accountStores.get(resolveUsageOwnerLifetime(context))!;
     const sessionInputReader = accountOwner.readSessionInput;
-    // One finite Account batch shares the scoped reader's existing observation.
+    // KV disclosure and Session evidence share this finite Account batch's identity.
     // It stays lazy: unchanged retained Session inputs need no currentness GET.
     let sessionCurrentness: Promise<SessionAccountCurrentnessSource> | undefined;
     let sessionCurrentnessClosed = false;
@@ -856,95 +1065,43 @@ export async function readUiUsageQueryBatch(
     let mcpCatalog: McpServerCatalogSnapshotV1 | undefined;
     let mcpCatalogRead: Promise<McpServerCatalogSnapshotV1> | undefined;
     let quota: OpenedQuotaRead = readOpenedQuota(context, previous);
-    let pools = readOpenedUsagePools(context, queries);
+    let pools: readonly UsagePoolSourceSnapshot[] = readOpenedUsagePools(context, queries);
     const priorSlices = new Map(previous?.results.map(slice => [slice.key, slice]));
-    const admitEvidenceSnapshot = (snapshot: HowYouWorkEvidenceSnapshot): HowYouWorkReadSnapshot => {
-        const prior = priorSlices.get(getUsageQueryKey(snapshot.query))?.howYouWork;
-        // Supersession supplies no new access verdict. Preserve an admitted
-        // warm population; a cold read can still show its healthy siblings.
-        return snapshot.errorCode === 'usage_session_evidence_changed' && prior && prior.detailStatus !== 'unknown'
-            ? { query: snapshot.query, errorCode: snapshot.errorCode } : snapshot;
-    };
     let admittedPrevious = previous;
     // All effects share this read's lifetime; snapshots are published directly
     // into its entry, never cached or rerun just to advance independent sources.
-    const compose = (): UsageQueryBatchResult => {
-        requireCurrent(context, signal);
-        if (queries.every(query => !query.includeAccounting)) {
-            return resolveUsageQuotaPageAggregation({ queries, previous: admittedPrevious, quota, pools,
-                sources: quota.sources, nowMs: accountingNowMs });
-        }
-        const settingsState = readRegisteredStorageState();
-        const accountSettings = readAccountSettingsForScope({ scope: context.accountLifetime.scope,
-            focusedScope: settingsState?.settingsScope, focusedSettings: settingsState?.settings ?? settingsDefaults });
-        // Accounting reductions belong to the admitted A response, not each quota/selection publication.
-        // Keep derived values in this read's existing per-query snapshot map.
-        for (const [key, snapshot] of accounting) {
-            // Admit references at the existing producer snapshot, not only in
-            // the published slice. Source labels/progress may replace wrappers
-            // without changing the already admitted contribution population.
-            const priced = projectUsageAccountingSnapshotPrices(snapshot, accountSettings.usageModelPriceOverridesV1,
-                accounting.values(), priorAccounting.get(key)?.value);
-            accounting.set(key, calendarQueryKeys.has(key) ? projectUsageAccountingSnapshotCalendar(priced, accounting.values()) : priced);
-        }
-        const sourceLocations = Object.values(readOpenedQuotaScope(context)?.state.machines ?? {}).flatMap(machine => {
-            const displayLocation = readMachineName(machine);
-            return displayLocation ? [{ machineId: machine.id, displayLocation }] : [];
-        });
-        // A rolling reread requests a new absolute window. Until current
-        // accounting answers, the displayed window still owns its exact old
-        // comparison; it is being replaced, not definitively absent.
-        const witnessedComparison = previous?.results.flatMap(slice => {
-            const comparison = slice.comparison;
-            if (!comparison?.accounting || accounting.has(getUsageQueryKey(comparison.query))) return [];
-            return [{ query: comparison.query, value: comparison.accounting,
-                status: accounting.get(slice.key)?.status === 'pending' ? 'pending' as const : 'stale' as const,
-                ...(comparison.source.asOfMs === undefined ? {} : { asOfMs: comparison.source.asOfMs }) }];
-        }) ?? [];
-        const batch = resolveUsagePageAggregation({ queries, accounting: [...accounting.values(), ...witnessedComparison], previous: admittedPrevious,
-            sourceLocations,
-            pricingOverrides: accountSettings.usageModelPriceOverridesV1, coachPreferences: accountSettings.usageCoachPreferencesV1,
-            nightHours: accountSettings.usageNightHoursV1,
-            quota, pools, work, howYouWork, nowMs: accountingNowMs,
-            sources: [...(quota.sources ?? []), ...(settledHowYouWorkQueries.size < evidenceQueries.length
-                ? [{ source: 'how_you_work', status: 'pending' as const }]
-                : evidenceQueries.length === 0 ? [{ source: 'how_you_work', status: 'not_loaded' as const }] : [])] });
-        // The base source remains pending until the complete private read
-        // settles. Its staged facts and reading phases belong to this query,
-        // never a held sibling in the same batch.
-        const staged = { ...batch, results: batch.results.map(slice => {
-            const sources = howYouWorkSourcesByQuery.get(slice.key);
-            if (!sources) return slice;
-            const pending = !settledHowYouWorkQueries.has(slice.key);
-            const observed = [...slice.sources].reverse().find(source => source.source === 'how_you_work');
-            return { ...slice, pending: slice.pending || pending,
-                sources: [...slice.sources.filter(source => source.source !== 'how_you_work'),
-                    { ...observed, source: 'how_you_work', status: pending ? 'pending' as const : observed?.status ?? 'unknown' },
-                    ...sources] };
-        }) };
-        const preferred = applyCoachPreferences(staged, howYouWork ?? []);
-        return { ...preferred, results: preferred.results.map(slice => {
-            const priorSources = priorSlices.get(slice.key)?.sources;
-            if (!priorSources) return slice;
-            return { ...slice, sources: slice.sources.map(source => {
-                if (source.status !== 'pending') return source;
-                const prior = priorSources.find(candidate => candidate.source === source.source);
-                // Keep the admitted observation's date and any settled failure
-                // while its replacement is in flight. Slice/Resource pending
-                // still reports the actual work; it does not erase that result.
-                if (prior?.status === 'error') return prior;
-                return source.asOfMs === undefined && prior?.asOfMs !== undefined
-                    ? { ...source, asOfMs: prior.asOfMs } : source;
-            }) };
-        }) };
+    const compose = (projectionSignal: AbortSignal | undefined): UsageQueryBatchResult => {
+        requireCurrent(context, projectionSignal);
+        quota = projectUsageEnteredPrices(quota, context.accountLifetime.scope);
+        return projectUsageQueryBatch({ context, queries, accountingNowMs, accounting, priorAccounting, calendarQueryKeys, previous, admittedPrevious,
+            prepareAccounting(snapshot, prepare) {
+                const answer = accountingAnswers.get(getUsageQueryKey(snapshot.query));
+                const retained = answer?.prepared;
+                const prepared = prepare(retained ? { ...snapshot, value: retained.value, priceProjection: retained.priceProjection,
+                    agentCalendarAccounting: retained.agentCalendarAccounting, delivery: retained.delivery } : snapshot);
+                if (answer) answer.prepared = prepared;
+                return prepared;
+            },
+            work, howYouWork, howYouWorkSourcesByQuery, settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog, coachSuppressions,
+            sourceLocations: Object.values(readOpenedQuotaScope(context)?.state.machines ?? {}).flatMap(machine => {
+                const displayLocation = readMachineName(machine);
+                return displayLocation ? [{ machineId: machine.id, displayLocation }] : [];
+            }) });
+    };
+    let projectionPending = true;
+    let progress: void | Promise<void> = undefined;
+    const reproject: UsageQueryReprojection = projectionSignal => {
+        const batch = compose(projectionSignal);
+        admittedPrevious = batch;
+        projectionPending = false;
+        return batch;
     };
     const publish = (): void => {
+        projectionPending = true;
         if (!options?.onProgress) return;
-        // Read identity and pending sources are useful before the first facts.
-        // The mounted body model keeps a source-only revision as a placeholder.
-        const batch = compose();
-        admittedPrevious = batch;
-        options.onProgress(batch);
+        // The Resource already coalesces source progress while native encoding
+        // settles. Compose only the revisions that its existing drain consumes.
+        progress = options.onProgress(reproject);
     };
     // Available preference-backed facts can progress while another source's
     // read remains pending. The Account settings owner remains the authority.
@@ -960,19 +1117,23 @@ export async function readUiUsageQueryBatch(
         if (sameStrictJsonValue(observedNightHours, next)) return;
         observedNightHours = next;
         publish();
-    }) : undefined;
+    }, { settingsScope: true, settings: ['usageNightHoursV1'] }) : undefined;
     try {
         publish();
         const accountingTasks = new Map(requests.map(query => [getUsageQueryKey(query), (async () => {
         let snapshot: UsageAccountingSourceSnapshot;
         try {
-            const request = usageQueryToAnalyticsRequest({ ...query, period: periods.get(getUsageQueryKey(query))! }, accountingNowMs);
-            const value = await accountOwner.readAccounting(request, signal);
-            const asOfMs = resolveUsageAccountingAsOfMs(value);
-            snapshot = { query, period: periods.get(getUsageQueryKey(query)), value, status: 'available', ...(asOfMs === undefined ? {} : { asOfMs }) };
+            const read = accountingReads.get(getUsageQueryKey(query))!;
+            if (!(read instanceof Promise)) return;
+            const answer = await read;
+            accountingAnswers.set(getUsageQueryKey(query), answer);
+            snapshot = snapshotForAnswer(query, answer);
         } catch (error) {
             requireCurrent(context, signal);
             const errorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'usage_query_failed';
+            // Malformed wire is a typed admission failure, not a usable partial
+            // source. The Resource still owns retaining its last valid bytes.
+            if (errorCode === 'usage_query_result_invalid') throw error;
             if (!canRetainUsageReadFailure(errorCode)) throw error;
             const retained = priorAccounting.get(getUsageQueryKey(query));
             // Detail/Work membership must see the same retained accounting as
@@ -985,6 +1146,13 @@ export async function readUiUsageQueryBatch(
         publish();
         })()]));
         await Promise.all([
+        (async () => {
+            if (!evidenceQueries.length) return;
+            coachSuppressions = await createUiCoachSuppressionPort(context, signal, undefined,
+                async () => (await readSessionCurrentness()).read()).read();
+            requireCurrent(context, signal);
+            publish();
+        })(),
         ...accountingTasks.values(),
         ...queries.map(async (query, index) => {
             if (!query.includeAccounting || !query.includeWorkEvidence) return;
@@ -1004,23 +1172,24 @@ export async function readUiUsageQueryBatch(
             requireCurrent(context, signal);
             let snapshots: Awaited<ReturnType<typeof readHowYouWorkEvidence>>;
             try {
-                snapshots = await readHowYouWorkEvidence(context, [query], [...accounting.values()], sessionInputReader, readSessionCurrentness, signal,
+                snapshots = await readHowYouWorkEvidence(context, query, [...accounting.values()], sessionInputReader, accountOwner.readSessionSelection, readSessionCurrentness,
+                    accountingInstants.get(getUsageQueryKey(query))!, isSessionAdmissionCurrent, signal,
                     (snapshots, sources) => {
                         requireCurrent(context, signal);
                         const key = getUsageQueryKey(query);
                         if (!snapshots[0] && sameStrictJsonValue(howYouWorkSourcesByQuery.get(key), sources)) return;
                         howYouWorkSourcesByQuery.set(key, sources);
                         if (snapshots[0]) {
-                            howYouWorkByQuery.set(key, admitEvidenceSnapshot(snapshots[0]));
+                            howYouWorkByQuery.set(key, snapshots[0]);
                             howYouWork = [...howYouWorkByQuery.values()];
                         }
                         publish();
                     });
             } catch (error) {
                 requireCurrent(context, signal);
-                if (!isTransientConnectivityError(error) && !isSessionEvidenceSuperseded(error)) throw error;
+                if (!isTransientConnectivityError(error)) throw error;
                 const key = getUsageQueryKey(query);
-                const errorCode = isSessionEvidenceSuperseded(error) ? 'usage_session_evidence_changed' : 'usage_session_evidence_read_failed';
+                const errorCode = 'usage_session_evidence_read_failed';
                 // Keep any actual partial admission/refusal already published.
                 // Otherwise the shared aggregation owner retains the prior facts.
                 howYouWorkByQuery.set(key, { ...(howYouWorkByQuery.get(key) ?? { query }), errorCode });
@@ -1033,7 +1202,7 @@ export async function readUiUsageQueryBatch(
             }
             // Binding advice and its catalog admission are one private-evidence
             // result. Unrelated quota/history reads must not hold them back.
-            const admittedSnapshot = admitEvidenceSnapshot(snapshots[0]!);
+            const admittedSnapshot = snapshots[0]!;
             if (admittedSnapshot.detail?.coach?.detail?.mcpUsage?.length) {
                 mcpCatalogRead ??= import('./apiMcpServerCatalog').then(({ readMcpServerCatalog }) =>
                     readMcpServerCatalog(context.accountLifetime.scope, signal, () => requireCurrent(context, signal)));
@@ -1045,10 +1214,25 @@ export async function readUiUsageQueryBatch(
             settledHowYouWorkQueries.add(getUsageQueryKey(query));
             publish();
         }),
-        (async () => { quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuotaHistory).map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal, value => { quota = value; publish(); }, previous); publish(); })(),
-        (async () => { pools = await readUiUsagePools(context, pools, signal, value => { pools = value; publish(); }); publish(); })(),
+        (async () => {
+            // Acquisition follows the changed input, independently of whether
+            // its retained observation is complete, stale, unavailable or failed.
+            if (!options?.retainAllowance) {
+                const settled = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuotaHistory).map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal,
+                    value => { quota = value; publish(); }, previous, quota);
+                if (settled !== quota) { quota = settled; publish(); }
+            }
+        })(),
+        (async () => {
+            const settled = await readUiUsagePools(context, pools, signal, value => { pools = value; publish(); });
+            if (settled !== pools) { pools = settled; publish(); }
+        })(),
         ]);
-        return compose();
+        await progress;
+        requireCurrent(context, signal);
+        // Settlement reuses this finite read's last consumed projection. The
+        // retained reproject closure still evaluates future presentation wakes.
+        return projectionPending || !admittedPrevious ? reproject(signal) : admittedPrevious;
     } finally {
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
@@ -1057,31 +1241,64 @@ export async function readUiUsageQueryBatch(
         await sessionCurrentness?.then(source => source.dispose(), () => undefined);
     }
 
-    function applyCoachPreferences(batch: UsageQueryBatchResult, howYouWork: readonly HowYouWorkReadSnapshot[]): UsageQueryBatchResult {
-        const openedByQuery = new Map(howYouWork.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
-        const settingsState = readRegisteredStorageState();
-        const preferences = readAccountSettingsForScope({ scope: context.accountLifetime.scope,
-            focusedScope: settingsState?.settingsScope, focusedSettings: settingsState?.settings ?? settingsDefaults }).usageCoachPreferencesV1;
-        const nowMs = Date.now();
-        const results = batch.results.map(slice => {
-            const opened = openedByQuery.get(slice.key);
-            if (!slice.coach) return slice;
-            const proposals = !opened?.detail || opened.detail.status === 'unknown' ? [] : buildUsageCoachRemedies({ findings: slice.coach.findings.filter(finding => finding.remedy === null),
-                composition: opened.detail.coach?.composition ?? [], sessions: opened.sessions,
-                mcpUsage: opened.detail.coach?.detail?.mcpUsage ?? [], ...(mcpCatalog ? { mcpCatalog } : {}),
-                serverId: context.accountLifetime.scope.serverId, accountId: context.accountLifetime.scope.accountId });
-            const coach = proposals.length === 0 ? slice.coach : admitUsageCoachRemedies(slice.coach,
-                [...(opened?.detail?.coach?.admittedRemedies ?? []), ...proposals]);
-            const preferred = applyUsageCoachPreferences(coach, preferences, nowMs);
-            return preferred === slice.coach ? slice : { ...slice, coach: preferred };
-        });
-        return results.every((slice, index) => slice === batch.results[index]) ? batch : { ...batch, results };
-    }
 }
 
-type UsageQueryInvalidation = HomeAccountChangeEvent | 'session-evidence';
-type AccountResourceOwner = Readonly<{ store: PluginUiResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
-    readAccounting(request: Parameters<typeof queryUsageAnalytics>[1], signal?: AbortSignal): Promise<Awaited<ReturnType<typeof queryUsageAnalytics>>>;
+type UsageQueryInvalidation = HomeAccountChangeEvent | 'session-evidence' | 'quota-inputs' | 'projection-inputs';
+type UsageQueryReadDemand = Readonly<{
+    allowance: boolean | undefined;
+    projectionOnly: boolean;
+    authorityChanged: boolean;
+    /** Nothing reached this watch since its previous read, whose bytes are therefore still current. */
+    unchanged: boolean;
+    isCurrent(): boolean;
+    finish(): void;
+}>;
+
+/** Activity comes from this watch's admitted demand, independently of retained allowance facts. */
+export type UsageQueryResourceEntry = PluginUiResourceEntry & Readonly<{ isAllowanceReadPending(): boolean }>;
+type UsageQueryResourceStore = Omit<PluginUiResourceStore, 'getEntry'> & Readonly<{
+    getEntry(reference: Parameters<PluginUiResourceStore['getEntry']>[0]): UsageQueryResourceEntry;
+}>;
+
+/** Explicit recovery replaces this entry's read; ordinary push wakes stay coalesced. */
+function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
+    requestFresh: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => void,
+    isAllowanceReadPending: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean): UsageQueryResourceStore {
+    return Object.freeze<UsageQueryResourceStore>({
+        ...store,
+        getEntry(reference) {
+            const entry = store.getEntry(reference);
+            const refresh: PluginUiResourceEntry['refresh'] = options => {
+                // Ordinary acquisition joins admitted facts and still settles on
+                // failure or retirement. Manual Refresh asks for a new answer.
+                if (options?.supersede === false) return entry.refresh(options);
+                requestFresh(reference);
+                return entry.refresh({ supersede: true });
+            };
+            return Object.freeze<UsageQueryResourceEntry>({
+                ...entry,
+                refresh,
+                isAllowanceReadPending: () => entry.getSnapshot().pending !== 'idle' && isAllowanceReadPending(reference),
+                select(projection, selector) {
+                    const selection = entry.select(projection, selector);
+                    return Object.freeze({ ...selection, refresh: async () => { await refresh(); } });
+                },
+            });
+        },
+    });
+}
+type UsageAccountingAnswer = {
+    readonly value: Awaited<ReturnType<typeof queryUsageAnalytics>>;
+    /** Protocol validates the prepared operand, cost basis and overrides before reuse. */
+    prepared?: PreparedUsageAccountingSnapshot;
+};
+type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
+    readSessionSelection: SessionInputSelectionReader;
+    captureSessionEvidenceAdmission(): () => boolean;
+    /** The instant this read resolves its accounting windows at. */
+    readAccountingInstant(query: UsageQuery): number;
+    readAccounting(request: Parameters<typeof queryUsageAnalytics>[1], query: UsageQuery, signal?: AbortSignal,
+        includeContributions?: boolean, includeSessionIds?: boolean, workOnly?: boolean): UsageAccountingAnswer | Promise<UsageAccountingAnswer>;
     projectionDocuments: ProviderAccountUsageProjectionDocuments }>;
 // This is the existing Resource store's Account ownership, not a response cache.
 const accountStores = new WeakMap<ServerAccountScopeLifetime, AccountResourceOwner>();
@@ -1102,7 +1319,7 @@ export function invalidateUsageQueryResources(lifetime = captureActiveServerAcco
 }
 
 /** Mounted host widgets and admitted plugin host reads acquire this exact store. */
-export function getUsageQueryResourceStore(context: UsageQueryAccountContext): PluginUiResourceStore {
+export function getUsageQueryResourceStore(context: UsageQueryAccountContext): UsageQueryResourceStore {
     requireCurrent(context);
     const active = captureActiveServerAccountScopeLifetime();
     const sharedContext = active && areServerAccountScopesEqual(active.scope, context.accountLifetime.scope)
@@ -1111,7 +1328,45 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
     const existing = accountStores.get(lifetime);
     if (existing) return existing.store;
     const evidenceAbort = new AbortController();
-    const accountingReads = createScopedResolutionSingleFlight<Awaited<ReturnType<typeof queryUsageAnalytics>>>();
+    const accountingReads = createUsageAccountingReader(sharedContext, evidenceAbort.signal);
+    // Server accounting answers, by exact request, share their first read instant.
+    // A scoped change advances only its queries. Other reads keep their instant so
+    // a growing page batch, a watch resync and
+    // Session/Settings/quota-input wakes repeat no request. Accounting or
+    // unknown Home wakes, mode changes and explicit refresh replace them;
+    // so does a new local day. Allowance acquisition does not
+    // change an already-admitted accounting answer.
+    let admittedAccounting: { nowMs: number; answers: Map<string, UsageAccountingAnswer> } | undefined;
+    // Retain admissions across closed views; observation follows live demand.
+    let resourceInputs = {};
+    // Closed accounting views do not consume Session/private input changes.
+    // Private views retain their own input identity and refresh when reopened.
+    let sessionEvidenceInputs = resourceInputs;
+    const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs: number }>();
+    let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
+    const replaceAccounting = () => {
+        resourceInputs = {};
+        sessionEvidenceInputs = resourceInputs;
+        retainedCurrentness.dispose();
+        retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
+        admittedAccounting = undefined;
+        accountingInputs.clear();
+        accountingReads.invalidate();
+    };
+    // The quota derivation owner supplies the interval where unchanged facts
+    // have unchanged time-derived meaning. Calculate it only when a Resource
+    // settles, including history; reopening never traverses that history again.
+    const readQuotaInterval = (read: ConnectedServiceQuotaGetResultV1, nowMs: number) => {
+        const interval = getProviderAccountUsageDerivationInterval({ current: read.current,
+            history: read.history?.entries.map(entry => entry.snapshot) ?? [], nowMs });
+        if (!interval) return null;
+        // Source freshness belongs to readOpenedQuota above and uses fetchedAt,
+        // while pace uses the provider observation's timestamp.
+        const staleAtMs = read.current ? read.current.fetchedAtMs + read.current.staleAfterMs : Infinity;
+        const value = { fromMs: Math.max(interval.fromMs, nowMs >= staleAtMs ? staleAtMs : 0),
+            untilMs: Math.min(interval.untilMs, nowMs < staleAtMs ? staleAtMs : Infinity) };
+        return value;
+    };
     const projectionDocuments: ProviderAccountUsageProjectionDocuments = new Map();
     // Allowances belong to this Account, not a page's accounting batch. Keep
     // their latest Resource revision across navigation, including zero views.
@@ -1123,118 +1378,139 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
     // Keep private evidence and selector state beside accounting so a changed
     // widget demand cannot retire only part of the same query's admission.
     const slicesByQuery = new Map<string, UsageQueryBatchResult['results'][number]>();
-    const sessionInputs = new Map<string, { sessionId: string; basis: string; needsAdmission: boolean;
-        value?: SessionInputEvidence; read: Promise<SessionInputEvidence | null>;
-        listeners: Set<(value: SessionInputEvidence) => void> }>();
-    const readSessionState = (id: string) => {
-        const state = readRegisteredStorageState();
-        const session = state && areServerAccountScopesEqual(state.profileScope, lifetime.scope) ? state.sessions[id] : undefined;
-        return session && (!session.serverId || areServerProfileIdentifiersEquivalent(session.serverId, lifetime.scope.serverId)) ? session : undefined;
-    };
-    const readSessionRow = (id: string) => {
-        const state = readRegisteredStorageState();
-        return state && areServerAccountScopesEqual(state.profileScope, lifetime.scope)
-            ? readSessionListRowForServerId(state.sessionListRowsByServerId, lifetime.scope.serverId, id) : null;
-    };
-    const version = (session: Pick<Session, 'seq' | 'updatedAt' | 'metadataVersion' | 'agentStateVersion'
-        | 'metadataLayoutVersion' | 'encryptionMode' | 'encryptedContentAvailability' | 'access'> | null | undefined) => [
-        session?.seq, session?.updatedAt, session?.metadataVersion, session?.agentStateVersion,
-        session?.metadataLayoutVersion, session?.encryptionMode, session?.encryptedContentAvailability, session?.access,
-    ];
-    const readEvidenceBasis = (id: string) => {
-        const session = readSessionState(id);
-        // Compact list rows survive detail eviction. Observe both owners' input
-        // versions, while exact content admission still uses the snapshot reader.
-        return JSON.stringify([getAccountEncryptionModeCacheRevision(), version(session), session?.sessionTurns?.updatedAt, version(readSessionRow(id))]);
-    };
+    const sessionInputs = createUsageQuerySessionInputs({ lifetime, signal: evidenceAbort.signal,
+        assertCurrent: () => requireCurrent(sharedContext, evidenceAbort.signal) });
     const listeners = new Map<(event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation) => void, Readonly<{
+        reference: Parameters<PluginUiResourceStore['getEntry']>[0];
+        takeReadDemand(): UsageQueryReadDemand;
+        isAllowanceReadPending(): boolean;
+        requestAllowanceRead(): void;
         queries: readonly UsageQuery[];
         previous(): UsageQueryBatchResult | undefined;
         machineId?: string;
     }>>();
+    const demandSubscriptions = new Map<() => () => void, (() => void) | undefined>();
+    const whileDemanded = (attach: () => () => void) => {
+        demandSubscriptions.set(attach, undefined);
+        return () => { demandSubscriptions.get(attach)?.(); demandSubscriptions.delete(attach); };
+    };
+    const resourceKey = (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => {
+        if (typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query') {
+            return JSON.stringify(['host', 'usage.query', getUsageQueryBatchKey(reference.input)]);
+        }
+        return pluginUiResourceReferenceKey(reference, null);
+    };
+    // Read and watch consume the same Account admission. The watch can name
+    // its retained digest so establishment converges after its mandatory read,
+    // without scheduling a second read of those same admitted inputs.
+    const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
+        if (!retainedCurrentness.isCurrent()) replaceAccounting();
+        // Relative windows advance at the local-day boundary even while closed.
+        for (const query of queries) owner.readAccountingInstant(query);
+        const readInputs = [resourceInputs,
+            ...(queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence)
+                ? [sessionEvidenceInputs] : []), ...queries.map(query => {
+                const key = getUsageQueryKey(query);
+                let admitted = accountingInputs.get(key);
+                if (!admitted) { admitted = { query, identity: {}, nowMs: Date.now() }; accountingInputs.set(key, admitted); }
+                return admitted.identity;
+            })];
+        const snapshot = owner.store.getEntry(reference).getSnapshot();
+        const content = snapshot.value;
+        const admission = content && decodedValues.get(content)?.admission;
+        const nowMs = Date.now();
+        const quotaClockCurrent = !!admission && nowMs >= admission.quotaInterval.fromMs && nowMs < admission.quotaInterval.untilMs;
+        const admitted = !snapshot.error && admission?.inputs.length === readInputs.length
+            && admission.inputs.every((identity, index) => identity === readInputs[index]) && quotaClockCurrent;
+        return { readInputs, nowMs, admission, quotaClockCurrent,
+            content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
+    };
     const owner: AccountResourceOwner = {
         projectionDocuments,
-        async readAccounting(request, signal) {
+        captureSessionEvidenceAdmission() {
+            const admitted = sessionEvidenceInputs;
+            return () => admitted === sessionEvidenceInputs;
+        },
+        readAccountingInstant(query) {
+            const nowMs = Date.now();
+            if (!query.includeAccounting) return nowMs;
+            const admitted = admittedAccounting;
+            const key = getUsageQueryKey(query);
+            const previous = accountingInputs.get(key);
+            if (!admitted || resolveUsageQueryPeriod(query, previous?.nowMs ?? admitted.nowMs).startMs !== resolveUsageQueryPeriod(query, nowMs).startMs) {
+                if (admitted) replaceAccounting();
+                admittedAccounting = { nowMs, answers: new Map() };
+            }
+            let input = accountingInputs.get(key);
+            if (!input) {
+                input = { query, identity: {}, nowMs: admittedAccounting!.nowMs };
+                accountingInputs.set(key, input);
+            }
+            return input.nowMs;
+        },
+        readAccounting(request, query, signal, includeContributions = true, includeSessionIds = false, workOnly = false) {
             requireCurrent(sharedContext, signal);
-            const cancellation = mergeAbortSignals([signal, evidenceAbort.signal]);
-            try {
-                const load = (readSignal: AbortSignal) => queryUsageAnalytics(sharedContext.credentials, request,
-                    { request: sharedContext.request, readTransport: sharedContext.readTransport, signal: readSignal });
-                // Opaque invocation-bound request closures cannot prove neutral cancellation.
-                // Only the captured physical transport enables cross-batch borrowing.
-                const transport = sharedContext.readTransport;
-                const bindingKey = transport?.key;
-                const value = transport
-                    ? await accountingReads.run(JSON.stringify([bindingKey,
-                        createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(request))]), load,
-                        { scope: transport.scope ?? bindingKey, signal: cancellation.signal })
-                    : await load(cancellation.signal);
-                requireCurrent(sharedContext, cancellation.signal);
-                return value;
-            } finally { cancellation.dispose(); }
+            owner.readAccountingInstant(query);
+            const inputKey = getUsageQueryKey(query);
+            const input = accountingInputs.get(inputKey);
+            // Opaque invocation-bound request closures keep their own exact transport.
+            const admitted = sharedContext.readTransport ? admittedAccounting : undefined;
+            // A scoped sibling wake preserves this query's pending admission;
+            // replacement of its input or the whole answer map retires it.
+            const isAdmitted = () => admitted && admittedAccounting?.answers === admitted.answers
+                && accountingInputs.get(inputKey) === input;
+            const key = getUsageAccountingReadKey(request, includeContributions, includeSessionIds, workOnly);
+            const answered = admitted?.answers.get(key);
+            if (answered) return answered;
+            if (admitted) for (const [candidateKey, answer] of admitted.answers) {
+                // Keys were serialized by this owner. Private detail and Session
+                // membership remain exact even when displayed output is narrower.
+                const [queryKey, detail, sessions, compactWork = false] = JSON.parse(candidateKey) as [string, boolean, boolean, boolean?];
+                if (detail !== includeContributions || sessions !== includeSessionIds || compactWork && !workOnly) continue;
+                const projected = projectUsageAnalyticsResponseDemand(answer.value, JSON.parse(queryKey) as UsageAnalyticsQueryRequest, request);
+                if (!projected) continue;
+                const projectedAnswer = { value: projected };
+                admitted.answers.set(key, projectedAnswer);
+                return projectedAnswer;
+            }
+            return (async () => {
+                const cancellation = mergeAbortSignals([signal, evidenceAbort.signal]);
+                try {
+                    const value = await accountingReads.read(request, cancellation.signal, includeContributions, includeSessionIds, workOnly);
+                    requireCurrent(sharedContext, cancellation.signal);
+                    // Borrowers of the same pending acquisition share its one admitted
+                    // answer, including preparation completed by an earlier borrower.
+                    const sharedAnswer = isAdmitted() ? admitted!.answers.get(key) : undefined;
+                    if (sharedAnswer) return sharedAnswer;
+                    let result = value;
+                    if (value.contributions !== undefined && (value.summary || includeContributions || includeSessionIds)) {
+                        const { contributions: _rows, sessionIds: _members, sessionMembership: _turns, ...summary } = value;
+                        const { summary: _basis, sessionIds: _sessionIds, ...detail } = value;
+                        const membership = { sessionIds: [...new Set(value.contributions.flatMap(row => row.sessionId === null ? [] : [row.sessionId]))],
+                            sessionMembership: value.sessionMembership ?? projectUsageAccountingSessionMembership(value.contributions) };
+                        // Rich evidence still needs its distinct historical membership
+                        // after final delivery removes the rows. Keep it on this same
+                        // admitted answer, including replies from older rich Homes.
+                        if (value.summary) {
+                            result = includeContributions ? { ...detail, ...membership }
+                                : includeSessionIds ? { ...summary, ...membership } : summary;
+                            if (isAdmitted()) {
+                                admitted!.answers.set(getUsageAccountingReadKey(request, false), { value: summary });
+                                admitted!.answers.set(getUsageAccountingReadKey(request, false, true), { value: { ...summary, ...membership } });
+                            }
+                        } else result = { ...value, ...membership };
+                    }
+                    // A replacement during this read means the answer may predate it.
+                    const answer = { value: result };
+                    if (isAdmitted()) admitted!.answers.set(key, answer);
+                    return answer;
+                } finally { cancellation.dispose(); }
+            })();
         },
-        readSessionInput(sessionId, readTranscript, load, onProgress) {
-            requireCurrent(sharedContext);
-            const basis = readEvidenceBasis(sessionId);
-            // Summary admission cannot satisfy later private transcript demand,
-            // and a held transcript must not hold an interval-only consumer.
-            const key = JSON.stringify([sessionId, readTranscript]);
-            const retained = sessionInputs.get(key);
-            const observe = (entry: NonNullable<ReturnType<typeof sessionInputs.get>>) => {
-                if (!onProgress) return entry.read;
-                entry.listeners.add(onProgress);
-                if (entry.value) onProgress(entry.value);
-                return entry.read.finally(() => entry.listeners.delete(onProgress));
-            };
-            if (retained && retained.basis === basis && !retained.needsAdmission) return observe(retained);
-            const assertCurrent = () => {
-                requireCurrent(sharedContext, evidenceAbort.signal);
-                if (sessionInputs.get(key) !== entry || readEvidenceBasis(sessionId) !== basis || entry.needsAdmission) {
-                    throw Object.assign(new Error('Usage Session evidence changed'), { code: 'usage_session_evidence_changed' });
-                }
-            };
-            const entry: NonNullable<ReturnType<typeof sessionInputs.get>> = { sessionId, basis, needsAdmission: false,
-                read: Promise.resolve<SessionInputEvidence | null>(null), listeners: new Set() };
-            sessionInputs.set(key, entry);
-            entry.read = load(assertCurrent, evidenceAbort.signal, retained?.value, value => {
-                assertCurrent();
-                entry.value = value;
-                for (const listener of entry.listeners) listener(value);
-            }).then(value => {
-                assertCurrent();
-                if (value) entry.value = value;
-                // A selected historical Session need not be loaded in the list.
-                // Its admitted version is reusable too; failures stay retryable.
-                // A successful partial page is still the result of this exact
-                // scope/roles read at this Session version. Repeating it cannot
-                // complete history. Failed or wholly unopened pages stay retryable.
-                if ((!value || readTranscript && !value.messageEvidence && !value.completeMessageCoverage)
-                    && sessionInputs.get(key) === entry) sessionInputs.delete(key);
-                return value;
-            }).catch(error => {
-                if (sessionInputs.get(key) === entry) {
-                    if (retained?.value && isTransientConnectivityError(error)
-                        && sharedContext.accountLifetime.isCurrent() && readEvidenceBasis(sessionId) === basis) {
-                        // Keep admission custody across repeated failed replacements,
-                        // but require the next reader to try admission again.
-                        entry.value = retained.value;
-                        entry.needsAdmission = true;
-                    } else sessionInputs.delete(key);
-                }
-                // A newer admission superseded this operation. It supplied no
-                // refusal: keep the Resource's witnessed facts until that read
-                // answers instead of publishing an incomplete population.
-                throw error;
-            });
-            return observe(entry);
-        },
-        store: createPluginUiResourceStore({ accountLifetime: lifetime, client: {
-            resourceKey(reference) {
-                if (typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query') {
-                    return JSON.stringify(['host', 'usage.query', getUsageQueryBatchKey(reference.input)]);
-                }
-                return pluginUiResourceReferenceKey(reference, null);
-            },
+        readSessionInput: sessionInputs.read,
+        readSessionSelection: sessionInputs.readSelection,
+        store: withExplicitAllowanceRefresh(createPluginUiResourceStore({ accountLifetime: lifetime, client: {
+            resourceKey,
             async readResource(reference, options) {
                 if (typeof reference === 'string' || !('hostRead' in reference)) {
                     throw Object.assign(new Error('Unsupported host read'), { code: 'unsupported_method' });
@@ -1258,13 +1534,21 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                 }
                 if (reference.hostRead !== 'usage.query') throw Object.assign(new Error('Unsupported host read'), { code: 'unsupported_method' });
                 const entry = owner.store.getEntry(reference);
+                const queries = normalizeUsageQueryBatchInput(reference.input).queries;
+                const readDemand = [...listeners.values()].filter(watched => resourceKey(watched.reference) === resourceKey(reference))
+                    .map(watched => watched.takeReadDemand());
+                try {
+                if (readDemand.some(demand => demand.authorityChanged)) replaceAccounting();
+                const retained = readUsageAdmission(reference, queries);
+                const { readInputs, nowMs, admission, quotaClockCurrent } = retained;
+                if (retained.content && readDemand.length > 0 && readDemand.every(demand => demand.unchanged)) return retained.content;
                 // Keep the admitted facts, not the superseded serialized bytes,
                 // in this async frame while unrelated source reads are pending.
-                const { value: ownPrevious, digest: ownPreviousDigest } = (() => {
+                const { value: ownPrevious, digest: ownPreviousDigest, reproject: previousReproject } = (() => {
                     const retained = entry.getSnapshot().value;
-                    return { value: retained ? decodeUsageQueryResource(retained) : undefined, digest: retained?.digest };
+                    return { value: retained ? decodeUsageQueryResource(retained) : undefined, digest: retained?.digest,
+                        reproject: retained ? decodedValues.get(retained)?.reproject : undefined };
                 })();
-                const queries = normalizeUsageQueryBatchInput(reference.input).queries;
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
                 const previousSlices = queries.flatMap(query => {
                     const key = getUsageQueryKey(query);
@@ -1278,7 +1562,33 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                     sources: [...slice.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')),
                         ...sharedAllowance.sources],
                 })) } : priorBatch ?? (sharedAllowance ? { v: 1 as const, results: [sharedAllowance] } : undefined);
+                let reproject: UsageQueryReprojection | undefined;
+                let projectionIsCurrent: (() => boolean) | undefined;
+                const assertProjectionCurrent = () => {
+                    requireCurrent(sharedContext, options?.signal);
+                    if (projectionIsCurrent?.() === false) throw Object.assign(new Error('Usage projection admission changed'), {
+                        code: 'account_encryption_currentness_changed',
+                    });
+                };
+                let settledRead = false;
+                const keepContent = (content: ResourceContent, value: UsageQueryBatchResult): ResourceContent => {
+                    // Keep the read's initial clock basis: a held read that
+                    // crosses a quota boundary cannot renew its old derivation.
+                    // Failed or incomplete sources keep their existing reopen
+                    // recovery; only a settled admission can skip reacquisition.
+                    const reusable = settledRead && value.results.every(slice => !slice.pending
+                        && slice.sources.every(source => source.status !== 'error' && source.status !== 'pending'
+                            && (!source.errorCode || source.status === 'unsupported') && !source.updateRequired));
+                    const intervals = settledRead ? [...new Set(value.results.flatMap(slice => slice.quota ?? []))]
+                        .map(read => readQuotaInterval(read, nowMs)) : [];
+                    const quotaInterval = { fromMs: Math.max(0, ...intervals.map(interval => interval?.fromMs ?? Infinity)),
+                        untilMs: Math.min(Infinity, ...intervals.map(interval => interval?.untilMs ?? 0)) };
+                    decodedValues.set(content, { value, ...(reproject ? { reproject } : {}),
+                        ...(settledRead ? { admission: { inputs: readInputs, quotaInterval, reusable } } : {}) });
+                    return content;
+                };
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
+                    assertProjectionCurrent();
                     requireCurrent(sharedContext, options?.signal);
                     // An older in-flight batch may publish after a sibling has
                     // settled. Pending is activity, never a replacement for those facts.
@@ -1291,15 +1601,16 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                         batch = { ...batch, results: batch.results.map(slice => {
                             const replacements = new Map<string, ConnectedServiceQuotaGetResultV1>();
                             const sources = slice.sources.map(state => {
-                                if (!state.source.startsWith('quota:') || !['pending', 'not_loaded'].includes(state.status)) return state;
+                                if (!state.source.startsWith('quota:')) return state;
                                 const key = state.source.slice('quota:'.length);
-                                const settled = states.get(state.source);
                                 const read = reads.get(key);
                                 const admission = admitted.get(key);
-                                if (!settled || ['pending', 'not_loaded'].includes(settled.status) || !read || !admission
-                                    || !canRetainQuotaRead(admission, read)) return state;
-                                replacements.set(key, read);
-                                return settled;
+                                if (!read || !admission) return state;
+                                const reconciled = reconcileQuotaRead({ admitted: admission, source: read.source, previous: read,
+                                    previousState: states.get(state.source), revision: { kind: 'sibling', state } });
+                                if (!reconciled.value) return state;
+                                replacements.set(key, reconciled.value);
+                                return reconciled.state!;
                             });
                             if (!replacements.size) return slice;
                             const quota = new Map(slice.quota?.map(read => [createCanonicalJsonSigningInput(read.source), read]));
@@ -1324,80 +1635,182 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                     // value so unrelated slices keep their selected references.
                     const currentBatch = current ? decodeUsageQueryResource(current) : undefined;
                     const value = retainUsageQueryResultReferences(batch, currentBatch, ownPrevious);
-                    // Reuse the entry's bytes as well as its decoded value. A
+                    // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
-                    if (current && value === currentBatch) return current;
+                    if (current && value === currentBatch) return keepContent(current, currentBatch);
                     const encoded = encodeUsageQueryResource(value);
                     const bytes = encoded.bytes;
                     const digest = await computePluginUiArtifactSha256Digest(bytes);
-                    requireCurrent(sharedContext, options?.signal);
-                    if (current?.digest === digest) return current;
-                    const content = { contentType: 'application/json', bytes, digest } as const;
+                    assertProjectionCurrent();
+                    if (current?.digest === digest) return keepContent(current, currentBatch!);
                     // The existing transport digest already proves a return to
                     // the settled value; do not deep-compare that whole slice.
-                    decodedValues.set(content, { value: digest === ownPreviousDigest && ownPrevious ? ownPrevious : value });
-                    return content;
+                    const admittedValue = digest === ownPreviousDigest && ownPrevious ? ownPrevious : value;
+                    const content = createUsageQueryResourceContent(admittedValue, bytes, digest);
+                    return keepContent(content, admittedValue);
                 };
-                let queuedProgress: UsageQueryBatchResult | null = null;
+                let queuedProgress: UsageQueryReprojection | null = null;
                 let progressContent: Promise<void> | null = null;
                 const drainProgress = (): void => {
                     if (progressContent) return;
                     progressContent = (async () => {
                         while (queuedProgress) {
-                            const batch = queuedProgress;
+                            const project = queuedProgress;
                             queuedProgress = null;
-                            const content = await contentFor(batch);
+                            const content = await contentFor(project(options?.signal));
                             options?.onProgress?.(content);
                         }
-                    })().finally(() => { progressContent = null; });
+                    })().finally(() => {
+                        progressContent = null;
+                        // A phase can arrive after the loop observes an empty
+                        // queue but before this promise releases the drain.
+                        if (queuedProgress) drainProgress();
+                    });
                     // The final read awaits the same drain. Observe a prompt
                     // rejection now so a slow producer cannot turn an eventual
                     // read failure into an unhandled one.
                     void progressContent.catch(() => {});
                 };
                 let result: UsageQueryBatchResult;
+                // Reuse the admitted source snapshots for a presentation wake;
+                // an explicit refresh or coalesced acquisition always wins.
+                if (previousReproject && (!admission || quotaClockCurrent)
+                    && readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly)) {
+                    projectionIsCurrent = () => readDemand.every(demand => demand.isCurrent());
+                    assertProjectionCurrent();
+                    reproject = previousReproject;
+                    settledRead = true;
+                    return await contentFor(reproject(options?.signal));
+                }
                 try {
                     // This is the typed producer used by progressive admission,
                     // not an external Action response. Dispatching it through
                     // the Action again clones all admitted facts at completion.
                     result = await readUiUsageQueryBatch(sharedContext, { queries }, options?.signal, previous,
-                        { onProgress: batch => {
-                            queuedProgress = batch;
-                            drainProgress();
-                        } });
+                        {
+                            retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
+                            onProgress: project => {
+                                reproject = project;
+                                queuedProgress = project;
+                                drainProgress();
+                                return progressContent ?? undefined;
+                            },
+                        });
                 } catch (error) {
-                    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+                    // Material refusal withdraws this private read context; a
+                    // transport outage still retains the admitted projection.
+                    const failure = classifyAccountStorageReadFailure(error, options?.signal) === 'encryption-material-unavailable'
+                        ? Object.assign(new Error('Usage Account encryption admission is unavailable', { cause: error }),
+                            { code: 'plugin_resource_context_unavailable' }) : error;
+                    const code = failure && typeof failure === 'object' && 'code' in failure ? failure.code : undefined;
                     if (typeof code === 'string' && !canRetainUsageReadFailure(code)) {
                         allowance = undefined;
                         owner.projectionDocuments.clear();
                         slicesByQuery.clear();
                     }
-                    throw error;
+                    throw failure;
                 }
                 requireCurrent(sharedContext, options?.signal);
                 // The final value supersedes any progress revision that has not
                 // started materializing yet. Finish only the in-flight digest.
                 queuedProgress = null;
                 await progressContent;
+                settledRead = true;
                 return await contentFor(result);
+                } finally { for (const demand of readDemand) demand.finish(); }
             },
             async watchResource(reference, listener, options) {
                 requireCurrent(sharedContext, options?.signal);
                 if (typeof reference === 'string' || !('hostRead' in reference)) {
                     throw Object.assign(new Error('Unsupported host read'), { code: 'unsupported_method' });
                 }
-                const allowanceOnly = reference.hostRead === 'usage.query'
-                    && normalizeUsageQueryBatchInput(reference.input).queries.every(query => !query.includeAccounting);
+                const queries = reference.hostRead === 'usage.query' ? normalizeUsageQueryBatchInput(reference.input).queries : [];
+                const allowanceOnly = reference.hostRead === 'usage.query' && queries.every(query => !query.includeAccounting);
+                const privateEvidence = queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence);
+                let allowanceReadDemand: boolean | undefined;
+                // Keep the demand already taken by the active read; retained B
+                // can stay available while its real replacement is outstanding.
+                let activeReadDemand: UsageQueryReadDemand | undefined;
+                let projectionOnly: boolean | undefined;
+                // Closed private demand checks its consumed bases on admission.
+                // Other live Usage watches do not keep this private read active.
+                if (privateEvidence) {
+                    const privateQueries = queries.filter(query => query.includeSessionEvidence
+                        || query.includeTranscriptEvidence || query.includeWorkEvidence);
+                    const ids = privateQueries.some(query => query.session === null) ? undefined
+                        : privateQueries.flatMap(query => typeof query.session === 'string' ? [query.session] : query.session ?? []);
+                    if (sessionInputs.reconcile(ids)) owner.invalidate('session-evidence');
+                }
+                let woken = false;
+                let accountingWakeScheduled = false;
+                // Disclosure withdrawals also cover socket churn. The canonical
+                // finite currentness owner distinguishes those from mode changes.
+                let accountModeCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
+                const takeAccountModeChange = () => {
+                    if (accountModeCurrentness.isCurrent()) return false;
+                    accountModeCurrentness.dispose();
+                    accountModeCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
+                    return true;
+                };
                 const observe = (event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation) => {
+                    const accountModeChanged = takeAccountModeChange();
+                    if (accountModeChanged) replaceAccounting();
+                    if (!accountModeChanged && typeof change === 'object' && isUsagePresentationHomeAccountChange(change)) return;
+                    if (!accountModeChanged && change === 'session-evidence' && !privateEvidence) return;
+                    const accountingChange = typeof change === 'object' && change.usageAccountingChange
+                        ? readUsageAccountingChangeScope(change) : undefined;
+                    if (!accountModeChanged && accountingChange && !usageAccountingChangeAffectsQueries(queries, accountingChange)) return;
                     // Session/accounting evidence does not change Capacity.
                     // Material Profile/Settings/Machine inputs still invalidate
                     // through their existing state subscription below.
-                    if (allowanceOnly && (change === 'session-evidence'
-                        || change && !isUsageProjectionHomeAccountChange(change))) return;
-                    listener(event);
+                    if (!accountModeChanged && allowanceOnly && (change === 'session-evidence'
+                        || typeof change === 'object' && !isUsageProjectionHomeAccountChange(change, true))) return;
+                    // Keep acquisition demand with the existing watch record until
+                    // its next read. Only this input's own changes demand quota.
+                    allowanceReadDemand = allowanceReadDemand === true || accountModeChanged || change === undefined
+                        || change === 'quota-inputs' || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true);
+                    projectionOnly = projectionOnly !== false && !accountModeChanged && change === 'projection-inputs';
+                    woken = true;
+                    if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange) {
+                        // Committed facts in one synchronous burst invalidate now,
+                        // then admit their one replacement together. Starting a read
+                        // inside the first push queues a redundant pre-dispatch read.
+                        if (!accountingWakeScheduled) {
+                            accountingWakeScheduled = true;
+                            queueMicrotask(() => {
+                                if (!accountingWakeScheduled || !listeners.has(observe)) return;
+                                accountingWakeScheduled = false;
+                                listener(event);
+                            });
+                        }
+                    } else {
+                        accountingWakeScheduled = false;
+                        listener(event);
+                    }
                 };
                 listeners.set(observe, {
-                    queries: reference.hostRead === 'usage.query' ? normalizeUsageQueryBatchInput(reference.input).queries : [],
+                    reference,
+                    requestAllowanceRead() { allowanceReadDemand = true; projectionOnly = false; woken = true; },
+                    isAllowanceReadPending() {
+                        return allowanceReadDemand === true || activeReadDemand !== undefined
+                            && !activeReadDemand.unchanged && !activeReadDemand.projectionOnly && activeReadDemand.allowance !== false;
+                    },
+                    takeReadDemand() {
+                        // A queued replacement can start after a mode withdrawal
+                        // even when no later Home wake has reached this observer.
+                        const authorityChanged = takeAccountModeChange();
+                        const witness = accountModeCurrentness;
+                        const demand: UsageQueryReadDemand = { allowance: authorityChanged ? true : allowanceReadDemand,
+                            projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
+                            unchanged: !authorityChanged && !woken, isCurrent: witness.isCurrent,
+                            finish() { if (activeReadDemand === demand) activeReadDemand = undefined; } };
+                        activeReadDemand = demand;
+                        allowanceReadDemand = undefined;
+                        projectionOnly = undefined;
+                        woken = false;
+                        return demand;
+                    },
+                    queries,
                     previous: () => {
                         if (reference.hostRead !== 'usage.query') return undefined;
                         const content = owner.store.getEntry(reference).getSnapshot().value;
@@ -1406,23 +1819,97 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                     ...(reference.hostRead === 'connectedServices.pools.selection.get'
                         ? { machineId: ConnectedServicePoolSelectionGetRequestV1Schema.parse(reference.input).machineId } : {}),
                 });
-                const dispose = () => { listeners.delete(observe); options?.signal?.removeEventListener('abort', dispose); };
+                syncQualifiedSubscriptions();
+                // Demand reattaches retained collection observations first;
+                // their closed-view changes belong to this same admission.
+                const admission = reference.hostRead === 'usage.query' ? readUsageAdmission(reference, queries) : undefined;
+                woken ||= admission?.reusable !== true;
+                const dispose = () => {
+                    activeReadDemand = undefined;
+                    allowanceReadDemand = undefined;
+                    accountModeCurrentness.dispose();
+                    listeners.delete(observe);
+                    syncQualifiedSubscriptions();
+                    options?.signal?.removeEventListener('abort', dispose);
+                };
                 options?.signal?.addEventListener('abort', dispose, { once: true });
-                return { dispose };
+                return { dispose, ...(admission?.reusable && admission.content ? { admittedDigest: admission.content.digest } : {}) };
             },
-        } }),
+        } }), reference => {
+            if (typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query') {
+                const queries = normalizeUsageQueryBatchInput(reference.input).queries.filter(query => query.includeAccounting
+                    && (query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence));
+                sessionInputs.retryFailures(new Set(queries.map(getUsageQueryKey)));
+            }
+            // An explicit refresh asks the server again at a new instant.
+            replaceAccounting();
+            const key = resourceKey(reference);
+            for (const watched of listeners.values()) {
+                if (resourceKey(watched.reference) === key) watched.requestAllowanceRead();
+            }
+        }, reference => [...listeners.values()].some(watched => resourceKey(watched.reference) === resourceKey(reference)
+            && watched.isAllowanceReadPending())),
         invalidate(homeChange) {
             if (!lifetime.isCurrent()) return;
             // A replacement demanded by this wake must not join pre-wake accounting.
             // Existing borrowers retain their own publication and Account fences.
-            accountingReads.invalidate(sharedContext.readTransport?.scope ?? sharedContext.readTransport?.key);
+            // Session, quota-input and projection wakes change no server answer.
+            if (homeChange === undefined || typeof homeChange === 'object' && !isUsagePresentationHomeAccountChange(homeChange)) {
+                const change = typeof homeChange === 'object' ? readUsageAccountingChangeScope(homeChange) : undefined;
+                if (!change) replaceAccounting();
+                else {
+                    // Relevance belongs to the Account admission, including
+                    // closed references and slices entering a different batch.
+                    const changedRequests = new Set<string>();
+                    const nowMs = Date.now();
+                    for (const [key, input] of accountingInputs) {
+                        if (!usageAccountingChangeAffectsQueries([input.query], change)) continue;
+                        for (const read of resolveUsagePageAccountingReads([input.query], input.nowMs)) {
+                            changedRequests.add(getUsageAnalyticsQueryRequestKey(usageQueryToAnalyticsRequest({ ...read.query, period: read.period })));
+                        }
+                        // Relative windows advance only for affected queries;
+                        // unrelated close/reopen/rebatch keeps its admitted clock.
+                        accountingInputs.set(key, { query: input.query, identity: {}, nowMs });
+                    }
+                    const affected = (request: UsageAnalyticsQueryRequest) => changedRequests.has(getUsageAnalyticsQueryRequestKey(request))
+                        || usageAccountingChangeAffectsQueries([usageAnalyticsRequestToQuery(request)], change);
+                    if (admittedAccounting) {
+                        const answers = admittedAccounting.answers;
+                        for (const key of answers.keys()) {
+                            const [queryKey] = JSON.parse(key) as [string];
+                            const request = JSON.parse(queryKey) as UsageAnalyticsQueryRequest;
+                            if (affected(request)) answers.delete(key);
+                        }
+                        // A pending pre-change answer cannot re-enter admission;
+                        // keep unaffected answers at the same accounting instant.
+                        admittedAccounting = { nowMs, answers };
+                    }
+                    accountingReads.invalidate(affected);
+                }
+            } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
+            else if (typeof homeChange === 'string') resourceInputs = {};
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange);
         },
     };
     accountStores.set(lifetime, owner);
     const qualifiedUnwatches = new Map<string, () => void>();
+    let unobserveMetadata: (() => void) | undefined;
     function syncQualifiedSubscriptions(): void {
-        const keys = new Set(readOpenedQuotaScope(sharedContext)?.sources.map(({ key }) => key));
+        for (const [attach, detach] of demandSubscriptions) {
+            if (listeners.size > 0 && !detach) {
+                demandSubscriptions.set(attach, () => {});
+                demandSubscriptions.set(attach, attach());
+            }
+            else if (listeners.size === 0 && detach) { detach(); demandSubscriptions.set(attach, undefined); }
+        }
+        const scope = readOpenedQuotaScope(sharedContext);
+        const keys = new Set(listeners.size ? scope?.sources.map(({ key }) => key) : []);
+        // The same catalog loader serves labels and entered prices. Demand it
+        // while quota is watched, including host reads without a Plans widget.
+        const needsMetadata = scope && keys.size > 0 && readQuotaFeatureDecision(sharedContext, scope)?.state === 'enabled'
+            && [...listeners.values()].some(watched => watched.queries.length > 0);
+        if (needsMetadata && !unobserveMetadata) unobserveMetadata = observeConnectedMetadataCatalog(lifetime.scope);
+        else if (!needsMetadata && unobserveMetadata) { unobserveMetadata(); unobserveMetadata = undefined; }
         for (const [key, dispose] of qualifiedUnwatches) {
             if (!keys.has(key)) { dispose(); qualifiedUnwatches.delete(key); }
         }
@@ -1438,7 +1925,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
                 if (admissionChanged || settled) observed = next;
                 // This reader consumes admission, not the cache's acquisition
                 // flags. Starting/finishing an unchanged read is not invalidation.
-                if (changed) owner.invalidate();
+                if (changed) owner.invalidate('quota-inputs');
             }));
         }
     }
@@ -1450,37 +1937,40 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
             // those versions are observed below at the existing state owner.
             // Reconnects and Sessions absent from that owner still need fresh
             // admission when the wake cannot name the changed Session.
-            if (event.source === 'connected' || event.changeKinds === undefined || event.changeKinds.includes('session')) {
-                if (event.entityIds === undefined || event.source === 'connected') {
-                    sessionInputs.forEach(entry => {
-                        if (event.source === 'connected' || !readSessionState(entry.sessionId) && !readSessionRow(entry.sessionId)) entry.needsAdmission = true;
-                    });
-                } else sessionInputs.forEach(entry => {
-                    if (event.entityIds?.includes(entry.sessionId)) entry.needsAdmission = true;
-                });
-            }
+            sessionInputs.invalidateForHomeChange(event);
             syncQualifiedSubscriptions();
-            owner.invalidate(event);
+            const accountingUnchanged = event.usageAccountingAffects === false
+                && event.source !== 'snapshot' && !event.usageAccountingChange;
+            owner.invalidate(isUsageQuotaHomeAccountChange(event)
+                || accountingUnchanged && isUsageProjectionHomeAccountChange(event, true) ? 'quota-inputs'
+                : accountingUnchanged ? 'session-evidence' : event);
         }
-    });
+    }, { reconnect: 'refresh' });
     const readProviderRows = () => {
         const scope = readOpenedQuotaScope(sharedContext);
         return scope ? getProviderAccountUsageCacheState().entriesByCredentialScope[scope.providerScope] : undefined;
     };
     let observedRows = readProviderRows();
-    const unwatchProvider = subscribeProviderAccountUsageCache(() => {
+    const reconcileProvider = () => {
         const rows = readProviderRows();
         if (rows === observedRows) return;
         const previous = observedRows;
         observedRows = rows;
         // Cache loading, retry deadlines and observation-only publications do
         // not change Usage facts. Preserve real replacement/removal and errors.
-        const keys = new Set([...Object.keys(previous ?? {}), ...Object.keys(rows ?? {})]);
+        const keys = new Set([
+            ...(allowance?.quota?.flatMap(read => read.current ? [read.current.recordId] : []) ?? []),
+            ...(readOpenedQuotaScope(sharedContext)?.sources.flatMap(({ key }) => {
+                const id = getQualifiedQuotaSnapshotEntry(key).usageRecordId;
+                return id ? [id] : [];
+            }) ?? []),
+        ]);
         if ([...keys].some(key => previous?.[key]?.hadError !== rows?.[key]?.hadError
-            || !sameStrictJsonValue(previous?.[key]?.snapshot, rows?.[key]?.snapshot))) owner.invalidate();
-    });
+            || !sameStrictJsonValue(previous?.[key]?.snapshot, rows?.[key]?.snapshot))) owner.invalidate('quota-inputs');
+    };
+    const unwatchProvider = whileDemanded(() => { reconcileProvider(); return subscribeProviderAccountUsageCache(reconcileProvider); });
     let observedFeatures = getCachedServerFeaturesSnapshot({ serverId: lifetime.scope.serverId });
-    const unwatchFeatures = subscribeServerFeaturesSnapshot(() => {
+    const reconcileFeatures = () => {
         const features = getCachedServerFeaturesSnapshot({ serverId: lifetime.scope.serverId });
         if (features === observedFeatures) return;
         const scope = readOpenedQuotaScope(sharedContext);
@@ -1490,11 +1980,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
             && readQuotaFeatureDecision(sharedContext, scope, observedFeatures ?? { status: 'loading' })?.state
                 !== readQuotaFeatureDecision(sharedContext, scope, features ?? { status: 'loading' })?.state;
         observedFeatures = features;
-        if (changed) owner.invalidate();
-    });
-    const unwatchState = subscribeUsageQueryStateInvalidation(() => {
+        if (changed) { syncQualifiedSubscriptions(); owner.invalidate('quota-inputs'); }
+    };
+    const unwatchFeatures = whileDemanded(() => { reconcileFeatures(); return subscribeServerFeaturesSnapshot(reconcileFeatures); });
+    const unwatchState = subscribeUsageQueryStateInvalidation(input => {
         syncQualifiedSubscriptions();
-        owner.invalidate();
+        owner.invalidate(input);
     }, machines => {
         const opened = readOpenedQuotaScope(sharedContext);
         const poolMachineFilters: (readonly string[])[] = [];
@@ -1512,6 +2003,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
             if (watched.machineId) sessionMachineIds.add(watched.machineId);
             for (const slice of watched.previous()?.results ?? []) {
                 if (!slice.requestedQuery.includeAccounting || !slice.requestedQuery.includeWorkEvidence) continue;
+                for (const turn of readUsageAccountingSessionMembership(slice.accounting)?.turns ?? []) sessionIds.add(turn.sessionId);
                 for (const row of slice.accounting?.contributions ?? []) {
                     if (!row.sessionId || !row.turnId) continue;
                     sessionIds.add(row.sessionId);
@@ -1527,37 +2019,56 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
             if (displayId) sessionMachineIds.add(displayId);
         }
         return { includeMachineNames, poolMachineFilters, sessionMachineIds: [...sessionMachineIds] };
-    });
-    let observedSessions = readRegisteredStorageState()?.sessions;
-    let observedSessionRows = readRegisteredStorageState()?.sessionListRowsByServerId;
+    }, whileDemanded);
+    const readEnteredPrices = () => {
+        const scope = readOpenedQuotaScope(sharedContext);
+        if (!scope || readQuotaFeatureDecision(sharedContext, scope)?.state !== 'enabled') return undefined;
+        const presentation = getConnectedMetadataCatalog(lifetime.scope).presentation;
+        // Loading is not a new price. The catalog owner retains its admission
+        // while refreshing and publishes the settled record separately.
+        if (presentation.status === 'loading') return undefined;
+        return { status: presentation.status,
+            prices: presentation.status === 'ready' ? scope.sources.map(({ source }) =>
+                [source.ref, readConnectedSubscriptionMonthlyPriceV1(presentation, source.ref)]) : undefined };
+    };
+    let observedPrices = readEnteredPrices();
+    const reconcilePrices = () => {
+        const prices = readEnteredPrices();
+        if (prices === undefined) return;
+        const changed = !sameStrictJsonValue(prices, observedPrices);
+        observedPrices = prices;
+        if (changed) owner.invalidate('projection-inputs');
+    };
+    const unwatchPrices = whileDemanded(() => { reconcilePrices(); return subscribeConnectedMetadataCatalog(reconcilePrices); });
     let observedProfileScope = readRegisteredStorageState()?.profileScope;
-    const unwatchSessions = subscribeRegisteredStorageState(state => {
-        if (state.sessions === observedSessions && state.sessionListRowsByServerId === observedSessionRows
-            && state.profileScope === observedProfileScope) return;
-        const previousSessions = observedSessions;
+    const unwatchSessions = whileDemanded(() => subscribeRegisteredStorageState((state, previous) => {
         const scopeChanged = !areServerAccountScopesEqual(state.profileScope, observedProfileScope);
-        observedSessions = state.sessions;
-        observedSessionRows = state.sessionListRowsByServerId;
         observedProfileScope = state.profileScope;
-        // Candidate membership is also an input: a list arriving after a cold
-        // empty read must wake demand even when it has no cached evidence yet.
-        const ids = Object.keys(state.sessions);
-        let changed = scopeChanged || ids.length !== Object.keys(previousSessions ?? {}).length
-            || ids.some(id => !previousSessions?.[id]);
-        for (const entry of sessionInputs.values()) {
-            if (readEvidenceBasis(entry.sessionId) === entry.basis) continue;
-            entry.needsAdmission = true;
-            changed = true;
-        }
+        const queries = [...listeners.values()].flatMap(watched => watched.queries.filter(query =>
+            query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence));
+        if (!scopeChanged && !queries.length) return;
+        const delta = state.sessionListRenderableDelta;
+        const ids = new Set(delta && delta !== previous?.sessionListRenderableDelta
+            ? [...delta.changedSessionIds, ...delta.removedSessionIds, ...(delta.hydratedSessionIds ?? [])] : []);
+        // The existing publication names changed/hydrated identities, including
+        // arrivals after a cold empty list. No whole-Session-map walk is needed.
+        const consumed = new Set(queries.flatMap(query => selectUsageQueryWorkEvidenceSessionIds({ query,
+            sessions: [...ids].map(id => ({ id })), contributions: slicesByQuery.get(getUsageQueryKey(query))?.accounting?.contributions,
+            sessionMembership: readUsageAccountingSessionMembership(slicesByQuery.get(getUsageQueryKey(query))?.accounting) })));
+        const changedIds = [...ids].filter(id => consumed.has(id));
+        const changed = sessionInputs.reconcile(changedIds, { scopeChanged,
+            membershipChangedSessionIds: changedIds.filter(id => Boolean(previous?.sessions[id]) !== Boolean(state.sessions[id])),
+        });
         if (changed) owner.invalidate(scopeChanged ? undefined : 'session-evidence');
-    });
+    }, { sessionListRenderableDelta: true, profileScope: true }) ?? (() => {}));
     const unwatchCredentials = subscribeHomeCredentialMutations(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
         if (event.kind === 'credentials_set' && event.credentials
             && resolveAuthCredentialsScopeKey(event.credentials) === resolveAuthCredentialsScopeKey(sharedContext.credentials)) return;
         owner.store.dispose();
         evidenceAbort.abort();
-        sessionInputs.clear();
+        retainedCurrentness.dispose();
+        sessionInputs.dispose();
         owner.projectionDocuments.clear();
         slicesByQuery.clear();
         allowance = undefined;
@@ -1566,6 +2077,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
         unwatchProvider();
         unwatchFeatures();
         unwatchState?.();
+        unwatchPrices();
+        unobserveMetadata?.();
         unwatchSessions?.();
         qualifiedUnwatches.forEach(dispose => dispose());
         qualifiedUnwatches.clear();
@@ -1574,7 +2087,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
     lifetime.onRetire(() => {
         owner.store.dispose();
         evidenceAbort.abort();
-        sessionInputs.clear();
+        retainedCurrentness.dispose();
+        sessionInputs.dispose();
         owner.projectionDocuments.clear();
         slicesByQuery.clear();
         allowance = undefined;
@@ -1584,6 +2098,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
         unwatchProvider();
         unwatchFeatures();
         unwatchState?.();
+        unwatchPrices();
+        unobserveMetadata?.();
         unwatchSessions?.();
         qualifiedUnwatches.forEach(dispose => dispose());
         qualifiedUnwatches.clear();
@@ -1596,6 +2112,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): P
 // select the same slice reference. No response or request lifetime lives here.
 const decodedValues = new WeakMap<ResourceContent, Readonly<{
     value: UsageQueryBatchResult;
+    reproject?: UsageQueryReprojection;
+    admission?: Readonly<{ inputs: readonly object[]; quotaInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean }>;
 }>>();
 
 export function decodeUsageQueryResource(value: ResourceContent): UsageQueryBatchResult {

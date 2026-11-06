@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
-import { projectSessionUsageWorkEvidence } from './usageWorkEvidence';
+import { projectUsageSessionInput } from './usageWorkEvidence';
+import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectUsageQueryWorkEvidence } from './usageWorkEvidence';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { resolveUsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 
 describe('opened Session usage work evidence', () => {
+    it('retains admitted layout-one Usage facts and identity while releasing unconsumed opened content', () => {
+        const privateText = 'unconsumed owner content'.repeat(20_000);
+        const session = createSessionFixture({ id: 'projected', serverId: 'home', encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadata: { path: 'shared', host: '', machineId: 'shared-machine' },
+            ownerMetadataView: { path: '/workspace/project', host: privateText, machineId: 'owner-machine' },
+            agentState: AgentStateSchema.parse({ requests: { permission: { tool: 'Read', arguments: { path: privateText }, createdAt: 100 } },
+                completedRequests: {} }),
+            sessionTurns: { v: 1, sessionId: 'projected', updatedAt: 400, turns: [
+                { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 400 },
+            ] } });
+        const projected = projectUsageSessionInput(session);
+        expect(projectSessionUsageWorkEvidence(projected)).toEqual(projectSessionUsageWorkEvidence({ ...session, metadata: session.ownerMetadataView ?? null }));
+        expect(projected).toMatchObject({ id: session.id, serverId: session.serverId, seq: session.seq,
+            metadataVersion: session.metadataVersion, agentStateVersion: session.agentStateVersion,
+            metadataLayoutVersion: 1, access: session.access, metadata: { machineId: 'owner-machine' }, agentState: null });
+        expect(projected).not.toHaveProperty('ownerMetadataView');
+        expect(JSON.stringify(projected)).not.toContain('unconsumed owner content');
+    });
+
     it('projects additive saved Action confirmations without losing witnessed waiting evidence', () => {
         const request = {
             tool: 'Happier Action confirmation' as const, kind: 'user_action' as const,
@@ -160,7 +180,7 @@ describe('opened Session usage work evidence', () => {
         expect(runtimeEmpty.permissions).toEqual([]);
         expect(compose(runtimeEmpty)).toMatchObject({ permissions: null, inputs: { acceptedCount: 0, steeringCount: 0 } });
         const confirmationEmpty = projectSessionUsageWorkEvidence({ ...session, agentState: null,
-            metadata: { path: '', host: '', actionConfirmationsV1: { v: 1, requests: {}, completedRequests: {} } },
+            metadata: { actionConfirmationsV1: { v: 1, requests: {}, completedRequests: {} } },
         });
         expect(confirmationEmpty.permissions).toEqual([]);
         // An observed empty map survives projection, but partial history cannot

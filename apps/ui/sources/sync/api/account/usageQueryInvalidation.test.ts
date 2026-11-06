@@ -1,12 +1,66 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
-import { getUsageProjectionNextReadAtMs, getUsageQueryMachineInvalidationKey, observeUsageProjection, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { isUsageQuotaHomeAccountChange, getUsageProjectionNextReadAtMs, getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, observeUsageProjection, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { clearMachineRequestReachabilityForScope, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
+import { storage } from '@/sync/domains/state/storageStore';
+import { handleEphemeralSocketUpdate } from '@/sync/engine/socket/socket';
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it('separates provider allowance publications from mixed, unknown and snapshot accounting wakes', () => {
+    const quota = { serverId: 'server', entityIds: ['provider-account-usage'], changeKinds: ['account' as const], usageQueryAffects: true };
+    expect(isUsageQuotaHomeAccountChange(quota)).toBe(true);
+    expect(isUsageQuotaHomeAccountChange({ ...quota, entityIds: [buildConnectedServicesAccountChangeV1().entityId] })).toBe(true);
+    for (const event of [
+        { ...quota, entityIds: ['provider-account-usage', 'self'] },
+        { ...quota, entityIds: [] },
+        { ...quota, changeKinds: ['account' as const, 'session' as const] },
+        { ...quota, source: 'snapshot' as const },
+        { ...quota, usageAccountingChange: { sessionId: null } },
+        { serverId: 'server' },
+    ]) expect(isUsageQuotaHomeAccountChange(event)).toBe(false);
+});
+
+it.each(['failed', 'withdrawn'] as const)('distinguishes %s selector presence from confirmed offline Machines', condition => {
+    const scope = { serverId: 'usage-selector-read-failure.test', accountId: 'account' };
+    const machine = createMachineFixture({ id: 'chosen', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    const machines = { [machine.id]: machine };
+    observeMachinePresenceForTest(scope, [machine.id]);
+    try {
+        expect(getUsageQueryPoolMachineSelection(machines, ['chosen'], scope))
+            .toEqual({ status: 'pending', machineId: 'chosen' });
+        if (condition === 'failed') recordMachineRequestFailed({ ...scope, machineId: 'chosen' });
+        else withdrawMachinePresenceForScope(scope);
+        expect(getUsageQueryPoolMachineSelection(machines, ['chosen'], scope))
+            .toEqual({ status: 'error', machineId: 'chosen', errorCode: 'MACHINE_RPC_UNREACHABLE' });
+        clearMachineRequestReachabilityForScope(scope);
+        observeMachinePresenceForTest(scope, ['chosen']);
+        expect(getUsageQueryPoolMachineSelection({ chosen: { ...machine, active: false } }, ['chosen'], scope))
+            .toEqual({ status: 'unsupported', errorCode: 'no_machine' });
+        expect(getUsageQueryPoolMachineSelection({}, [], scope))
+            .toEqual({ status: 'unsupported', errorCode: 'no_machine' });
+    } finally { clearMachineRequestReachabilityForScope(scope); }
+});
+
+it('honors a positive predecessor acquisition deadline without adding a local floor', async () => {
+    vi.useFakeTimers();
+    const staleAfterMs = 100;
+    let reads = 0;
+    const deadline = getUsageProjectionNextReadAtMs({ legacyStaleAfterMs: staleAfterMs });
+    const observation = observeUsageProjection({ serverId: 'predecessor-quota-deadline.test', initialReadCompleted: true,
+        busy: () => false, read: async () => { reads++; },
+        nextReadAtMs: () => reads === 0 ? deadline : Number.POSITIVE_INFINITY });
+    try {
+        await vi.advanceTimersByTimeAsync(staleAfterMs - 1);
+        expect(reads).toBe(0);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reads).toBe(1);
+    } finally { observation.dispose(); vi.useRealTimers(); }
+});
 
 it('refreshes quota acquisition for connected-service entities and the legacy broad signal', async () => {
     vi.useFakeTimers();
@@ -34,7 +88,6 @@ it('refreshes quota acquisition for connected-service entities and the legacy br
 });
 
 it('reconsiders existing accounts when their Usage capability arrives, but not when only its title changes', async () => {
-    const { storage } = await import('@/sync/domains/state/storageStore');
     const previous = storage.getState();
     const scope = { serverId: 'usage-capability.test', accountId: 'account' };
     const service = { pluginId: 'acme.meter', localId: 'meter' };
@@ -66,13 +119,13 @@ it('reconsiders existing accounts when their Usage capability arrives, but not w
     }
 });
 
-it('keeps a healthy current-server quota reader idle for 120 seconds and ignores unrelated exact wakes', async () => {
+it('keeps a current-server quota reader idle and recovers on relevant pushes', async () => {
     vi.useFakeTimers();
     let reads = 0;
     const serverId = 'idle-current-usage.test';
     const observation = observeUsageProjection({ serverId, initialReadCompleted: true,
         busy: () => false, read: async () => { reads++; },
-        nextReadAtMs: () => getUsageProjectionNextReadAtMs({ consecutiveErrors: 0 }) });
+        nextReadAtMs: () => getUsageProjectionNextReadAtMs() });
     try {
         for (let index = 0; index < 30; index++) {
             publishHomeAccountChange(serverId, ['unrelated-session'], { changeKinds: ['session'] });
@@ -95,8 +148,7 @@ it('keeps a healthy current-server quota reader idle for 120 seconds and ignores
     } finally { observation.dispose(); vi.useRealTimers(); }
 });
 
-it.each(['usage', 'usage-sources-invalidated'] as const)('still refreshes Usage readers for a scoped %s socket wake', async type => {
-    const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
+it.each(['usage', 'usage-sources-invalidated'] as const)('does not demand Provider quota for an accounting %s socket wake', async type => {
     let reads = 0;
     const observation = observeUsageProjection({
         serverId: 'usage-scoped-wake.test', initialReadCompleted: true,
@@ -111,7 +163,7 @@ it.each(['usage', 'usage-sources-invalidated'] as const)('still refreshes Usage 
             addActivityUpdate: () => {}, addMachineActivityUpdate: () => {},
             getSessionEncryption: () => null, getSession: () => undefined, applyMessages: () => {},
         });
-        expect(reads).toBe(1);
+        expect(reads).toBe(0);
     } finally { observation.dispose(); }
 });
 
@@ -212,7 +264,6 @@ it('keys pool selection by its resolved machine and Session evidence by only its
 });
 
 it('ignores equivalent Profile and Settings refreshes but invalidates changed quota inputs', async () => {
-    const { storage } = await import('@/sync/domains/state/storageStore');
     const previous = storage.getState();
     const scope = { serverId: 'usage-invalidation.test', accountId: 'account-a' };
     storage.setState({ profileScope: scope, settingsScope: scope,
@@ -265,11 +316,33 @@ it('ignores equivalent Profile and Settings refreshes but invalidates changed qu
     }
 });
 
-it('does not reread machine details for unrelated store notifications, but observes presence expiry', async () => {
-    const { storage } = await import('@/sync/domains/state/storageStore');
+it('separates presentation settings and Machine labels from selection eligibility', async () => {
+    const previous = storage.getState();
+    const scope = { serverId: 'usage-projection-classification.test', accountId: 'account-a' };
+    const machine = createMachineFixture({ id: 'projection-machine', activeAt: Date.now() });
+    storage.setState({ profileScope: scope, settingsScope: scope, machines: { [machine.id]: machine } });
+    const invalidations: string[] = [];
+    const release = subscribeUsageQueryStateInvalidation(input => invalidations.push(input), () => ({
+        includeMachineNames: true, poolMachineFilters: [[]], sessionMachineIds: [machine.id],
+    }));
+    try {
+        storage.setState(state => ({ settings: { ...state.settings, usageNightHoursV1: { startHour: 23, endHour: 7 } } }));
+        expect(invalidations.splice(0)).toEqual(['projection-inputs']);
+        storage.setState({ machines: { [machine.id]: { ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } } } });
+        expect(invalidations.splice(0)).toEqual(['projection-inputs']);
+        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: 1 } } });
+        expect(invalidations.splice(0)).toEqual(['quota-inputs']);
+    } finally {
+        release?.();
+        storage.setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope,
+            settings: previous.settings, machines: previous.machines });
+    }
+});
+
+it('does not reread machine details for unrelated store notifications or wall time, but observes pushed presence', async () => {
     let nowMs = 1_900_000_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-    const machine = createMachineFixture({ id: 'machine', activeAt: nowMs, updatedAt: nowMs });
+    const machine = createMachineFixture({ id: 'machine', activeAt: nowMs, updatedAt: nowMs, presenceProtocolVersion: 1 });
     const metadata = machine.metadata;
     let detailReads = 0;
     Object.defineProperty(machine, 'metadata', { enumerable: true, get() { detailReads++; return metadata; } });
@@ -277,7 +350,9 @@ it('does not reread machine details for unrelated store notifications, but obser
     const previousReady = storage.getState().isDataReady;
     const previousSettingsScope = storage.getState().settingsScope;
     const previousProfileScope = storage.getState().profileScope;
-    storage.setState({ machines: { [machine.id]: machine }, profileScope: { serverId: 'usage-invalidation.test', accountId: 'account-a' } });
+    const scope = { serverId: 'usage-invalidation.test', accountId: 'account-a' };
+    storage.setState({ machines: { [machine.id]: machine }, profileScope: scope });
+    observeMachinePresenceForTest(scope, [machine.id]);
     let invalidated = false;
     const release = subscribeUsageQueryStateInvalidation(() => { invalidated = true; }, () => ({
         poolMachineFilters: [[machine.id]], sessionMachineIds: [],
@@ -287,10 +362,10 @@ it('does not reread machine details for unrelated store notifications, but obser
         for (let index = 0; index < 128; index++) storage.setState({ isDataReady: !storage.getState().isDataReady });
         const unrelatedDetailReads = detailReads;
         expect(invalidated).toBe(false);
-        const deadline = readMachineStatusNextRefreshAtMs(machine, nowMs);
-        if (deadline === null) throw new Error('Expected witnessed presence deadline');
-        nowMs = deadline;
+        nowMs += 120_000;
         storage.setState({ isDataReady: !storage.getState().isDataReady });
+        expect(invalidated).toBe(false);
+        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: nowMs } } });
         expect(invalidated).toBe(true);
         expect(detailReads).toBeGreaterThan(unrelatedDetailReads);
         console.info(JSON.stringify({ unrelatedStoreRevisions: 128, unrelatedMachineDetailReads: unrelatedDetailReads, expiryDetailReads: detailReads - unrelatedDetailReads }));
@@ -298,9 +373,9 @@ it('does not reread machine details for unrelated store notifications, but obser
         invalidated = false;
         nowMs = machine.activeAt!;
         storage.setState({ isDataReady: !storage.getState().isDataReady });
-        expect(invalidated).toBe(true); // A backward clock can make the same rows online again.
+        expect(invalidated).toBe(false);
         invalidated = false;
-        storage.setState({ machines: { [machine.id]: { ...machine, activeAt: nowMs + 1, updatedAt: nowMs + 1 } } });
+        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: nowMs + 1, updatedAt: nowMs + 1 } } });
         expect(invalidated).toBe(false);
         const beforeScopeChange = detailReads;
         storage.setState({ settingsScope: { serverId: 'usage-invalidation.test', accountId: 'other-account' } });
@@ -308,6 +383,7 @@ it('does not reread machine details for unrelated store notifications, but obser
         expect(detailReads).toBe(beforeScopeChange);
     } finally {
         release?.();
+        clearMachineRequestReachabilityForScope(scope);
         storage.setState({ machines: previousMachines, isDataReady: previousReady, settingsScope: previousSettingsScope, profileScope: previousProfileScope });
     }
 });

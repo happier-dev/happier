@@ -74,12 +74,12 @@ export async function createQualifiedQuotaTestHarness(options: Readonly<{
     const serverUrl = options.serverUrl ?? 'https://qualified-quota-fixture.test';
     const serverIdentityId = options.serverIdentityId ?? 'srv_qualified_quota_fixture';
     const requests: Array<{ path: string; method: string }> = [];
-    const features = vi.fn(async () => new Response(JSON.stringify(createRootLayoutFeaturesResponse({
+    const features = vi.fn(async () => Response.json(createRootLayoutFeaturesResponse({
         capabilities: { serverIdentity: { serverIdentityId }, connectedServices: {
             credentialDelete: { revisionGuard: true },
             ...(options.qualifiedAccountsProtocol === null ? {} : { qualifiedAccounts: { protocolVersion: 4 } }),
         } },
-    })), { status: 200 }));
+    })));
     const read = vi.fn(async (_ref: QualifiedConnectedAccountRef): Promise<Response> => new Response(JSON.stringify(quotaTestResponse(options.snapshot)), { status: 200 }));
     const refresh = vi.fn(async (_ref: QualifiedConnectedAccountRef): Promise<Response> => new Response(JSON.stringify({ success: true }), { status: 200 }));
     const usageRead = vi.fn(async (_recordId: string): Promise<Response> => Response.json(quotaTestProviderUsageResponse()));

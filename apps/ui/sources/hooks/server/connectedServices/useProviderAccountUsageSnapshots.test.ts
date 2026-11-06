@@ -14,7 +14,6 @@ import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServi
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import { computeConnectedServiceQuotaErrorBackoffMs } from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
 import { createQualifiedQuotaTestHarness, quotaTestProviderUsageSnapshot, quotaTestProviderUsageResponse } from './qualifiedConnectedAccountQuotaTestHarness';
 import { useProviderAccountUsageSnapshots } from './useProviderAccountUsageSnapshots';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -135,7 +134,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         const scope = buildProviderAccountUsageScopeKey({ ...getActiveServerSnapshot(),
             credentialScope: resolveAuthCredentialsScopeKey(boundary.account.credentials) });
         const entry = (snapshot: typeof first) => ({ snapshot, loading: false, hadError: false,
-            nextFetchAtMs: Number.POSITIVE_INFINITY, consecutiveErrors: 0 });
+            nextFetchAtMs: Number.POSITIVE_INFINITY });
         await act(async () => updateProviderAccountUsageCacheEntries(scope, () => ({
             [first.recordId]: entry(first), [second.recordId]: entry(second),
         })));
@@ -303,7 +302,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]?.meters[0]?.used).toBe(50);
     });
 
-    it('settles every failed record, retains last-known-good, and retries on the shared error deadline', async () => {
+    it('settles failed records without timed retries, retains last-known-good, and recovers on a quota push', async () => {
         vi.useFakeTimers();
         const first = makeUsageSnapshot('first'), second = makeUsageSnapshot('second');
         const rows = new Map([first, second].map(snapshot => [snapshot.recordId, snapshot]));
@@ -319,7 +318,12 @@ describe('useProviderAccountUsageSnapshots', () => {
             expect(hook.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(false);
         }
         failing = false;
-        await act(async () => { await vi.advanceTimersByTimeAsync(computeConnectedServiceQuotaErrorBackoffMs(1)); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.usageRead).toHaveBeenCalledTimes(4);
+        for (const snapshot of rows.values()) rows.set(snapshot.recordId, { ...snapshot,
+            observedAtMs: Date.now(), fetchedAtMs: Date.now() });
+        await act(async () => { wake(); });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(boundary.usageRead).toHaveBeenCalledTimes(6);
         expect(hook.getCurrent().stateByRecordId[first.recordId]).toBe('loaded_data');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { UsagePromptCompositionSchema } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
-import { projectSessionUsageWorkEvidence } from './usageWorkEvidence';
+import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 const composition = UsagePromptCompositionSchema.parse({
     v: 1, evidenceId: 'composition', sessionId: 'session', turnId: 'turn', inputId: 'input',

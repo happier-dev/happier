@@ -5,7 +5,6 @@ import { resolveProviderAccountUsageSnapshotState } from './providerAccountUsage
 export type ProviderAccountUsageCacheEntry = Readonly<{
     snapshot: ProviderAccountUsageSnapshotV1 | null;
     nextFetchAtMs: number;
-    consecutiveErrors: number;
     loading: boolean;
     hadError: boolean;
 }>;

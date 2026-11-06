@@ -20,7 +20,6 @@ import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccoun
 import { useProviderAccountUsageSnapshots } from './useProviderAccountUsageSnapshots';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import { computeConnectedServiceQuotaErrorBackoffMs } from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -64,7 +63,7 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         const advertised = { ...features, capabilities: { ...features.capabilities,
             connectedServices: { ...features.capabilities.connectedServices, qualifiedAccounts: { protocolVersion } },
         } };
-        boundary.features.mockImplementation(async () => new Response(JSON.stringify(advertised), { status: 200 }));
+        boundary.features.mockImplementation(async () => Response.json(advertised));
         const parsed = parseServerFeatures(advertised);
         primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, snapshot: parsed
             ? { status: 'ready', features: parsed }
@@ -230,7 +229,7 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         } finally { vi.useRealTimers(); }
     });
 
-    it('retains the last quota on read failure and retries through the shared recovery deadline', async () => {
+    it('retains the last quota after failure without timed retries and recovers on a quota push', async () => {
         vi.useFakeTimers();
         try {
             const hook = await renderHook(() => useConnectedServiceQuotaSnapshots(profileInput), { wrapper: Wrapper });
@@ -242,7 +241,11 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
             await flushHookEffects({ cycles: 8, turns: 8 });
             expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.fetchedAt).toBe(1);
             expect(boundary.read).toHaveBeenCalledTimes(2);
-            await act(async () => { await vi.advanceTimersByTimeAsync(computeConnectedServiceQuotaErrorBackoffMs(1)); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+            await flushHookEffects({ cycles: 8, turns: 8 });
+            expect(boundary.read).toHaveBeenCalledTimes(2);
+            await act(async () => { publishHomeAccountChange(getActiveServerSnapshot().serverId,
+                [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }); });
             await flushHookEffects({ cycles: 8, turns: 8 });
             expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.fetchedAt).toBe(2);
             expect(boundary.read).toHaveBeenCalledTimes(3);

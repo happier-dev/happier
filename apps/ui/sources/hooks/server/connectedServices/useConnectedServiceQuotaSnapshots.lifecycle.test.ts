@@ -3,7 +3,9 @@ import * as React from 'react';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { act } from 'react-test-renderer';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import { computeConnectedServiceQuotaErrorBackoffMs } from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { createDeferredResponse, createLegacyQuotaAuthWrapper, createLegacyQuotaTestHarness, makeQuotaSnapshot,
     plainQuotaResponse, resetConnectedServiceQuotaSnapshotsTestState, type ProfileRef } from './useConnectedServiceQuotaSnapshots.testkit';
 
@@ -68,7 +70,7 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
             });
             await flushHookEffects({ cycles: 8, turns: 8 });
             expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('weekly');
-            expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false);
+            await vi.waitFor(() => expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false));
             if (change !== 'removed sibling') {
                 expect(hook.getCurrent().snapshotsByKey['openai-codex/work']?.meters[0]?.meterId).toBe('monthly');
                 expect(hook.getCurrent().loadingByKey['openai-codex/work']).toBe(false);
@@ -115,7 +117,7 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         expect(boundary.plainRead).toHaveBeenCalledTimes(2);
     });
 
-    it('preserves retained data on a failed read and recovers at the existing error deadline', async () => {
+    it('preserves retained data after failure without timed retries and recovers on a quota push', async () => {
         vi.useFakeTimers();
         const snapshot = makeQuotaSnapshot({ serviceId: 'anthropic', meterId: 'retained' });
         boundary.plainRead.mockImplementationOnce(async () => plainQuotaResponse(snapshot))
@@ -129,9 +131,14 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']).toEqual(snapshot);
         expect(hook.getCurrent().errorsByKey['anthropic/work']).not.toBeNull();
         expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false);
-        await act(async () => { await vi.advanceTimersByTimeAsync(computeConnectedServiceQuotaErrorBackoffMs(1)); });
+        const failedReads = boundary.plainRead.mock.calls.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('recovered');
+        expect(boundary.plainRead).toHaveBeenCalledTimes(failedReads);
+        await act(async () => { publishHomeAccountChange(getActiveServerSnapshot().serverId,
+            [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }); });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        await vi.waitFor(() => expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('recovered'));
         expect(hook.getCurrent().errorsByKey['anthropic/work']).toBeNull();
     });
 

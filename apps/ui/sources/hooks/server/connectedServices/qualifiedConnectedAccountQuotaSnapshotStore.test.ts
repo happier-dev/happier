@@ -6,6 +6,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import type { QualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
     resolveConnectedServiceSettingsErrorMessage,
@@ -50,7 +51,7 @@ function installQuotaReadBoundary(): void {
         if (response instanceof Response) return response;
         if (!response) return Response.json({ error: 'connect_quotas_not_found' }, { status: 404 });
         const snapshot = { ...snapshotFixture({ response }), activeAccountId: 'provider-work' };
-        return Response.json(quotaTestResponse(snapshot, response.metadata?.status ?? 'ok'));
+        return Response.json(quotaTestResponse(snapshot, response.metadata?.status ?? 'ok', response.metadata?.refreshRequestedAt));
     });
 }
 const ref = {
@@ -91,6 +92,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         snapshotFixture.mockImplementation(() => ({ ...snapshot, meters: [] }));
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         await flushAsyncTurns();
+        await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         const before = store.getQualifiedQuotaSnapshotEntry(key);
         const listener = vi.fn();
         const unsubscribe = store.subscribeQualifiedQuotaSnapshotEntry(key, listener);
@@ -165,10 +167,12 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const release = retain();
         let releaseAgain = () => {};
         try {
-            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                snapshot, loading: false, read: true,
+            }));
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: snapshot.fetchedAt + 1 } });
             const first = store.refreshQualifiedQuotaSnapshot(key, context);
-            await vi.advanceTimersByTimeAsync(0);
-            expect(boundary.refresh).toHaveBeenCalledTimes(1);
+            await vi.waitFor(() => expect(boundary.refresh).toHaveBeenCalledTimes(1));
             if (intent !== 'join') release();
             if (intent === 'retry') releaseAgain = retain();
             const retry = intent !== 'cancel' ? store.refreshQualifiedQuotaSnapshot(key, context) : undefined;
@@ -179,10 +183,13 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             expect(boundary.refresh).toHaveBeenCalledTimes(intent === 'retry' ? 2 : 1);
             expect(getQuotaMock).toHaveBeenCalledTimes(intent === 'cancel' ? 1 : 2);
             snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: 2 });
-            await vi.advanceTimersByTimeAsync(30_000);
-            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+            publishHomeAccountChange(context.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                loading: false,
                 refreshing: false, snapshot: { fetchedAt: intent === 'cancel' ? 1 : 2 }, error: null,
-            });
+            }));
         } finally {
             release();
             releaseAgain();
@@ -191,12 +198,51 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         }
     });
 
-    it('polls an explicit cached refresh until new data and then returns to cache-only reads', async () => {
+    it('ignores a pre-marker read begun during the refresh POST after acceptance', async () => {
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: Date.now(), staleAfterMs: 30 * 60_000,
+            planLabel: null, accountLabel: null, meters: [] } satisfies QualifiedConnectedAccountQuotaSnapshotV4;
+        getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+        snapshotFixture.mockReturnValue(snapshot);
+        const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
+        let acceptPost!: (response: Response) => void;
+        let finishOldRead!: (response: Response) => void;
+        try {
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key).loading).toBe(false));
+            boundary.refresh.mockImplementationOnce(() => new Promise<Response>(resolve => { acceptPost = resolve; }));
+            const refresh = store.refreshQualifiedQuotaSnapshot(key, context);
+            await vi.waitFor(() => expect(boundary.refresh).toHaveBeenCalledTimes(1));
+            getQuotaMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finishOldRead = resolve; }));
+            const oldRead = store.reloadQualifiedQuotaSnapshotAfterRecovery(context);
+            await vi.waitFor(() => expect(getQuotaMock).toHaveBeenCalledTimes(2));
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: snapshot.fetchedAt + 1 } });
+            acceptPost(Response.json({ success: true }));
+            await refresh;
+            expect(getQuotaMock).toHaveBeenCalledTimes(3);
+            expect(store.getQualifiedQuotaSnapshotEntry(key).refreshing).toBe(true);
+            // This response predates the POST marker despite arriving after its acknowledgement.
+            finishOldRead(Response.json(quotaTestResponse(snapshot)));
+            await oldRead;
+            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot });
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+            publishHomeAccountChange(context.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key).refreshing).toBe(false));
+        } finally {
+            acceptPost?.(Response.json({ success: true }));
+            finishOldRead?.(Response.json(quotaTestResponse(snapshot)));
+            release();
+            store.__resetQualifiedConnectedAccountQuotaSnapshotStore();
+        }
+    });
+
+    it('settles an unchanged snapshot when a pushed read clears the producer refresh request', async () => {
         vi.useFakeTimers();
         const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         const context = buildContext('server-a', 1);
         const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [] };
+        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: Date.now(), staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [] };
         getQuotaMock.mockResolvedValue({ ref, sourceResolution });
         snapshotFixture.mockReturnValue(snapshot);
         const release = store.loadQualifiedQuotaSnapshotOnce(key, context);
@@ -204,12 +250,19 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         try {
             await vi.advanceTimersByTimeAsync(0);
             expect(getQuotaMock).toHaveBeenCalledTimes(1);
+            // The server accepts a same-timestamp write to clear this request.
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: snapshot.fetchedAt } });
             await store.refreshQualifiedQuotaSnapshot(key, context);
             await vi.advanceTimersByTimeAsync(60_000);
             expect(store.getQualifiedQuotaSnapshotEntry(key).refreshing).toBe(true);
-            snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: 2 });
-            await vi.advanceTimersByTimeAsync(30_000);
-            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ refreshing: false, snapshot: { fetchedAt: 2 } });
+            expect(getQuotaMock).toHaveBeenCalledTimes(2);
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+            publishHomeAccountChange(context.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(getQuotaMock).toHaveBeenCalledTimes(3);
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                loading: false, refreshing: false, snapshot,
+            }));
             const reads = getQuotaMock.mock.calls.length;
             await vi.advanceTimersByTimeAsync(60_000);
             expect(getQuotaMock.mock.calls.length).toBe(reads);
@@ -231,17 +284,20 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         try {
             await vi.advanceTimersByTimeAsync(0);
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: snapshot.fetchedAt + 1 } });
             await store.refreshQualifiedQuotaSnapshot(key, context);
             await vi.advanceTimersByTimeAsync(60_000);
             expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
             snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: 2 });
-            if (outcome === 'error') getQuotaMock.mockResolvedValue({ metadata: { status: 'error' } });
-            await vi.advanceTimersByTimeAsync(30_000);
-            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { status: outcome === 'error' ? 'error' : 'ok' } });
+            publishHomeAccountChange(context.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                loading: false,
                 refreshing: false,
                 snapshot: { fetchedAt: 2 },
                 error: outcome === 'error' ? t('connectedServices.errors.quotaRefreshFailed') : null,
-            });
+            }));
         } finally {
             release();
             store.__resetQualifiedConnectedAccountQuotaSnapshotStore();
@@ -299,6 +355,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
     });
     afterEach(async () => {
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
+        vi.useRealTimers();
         await boundary?.dispose();
         vi.restoreAllMocks();
     });
@@ -652,7 +709,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         release();
     });
 
-    it('backs off exponentially while consecutive quota reads keep failing', async () => {
+    it('keeps failed reads idle and recovers immediately through pushes and explicit recovery', async () => {
         vi.useFakeTimers();
         try {
             const snapshot = {
@@ -670,6 +727,8 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             const {
                 buildQualifiedQuotaSnapshotScopeKey,
                 retainQualifiedQuotaSnapshotPolling,
+                getQualifiedQuotaSnapshotEntry,
+                reloadQualifiedQuotaSnapshotAfterRecovery,
             } = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
             const context = buildContext('server-a', 1);
             const key = buildQualifiedQuotaSnapshotScopeKey(context);
@@ -678,37 +737,30 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             await flushAsyncTurns();
             expect(getQuotaMock).toHaveBeenCalledTimes(1);
 
-            // One consecutive failure retries at the 30s floor.
-            await vi.advanceTimersByTimeAsync(30_000);
-            await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(2);
-
-            // Two consecutive failures must double the wait instead of
-            // hammering the same failing account every 30s forever.
-            await vi.advanceTimersByTimeAsync(30_000);
-            await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(2);
-            await vi.advanceTimersByTimeAsync(30_000);
-            await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(3);
-
-            // Success parks acquisition; the next real invalidation resets the error ladder.
-            getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+            await vi.waitFor(() => expect(getQualifiedQuotaSnapshotEntry(key).loading).toBe(false));
             await vi.advanceTimersByTimeAsync(120_000);
             await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(4);
+            expect(getQuotaMock).toHaveBeenCalledTimes(1);
 
-            getQuotaMock.mockImplementation(async () => Response.json({ error: 'unavailable' }, { status: 400 }));
-            await vi.advanceTimersByTimeAsync(30_000);
-            await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(4);
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution });
+            const recoveredAt = Date.now();
+            snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: recoveredAt });
             publishHomeAccountChange(getActiveServerSnapshot().serverId,
                 [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
             await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(5);
-            await vi.advanceTimersByTimeAsync(30_000);
+            await vi.waitFor(() => expect(getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                snapshot: { fetchedAt: recoveredAt }, loading: false, error: null,
+            }));
+            expect(getQuotaMock).toHaveBeenCalledTimes(2);
+
+            getQuotaMock.mockImplementation(async () => Response.json({ error: 'unavailable' }, { status: 400 }));
+            await reloadQualifiedQuotaSnapshotAfterRecovery(context);
+            expect(getQuotaMock).toHaveBeenCalledTimes(3);
+            expect(getQualifiedQuotaSnapshotEntry(key).loading).toBe(false);
+            expect(getQualifiedQuotaSnapshotEntry(key).error).not.toBeNull();
+            await vi.advanceTimersByTimeAsync(120_000);
             await flushAsyncTurns();
-            expect(getQuotaMock).toHaveBeenCalledTimes(6);
+            expect(getQuotaMock).toHaveBeenCalledTimes(3);
 
             release();
         } finally {

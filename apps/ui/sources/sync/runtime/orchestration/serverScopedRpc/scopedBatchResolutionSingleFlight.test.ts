@@ -4,6 +4,37 @@ import { createScopedBatchResolutionSingleFlight } from './scopedResolutionSingl
 import { createDeferred } from '@/dev/testkit';
 
 describe('scoped batch pending reads', () => {
+    it('keeps Account-owned physical work joinable after the last borrower leaves, until owner retirement', async () => {
+        const owner = new AbortController();
+        const caller = new AbortController();
+        const reads = createScopedBatchResolutionSingleFlight<string>({ ownerSignal: owner.signal });
+        const started = createDeferred<void>();
+        const response = createDeferred<ReadonlyMap<string, string>>();
+        let physical: AbortSignal | undefined;
+        let requests = 0;
+        const request = async (_ids: readonly string[], signal: AbortSignal) => {
+            requests++;
+            physical = signal;
+            started.resolve();
+            return response.promise;
+        };
+        const first = reads.run('accounting', ['a'], request, { signal: caller.signal });
+        const left = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+        try {
+            await started.promise;
+            caller.abort();
+            await left;
+            expect(physical?.aborted).toBe(false);
+            const second = reads.run('accounting', ['a'], request);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(requests).toBe(1);
+            owner.abort();
+            expect(physical?.aborted).toBe(true);
+            response.resolve(new Map([['a', 'A']]));
+            await expect(second).rejects.toMatchObject({ name: 'AbortError' });
+        } finally { owner.abort(); response.resolve(new Map([['a', 'A']])); await first.catch(() => {}); }
+    });
+
     it('closes materialization for each physical chunk before the same borrower receives later chunks', async () => {
         const reads = createScopedBatchResolutionSingleFlight<string>({ materializePhysicalChunks: true });
         const later = createDeferred<void>();

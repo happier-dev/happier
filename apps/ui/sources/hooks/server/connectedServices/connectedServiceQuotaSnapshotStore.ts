@@ -41,7 +41,7 @@ export type QuotaSnapshotStoreEntry = Readonly<{
     snapshot: ConnectedServiceQuotaSnapshotV1 | null;
     loading: boolean;
     error: string | null;
-    /** True until the requested refresh produces a newer snapshot, fails, or is cancelled. */
+    /** True until the producer settles the requested refresh, it fails, or is cancelled. */
     refreshing: boolean;
     /** A read has completed (with or without a snapshot): "no snapshot" is then an answer, not a wait. */
     read: boolean;
@@ -86,7 +86,6 @@ type InternalEntry = {
     credentialScope: string | null;
     loadAttempted: boolean;
     nextFetchAtMs: number;
-    consecutiveErrors: number;
     loadPromise: Promise<ConnectedServiceQuotaSnapshotV1 | null> | null;
     refreshPromise: Promise<void> | null;
     refreshController: AbortController | null;
@@ -125,7 +124,6 @@ function getOrCreateEntry(key: string): InternalEntry {
         credentialScope: null,
         loadAttempted: false,
         nextFetchAtMs: 0,
-        consecutiveErrors: 0,
         loadPromise: null,
         refreshPromise: null,
         refreshController: null,
@@ -249,33 +247,39 @@ export function subscribeQuotaSnapshotEntry(key: string | null, listener: () => 
     };
 }
 
-async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
+async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: AbortSignal): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
     const entry = getOrCreateEntry(key);
     if (entry.loadPromise) return entry.loadPromise;
+    if (!isScopeActive(ctx.credentialScope)) return null;
+    entry.loading = true;
+    entry.error = null;
+    publish(key, entry);
 
-    const promise = (async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
-        if (!isScopeActive(ctx.credentialScope)) return null;
-        entry.loading = true;
-        entry.error = null;
-        publish(key, entry);
+    const promise = Promise.resolve().then(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
+        const isCurrent = () => entries.get(key) === entry && entry.loadPromise === promise;
         try {
             const mode = await ctx.resolveAccountMode();
-            if (!isScopeActive(ctx.credentialScope)) return null;
+            if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
             // A read is the server's GET: the server decides the route and storage mode (404/409),
             // so no machine is asked. Daemon-executed operations (refresh, recovery) stay admitted.
 
             if (mode === 'plain') {
-                const opened = await getConnectedServiceQuotaSnapshotPlain(ctx.credentials, {
+                const read = await getConnectedServiceQuotaSnapshotPlain(ctx.credentials, {
                     serviceId: ctx.serviceId,
                     profileId: ctx.profileId,
                 }, {
                     expectedActiveServer: ctx.serverBasis,
+                    ...(signal ? { signal } : {}),
                 });
-                if (!isScopeActive(ctx.credentialScope)) return null;
+                if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
+                const opened = read?.snapshot ?? null;
                 entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
-                entry.consecutiveErrors = 0;
-                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0,
-                    legacyStaleAfterMs: opened?.staleAfterMs ?? 30_000 });
+                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
+                    legacyStaleAfterMs: read?.metadata.staleAfterMs });
+                if (entry.refreshSinceFetchedAt !== null && read && read.metadata.refreshRequestedAt === undefined) {
+                    entry.refreshing = false;
+                    entry.refreshSinceFetchedAt = null;
+                }
                 return opened;
             }
 
@@ -284,43 +288,44 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                 profileId: ctx.profileId,
             }, {
                 expectedActiveServer: ctx.serverBasis,
+                ...(signal ? { signal } : {}),
             });
+            if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
             const opened = sealed
                 ? openConnectedServiceQuotaViewSnapshot(ctx.credentials, sealed.sealed, {
                     serviceId: ctx.serviceId,
                     profileId: ctx.profileId,
                 })
                 : null;
-            if (!isScopeActive(ctx.credentialScope)) return null;
             entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
-            entry.consecutiveErrors = 0;
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0,
-                legacyStaleAfterMs: opened?.staleAfterMs ?? 30_000 });
+            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
+                legacyStaleAfterMs: sealed?.metadata.staleAfterMs });
+            if (entry.refreshSinceFetchedAt !== null && sealed && sealed.metadata.refreshRequestedAt === undefined) {
+                entry.refreshing = false;
+                entry.refreshSinceFetchedAt = null;
+            }
             return opened;
         } catch (error) {
-            if (!isScopeActive(ctx.credentialScope)) return null;
+            if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
-            entry.consecutiveErrors += 1;
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: entry.consecutiveErrors });
+            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
             if (!entry.snapshot) entry.snapshot = null;
             return null;
         } finally {
-            if (isScopeActive(ctx.credentialScope)) {
+            if (isCurrent()) {
                 entry.loading = false;
                 if (entry.refreshSinceFetchedAt !== null) {
-                    if (entry.error || (entry.snapshot && entry.snapshot.fetchedAt > entry.refreshSinceFetchedAt)) {
+                    if (entry.error) {
                         entry.refreshing = false;
                         entry.refreshSinceFetchedAt = null;
-                    } else {
-                        entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0, legacyStaleAfterMs: 0 });
                     }
                 }
+                entry.loadPromise = null;
+                publish(key, entry);
+                entry.observation?.reconcile();
             }
-            entry.loadPromise = null;
-            publish(key, entry);
-            entry.observation?.reconcile();
         }
-    })();
+    });
 
     entry.loadPromise = promise;
     return promise;
@@ -391,11 +396,6 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotRefres
     const promise = Promise.resolve(previousRefresh).then(async () => {
         // A new intent waits for the cancelled request without inheriting its completion.
         if (entry.refreshPromise !== promise || !entry.refreshing || !isScopeActive(ctx.credentialScope)) return;
-        const inFlightFetchedAt = (await entry.loadPromise
-            ?.then((snapshot) => snapshot?.fetchedAt ?? 0)
-            .catch(() => 0)) ?? 0;
-        if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
-        entry.refreshSinceFetchedAt = Math.max(entry.snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
         try {
             const mode = await ctx.resolveAccountMode();
             if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
@@ -408,7 +408,7 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotRefres
                         serviceId: ctx.serviceId,
                         profileId: ctx.profileId,
                     },
-                    { expectedActiveServer: ctx.serverBasis },
+                    { expectedActiveServer: ctx.serverBasis, signal: controller.signal },
                 )
                 : requestConnectedServiceQuotaSnapshotRefresh(
                     ctx.credentials,
@@ -416,11 +416,15 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotRefres
                         serviceId: ctx.serviceId,
                         profileId: ctx.profileId,
                     },
-                    { expectedActiveServer: ctx.serverBasis },
+                    { expectedActiveServer: ctx.serverBasis, signal: controller.signal },
                 ));
             if (!ok) throw new Error(t('common.error'));
             if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
-            await runLoad(key, ctx);
+            // Only reads issued after the accepted request may settle it. An older GET
+            // may still land its data first, but is no longer current once this read starts.
+            entry.refreshSinceFetchedAt = entry.snapshot?.fetchedAt ?? 0;
+            entry.loadPromise = null;
+            await runLoad(key, ctx, controller.signal);
         } catch (error) {
             if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');

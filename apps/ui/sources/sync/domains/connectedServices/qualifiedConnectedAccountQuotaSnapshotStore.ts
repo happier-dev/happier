@@ -57,7 +57,6 @@ type InternalEntry = {
     refreshPromise: Promise<void> | null;
     refreshSinceFetchedAt: number | null;
     nextFetchAtMs: number;
-    consecutiveErrors: number;
     retainCount: number;
     observation: ReturnType<typeof observeUsageProjection> | null;
     pollContext: QualifiedQuotaSnapshotStoreContext | null;
@@ -159,7 +158,6 @@ function getOrCreateEntry(key: string): InternalEntry {
         refreshPromise: null,
         refreshSinceFetchedAt: null,
         nextFetchAtMs: 0,
-        consecutiveErrors: 0,
         retainCount: 0,
         observation: null,
         pollContext: null,
@@ -274,8 +272,7 @@ async function runLoad(
             if (credentialMutation) {
                 // Authentication already succeeded. Only establish its identity here;
                 // quota acquisition remains with the existing observed load lifecycle.
-                entry.consecutiveErrors = 0;
-                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0 });
+                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
                 if (!entry.snapshot) {
                     entry.loadAttempted = false;
                     entry.observation?.invalidate();
@@ -301,10 +298,9 @@ async function runLoad(
             entry.snapshot = snapshot ?? (entry.refreshing ? entry.snapshot : null);
             entry.usageRecordId = admitted ? read?.recordId ?? (entry.refreshing ? entry.usageRecordId : null) : null;
             const diagnostic = read?.diagnostics?.find((value) => value.kind === 'provider_http');
-            // POST only queues acquisition. A fresh observation or a later producer
-            // failure settles it; the last-known snapshot's timestamp cannot do so.
-            const observedAt = Math.max(snapshot?.fetchedAt ?? 0, diagnostic?.observedAtMs ?? 0);
-            entry.producerRefreshPending = read?.refreshRequestedAt !== undefined && read.refreshRequestedAt > observedAt;
+            // The producer removes this fact when acquisition settles, including
+            // writes that preserve the snapshot's material and timestamp.
+            entry.producerRefreshPending = read?.refreshRequestedAt !== undefined;
             // An absent producer observation says nothing about quota capability.
             // Manual refresh still goes through the canonical runtime admission.
             if (snapshot) entry.supported = true;
@@ -319,8 +315,11 @@ async function runLoad(
                     })
                     : error;
             }
-            entry.consecutiveErrors = 0;
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0 });
+            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
+            if (entry.refreshSinceFetchedAt !== null && read && !entry.producerRefreshPending) {
+                entry.refreshing = false;
+                entry.refreshSinceFetchedAt = null;
+            }
             return snapshot;
         } catch (error) {
             if (!isCurrent()) return null;
@@ -336,19 +335,14 @@ async function runLoad(
             }
             entry.producerRefreshPending = false;
             entry.error = resolveConnectedServiceSettingsErrorMessage(error);
-            entry.consecutiveErrors += 1;
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: entry.consecutiveErrors });
+            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
             return null;
         } finally {
             if (isCurrent()) {
                 entry.loading = false;
-                if (entry.refreshSinceFetchedAt !== null) {
-                    if (entry.error || (entry.snapshot && entry.snapshot.fetchedAt > entry.refreshSinceFetchedAt)) {
-                        entry.refreshing = false;
-                        entry.refreshSinceFetchedAt = null;
-                    } else {
-                        entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({ consecutiveErrors: 0, legacyStaleAfterMs: 0 });
-                    }
+                if (entry.refreshSinceFetchedAt !== null && entry.error) {
+                    entry.refreshing = false;
+                    entry.refreshSinceFetchedAt = null;
                 }
                 entry.loadPromise = null;
                 publish(key, entry);
@@ -492,11 +486,12 @@ export async function refreshQualifiedQuotaSnapshot(
         try {
             // Cancelled admission cannot complete a later explicit intent.
             if (entry.refreshPromise !== promise || !entry.refreshing) return;
-            await entry.loadPromise;
-            if (entry.refreshPromise !== promise || !entry.refreshing) return;
-            entry.refreshSinceFetchedAt = entry.snapshot?.fetchedAt ?? 0;
             await refreshQualifiedConnectedAccountQuota(context);
             if (entry.refreshPromise !== promise || !entry.refreshing) return;
+            // Only reads issued after the accepted request may settle it. An older GET
+            // may still land its data first, but is no longer current once this read starts.
+            entry.refreshSinceFetchedAt = entry.snapshot?.fetchedAt ?? 0;
+            entry.loadPromise = null;
             await runLoad(key, context);
         } catch (error) {
             if (entry.refreshPromise !== promise || !entry.refreshing) return;

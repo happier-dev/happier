@@ -35,7 +35,10 @@ export async function getConnectedServiceQuotaSnapshotPlain(
     signal?: AbortSignal;
     expectedActiveServer?: ExpectedActiveServerFetchBasis;
   }>,
-): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
+): Promise<Readonly<{
+  snapshot: ConnectedServiceQuotaSnapshotV1;
+  metadata: z.infer<typeof ConnectedServiceQuotasV3ResponseSchema>['metadata'];
+}> | null> {
   const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
   return await backoff(async () => {
     const response = await request(
@@ -81,17 +84,21 @@ export async function getConnectedServiceQuotaSnapshotPlain(
     if (parsed.data.content.t !== 'plain') return null;
 
     try {
-      return parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(parsed.data.content.v);
+      return {
+        snapshot: parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(parsed.data.content.v),
+        metadata: parsed.data.metadata,
+      };
     } catch {
       throw new Error(`Invalid quota snapshot response for ${params.serviceId}`);
     }
-  });
+  }, { signal: opts?.signal });
 }
 
 export async function requestConnectedServiceQuotaSnapshotRefreshV3(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
   opts?: Readonly<{
+    signal?: AbortSignal;
     expectedActiveServer?: ExpectedActiveServerFetchBasis;
   }>,
 ): Promise<boolean> {
@@ -101,6 +108,7 @@ export async function requestConnectedServiceQuotaSnapshotRefreshV3(
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas/refresh`,
       {
         method: 'POST',
+        signal: opts?.signal,
         headers: {
           Authorization: `Bearer ${credentials.token}`,
           'Content-Type': 'application/json',
@@ -131,5 +139,5 @@ export async function requestConnectedServiceQuotaSnapshotRefreshV3(
     }
 
     return true;
-  });
+  }, { signal: opts?.signal });
 }

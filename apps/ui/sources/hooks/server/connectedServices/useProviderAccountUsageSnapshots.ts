@@ -142,7 +142,7 @@ function createUsageRowObserver(input: Readonly<{
                 if (!current()) return Promise.resolve();
                 const previous = readEntry();
                 enqueue({ recordId, current, entry: { snapshot: previous?.snapshot ?? null,
-                        nextFetchAtMs: previous?.nextFetchAtMs ?? 0, consecutiveErrors: previous?.consecutiveErrors ?? 0,
+                        nextFetchAtMs: previous?.nextFetchAtMs ?? 0,
                         loading: true, hadError: previous?.hadError ?? false } });
                 const requestController = new AbortController();
                 controller = requestController;
@@ -153,15 +153,14 @@ function createUsageRowObserver(input: Readonly<{
                         if (!current()) return;
                         const opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId,
                             signal: requestController.signal });
-                        entry = { snapshot: opened, nextFetchAtMs: getUsageProjectionNextReadAtMs({ consecutiveErrors: 0 }),
-                            consecutiveErrors: 0, loading: false, hadError: false };
+                        entry = { snapshot: opened, nextFetchAtMs: getUsageProjectionNextReadAtMs(),
+                            loading: false, hadError: false };
                     } catch (error) {
                         if (!current()) return;
                         const denied = error instanceof HappyError && (error.status === 401 || error.status === 403);
-                        const consecutiveErrors = (previous?.consecutiveErrors ?? 0) + 1;
                         entry = { snapshot: denied ? null : previous?.snapshot ?? null,
-                            nextFetchAtMs: getUsageProjectionNextReadAtMs({ consecutiveErrors }),
-                            consecutiveErrors, loading: false, hadError: !denied && Boolean(previous?.snapshot) };
+                            nextFetchAtMs: getUsageProjectionNextReadAtMs(),
+                            loading: false, hadError: !denied && Boolean(previous?.snapshot) };
                     } finally {
                         reading = null;
                         controller = null;

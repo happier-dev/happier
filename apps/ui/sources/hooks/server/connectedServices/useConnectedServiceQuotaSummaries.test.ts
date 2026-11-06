@@ -472,7 +472,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
             connectedServicesProfileLabelByKey: {},
             connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(ConnectedServiceQuotaSnapshotV1Schema.parse({
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -504,7 +504,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: {},
                 },
             ],
-        }));
+        }) });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
         const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
@@ -543,7 +543,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
             connectedServicesProfileLabelByKey: {},
             connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(ConnectedServiceQuotaSnapshotV1Schema.parse({
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -567,7 +567,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: { limitCategory: 'usage_limit' },
                 },
             ],
-        }));
+        }) });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
         const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
@@ -604,7 +604,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
             connectedServicesProfileLabelByKey: {},
             connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(ConnectedServiceQuotaSnapshotV1Schema.parse({
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -636,7 +636,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: { limitCategory: 'rate_limit' },
                 },
             ],
-        }));
+        }) });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
         const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
