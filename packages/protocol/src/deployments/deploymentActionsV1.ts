@@ -1,3 +1,4 @@
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { DeploymentStateV1Schema } from './deploymentStateV1.js';
 import { DeploymentHealthCurrentSuccessV1Schema } from './deploymentReadsV1.js';
 import { MachineServiceControlResultV1Schema } from '../actions/specs/machine/services.js';
@@ -398,6 +399,10 @@ export type DeploymentRollbackAdmissionInputV1 = z.infer<typeof DeploymentRollba
 export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
   z.extend(ArtifactQuotaExceededV1Schema, { ok: z.literal(false) }),
   DeploymentInvalidV1Schema,
+  z.strictObject({ ...ActionExecuteFailureSchema.shape,
+    errorCode: z.literal('unsupported_action'), error: z.literal('unsupported_action'),
+    effectAttempted: z.literal(false), details: DeploymentTeardownRefusalDetailsV1Schema,
+    failureCause: ActionFailureCauseV1Schema }),
   z.strictObject({ ok: z.literal(false), error: z.enum(['deployment_unavailable',
     'deployment_access_denied', 'deployment_conflict', 'deployment_content_unavailable', 'deployment_teardown_required', 'unsupported_action', 'client_required']) }),
   z.strictObject({ ok: z.literal(false), error: z.literal('deployment_in_progress'),
