@@ -33,6 +33,10 @@ import { hashVoiceModelPackManifest } from './voiceModelPackInstaller';
 import * as lifecycleModule from './voiceInferenceWorker.lifecycle';
 import { createNodeInstalledModelPackIntegrityHost } from './nodeModelPackIntegrityHost';
 import { resolveVoiceInferencePaths } from './voiceInferencePaths';
+import { startVoiceInferenceWorker } from './voiceInferenceWorker';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerMachineVoiceInferenceRpcHandlers } from '@/api/machine/rpcHandlers.voiceInference';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const KOKORO_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
@@ -386,6 +390,62 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
       expect.objectContaining({ installState: expect.not.stringMatching(/^installed$/) }),
     ]);
     await lifecycle.stop();
+  });
+
+  it('refreshes retained Kokoro voice metadata through model install and publishes it after restart', async () => {
+    const homeDir = await createHomeDir();
+    await importLifecycleModuleForHome(homeDir);
+    const manifest = createKokoroCatalogManifest();
+    const { requests } = await serveModelPackManifest(manifest);
+    let worker = await startVoiceInferenceWorker();
+    const manager = new RpcHandlerManager({
+      scopePrefix: 'kokoro-catalog-metadata-test',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    let registration = registerMachineVoiceInferenceRpcHandlers({
+      rpcHandlerManager: manager,
+      voiceInferenceWorker: worker,
+    });
+    const list = () => manager.invokeLocal(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST, {});
+    try {
+      await manager.invokeLocal(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, { packId: KOKORO_PACK_ID });
+      await expect(list()).resolves.toMatchObject({ ok: true, models: [{ voices: [], defaultVoiceId: null }] });
+
+      manifest.voices = [
+        { id: 'calm', title: 'Calm', subtitle: 'English', sid: 0 },
+        { id: 'bright', title: 'Bright', subtitle: 'English', sid: 1 },
+      ];
+      manifest.defaultVoiceId = 'bright';
+      const expected = {
+        packId: KOKORO_PACK_ID,
+        installState: 'installed',
+        voices: manifest.voices,
+        defaultVoiceId: 'bright',
+      };
+      const requestsBeforeRefresh = requests.length;
+      await expect(manager.invokeLocal(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, {
+        packId: KOKORO_PACK_ID,
+      })).resolves.toMatchObject({ ok: true, model: expected });
+      expect(requests.slice(requestsBeforeRefresh)).toEqual(['/manifest.json']);
+      await expect(list()).resolves.toMatchObject({ ok: true, models: [expected] });
+
+      await registration.dispose();
+      await worker.stop();
+      worker = await startVoiceInferenceWorker();
+      registration = registerMachineVoiceInferenceRpcHandlers({ rpcHandlerManager: manager, voiceInferenceWorker: worker });
+      const requestsBeforeReads = requests.length;
+      await expect(list()).resolves.toMatchObject({ ok: true, models: [expected] });
+      await expect(manager.invokeLocal(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS, {
+        packIds: [KOKORO_PACK_ID],
+      })).resolves.toMatchObject({ ok: true, models: [expected] });
+      expect(requests).toHaveLength(requestsBeforeReads);
+    } finally {
+      await registration.dispose();
+      await worker.stop();
+    }
   });
 
   it('admits a supported catalog family for an explicit injected runtime fixture', async () => {
