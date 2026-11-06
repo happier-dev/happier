@@ -10559,6 +10559,8 @@ settingsSession: {
   },
 
   message: {
+    provenanceFrom: ({ source }: { source: string }) => `来自 ${source}`,
+    provenanceSession: '会话',
     sessionReferenceUnavailable: "会话不可用",
     sessionReferenceOpen: ({ name }: { name: string }) => `打开会话 ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `已切换到 ${mode} 模式`,

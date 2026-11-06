@@ -11265,6 +11265,8 @@ settingsSession: {
   },
 
   message: {
+    provenanceFrom: ({ source }: { source: string }) => `Da ${source}`,
+    provenanceSession: 'Sessione',
     sessionReferenceUnavailable: "Sessione non disponibile",
     sessionReferenceOpen: ({ name }: { name: string }) => `Apri la sessione ${name}`,
     switchedToMode: ({ mode }: { mode: string }) =>

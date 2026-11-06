@@ -42,6 +42,10 @@ import {
     shouldExposePendingDeliveryInDiscardedHistoryV1,
     PendingRequestedActionV1Schema,
     readPendingLocalId,
+    readAttachmentEnvelopeLocalImagePaths,
+    HAPPIER_SKILL_MENTIONS_METADATA_KEY,
+    HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY,
+    sanitizeSessionUserMessageSendMeta,
     SessionStoredMessageContentSchema,
     type PendingDeliveryBlockedReason,
     type PendingDeliveryStatusV1 as ProtocolPendingDeliveryStatusV1,
@@ -2324,6 +2328,7 @@ export async function updatePendingMessageV2(params: {
     sessionId: string;
     pendingId: string;
     text: string;
+    metaOverrides?: Record<string, unknown>;
     encryption: PendingQueueEncryption;
     fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
     updateArtifact?: (artifact: DecryptedArtifact) => void;
@@ -2351,7 +2356,7 @@ export async function updatePendingMessageV2(params: {
         throw new Error('Pending message cancellation is outstanding');
     }
 
-    const rawRecord: RawRecord = (() => {
+    const originalRecord: RawRecord = (() => {
         if (existing.rawRecord) {
             const parsed = RawRecordSchema.safeParse(existing.rawRecord);
             if (parsed.success && parsed.data.role === 'user' && parsed.data.content.type === 'text') {
@@ -2383,6 +2388,29 @@ export async function updatePendingMessageV2(params: {
             session,
         });
     })();
+
+    const meta = { ...(originalRecord.meta ?? {}) };
+    if (params.metaOverrides) {
+        const previousEnvelope = isPlainObject(meta.happierStructuredInputV1) ? meta.happierStructuredInputV1 : {};
+        const suppliedEnvelope = isPlainObject(params.metaOverrides.happierStructuredInputV1)
+            ? params.metaOverrides.happierStructuredInputV1 : {};
+        // The composer replaces selected bindings; attachment metadata stays with the queued turn.
+        const { mentions: _mentions, ...retainedEnvelope } = previousEnvelope;
+        if (Array.isArray(previousEnvelope.mentions) && previousEnvelope.mentions.length > 0) {
+            delete retainedEnvelope.skillMentions;
+            delete retainedEnvelope.vendorPluginMentions;
+            delete meta[HAPPIER_SKILL_MENTIONS_METADATA_KEY];
+            delete meta[HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY];
+        }
+        meta.happierStructuredInputV1 = { ...retainedEnvelope, ...suppliedEnvelope, v: 1 };
+    }
+    const rawRecord: RawRecord = {
+        ...originalRecord,
+        meta: sanitizeSessionUserMessageSendMeta(meta, {
+            text,
+            allowedLocalImagePaths: readAttachmentEnvelopeLocalImagePaths(originalRecord.meta),
+        }),
+    };
 
     const writeBody =
         sessionEncryptionMode === 'plain'

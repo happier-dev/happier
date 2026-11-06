@@ -960,7 +960,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 await pendingFireAndForget[0];
             });
 
-            expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', 'p1', 'edited queued message');
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', 'p1', 'edited queued message', {});
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
 
@@ -970,6 +970,59 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             act(() => {
                 tree?.unmount();
             });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it.each(['save', 'cancel'] as const)('hydrates queued session bindings and restores the prior draft after %s', async (action) => {
+        const originalMention = { kind: 'session' as const, sessionId: 'draft-session', tokenText: '@draft' };
+        const queuedMention = { kind: 'session' as const, sessionId: 'queued-session', tokenText: '@queued', label: 'Queued' };
+        const nextReference = { kind: 'happier.session', ref: 'session:new-session', token: '@new' };
+        sessionPendingMessagesState.current = [{
+            id: 'p1', localId: 'p1', text: 'ask @queued', createdAt: 0, updatedAt: 0,
+            rawRecord: { role: 'user', content: { type: 'text', text: 'ask @queued' }, meta: {
+                happierStructuredInputV1: { v: 1, mentions: [{ kind: 'happier.session', ref: 'session:queued-session', token: '@queued', label: 'Queued' }] },
+            } },
+        }];
+        sessionTranscriptIdsState.current = ['m1'];
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider><SessionView id="s1" /></AppPaneProvider>)).tree;
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'prior @draft', 'AgentInput');
+                existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions', [originalMention]);
+            });
+            await act(async () => {
+                await readLatestChatListPropsWithPendingEdit().onEditPendingMessage({
+                    id: 'p1', text: 'ask @queued', message: sessionPendingMessagesState.current[0],
+                });
+            });
+            expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toEqual([queuedMention]);
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            if (action === 'save') {
+                await act(async () => { invokeTestInstanceHandler(agentInput, 'onChangeText', 'ask @new', 'AgentInput'); });
+                agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+                pendingFireAndForget.length = 0;
+                await act(async () => {
+                    invokeTestInstanceHandler(agentInput, 'onSend', {
+                        structuredInputMetaOverrides: { happierStructuredInputV1: { v: 1, mentions: [nextReference] } },
+                    }, 'AgentInput');
+                });
+                await act(async () => { await Promise.all(pendingFireAndForget); });
+                expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', 'p1', 'ask @new', {
+                    happierStructuredInputV1: { v: 1, mentions: [nextReference] },
+                });
+            } else {
+                await act(async () => { agentInput.props.statusBadges.find((badge: { key: string }) => badge.key === 'pending-message-edit').onPress(); });
+            }
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('prior @draft');
+            expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toEqual([originalMention]);
+        } finally {
+            act(() => { tree?.unmount(); });
             pendingFireAndForget.length = 0;
         }
     });

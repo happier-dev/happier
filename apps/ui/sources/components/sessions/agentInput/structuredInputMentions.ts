@@ -4,6 +4,9 @@ import {
     buildMentionRefForKindV1,
     resolveSkillCatalogItemIdentityV1,
     sanitizeMentionRefsV1,
+    readHappierStructuredInputV1FromMeta,
+    readMentionRefOpaqueForKindV1,
+    readStructuredInputMentionSourcesV1,
     type MentionRefV1,
 } from '@happier-dev/protocol';
 
@@ -221,6 +224,26 @@ export function reconcileStructuredInputMentionsWithText(args: Readonly<{
 }>): ComposerStructuredInputMention[] {
     if (args.mentions.length === 0) return [];
     return args.mentions.filter((mention) => structuredInputMentionSurvivesText(args.text, mention));
+}
+
+/** Reopen selected bindings by their stored identity; visible tokens never resolve identity. */
+export function readComposerStructuredInputMentionsFromMeta(args: Readonly<{
+    meta: unknown;
+    text: string;
+}>): ComposerStructuredInputMention[] {
+    const { mentions } = readStructuredInputMentionSourcesV1(readHappierStructuredInputV1FromMeta(args.meta));
+    return admitMentionRefsV1ForText(args.text, mentions).flatMap((mention): ComposerStructuredInputMention[] => {
+        if (mention.kind === MENTION_KIND_V1.session) {
+            const sessionId = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.session, mention.ref);
+            return sessionId === null ? [] : [{
+                kind: 'session', sessionId, tokenText: mention.token,
+                ...(mention.label ? { label: mention.label } : {}),
+            }];
+        }
+        return [{ kind: mention.kind, ref: mention.ref, tokenText: mention.token,
+            ...(mention.label ? { label: mention.label } : {}),
+        }];
+    });
 }
 
 export function createStructuredInputMentionFromSuggestion(args: Readonly<{

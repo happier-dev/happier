@@ -306,7 +306,7 @@ import {
 } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { buildAttachmentMessageMeta } from '@/components/sessions/attachments/buildAttachmentMessageMeta';
-import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
+import { mergeMessageMetaOverrides, readComposerStructuredInputMentionsFromMeta } from '@/components/sessions/agentInput/structuredInputMentions';
 import { Text } from '@/components/ui/text/Text';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
@@ -4543,11 +4543,11 @@ function SessionViewLoaded({
     const restorePendingEditComposerSnapshotIfSafe = React.useCallback((edit: PendingMessageComposerEditState) => {
         setDraftValue(edit.previousDraftText);
         restorePendingEditAttachmentDraftsIfSafe(edit);
-        restorePendingEditSemanticDraftsIfSafe(edit);
+        restoreSemanticDraftValuesFromSnapshot(edit.previousSemanticDraftSnapshot);
         inputComposerRestoreTransientStateRef.current(edit.previousTransientInputState);
     }, [
         restorePendingEditAttachmentDraftsIfSafe,
-        restorePendingEditSemanticDraftsIfSafe,
+        restoreSemanticDraftValuesFromSnapshot,
         setDraftValue,
     ]);
     const restorePendingEditNonTextComposerSnapshotIfSafe = React.useCallback((edit: PendingMessageComposerEditState) => {
@@ -4598,11 +4598,21 @@ function SessionViewLoaded({
         clearMountedArmedContinuationAfterAcceptedComposerClear();
         inputComposerClearTransientStateRef.current();
         setDraftValue(editText);
+        if (draftScope) {
+            const rawRecord = request.message.rawRecord;
+            existingSessionDraftSemanticValues.write(draftScope, sessionId, 'structuredInput.mentions',
+                readComposerStructuredInputMentionsFromMeta({
+                    meta: rawRecord && typeof rawRecord === 'object' && 'meta' in rawRecord ? rawRecord.meta : null,
+                    text: editText,
+                }));
+        }
     }, [
         captureComposerSemanticDraftSnapshot,
         captureDraftForOutboundHandoff,
         clearDraftCurrentness,
         composerTextStore,
+        draftScope,
+        sessionId,
         clearMountedArmedContinuationAfterAcceptedComposerClear,
         replaceSessionAttachmentDrafts,
         setDraftValue,
@@ -5378,7 +5388,7 @@ function SessionViewLoaded({
             setIsComposerSendPending(true);
             fireAndForget((async () => {
                 try {
-                    await sync.updatePendingMessage(sessionId, activePendingEdit.pendingId, nextText);
+                    await sync.updatePendingMessage(sessionId, activePendingEdit.pendingId, nextText, sendOptions?.structuredInputMetaOverrides ?? {});
                     if (pendingMessageEditRef.current?.pendingId === activePendingEdit.pendingId) {
                         setPendingMessageEdit(null);
                         restorePendingEditComposerSnapshotIfSafe(activePendingEdit);

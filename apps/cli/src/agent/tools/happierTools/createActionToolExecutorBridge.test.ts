@@ -10,6 +10,9 @@ import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBas
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
+import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
+import { callBuiltInHappierTool } from './callBuiltInHappierTool';
 
 const { nativeRpc } = vi.hoisted(() => ({
   nativeRpc: vi.fn<typeof import('@/session/transport/rpc/sessionRpc').callSessionRpc>(),
@@ -43,8 +46,10 @@ describe('createActionToolExecutorBridge', () => {
 
   // HTTP and native session RPC are external boundaries. Keep session lookup,
   // authentication, goal routing, encrypted approvals and their coordinator real.
-  async function createGoalHarness() {
+  async function createGoalHarness(mode: 'plain' | 'e2ee' = 'plain') {
     const app = Fastify();
+    const key = new Uint8Array(32).fill(1);
+    const pendingBodies: Array<{ ciphertext?: string; content?: { t: 'plain'; v: unknown } }> = [];
     app.addHook('onRequest', async (request, reply) => {
       if (request.headers.authorization !== 'Bearer test-token') {
         await reply.code(401).send({ error: 'not_authenticated' });
@@ -58,9 +63,14 @@ describe('createActionToolExecutorBridge', () => {
     const approvalCreated = new Promise<string>((resolve) => { notifyCreated = resolve; });
     app.get<{ Params: { id: string } }>('/v2/sessions/:id', async (request) => ({
       session: createSessionRecordFixture({
-        id: request.params.id, active: true, encryptionMode: 'plain', metadata: '{}',
+        id: request.params.id, active: true, encryptionMode: mode,
+        metadata: mode === 'plain' ? '{}' : encodeBase64(encrypt(key, 'legacy', {}), 'base64'),
       }),
     }));
+    app.post<{ Body: (typeof pendingBodies)[number] }>('/v2/sessions/:id/pending', async (request) => {
+      pendingBodies.push(request.body);
+      return { didWrite: true };
+    });
     app.post<{ Body: { id: string; header: string; body: string; dataEncryptionKey: string } }>(
       '/v1/artifacts', async (request) => {
         artifacts.set(request.body.id, { ...request.body, headerVersion: 1, bodyVersion: 1 });
@@ -95,6 +105,7 @@ describe('createActionToolExecutorBridge', () => {
     let goal: { objective: string; status: string } | null = { objective: 'Blocked goal', status: 'blocked' };
     nativeRpc.mockImplementation(async ({ sessionId, method, request }) => {
       expect(method.startsWith(`${sessionId}:`)).toBe(true);
+      if (method.endsWith(`:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1}`)) return { ok: true };
       if (method.endsWith(`:${SESSION_RPC_METHODS.SESSION_GOAL_CLEAR}`)) {
         goal = null;
       } else if (method.endsWith(`:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`)) {
@@ -119,8 +130,49 @@ describe('createActionToolExecutorBridge', () => {
       token: 'test-token', sessionId: 'sess-current', credentials,
       ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
     });
-    return { ...harness, approvalCreated, credentials };
+    return { ...harness, approvalCreated, credentials, pendingBodies, key };
   }
+
+  it.each([
+    { route: 'direct', mode: 'plain' },
+    { route: 'generic', mode: 'e2ee' },
+  ] as const)('preserves the host sender through $route MCP admission and $mode provider dispatch', async ({ route, mode }) => {
+    const { credentials, pendingBodies, key } = await createGoalHarness(mode);
+    const { mcp } = createHappierMcpServer({
+      sessionId: 'sess-current',
+      getPermissionMode: () => 'default',
+      rpcHandlerManager: { registerHandler: () => {}, invokeLocal: async () => { throw new Error('Unexpected local RPC'); } },
+      sendClaudeSessionMessage: () => {}, updateMetadata: () => {},
+    }, { credentials, accountSettings: AccountSettingsSchema.parse({
+      actionsSettingsV1: { v: 1, actions: { 'session.message.send': { toolExposureModes: { session_agent: 'direct' } } } },
+    }) });
+    const client = new Client({ name: 'sender-regression', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    cleanups.push(async () => { await client.close(); await mcp.close(); });
+    await mcp.connect(serverTransport);
+    await client.connect(clientTransport);
+    const input = { sessionId: 'sess-recipient', message: 'Please review this', wait: false };
+    const reply = await client.callTool(route === 'direct'
+      ? { name: 'session_message_send', arguments: input }
+      : { name: 'action_execute', arguments: { actionId: 'session.message.send', input } });
+    expect(reply.isError, JSON.stringify(reply.content)).toBe(false);
+    expect(pendingBodies).toHaveLength(1);
+    const body = pendingBodies[0]!;
+    const record = (body.content?.t === 'plain' ? body.content.v
+      : decrypt(key, 'legacy', decodeBase64(body.ciphertext!, 'base64'))) as { content: { text: string }; meta: Record<string, unknown> };
+    expect(record.meta).toMatchObject({
+      source: 'ui', sentFrom: 'cli',
+      happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'sess-current', via: 'mcp' },
+    });
+    const dispatched = await resolveProviderPromptForDispatch({
+      session: { getMetadataSnapshot: () => ({}), updateMetadata: () => {} },
+      userText: record.content.text, meta: record.meta, allowSeed: false,
+      localId: 'test-input', nowMs: 1, refreshMetadataBeforeRead: false,
+    });
+    expect(dispatched.providerPrompt).toContain('source_session_id="sess-current"');
+    expect(dispatched.providerPrompt).toContain('source_kind="happierSession"');
+    expect(dispatched.providerPrompt).toContain(input.message);
+  });
 
   it.each(['direct', 'generic'] as const)('can replace its blocked goal without a session ID through %s MCP tools', async (route) => {
     const { credentials } = await createGoalHarness();
@@ -155,6 +207,39 @@ describe('createActionToolExecutorBridge', () => {
       .toMatchObject([{ title: 'Replacement goal', status: 'active' }]);
     expect((await execute('get')).workState?.items).toMatchObject([{ title: 'Replacement goal', status: 'active' }]);
     expect(nativeRpc).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'sess-current' }));
+  });
+
+  it.each(['cli', 'session_agent_bridge'] as const)('attributes only agent-originating built-in tools (%s)', async (invocation) => {
+    const { credentials, pendingBodies } = await createGoalHarness();
+    const result = await callBuiltInHappierTool({
+      credentials, sessionId: 'sess-current', invocation, toolName: 'action_execute',
+      args: { actionId: 'session.message.send', input: { sessionId: 'sess-recipient', message: 'Review this' } },
+    });
+    expect(result.ok).toBe(true);
+    const record = pendingBodies[0]?.content?.v as { meta: Record<string, unknown> };
+    expect(record.meta.happierProvenanceV1).toEqual(invocation === 'session_agent_bridge'
+      ? { v: 1, kind: 'happierSession', sourceSessionId: 'sess-current', via: 'action' }
+      : undefined);
+  });
+
+  it.each([true, false])('uses only a host-bound message source (bound=%s), never the default target or tool input', async (bound) => {
+    const { executor, pendingBodies } = await createGoalHarness();
+    const bridge = createActionToolExecutorBridge({
+      executor, surface: 'mcp',
+      ...(bound ? { messageSource: { sourceSessionId: 'sess-origin', via: 'action' as const } } : {}),
+    });
+    const result = await bridge.executeActionByToolName('action_execute', {
+      actionId: 'session.message.send',
+      input: {
+        sessionId: 'sess-recipient', message: 'Review this',
+        provenance: { v: 1, kind: 'happierSession', sourceSessionId: 'spoofed', via: 'mcp' },
+      },
+    }, 'sess-selected-target');
+    expect(result.ok).toBe(true);
+    const record = pendingBodies[0]?.content?.v as { meta: Record<string, unknown> };
+    expect(record.meta.happierProvenanceV1).toEqual(bound
+      ? { v: 1, kind: 'happierSession', sourceSessionId: 'sess-origin', via: 'action' }
+      : undefined);
   });
 
   it('preserves explicit goal targets and rejects unbound goal calls without IDs', async () => {
@@ -207,6 +292,38 @@ describe('createActionToolExecutorBridge', () => {
     expect(await bridge.executeActionByToolName('session_goal_get', {}, 'sess-current')).toMatchObject({
       result: { workState: { items: decision === 'approve' ? [] : [{ status: 'blocked' }] } },
     });
+  });
+
+  it.each([
+    { bound: true, route: 'policy' }, { bound: false, route: 'policy' },
+    { bound: true, route: 'explicit' }, { bound: false, route: 'explicit' },
+  ] as const)('retains the original sender through $route deferred approval (bound=$bound)', async ({ bound, route }) => {
+    envScope.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({
+      v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: ['session_agent'] } },
+    }) });
+    const { executor, pendingBodies, approvalCreated } = await createGoalHarness();
+    const bridge = createActionToolExecutorBridge({
+      executor, surface: 'session_agent',
+      ...(bound ? { messageSource: { sourceSessionId: 'sess-origin', via: 'mcp' as const } } : {}),
+    });
+    const actionArgs = { sessionId: 'sess-recipient', message: 'Review this' };
+    const result = await bridge.executeActionByToolName('action_execute', route === 'policy'
+      ? { actionId: 'session.message.send', input: actionArgs }
+      : { actionId: 'approval.request.create', input: {
+          actionId: 'session.message.send', actionArgs, summary: 'Review this', createdBy: { surface: 'session_agent' },
+          messageSource: { v: 1, kind: 'happierSession', sourceSessionId: 'spoofed', via: 'action' },
+        } },
+    'sess-current');
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(pendingBodies).toHaveLength(0);
+    const artifactId = await approvalCreated;
+    expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+      surface: 'cli', messageSource: { sourceSessionId: 'sess-approver', via: 'action' },
+    })).toMatchObject({ ok: true });
+    const record = pendingBodies[0]?.content?.v as { meta: Record<string, unknown> };
+    expect(record.meta.happierProvenanceV1).toEqual(bound
+      ? { v: 1, kind: 'happierSession', sourceSessionId: 'sess-origin', via: 'mcp' }
+      : undefined);
   });
 
   it('passes approval origin metadata through to action executor context', async () => {

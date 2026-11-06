@@ -32,6 +32,50 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         resetPendingQueueState();
     });
 
+    it.each(['plain', 'e2ee'] as const)('replaces edited references and retains other metadata in %s pending messages', async (encryptionMode) => {
+        const sessionId = 's_edit_references';
+        const pendingId = 'p-edit-references';
+        const oldReference = { kind: 'happier.session', ref: 'session:old', token: '@old' };
+        const nextReference = { kind: 'happier.session', ref: 'session:new', token: '@new' };
+        const localPath = '.happier/uploads/messages/m1/screen.png';
+        const attachment = { type: 'localImage', kind: 'image', localPath, mimeType: 'image/png', provenance: { kind: 'sessionAttachmentUpload' } };
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: pendingId, localId: pendingId, createdAt: 1, updatedAt: 1, text: 'ask @old',
+            rawRecord: { role: 'user', content: { type: 'text', text: 'ask @old' }, meta: {
+                sentFrom: 'web', custom: 'preserved',
+                happierSkillMentions: [{ name: 'shadowed-old-skill' }],
+                happierVendorPluginMentions: [{ vendorPluginRef: 'plugin://shadowed' }],
+                happier: { kind: 'attachments.v1', payload: { attachments: [{ name: 'screen.png', path: localPath, mimeType: 'image/png', sizeBytes: 42 }] } },
+                happierStructuredInputV1: { v: 1, mentions: [oldReference], attachments: [attachment] },
+            } },
+        });
+        let writtenRecord: unknown;
+        const request = async (_path: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body));
+            writtenRecord = encryptionMode === 'plain'
+                ? body.content.v
+                : await getSessionEncryptionOrThrow({ encryption, sessionId }).decryptRaw(body.ciphertext);
+            return new Response('{}', { status: 200 });
+        };
+
+        await updatePendingMessageV2({ sessionId, pendingId, text: 'ask @new', encryption, request,
+            metaOverrides: { happierStructuredInputV1: { v: 1, mentions: [nextReference, oldReference] } },
+        });
+        expect(writtenRecord).toMatchObject({ meta: {
+            custom: 'preserved', sentFrom: 'web', happierStructuredInputV1: { mentions: [nextReference], attachments: [expect.objectContaining(attachment)] },
+        } });
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.rawRecord).toEqual(writtenRecord);
+
+        await updatePendingMessageV2({ sessionId, pendingId, text: 'plain edited text', encryption, request, metaOverrides: {} });
+        const record = writtenRecord as { meta: Record<string, unknown> };
+        expect(record.meta.custom).toBe('preserved');
+        expect(record.meta.happierStructuredInputV1).not.toHaveProperty('mentions');
+        expect(record.meta).not.toHaveProperty('happierSkillMentions');
+        expect(record.meta).not.toHaveProperty('happierVendorPluginMentions');
+    });
+
     it('retires exact-scope enqueue custody after a successful PATCH', async () => {
         const sessionId = 's_test_patch_retires_enqueue';
         const pendingId = 'p-enqueue';

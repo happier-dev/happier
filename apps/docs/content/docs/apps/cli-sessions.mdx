@@ -140,6 +140,23 @@ Notes:
 - `--model` lets you target a specific model for that message when the backend supports it.
 - `--json` + explicit timeouts are recommended for scripts.
 
+### Messages from another session (development)
+
+In current development source, a message sent through a running session's Happier
+tools carries that session's ID automatically. The receiving Agent gets a context
+block identifying the sender, and the app shows the sender above the message.
+This also applies when the message steers an active turn. Sender context describes
+origin; it does not grant permissions or enforce an owner-only instruction policy.
+
+The receiving Agent replies normally. When the sender waits for the answer, its
+existing send call returns the final response. Sending a separate message back is
+an explicit action. An ordinary CLI send or an external MCP server with a selected
+target does not establish a source session identity.
+
+This requires updated sending and receiving CLI runtimes and an updated app for
+the attribution label. Older messages remain readable. It is development behavior,
+not a claim about the current stable release.
+
 ### Display-only notices (development)
 
 Current development source can store an informational notice in session history without starting, resuming, or interrupting an Agent:

@@ -3874,12 +3874,13 @@ class Sync {
         }
     }
 
-    async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
+    async updatePendingMessage(sessionId: string, pendingId: string, text: string, metaOverrides?: Record<string, unknown>): Promise<void> {
         const ownerContext = await this.resolvePendingQueueOwnerContext(sessionId);
         await updatePendingMessageV2({
             sessionId,
             pendingId,
             text,
+            metaOverrides,
             encryption: ownerContext.enqueueEncryption,
             fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
             updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),

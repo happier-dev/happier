@@ -1658,6 +1658,13 @@ export {
 
 export { SENT_FROM_VALUES, SentFromSchema, createSentFromSchema, type SentFrom } from './sentFrom.js';
 export {
+    HAPPIER_SESSION_MESSAGE_PROVENANCE_META_KEY,
+    SessionMessageProvenanceV1Schema,
+    readSessionMessageProvenanceV1,
+    renderSessionMessageProvenanceContextV1,
+    type SessionMessageProvenanceV1,
+} from './sessionMessages/sessionMessageProvenance.js';
+export {
   AuthStatusEnvelopeSchema,
   AuthStatusResultSchema,
   SessionControlEnvelopeBaseSchema,

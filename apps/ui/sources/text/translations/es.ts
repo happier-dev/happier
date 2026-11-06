@@ -10941,6 +10941,8 @@ settingsSession: {
   },
 
   message: {
+    provenanceFrom: ({ source }: { source: string }) => `De ${source}`,
+    provenanceSession: 'Sesión',
     sessionReferenceUnavailable: "Sesión no disponible",
     sessionReferenceOpen: ({ name }: { name: string }) => `Abrir la sesión ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `Cambiado al modo ${mode}`,

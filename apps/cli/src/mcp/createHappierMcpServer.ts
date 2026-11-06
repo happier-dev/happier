@@ -250,6 +250,7 @@ export function createHappierMcpServer(
 
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
+    messageSource: { sourceSessionId: client.sessionId, via: 'mcp' },
     isActionEnabled: (id) => {
       const spec = getActionSpec(id as any);
       return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id as any);

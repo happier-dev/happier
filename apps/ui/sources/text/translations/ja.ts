@@ -11169,6 +11169,8 @@ settingsSession: {
   },
 
   message: {
+    provenanceFrom: ({ source }: { source: string }) => `${source} から`,
+    provenanceSession: 'セッション',
     sessionReferenceUnavailable: "利用できないセッション",
     sessionReferenceOpen: ({ name }: { name: string }) => `セッション ${name} を開く`,
     switchedToMode: ({ mode }: { mode: string }) =>

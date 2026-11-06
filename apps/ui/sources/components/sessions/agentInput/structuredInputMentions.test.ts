@@ -5,6 +5,7 @@ import {
     buildStructuredInputMetaOverrides,
     mergeMessageMetaOverrides,
     reconcileStructuredInputMentionsWithText,
+    readComposerStructuredInputMentionsFromMeta,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
 
@@ -28,6 +29,23 @@ const skillMention = {
 } satisfies ComposerStructuredInputMention;
 
 describe('structured input mentions', () => {
+    it('hydrates selected references from metadata without resolving names or inferring typed tokens', () => {
+        const references = [
+            { kind: 'happier.session', ref: 'session:original-id', token: '@renamed', label: 'Original name' },
+            { kind: 'happier.skill', ref: 'skill:vendor:codex:review', token: '$review' },
+            { kind: 'future.kind', ref: 'future:opaque', token: '@future' },
+            { kind: 'happier.session', ref: 'session:gone', token: '@removed' },
+        ];
+        const text = 'ask @renamed $review @future @manually-typed';
+        const mentions = readComposerStructuredInputMentionsFromMeta({
+            meta: { happierStructuredInputV1: { v: 1, mentions: references } }, text,
+        });
+        expect(mentions).toContainEqual({ kind: 'session', sessionId: 'original-id', tokenText: '@renamed', label: 'Original name' });
+        expect(buildStructuredInputMetaOverrides({ mentions, text })).toEqual({
+            happierStructuredInputV1: { v: 1, mentions: references.slice(0, 3) },
+        });
+        expect(readComposerStructuredInputMentionsFromMeta({ meta: {}, text })).toEqual([]);
+    });
     it.each([
         { what: 'text inserted before the token', text: 'Please Call @gmail' },
         { what: 'text inserted after the token', text: 'Call @gmail now' },

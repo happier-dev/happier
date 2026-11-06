@@ -45,6 +45,44 @@ graph TB
 - **Persistence/config:** `src/persistence.ts` + `src/configuration.ts` manage local state in `~/.happy`.
 - **Agents:** `src/claude`, `src/codex`, `src/gemini` provide provider-specific runners.
 
+## Session message provenance and references (development)
+
+Session-bound Happier action and MCP tools bind their sender independently of the
+selected recipient. The shared action executor passes that host origin through
+`createCliActionDeps` and `sendSessionMessage` into the existing Pending admission
+metadata. `sessionMessages/sessionMessageProvenance.ts` in protocol owns the
+`happierProvenanceV1` session-origin shape, compatible with the corresponding 0.3
+shape, and its tolerant reader. Tool input cannot override the host binding.
+Unbound CLI and external MCP calls do not acquire a sender from their current target.
+Deferred approvals preserve this host origin on the existing approval request;
+replay uses the original origin and never the approving session's identity.
+
+`resolveProviderPromptForDispatch` renders the origin once as
+`<happier_input_context>` alongside the existing session-reference block, for both
+new turns and in-flight steering. Replay context reserves space for both blocks;
+native commands retain their first-line syntax. The context identifies the source
+session and action/MCP transport and explains ordinary final-answer delivery through
+the existing send wait. It does not introduce the 0.3 reply action or returned-answer
+state machine. Attribution is descriptive and grants no additional authority.
+Delivery's existing `source`, `sentFrom`, permissions, and notice behavior retain
+their separate meanings. The UI reads the same protocol shape and displays the
+sender's cached title, exact ID, and transport without fetching another transcript.
+
+Composer session mentions continue to use typed reference metadata rather than
+resolving pasted titles or slugs. Editing a queued message hydrates those bindings
+into the existing composer and saves replacements through the Pending writer's
+canonical structured-input sanitizer. Removed bindings also remove shadowed legacy
+mention aliases so they cannot become active again. Existing attachments and other
+message metadata survive the edit. No referenced transcript is embedded or read
+automatically.
+
+Older messages without provenance remain readable without an inferred identity.
+The `cli-v0.2.20` message-meta reader at `282a8fc3f999df1d104b78daa489317e65d395a6`
+accepts additive metadata through its passthrough schema. Older receiving runtimes
+and UIs retain message delivery but do not render this new attribution; displaying
+it requires updated consumers. This section describes development source, not a
+released-channel guarantee.
+
 ## Claude unified questions and approvals (development)
 
 `backends/claude/localPermissions/routeClaudePermissionHook` owns hook delivery

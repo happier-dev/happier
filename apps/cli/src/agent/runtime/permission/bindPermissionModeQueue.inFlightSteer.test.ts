@@ -704,7 +704,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
   });
 
-  it('carries the session-reference block on the steered text, not only on send (D-21)', async () => {
+  it('carries session references and sender provenance on steered text, not only on send', async () => {
     // The seam, not the block: this path hands `message.meta` to the prompt-finalization owner.
     // Without that, `@session` would work on send and silently vanish on an in-flight steer —
     // the exact asymmetry D-21's "identically on send and steer" exists to forbid.
@@ -728,6 +728,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       content: { text: 'compare with @session:peer-abc123' },
       localId: 'local-1',
       meta: {
+        happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'sess-sender', via: 'mcp' },
         happierStructuredInputV1: {
           v: 1,
           mentions: [{
@@ -747,6 +748,8 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(steered).toContain('compare with @session:peer-abc123');
     expect(steered).toContain('<happier_session_reference>');
     expect(steered).toContain('sess-referenced');
+    expect(steered).toContain('source_session_id="sess-sender"');
+    expect(steered).toContain('source_via="mcp"');
     expect(spyPush).not.toHaveBeenCalled();
   });
 

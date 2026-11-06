@@ -2,6 +2,7 @@ import {
     HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
     MENTION_BOUNDS,
     sanitizeMentionRefsV1,
+    renderSessionMessageProvenanceContextV1,
 } from '@happier-dev/protocol';
 
 import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
@@ -107,6 +108,8 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     // without a single signature change (D-21a) — including the backends whose prompt call
     // takes only a string.
     const sessionReferenceBlock = buildSessionReferenceBlockV1(params.meta);
+    const inputContext = [sessionReferenceBlock, renderSessionMessageProvenanceContextV1(params.meta)]
+        .filter((block): block is string => Boolean(block)).join('\n\n');
 
     // Reference resolution runs BEFORE the seed, because consuming the replay seed mutates
     // session metadata: a send rejected by D-27 must not have burned the seed on its way out.
@@ -161,8 +164,8 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
             // A persisted seed may have been sealed under a larger Account or
             // wire cap than this daemon allows. Even without a Session
             // reference it therefore goes through the one dispatch budget;
-            // only the actual rendered reference block consumes a reservation.
-            reservedChars: sessionReferenceBlock ? sessionReferenceBlock.length + 2 : 0,
+            // only the rendered reference and sender context consumes a reservation.
+            reservedChars: inputContext ? inputContext.length + 2 : 0,
             maxPromptChars: configuration.replaySeedMaxChars,
         })
         : '';
@@ -179,7 +182,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     const seedDelivered = seedResolution.seedApplied && fittedSeedText.length > 0;
 
     return {
-        providerPrompt: sessionReferenceBlock ? `${promptBody}\n\n${sessionReferenceBlock}` : promptBody,
+        providerPrompt: inputContext ? `${promptBody}\n\n${inputContext}` : promptBody,
         meta,
         seedApplied: seedDelivered,
         seedText: fittedSeedText || seedResolution.seedText,

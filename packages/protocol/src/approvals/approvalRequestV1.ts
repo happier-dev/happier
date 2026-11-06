@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { lazySchema } from '../lazySchema.js';
+import { SessionMessageProvenanceV1Schema } from '../sessionMessages/sessionMessageProvenance.js';
 
 export const ApprovalRequestStatusSchema = lazySchema(() => z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']));
 export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
@@ -57,6 +58,8 @@ export const ApprovalRequestV1Schema = lazySchema(() => z.object({
   createdAtMs: z.number().int().min(0),
   updatedAtMs: z.number().int().min(0),
   createdBy: ApprovalRequestCreatedBySchema,
+  // Descriptive host origin survives deferred execution; the approver is not the sender.
+  messageSource: SessionMessageProvenanceV1Schema.optional(),
   requestedSurface: ApprovalRequestedSurfaceSchema.optional(),
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),

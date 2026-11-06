@@ -41,6 +41,7 @@ import {
 } from './permissionPrivilege.js';
 import type { ActionsSettingsV1 } from './actionSettings.js';
 import { readPendingLocalId } from '../sessionMessages/pendingLocalId.js';
+import { SessionMessageProvenanceV1Schema, type SessionMessageProvenanceV1 } from '../sessionMessages/sessionMessageProvenance.js';
 import type { ReviewStartInput } from '../reviews/reviewStart.js';
 import type { AcpConfigOptionOverridesV1 } from '../sessionMetadata/metadataOverridesV1.js';
 import type { ConnectedServiceBindingsV1 } from '../connect/connectedServiceBindings.js';
@@ -123,6 +124,9 @@ export type ActionExecutorContext = Readonly<{
    * wants to default to a current/active session.
    */
   defaultSessionId?: string | null;
+
+  /** Host-bound origin, separate from the mutable/default recipient. Never populated from action input. */
+  messageSource?: Pick<SessionMessageProvenanceV1, 'sourceSessionId' | 'via'>;
 
   /** Machine authoritatively bound to the current session, for explicitly declared contextual defaults. */
   defaultSessionMachineId?: string | null;
@@ -270,6 +274,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionSendMessage: (args: Readonly<{
     sessionId: string;
     message: string;
+    provenance?: SessionMessageProvenanceV1;
     kind?: 'user' | 'notice';
     from?: string;
     localId?: string;
@@ -1334,6 +1339,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? await args.runApprovedAction()
         : await execute(args.request.actionId, args.request.actionArgs, {
             ...args.ctx,
+            messageSource: args.request.messageSource,
             ...(args.effectiveServerId ? { serverId: args.effectiveServerId } : {}),
             ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
             surface: requestSurface,
@@ -1447,6 +1453,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     });
 
     try {
+      const messageSource = ctx.messageSource ? SessionMessageProvenanceV1Schema.parse({
+        v: 1, kind: 'happierSession', ...ctx.messageSource,
+      }) : undefined;
       if (approvalRouting?.required && !isApprovalAction) {
         if (!deps.approvalsCreate) {
           return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
@@ -1474,6 +1483,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           createdAtMs: now,
           updatedAtMs: now,
           createdBy,
+          ...(messageSource ? { messageSource } : {}),
           ...(requestedSurface ? { requestedSurface } : {}),
           actionId,
           actionArgs: parsed.data,
@@ -2278,6 +2288,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionSendMessage({
             sessionId,
             message: (parsed.data as any).message,
+            ...(messageSource ? { provenance: messageSource } : {}),
             ...(messageKind ? { kind: messageKind } : {}),
             ...(from !== undefined ? { from } : {}),
             ...(localId !== null ? { localId } : {}),
@@ -3074,6 +3085,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           createdBy,
           ...(requestedSurface ? { requestedSurface } : {}),
           actionId: targetActionId,
+          ...(messageSource ? { messageSource } : {}),
           actionArgs: parsedTargetArgs.data,
           approval: buildApprovalMetadata(targetSpec),
           ...(approvalOrigin ? { origin: approvalOrigin } : {}),

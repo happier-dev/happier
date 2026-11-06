@@ -1,5 +1,7 @@
 import {
   type ActionId,
+  type ActionExecuteResult,
+  type ActionExecutorContext,
   type ActionsSettingsV1,
   type ApprovalRequestOriginV1,
   type ResolvedActionOption,
@@ -8,23 +10,15 @@ import { createActionToolNameToIdMap } from './actionToolCatalog';
 import { bindContextualActionToolInput } from './contextualActionToolInput';
 import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
 
-type ActionExecutorResult = Readonly<
-  | { ok: true; result: unknown }
-  | { ok: false; errorCode: string; error: string; details?: unknown }
->;
+type ActionExecutorResult = ActionExecuteResult;
 
 type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{
+    ctx: ActionExecutorContext & Readonly<{
       defaultSessionId: string;
-      defaultSessionMachineId?: string | null;
       surface: 'mcp' | 'cli' | 'session_agent';
-      approvalOrigin?: ApprovalRequestOriginV1 | null;
-      callerPermissionMode?: string | null;
-      actionsSettings?: ActionsSettingsV1 | null;
-      actionRequestId?: string | null;
     }>,
   ) => Promise<ActionExecutorResult>;
 }>;
@@ -96,6 +90,7 @@ function readActionRequestId(origin: ApprovalRequestOriginV1 | null | undefined)
 }
 
 export function createActionToolExecutorBridge(params: Readonly<{
+  messageSource?: ActionExecutorContext['messageSource'];
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
   surface?: 'mcp' | 'cli' | 'session_agent';
@@ -127,6 +122,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const actionRequestId = readActionRequestId(options?.approvalOrigin);
       const context = {
         defaultSessionId,
+        ...(params.messageSource ? { messageSource: params.messageSource } : {}),
         ...(params.defaultSessionMachineId ? { defaultSessionMachineId: params.defaultSessionMachineId } : {}),
         surface,
         ...(options?.approvalOrigin ? { approvalOrigin: options.approvalOrigin } : {}),
