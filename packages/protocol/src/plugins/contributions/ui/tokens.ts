@@ -75,6 +75,7 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   'workflow',
   // Skipped or neutral CI work: the status owner's circle-and-dash mark.
   'neutral',
+  'task',
   // Marks a person gives a Session Section, drawn exactly by a Space saved from that Section.
   'rocket',
   'star',
@@ -83,6 +84,9 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   'flask',
   'book',
   'heart',
+  // A security finding (a Dependabot or code scanning alert), and editing something the reader wrote.
+  'shield',
+  'edit',
 ] as const;
 
 export const PluginUiIconTokenV1Schema = lazyZodSchema(() => z.enum(PLUGIN_UI_ICON_TOKENS_V1));
