@@ -98,16 +98,15 @@ function quotaRead(
 }
 
 describe('Plans projection of admitted allowance reads', () => {
-  it('separates observed accounts from unread placeholders and excludes ineligible services', () => {
+  it('separates admitted observations from pending qualified sources', () => {
     const observed = quotaRead({ accountId: 'observed', meters: [] });
     const unread = { bindingKind: 'account' as const, ref: { service, accountId: 'unread' } };
-    const email = { bindingKind: 'account' as const, ref: { service: { pluginId: 'acme.email', localId: 'email' }, accountId: 'mail' } };
+    const external = { bindingKind: 'account' as const, ref: { service: { pluginId: 'acme.sleeping', localId: 'usage' }, accountId: 'external' } };
     const projection = projectUsagePlans([observed], NOW, undefined,
-      [unread, email].map(source => ({ source: `quota:${JSON.stringify(source)}`, status: 'pending' as const })),
-      candidate => candidate.pluginId === service.pluginId && candidate.localId === service.localId);
-    expect(projection.accounts.map(account => account.accountId)).toEqual(['unread', 'observed']);
+      [unread, external].map(source => ({ source: `quota:${JSON.stringify(source)}`, status: 'pending' as const })));
+    expect(projection.accounts.map(account => account.accountId)).toEqual(['unread', 'external', 'observed']);
     expect(projection.readAccounts.map(account => account.accountId)).toEqual(['observed']);
-    expect(projection.unreadAccounts.map(account => account.accountId)).toEqual(['unread']);
+    expect(projection.unreadAccounts.map(account => account.accountId)).toEqual(['unread', 'external']);
     expect(projection.readAccountCount).toBe(1);
   });
   it('compares every retained observation while refresh and history reads are outstanding', () => {

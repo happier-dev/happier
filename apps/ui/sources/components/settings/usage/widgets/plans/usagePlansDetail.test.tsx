@@ -4,7 +4,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testkit';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { OverlayPortalProvider, OverlayPortalHost } from '@/components/ui/popover/OverlayPortal';
-import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installRealActionExecutorModuleLoader, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { ConnectedServicePoolSelectionGetRequestV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -19,10 +23,12 @@ import {
   type ConnectedServiceQuotaGetResultV1,
 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
-import { BurnUpChart } from '@happier-dev/plugin-ui/presentation';
+import { BurnUpChart, ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { storage } from '@/sync/domains/state/storageStore';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import {
   getAppliedActiveServerSnapshot,
   isAppliedActiveServerRuntimeAvailable,
@@ -30,23 +36,12 @@ import {
 } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 
-// Machine RPC is the genuine transport boundary. The two reset-start cases below still substitute
-// the internal Action front door: their witness/privacy UI assertions do not prove admission/custody.
-const execute = vi.hoisted(() => vi.fn());
+// Machine RPC and the served Home's Artifact persistence are the external boundaries.
 const selectionTransport = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
   const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
   return createServerScopedMachineRpcBoundaryMock(selectionTransport);
 });
-vi.mock(
-  '@/sync/ops/actions/frontDoorRuntimeActionExecutor',
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')
-    >()),
-    createFrontDoorActionExecute: () => execute,
-  }),
-);
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }, {
     Platform: { isPad: true },
@@ -73,6 +68,7 @@ let previousAvailable = isAppliedActiveServerRuntimeAvailable();
 let previousProfile = storage.getState().profile;
 let previousProfileScope = storage.getState().profileScope;
 let restoreFrameBoundary: (() => void) | undefined;
+let restoreActionModuleLoader: (() => void) | undefined;
 beforeEach(() => {
   restoreFrameBoundary = withPopoverWebGlobals();
   previousSnapshot = getAppliedActiveServerSnapshot();
@@ -83,7 +79,7 @@ beforeEach(() => {
 afterEach(async () => {
   standardCleanup();
   restoreFrameBoundary?.();
-  execute.mockReset();
+  restoreActionModuleLoader?.(); restoreActionModuleLoader = undefined;
   selectionTransport.mockReset();
   await comparisonHome?.dispose(); comparisonHome = undefined;
   (
@@ -92,6 +88,26 @@ afterEach(async () => {
   publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
   storage.setState({ profile: previousProfile, profileScope: previousProfileScope });
 });
+
+async function serveResetStartApprovalHome(serverUrl: string) {
+  const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+  const settings = { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+    'session.pending.resetStart.set': { approvalRequiredSurfaces: ['ui'] },
+  } }) };
+  comparisonHome = await serveAccountHomes({ homes: [{ key: 'reset', serverUrl, accountId: 'account-a', currentAccount: true, settings }],
+    route: request => {
+      if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+      return artifacts.handle(request.path, { method: request.method, headers: request.headers,
+        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }), signal: request.signal }) ?? undefined;
+    } });
+  restoreActionModuleLoader = await installRealActionExecutorModuleLoader();
+  const server = comparisonHome.homes.reset!;
+  const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  const requests = () => artifacts.list().map(artifact => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifact.id) ?? 'null')));
+  return { server, credentials, requests };
+}
 
 type Meter = Readonly<{
   meterId: string;
@@ -130,6 +146,7 @@ function quotaRead(
       confidence: 'confirmed',
       state: 'loaded_data',
       planLabel: `Plan ${accountId}`,
+      accountLabel: `Account ${accountId}`,
       meters: meters.map((meter) => ({
         ...meter,
         used: null,
@@ -215,8 +232,8 @@ function bodyProps(
   return { model, slice, query: shownQuery, serverId: 'home' };
 }
 
-const wrap = (node: React.ReactElement) => (
-  <InjectedAuthProvider credentials={null}>
+const wrap = (node: React.ReactElement, credentials: React.ComponentProps<typeof InjectedAuthProvider>['credentials'] = null) => (
+  <InjectedAuthProvider credentials={credentials}>
     <OverlayPortalProvider>{node}<OverlayPortalHost /></OverlayPortalProvider>
   </InjectedAuthProvider>
 );
@@ -226,6 +243,15 @@ const renderScreen = (node: Parameters<typeof renderScreenAtHost>[0]) => renderS
   createNodeMock: () => ({
     measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(200, 200, 120, 32),
   }),
+});
+
+it('reveals exact projected percent points without rounding the admitted projection headline', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />));
+  expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.headline.detail')?.props.datum.value).toBe('60.25%');
 });
 
 it('shows the canonical capacity weather and insufficient model/reset basis inside the existing plan fit body', async () => {
@@ -272,7 +298,7 @@ it('shows the entered monthly amount without inventing a provider billing period
 
 it('names available model-meter headroom through the catalog and readable unknown fallback', async () => {
   const now = Date.now();
-  const base = quotaRead('work', now, [{ meterId: 'known', label: 'Known model', usedPct: 30,
+  const base = quotaRead('work', now, [{ meterId: 'known', label: 'Known model', usedPct: 30.125,
     resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'external', label: 'External model', usedPct: 40,
     resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
   const read = ConnectedServiceQuotaGetResultV1Schema.parse({ ...base, current: { ...base.current,
@@ -282,6 +308,7 @@ it('names available model-meter headroom through the catalog and readable unknow
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...bodyProps([read])} id="usage_plan_fit" testID="fit" />));
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
   expect(screen.findByTestId('fit.plan.work.modelHeadroom.known')).toBeTruthy();
+  expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'fit.plan.work.values.detail')?.props.datum.value).toContain('69.88%');
   expect(screen.findByTestId('fit.plan.work.modelHeadroom.external')).toBeTruthy();
   expect(screen.getTextContent()).toContain('Fable 5');
   // An id outside the catalog is shown exactly (2a2cc0979c), never title-cased into a name.
@@ -291,7 +318,7 @@ it('names available model-meter headroom through the catalog and readable unknow
 
 it('keeps unreported windows reachable behind one count and shows each reset once', async () => {
   const now = Date.now();
-  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
     resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
     resetAtMs: now + HOUR, windowDurationMs: DAY }]);
   const unknown = { ...read.current!.meters[0]!, meterId: 'unknown', label: 'Unknown allowance',
@@ -321,6 +348,8 @@ it('keeps unreported windows reachable behind one count and shows each reset onc
   expect(screen.findByTestId('proj.window.work.unknown')).toBeTruthy();
   expect(screen.findByTestId('reset.list')).toBeTruthy();
   expect(screen.findByTestId('reset.timeline')).toBeFalsy();
+  expect(screen.findAllByType(ChartDatum).some(node => String(node.props.testID).startsWith('reset.list.')
+    && node.props.datum.value.includes('69.88%'))).toBe(true);
 });
 
 it('chooses the earliest settled depletion consistently instead of whichever account answered first', async () => {
@@ -342,12 +371,12 @@ it('chooses the earliest settled depletion consistently instead of whichever acc
   const screen = await renderScreen(render(reads));
   const aheadText = () => screen.findByTestId('proj.ahead')!.findAll(node => typeof node.type === 'string')
     .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
-  expect(aheadText()).toContain('Plan earlier');
-  expect(aheadText()).not.toContain('Plan later');
+  expect(aheadText()).toContain('Account earlier');
+  expect(aheadText()).not.toContain('Account later');
   // The alert's line is in use, so none is held for it.
   expect(screen.findByTestId('proj.aheadRoom')).toBeFalsy();
   await screen.update(render([...reads].reverse()));
-  expect(aheadText()).toContain('Plan earlier');
+  expect(aheadText()).toContain('Account earlier');
 });
 
 it('does not declare all projections missing when a settled paced window is behind Show all', async () => {
@@ -414,6 +443,8 @@ it('lists every reported window with its projection beside other widgets, withou
   // Lab wgusage-CD "Limits": the meters are the body, read at a glance.
   expect(screen.findByTestId('proj.window.work.weekly')).toBeTruthy();
   expect(screen.findByTestId('proj.window.work.daily')).toBeTruthy();
+  expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.window.work.weekly.datum')?.props.datum.subtitle)
+    .toContain(t('usage.board.plans.estimatedFrom', { count: partial.pace[0]!.value.status === 'available' ? partial.pace[0]!.value.sampleCount : 0 }));
   expect(screen.findAllByType(BurnUpChart)).toHaveLength(0);
   expect(screen.findByTestId('proj.reported-header')).toBeFalsy();
   expect(screen.findByTestId('proj.pastCycles-header')).toBeFalsy();
@@ -491,7 +522,7 @@ it('shows attributed API-equivalent account value and a qualified price multiple
     } }],
   }).results[0]!;
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
-  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} model={{ ...base.model, slice }} id="usage_plan_fit" testID="fit" />));
+  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
   // The row's one key figure is the qualified multiple ($4.00 observed against the $2.00 entered price).
   expect(screen.getTextContent()).toContain('2×');
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
@@ -516,7 +547,7 @@ it('shows a recorded week from accounting even without connected plan accounts',
       activity: { calendarDays: [{ date: '2026-10-01', eventCount: 1 }], weekdayHourBuckets: [] },
     } }] }).results[0]!;
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
-  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} model={{ ...base.model, slice }} id="usage_plan_fit" testID="fit" />));
+  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
   expect(screen.findByTestId('fit.recordedWeek')).toBeTruthy();
 });
 
@@ -687,7 +718,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   expect([...new Set(comparisonOrder)]).toEqual([`${comparison}.candidate.work`, `${comparison}.candidate.personal`, `${comparison}.candidate.side`]);
   // Hypothetical rows never replace the current queue or issue a mutation Action.
   expect(screen.findHostByTestId('cap.usedFirst.pool.personal')).toBeTruthy();
-  expect(execute).not.toHaveBeenCalled();
+  expect(comparisonHome.requests.filter(request => request.method === 'POST' && request.path.startsWith('/v1/artifacts'))).toEqual([]);
   const captured = captureUiUsageQueryAccountContext(credentials)!;
   const comparisonEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'connectedServices.pools.selection.get',
     input: { machineId: 'witnessed-selector', group, hypothetical: { strategy: 'priority', atMs: now + 3 * HOUR } } });
@@ -756,6 +787,93 @@ it('states one unreadable-order cause once under every pool that shares it (H30)
   // Pools with no order to show share one quiet "Used first" label over their names, not a heading each.
   expect(screen.getTextContent().split(t('usage.board.plans.queueTitle')).length - 1).toBe(1);
   expect(screen.getTextContent()).not.toContain(`${t('usage.board.plans.queueTitle')} ·`);
+});
+
+it('greets an Account with nothing connected with the shared empty state, its connect scene and the one sign-in (58d AF1)', async () => {
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  // Nothing connected: the quota read settles with no account, and a history page marker can still be partial.
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'partial', value: [] } }).results[0]!;
+  const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
+    refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const screen = await renderScreen(wrap(<UsageCapacityWidget model={model} slice={slice} query={query} serverId="home" id="usage_capacity" testID="cap" />));
+  const states = screen.findAllByType(SurfaceStateCard);
+  expect(states).toHaveLength(1);
+  // The widget empty state every frame uses (centred, replacing the body), not an inline line beside a link.
+  // It invites the sign-in, and one line says what will appear here (owner 10-31 first-run rules).
+  expect(states[0]!.props).toMatchObject({ kind: 'empty', replacesContent: true, scene: 'connectAccount',
+    title: t('usage.board.plans.capacitySignInTitle'), reason: t('usage.board.plans.capacityNoneConnectedPromise') });
+  // Capacity's empty state carries the sign-in; Get set up drops its item while Capacity is placed.
+  expect(states[0]!.props.action).toMatchObject({ label: t('usage.board.plans.capacitySignIn') });
+  expect(states[0]!.props.layout).toBeUndefined();
+  expect(states[0]!.props.size).toBeUndefined();
+  expect(screen.findHostByTestId('cap.none.coverage')).toBeNull();
+});
+
+it('says "nothing connected" once: Capacity owns the cause, the widgets derived from it say what they will show (Plans ×4)', async () => {
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'available', value: [] } }).results[0]!;
+  const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
+    refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const body = { model, slice, query, serverId: 'home' };
+  const screen = await renderScreen(wrap(<>
+    <UsageCapacityWidget {...body} id="usage_capacity" testID="cap" />
+    <UsageProjectionsWidget {...body} id="usage_projections" testID="proj" />
+    <UsageResetPlannerWidget {...body} id="usage_resets" testID="resets" />
+    <UsagePlanFitWidget {...body} id="usage_plan_fit" testID="fit" />
+  </>));
+  const cause = t('usage.board.plans.capacitySignInTitle');
+  expect(screen.getTextContent().split(cause).length - 1).toBe(1);
+  const titles = screen.findAllByType(SurfaceStateCard).map((state) => state.props.title);
+  expect(titles).toEqual([
+    cause,
+    t('usage.board.plans.projectionsNoneConnected'),
+    t('usage.board.plans.resetsNoneConnected'),
+    t('usage.board.plans.planFitNoneConnected'),
+  ]);
+});
+
+it('asks whose order to show when several Machines are in scope, instead of calling the order unreadable (QA U2)', async () => {
+  const now = Date.now();
+  const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 20, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY };
+  // The Machine inventory follows the selected Home, while the Resource follows its applied Account.
+  const server = await upsertAndActivateServer({ serverUrl: 'https://usage-pool-choices.test' });
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  storage.setState({ profileScope: { serverId: server.id, accountId: 'pool-choices' },
+    profile: AccountProfileSchema.parse({ id: 'pool-choices' }) });
+  // Machines = All with two online Machines: the Resource has no single selector to read (`unknown`, no Machine id).
+  const ambiguous = (groupId: string, memberAccountIds: string[]) => ({
+    group: { service, groupId }, memberAccountIds, activeAccountId: memberAccountIds[0]!, selection: { status: 'unknown' as const },
+  });
+  const props = bodyProps(['a', 'b', 'c'].map((id) => quotaRead(id, now, [weekly])),
+    [{ query, value: [ambiguous('first', ['a', 'b']), ambiguous('second', ['c'])] }]);
+  const scope = storage.getState().profileScope!;
+  storage.getState().applyMachines([
+    createMachineFixture({ id: 'desk', activeAt: now, metadata: { ...createMachineFixture().metadata!, displayName: 'Desk' } }),
+    createMachineFixture({ id: 'build', activeAt: now, metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } }),
+  ], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  const chosen: string[] = [];
+  const drill = { available: () => true, selected: () => false, toggle: (field: string, id: string) => { chosen.push(`${field}:${id}`); return true; } };
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { UsageDrillProvider } = await import('../../usageDrill');
+  const screen = await renderScreen(wrap(<UsageDrillProvider value={drill}>
+    <UsageCapacityWidget {...props} serverId="home" id="usage_capacity" testID="cap" />
+  </UsageDrillProvider>));
+  const text = screen.getTextContent();
+  expect(text).not.toContain(t('usage.board.plans.usedFirstReadFailed'));
+  expect(text).not.toContain(t('usage.board.plans.usedFirstNoMachine'));
+  // The cause is said once for both pools, with the one way forward beside it.
+  expect(text.split(t('usage.board.plans.usedFirstPerMachine')).length - 1).toBe(1);
+  const chooser = screen.findAllByType(DropdownMenu).find((node) => node.props.testID === 'cap.usedFirst.chooseMachine')!;
+  expect(chooser).toBeTruthy();
+  expect(chooser.props.items.map((item: { id: string; title: string }) => [item.id, item.title]).sort())
+    .toEqual([['build', 'Build box'], ['desk', 'Desk']]);
+  await act(async () => chooser.props.onSelect('desk'));
+  expect(chosen).toEqual(['machines:desk']);
 });
 
 it('keeps one unordered pool on one quiet line, and titles the unordered pools "Other pools" beside an ordered one (D2, R4)', async () => {
@@ -908,12 +1026,7 @@ it('charts the picked window in the same chart, labels the empirical range with 
 
 it("binds one Session's pending message to a reset with the exact witnessed input, and withholds the control without a witness", async () => {
   const now = Date.now();
-  const runtime = await import('@/sync/domains/server/serverRuntime');
-  const server = await runtime.upsertAndActivateServer({
-    serverUrl: 'http://usage-plans.test',
-    name: 'Plans',
-  });
-  publishAppliedActiveServerSnapshot(runtime.getActiveServerSnapshot());
+  const { server, credentials, requests } = await serveResetStartApprovalHome('https://usage-plans.test');
   const previous = storage.getState();
   storage.setState({
     profileScope: { serverId: server.id, accountId: 'account-a' },
@@ -961,7 +1074,7 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
           serverId={server.id}
           id="usage_resets"
           testID="reset"
-        />,
+        />, credentials,
       ),
     );
     expect(none.findByTestId('reset.resetStart.unavailable')).toBeTruthy();
@@ -970,11 +1083,8 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
         .findAllByType(DropdownMenu)
         .some((node) => node.props.testID === 'reset.resetStart.local-1.pick'),
     ).toBe(false);
+    expect(requests()).toEqual([]);
     await none.unmount();
-    execute.mockResolvedValue({
-      ok: true,
-      result: { didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } },
-    });
     const screen = await renderScreen(
       wrap(
         <UsageResetPlannerWidget
@@ -982,7 +1092,7 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
           serverId={server.id}
           id="usage_resets"
           testID="reset"
-        />,
+        />, credentials,
       ),
     );
     const picker = screen
@@ -992,9 +1102,9 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
       picker.props.onSelect(picker.props.items[0].id);
       await Promise.resolve();
     });
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]![0]).toBe('session.pending.resetStart.set');
-    expect(execute.mock.calls[0]![1]).toEqual({
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()[0]!.actionId).toBe('session.pending.resetStart.set');
+    expect(requests()[0]!.actionArgs).toEqual({
       sessionId: 's1',
       localId: 'local-1',
       serverId: server.id,
@@ -1015,9 +1125,7 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
 
 it('binds Account-wide queued identities once across accounts without reading private Pending text or granting unavailable authority', async () => {
   const now = Date.now();
-  const runtime = await import('@/sync/domains/server/serverRuntime');
-  const server = await runtime.upsertAndActivateServer({ serverUrl: 'http://usage-account-plans.test', name: 'Plans' });
-  publishAppliedActiveServerSnapshot(runtime.getActiveServerSnapshot());
+  const { server, credentials, requests } = await serveResetStartApprovalHome('https://usage-account-plans.test');
   const previous = storage.getState();
   const privateText = 'Private queued request';
   storage.setState({
@@ -1040,9 +1148,8 @@ it('binds Account-wide queued identities once across accounts without reading pr
         waitingWork: { status: 'available', entries: [], unboundEntries },
       });
     });
-    execute.mockResolvedValue({ ok: true, result: { didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } } });
     const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
-    const screen = await renderScreen(wrap(<UsageResetPlannerWidget {...bodyProps(reads)} serverId={server.id} id="usage_resets" testID="reset" />));
+    const screen = await renderScreen(wrap(<UsageResetPlannerWidget {...bodyProps(reads)} serverId={server.id} id="usage_resets" testID="reset" />, credentials));
     const pickers = screen.findAllByType(DropdownMenu).filter(node => String(node.props.testID).startsWith('reset.resetStart.'));
     expect(pickers).toHaveLength(2);
     expect(screen.getTextContent()).not.toContain(privateText);
@@ -1053,15 +1160,18 @@ it('binds Account-wide queued identities once across accounts without reading pr
       unavailable.props.onSelect(unavailable.props.items[0].id);
       await Promise.resolve();
     });
-    expect(execute).not.toHaveBeenCalled();
+    expect(requests()).toEqual([]);
     await act(async () => {
       available.props.onSelect(available.props.items[0].id);
       await Promise.resolve();
     });
-    expect(execute).toHaveBeenCalledWith('session.pending.resetStart.set', {
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()[0]!.actionId).toBe('session.pending.resetStart.set');
+    expect(requests()[0]!.actionArgs).toEqual({
       sessionId: 's1', localId: 'local-1', serverId: server.id,
       reset: { source: reads[0]!.source, recordId: reads[0]!.current!.recordId, meterId: 'weekly', witness: { id: 'accepted-work', observedAtMs: now } },
-    }, expect.objectContaining({ expectedAccountId: 'account-a', serverId: server.id }));
+    });
+    expect(JSON.stringify(requests())).not.toContain(privateText);
   } finally {
     storage.setState({ profileScope: previous.profileScope, sessionPending: previous.sessionPending });
   }
@@ -1189,4 +1299,39 @@ it('shows the list-price observation date in the selected app language', async (
   } finally {
     setPreferredLanguageFromSettings(previousLanguage);
   }
+});
+
+
+it.each(['waiting', 'unbound'] as const)('conceals hidden reset-plan Session labels while keeping configured %s work', async kind => {
+  const now = Date.now();
+  const { server, credentials } = await serveResetStartApprovalHome('https://usage-reset-privacy.test');
+  const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+  const previous = storage.getState();
+  const session = createSessionFixture({ id: 'private-reset', serverId: server.id, metadata: {
+    name: 'Private reset project', path: '/private-reset', host: 'host', machineId: 'machine',
+  } });
+  storage.setState({ sessions: { [session.id]: session } });
+  const bare = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 80, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY }]);
+  const read = ConnectedServiceQuotaGetResultV1Schema.parse({ ...bare,
+    history: { nextCursor: null, entries: [{ id: 'private-reset-reading', observedAtMs: now, snapshot: bare.current }] },
+    waitingWork: { status: 'available',
+    unboundEntries: kind === 'unbound' ? [{ sessionId: session.id, localId: 'private-wait', authorityCurrent: true }] : [],
+    entries: kind === 'waiting' ? [{ sessionId: session.id, localId: 'private-wait', recordId: bare.current!.recordId, meterId: 'weekly', readiness: { status: 'ready' } }] : [] } });
+  const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+  const screen = await renderScreen(wrap(<UsageResetPlannerWidget {...bodyProps([read])} serverId={server.id} id="usage_resets" testID="reset-privacy" />, credentials));
+  try {
+    expect(screen.getTextContent()).toContain('Private reset project');
+    await act(async () => {
+      storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [server.id]: ['private'] } });
+      storage.getState().setSessionTagAssignmentsOptimistic(server.id, session.id, ['private']);
+      setScreenSharingPrivacyActive(true);
+    });
+    expect(screen.getTextContent()).not.toContain('Private reset project');
+    expect(screen.findByTestId(kind === 'waiting' ? 'reset-privacy.waiting.private-wait.cancel'
+      : 'reset-privacy.resetStart.private-reset.private-wait.open')).not.toBeNull();
+    expect(screen.getTextContent()).not.toContain(session.id);
+    await act(async () => { setScreenSharingPrivacyActive(false); });
+    expect(screen.getTextContent()).toContain('Private reset project');
+  } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); storage.setState(previous, true); }
 });

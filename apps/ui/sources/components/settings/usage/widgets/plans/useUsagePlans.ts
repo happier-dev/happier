@@ -5,15 +5,15 @@ import type { ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/pr
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { presentConnectedAccountNames, presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import { storage, useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
+import { listUsagePoolSelectorMachineIds } from '@/sync/api/account/usageQueryInvalidation';
+import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useProjectedConnectedServicesRegistry, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveConnectedServiceRegistryEntryDisplayName, resolveQualifiedConnectedServiceRegistryDisplayName, resolveQualifiedConnectedServiceRegistryEntry } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { isConnectedServiceUsageCapable, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import type { QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { t } from '@/text';
@@ -24,9 +24,9 @@ import {
 } from './usagePlansModel';
 
 export type UsagePlanAccountName = Readonly<{
-  /** "Claude Pro" when the plan is known, else the account's name through the one naming owner. */
+  /** The account's distinct name through the canonical connected-account naming owner. */
   title: string;
-  /** The account identity and service, quiet beside the title. */
+  /** The plan and account identity, quiet beside the title. */
   qualifier: string;
   serviceLabel: string;
   legacyServiceId: ConnectedServiceId | null;
@@ -37,9 +37,6 @@ const accountKeyOf = (
   accountId: string,
 ) => `${service.pluginId}/${service.localId}:${accountId}`;
 
-// Observed catalog identity survives route-owned hook mounts and sleeping
-// catalog machines; it does not depend on a service supporting allowance reads.
-const observedServiceNames = new WeakMap<ServerAccountScopeLifetime, Map<string, ConnectedServiceRegistryEntry>>();
 const NO_GROUPS: readonly QualifiedConnectedAccountGroupV4[] = [];
 
 /**
@@ -48,15 +45,11 @@ const NO_GROUPS: readonly QualifiedConnectedAccountGroupV4[] = [];
  * belong to the displayed Usage Resource; no mounted body creates another quota demand.
  * Nothing here ranks or weights accounts.
  */
-export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
-  refresh(): Promise<void>;
-  refreshing: boolean;
-}>): Readonly<{
+export function useUsagePlans(slice: UsageQueryResultSlice, refresh: () => Promise<void>): Readonly<{
   projection: UsagePlansProjection;
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
   inUse: ReadonlySet<string>;
   refresh(): Promise<void>;
-  refreshing: boolean;
   nowMs: number;
 }> {
   const nowMs = Date.now();
@@ -67,9 +60,8 @@ export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
   const summaries = useConnectedServiceQuotaSummaries({ fetchPolicy: 'cache_only' });
   const registry = useProjectedConnectedServicesRegistry();
   const baseProjection = React.useMemo(
-    () => projectUsagePlans(quota, minute * 60_000, slice.pools, slice.sources,
-      service => isConnectedServiceUsageCapable(service, registry)),
-    [quota, minute, slice.pools, slice.sources, registry],
+    () => projectUsagePlans(quota, minute * 60_000, slice.pools, slice.sources),
+    [quota, minute, slice.pools, slice.sources],
   );
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const scope = useActiveServerAccountScope();
@@ -85,22 +77,8 @@ export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
       serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(registry, pool.service, t, localizePluginText),
     }).primaryLabel,
   })) }), [baseProjection, groups, labelsByKey, registry, localizePluginText]);
-  const lifetime = captureActiveServerAccountScopeLifetime();
-  const retainedNames = React.useMemo(() => {
-    if (!lifetime) return new Map<string, ConnectedServiceRegistryEntry>();
-    let names = observedServiceNames.get(lifetime);
-    if (!names) { names = new Map(); observedServiceNames.set(lifetime, names); }
-    return names;
-  }, [lifetime]);
   const serviceEntryOf = React.useCallback((account: UsagePlanAccount) =>
     resolveQualifiedConnectedServiceRegistryEntry(registry, account.service), [registry]);
-  React.useEffect(() => {
-    if (!lifetime?.isCurrent()) return;
-    for (const account of projection.accounts) {
-      const entry = serviceEntryOf(account);
-      if (entry) retainedNames.set(account.key, entry);
-    }
-  }, [lifetime, projection.accounts, retainedNames, serviceEntryOf]);
   const { present } = useConnectedAccountIdentityPrivacy();
   const summaryByKey = React.useMemo(
     () =>
@@ -114,10 +92,10 @@ export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
   );
   const serviceLabelOf = React.useCallback((account: UsagePlanAccount) => {
     // The catalog establishes identity independently of Usage read availability.
-    const entry = serviceEntryOf(account) ?? (lifetime?.isCurrent() ? retainedNames.get(account.key) : undefined);
+    const entry = serviceEntryOf(account);
     return entry ? resolveConnectedServiceRegistryEntryDisplayName(entry, t, localizePluginText)
       : t('connectedServices.fallbackName');
-  }, [registry, localizePluginText, serviceEntryOf, lifetime, retainedNames]);
+  }, [localizePluginText, serviceEntryOf]);
   const names = React.useMemo(
     () =>
       presentConnectedAccountNames(
@@ -147,8 +125,8 @@ export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
       const accountName = name?.primaryLabel ?? serviceLabel;
       const plan = account.planLabel;
       return {
-        title: plan ?? accountName,
-        qualifier: [plan ? accountName : null, name?.identityLabel ?? null]
+        title: accountName,
+        qualifier: [plan, name?.identityLabel ?? null]
           .filter(Boolean)
           .join(' · '),
         serviceLabel,
@@ -169,15 +147,14 @@ export function useUsagePlans(slice: UsageQueryResultSlice, resource: Readonly<{
     projection,
     nameOf,
     inUse,
-    refresh: resource.refresh,
-    refreshing: resource.refreshing,
+    refresh,
     nowMs,
   };
 }
 
 /** An online machine of this Home: the daemon whose selector the read projects. */
 export function useUsageSelectorMachineId(): string | null {
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const scope = useActiveServerAccountScope();
   const reachabilityRevision = useMachineReachabilityRevision();
   const nowMs = useMachinePresenceNowMs(machines);
@@ -187,6 +164,23 @@ export function useUsageSelectorMachineId(): string | null {
   );
 }
 
+/**
+ * The Machines a pool's switching order can be read on under this Machines filter, by the names the
+ * Machines filter shows. Mounted only while a person is asked to choose one (`choose_machine`).
+ */
+export function useUsagePoolMachineChoices(machineIds: readonly string[]): readonly Readonly<{ id: string; name: string }>[] {
+  const machines = useActiveMachineFacts();
+  const scope = useActiveServerAccountScope();
+  const reachabilityRevision = useMachineReachabilityRevision();
+  const nowMs = useMachinePresenceNowMs(machines);
+  return React.useMemo(() => {
+    if (!scope) return [];
+    const ids = listUsagePoolSelectorMachineIds(Object.fromEntries(machines.map(machine => [machine.id, machine])), machineIds, scope, nowMs);
+    const names = resolveMachineDisplayNames(machines);
+    return ids.map(id => ({ id, name: names.get(id) ?? id }));
+  }, [machines, machineIds, scope, reachabilityRevision, nowMs]);
+}
+
 type ResolvedPoolSelection = Extract<ConnectedServicePoolSelectionGetResponseV1, { selection: unknown }>;
 export type UsagePoolMemberStatus = 'none_known' | 'all_excluded' | 'known';
 export type UsagePoolSelectionState =
@@ -194,7 +188,9 @@ export type UsagePoolSelectionState =
   | Exclude<ConnectedServicePoolSelectionGetResponseV1, ResolvedPoolSelection>
   | 'loading'
   | 'failed'
-  | 'no_machine';
+  | 'no_machine'
+  /** Several Machines are in scope and each keeps its own order: the person chooses whose order to see. */
+  | 'choose_machine';
 
 /**
  * The Resource's admitted selector projection. It is evidence, not a controller; this hook creates
@@ -211,7 +207,8 @@ export function useUsagePoolSelections(
         refreshError: selection.errorCode === 'no_machine' ? 'no_machine' as const : 'failed' as const,
       } : {}) } : selection.value) ??
       (selection.status === 'pending' || selection.status === 'not_loaded' ? 'loading' :
-        selection.errorCode === 'no_machine' ? 'no_machine' : 'failed');
+        selection.errorCode === 'no_machine' ? 'no_machine'
+          : selection.status === 'unknown' && !selection.machineId ? 'choose_machine' : 'failed');
     if (typeof state === 'string' || 'status' in state) return [key, state] as const;
     const { selected, excluded, decisionTrace } = state.selection;
     // A machine's empty trace is not evidence that the pool's accounts are unusable.

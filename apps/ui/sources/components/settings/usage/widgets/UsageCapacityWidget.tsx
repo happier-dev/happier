@@ -2,14 +2,14 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { HAPPIER_DATA_METRICS, HappierDataMetric, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, formatHappierDataExactShare, HAPPIER_DATA_METRICS, HappierDataMetric, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import {
   UsageResetCelebration,
   type UsageResetCelebrationWindow,
@@ -174,7 +174,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // A tile says the order as Now → Next → Then (lab `p2pool` U2); the full body lists it with reasons (U1).
   const tile = presentation?.size === 'small';
   const text = usePlanText();
-  const plans = useUsagePlans(props.slice, props.model);
+  const plans = useUsagePlans(props.slice, props.model.refresh);
   const { projection, nameOf, nowMs } = plans;
   const selections = useUsagePoolSelections(props.slice);
   useWidgetFrameBodyCaption(t('usage.board.plans.capacityCaption'));
@@ -206,6 +206,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         <UsagePlansNothingRead
           testID={`${props.testID}.none`}
           slice={props.slice}
+          ownsCause
+          promise={t('usage.board.plans.capacityNoneConnectedPromise')}
           onRetry={props.model.refresh}
         />
       </View>
@@ -223,6 +225,14 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const pendingAccounts = readPendingPlanAccountCount(projection.accounts);
   const reading = tightest === null && pendingAccounts > 0;
   const provisionalReading = tightest?.provisional === true && pendingAccounts > 0;
+  // One account: the headline says its figure and reset, and its cell under the bar names it (mark, name, plan),
+  // so neither says the other's fact again. A state only the cell says (left out of a pool, an old reading)
+  // keeps the ordinary cell.
+  const lone = drawn.length === 1 && tightest !== null && tightest.account.key === drawn[0]!.key && !drawn[0]!.stale
+    && runs.every((run) => run.cells.every((cell) => cell.excluded === null));
+  const heroUnit = !tightestName ? ''
+    : lone ? t('usage.board.plans.capacityLoneUnit')
+    : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
   // Equal cells while they fit; a narrow frame (a phone) wraps them two-up rather than shrinking them.
   const cellBasis =
     !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX ? ('46%' as const) : undefined;
@@ -238,20 +248,20 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {tightest && tightestName ? (
         <View style={styles.hero}>
           <View style={styles.heroLine}>
+            <ChartDatum testID={`${props.testID}.tightest-datum`}
+              datum={{ label: `${tightestName.title} · ${tightest.window.label}`,
+                value: formatHappierDataExactShare(tightest.window.remainingFraction!, getPreferredLanguage()),
+                subtitle: tightest.window.resetAtMs === null ? undefined : formatPlanResetPhrase(tightest.window.resetAtMs, nowMs) ?? undefined }}>
             <HappierDataMetric
               testID={`${props.testID}.tightest`}
               theme={chartTheme}
               size="hero"
-              label={t('usage.board.plans.capacityTightestUnit', {
-                name: tightestName.title,
-              })}
+              label={heroUnit}
               value={Math.round(tightest.window.remainingFraction! * 100)}
               valueFormatter={(value) => `${value}%`}
-            />
+            /></ChartDatum>
             <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>
-              {t('usage.board.plans.capacityTightestUnit', {
-                name: tightestName.title,
-              })}
+              {heroUnit}
             </Text>
           </View>
           <Text style={[styles.subline, text.detail]} testID={provisionalReading ? `${props.testID}.reading` : undefined}>
@@ -263,7 +273,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
                 : null,
               provisionalReading
                 ? t('usage.board.plans.capacityReading', { count: pendingAccounts })
-                : tightest.provisional ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
+                : tightest.provisional || lone ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
               oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatPlanMoment(oldestReadMs, nowMs) }) : null,
             ]
               .filter(Boolean)
@@ -274,7 +284,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         <CapacityHeroReading count={pendingAccounts} testID={`${props.testID}.reading`} />
       ) : null}
       {pooled && runs.length > 0 ? (
-        <CapacityPooledBar runs={runs} nameOf={nameOf} nowMs={nowMs} staleSaidOnce={everyStale} testID={props.testID}
+        <CapacityPooledBar runs={runs} nameOf={nameOf} nowMs={nowMs} staleSaidOnce={everyStale} lone={lone} testID={props.testID}
           listed={width !== null && width / Math.max(1, cellCount) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX} />
       ) : runs.length > 0 ? (
       <View style={styles.bar} accessibilityRole="list">
@@ -296,6 +306,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
                   cell={cell}
                   name={nameOf(cell.account)}
                   nowMs={nowMs}
+                  lone={lone}
                   basis={isFramedRun(run) ? cellBasis : undefined}
                   testID={`${props.testID}.cell.${cell.account.accountId}`}
                 />
@@ -314,6 +325,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {tile ? (
         <UsagePoolSteps
           serverId={props.serverId}
+          query={props.query}
           pools={projection.pools}
           accounts={projection.accounts}
           selections={selections}
@@ -324,6 +336,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ) : (
         <UsagePoolQueue
           serverId={props.serverId}
+          query={props.query}
           pools={projection.pools}
           accounts={projection.accounts}
           selections={selections}
@@ -353,12 +366,14 @@ function CapacityPooledBar(props: Readonly<{
   runs: readonly Run[]; nameOf: (account: UsagePlanAccount) => UsagePlanAccountName; nowMs: number;
   /** Every reading is old and the headline says so once; no segment repeats "last read". */
   staleSaidOnce: boolean; testID: string;
+  /** The only account: the headline says its figure and reset (see {@link CapacityCell}). */
+  lone: boolean;
   /** Too narrow for a label under each segment: the accounts are listed beneath the one bar, a row each. */
   listed: boolean;
 }>) {
   const label = (run: Run, cell: Cell, listed: boolean) => (
     <CapacityCell key={`${runKey(run)}:${cell.account.key}`} cell={cell} name={props.nameOf(cell.account)} nowMs={props.nowMs}
-      pooled staleSaidOnce={props.staleSaidOnce} {...(listed ? { listed } : {})} testID={`${props.testID}.cell.${cell.account.accountId}`} />
+      pooled staleSaidOnce={props.staleSaidOnce} lone={props.lone} {...(listed ? { listed } : {})} testID={`${props.testID}.cell.${cell.account.accountId}`} />
   );
   return (
     <>
@@ -427,6 +442,8 @@ function CapacityCell(
     /** One row of the list under a narrow pooled bar: the account and its note at the start, its figure at the end. */
     listed?: boolean;
     staleSaidOnce?: boolean;
+    /** The only account: the headline above already says its figure and reset, so the cell keeps its bar and name. */
+    lone?: boolean;
     testID: string;
   }>,
 ) {
@@ -467,7 +484,7 @@ function CapacityCell(
     remaining === null
       ? '—'
       : formatPlanPercent(remaining);
-  const valueText = (
+  const valueInk = (
     <Text
       style={[
         styles.cellValue,
@@ -484,6 +501,10 @@ function CapacityCell(
       {value}
     </Text>
   );
+  const valueText = remaining === null || !window ? valueInk : <ChartDatum testID={`${props.testID}.datum`}
+    datum={{ label: `${props.name.title} · ${window.label}`, value: formatHappierDataExactShare(remaining, getPreferredLanguage()),
+      subtitle: [window.resetAtMs === null ? null : formatPlanResetPhrase(window.resetAtMs, nowMs),
+        ...otherWindows.map(other => windowNote(other))].filter(Boolean).join(' · ') }}>{valueInk}</ChartDatum>;
   const detailLine = detail === null && props.listed ? null : (
     <Text
       style={[
@@ -538,13 +559,13 @@ function CapacityCell(
               <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
               {cell.rank !== null || cell.excluded !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
             </View>
-            {detailLine}
+            {props.lone ? null : detailLine}
           </View>
-          {valueText}
+          {props.lone ? null : valueText}
         </View>
       ) : (
         <>
-          <View style={styles.cellHead}>{valueText}</View>
+          {props.lone ? null : <View style={styles.cellHead}>{valueText}</View>}
           <View style={styles.cellHead}>
             <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
             {cell.rank !== null || cell.excluded !== null ? (
@@ -555,7 +576,7 @@ function CapacityCell(
               included: "last read" or "used up" arrives into it, and settling never resizes the bar. Under the
               pooled bar a label is its figure and plan (lab `d2top-A`); only a state that changes what the viewer
               can do takes a line there. */}
-          {props.pooled && detail === null ? null : detailLine}
+          {props.lone || props.pooled && detail === null ? null : detailLine}
         </>
       )}
     </View>

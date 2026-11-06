@@ -43,7 +43,7 @@ import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetF
 /** What every Usage body receives from the one dispatcher: admitted facts, never a fetch handle. */
 export type UsageBodyProps = Readonly<{
   id: UsageBuiltinWidgetIdV1;
-  model: UsageWidgetBodyModel;
+  model: Pick<UsageWidgetBodyModel, 'refresh'>;
   slice: UsageQueryResultSlice;
   /** The query these facts answer (the shown one while a period change settles). */
   query: UsageQuery;

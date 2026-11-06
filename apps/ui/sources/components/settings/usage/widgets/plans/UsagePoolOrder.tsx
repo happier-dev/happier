@@ -23,11 +23,14 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { Typography } from '@/constants/Typography';
 import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 import { t } from '@/text';
+import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { useUsageDrill } from '../../usageDrill';
 import type { UsagePlanAccount, UsagePlanPool } from './usagePlansModel';
-import type {
-  UsagePlanAccountName,
-  UsagePoolMemberStatus,
-  UsagePoolSelectionState,
+import {
+  useUsagePoolMachineChoices,
+  type UsagePlanAccountName,
+  type UsagePoolMemberStatus,
+  type UsagePoolSelectionState,
 } from './useUsagePlans';
 import {
   formatPlanMoment,
@@ -154,6 +157,7 @@ function unreadText(
 ): string {
   if (state === 'loading') return t('usage.board.plans.hintLoading');
   if (state === 'no_machine') return t('usage.board.plans.usedFirstNoMachine');
+  if (state === 'choose_machine') return t('usage.board.plans.usedFirstPerMachine');
   if (state !== 'failed' && state.code === 'unsupported')
     return t('usage.board.plans.usedFirstUnsupported');
   return t('usage.board.plans.usedFirstReadFailed');
@@ -177,6 +181,8 @@ function readSharedUnreadCause(
 
 type PoolOrderProps = Readonly<{
   serverId: string;
+  /** The query these pools were read for: its Machines filter is what a chosen Machine narrows. */
+  query: UsageQuery;
   pools: readonly UsagePlanPool[];
   accounts: readonly UsagePlanAccount[];
   selections: ReadonlyMap<string, UsagePoolSelectionState>;
@@ -230,17 +236,63 @@ export function UsagePoolQueue(props: PoolOrderProps) {
                   {pool.name}
                 </Text>
                 {cause ? <Text style={[styles.quiet, text.detail]}>{cause}</Text> : null}
+                {cause && state === 'choose_machine' ? <PoolMachineChooser query={props.query} testID={`${props.testID}.chooseMachine`} /> : null}
               </View>
             );
           })}
         </View>
       ) : null}
       {sharedCause ? (
-        <Text testID={`${props.testID}.cause`} style={[styles.quiet, text.detail]}>
-          {sharedCause}
-        </Text>
+        <View style={styles.bareRow}>
+          <Text testID={`${props.testID}.cause`} style={[styles.quiet, text.detail]}>
+            {sharedCause}
+          </Text>
+          {bare.some((pool) => stateOf(pool) === 'choose_machine')
+            ? <PoolMachineChooser query={props.query} testID={`${props.testID}.chooseMachine`} /> : null}
+        </View>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Each Machine keeps its own switching order, so with several in scope the person picks whose order to
+ * see. The choice narrows the one Machines filter (the page's, or the Usage page opened from elsewhere);
+ * nothing here picks a Machine or merges their orders.
+ */
+function PoolMachineChooser(props: Readonly<{ query: UsageQuery; testID: string }>) {
+  const { theme } = useUnistyles();
+  const text = usePlanText();
+  const drill = useUsageDrill(props.query);
+  const choices = useUsagePoolMachineChoices(props.query.machines);
+  const [open, setOpen] = React.useState(false);
+  if (!drill.available('machines') || choices.length === 0) return null;
+  return (
+    <DropdownMenu
+      testID={props.testID}
+      open={open}
+      onOpenChange={setOpen}
+      items={choices.map((choice) => ({ id: choice.id, title: choice.name }))}
+      // A list of Machine names, not a field: it takes the names' width so each one reads whole.
+      matchTriggerWidth={false}
+      onSelect={(id) => { void drill.toggle('machines', id); }}
+      trigger={({ open: shown, toggle }) => (
+        <HappierPressable
+          testID={`${props.testID}.trigger`}
+          onPress={toggle}
+          accessibilityRole="button"
+          expanded={shown}
+          style={(state) => [
+            styles.whyTrigger,
+            state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+          ]}
+        >
+          <Text style={[styles.whyTriggerText, text.detail]}>{t('usage.board.plans.usedFirstChooseMachine')}</Text>
+          <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
+        </HappierPressable>
+      )}
+    />
   );
 }
 

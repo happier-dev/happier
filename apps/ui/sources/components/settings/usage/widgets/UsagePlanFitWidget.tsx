@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
+import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -38,7 +39,7 @@ import {
  * headroom, recorded-reset prices and recorded weeks. Unsupported account value remains explicit.
  */
 export function UsagePlanFitWidget(props: UsageBodyProps) {
-  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model);
+  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   const text = usePlanText();
   // A tile keeps every plan's facts on two lines and says the unrecorded comparisons once.
   const tile = useWidgetPresentation()?.size === 'small';
@@ -52,6 +53,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
           testID={`${props.testID}.none`}
           replacesContent={props.slice.planInsights?.recordedWeek.status !== 'available'}
           slice={props.slice}
+          promise={t('usage.board.plans.planFitNoneConnected')}
           onRetry={props.model.refresh}
         />
         {props.slice.planInsights?.recordedWeek.status === 'available'
@@ -220,6 +222,12 @@ function PlanRow(
   const keyFact = multiple !== null
     ? `${multiple.toLocaleString(getPreferredLanguage(), { maximumFractionDigits: 1 })}×`
     : known ? priceText : null;
+  const selectedPrice = entered ?? price.paid ?? price.list;
+  const exactFigure = multiple !== null ? `${formatHappierDataValue(multiple, getPreferredLanguage())}×`
+    : selectedPrice ? `${selectedPrice.currency} ${formatHappierDataValue(selectedPrice.amount, getPreferredLanguage())}` : null;
+  const hiddenFigure = multiple !== null || selectedPrice !== null && selectedPrice !== undefined
+    && !priceText.includes(formatHappierDataValue(selectedPrice.amount, getPreferredLanguage()));
+  const figure = keyFact === null ? null : <Text style={[styles.price, text.title]} numberOfLines={1}>{keyFact}</Text>;
   // The verdict is the outcome ("never ran out in 242"); the counted windows stay in Details.
   const verdict = fit.observed === 0 ? null : fit.usedUp === 0
     ? t('usage.board.plans.fitNeverRanOut', { total: fit.observed })
@@ -241,11 +249,8 @@ function PlanRow(
         <View style={styles.rowIdentity}>
           <UsagePlanIdentity name={props.name} compact />
         </View>
-        {keyFact !== null ? (
-          <Text style={[styles.price, text.title]} numberOfLines={1}>
-            {keyFact}
-          </Text>
-        ) : null}
+        {hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
+          datum={{ label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure}
       </View>
       <Text
         testID={fit.observed === 0 ? `${props.testID}.fit.insufficient` : `${props.testID}.fit`}
@@ -300,7 +305,26 @@ function PlanExtras(props: Readonly<{ value: UsagePlanInsights['accounts'][numbe
         : t('usage.board.plans.planList', { amount: formatUsageCost(multiple.priceAmount, multiple.currency),
           date: formatWithCachedDateTimeFormatter(multiple.priceAsOfMs, getPreferredLanguage(), { day: 'numeric', month: 'short', year: 'numeric' }) }) : null,
   ].filter(Boolean).join(' · ') : t('usage.board.plans.planValueInsufficient');
-  return <View style={styles.rowFit}>
+  const percent = (fraction: number) => formatHappierDataExactShare(fraction, getPreferredLanguage());
+  const money = (amount: number, currency: string) => `${currency} ${formatHappierDataValue(amount, getPreferredLanguage())}`;
+  const numericFacts = [
+    ...(value.status === 'available' ? [{ label: t('usage.board.plans.planValueTitle'), exact: money(value.amountUsd, value.currency),
+      hidden: !formatUsageCost(value.amountUsd, value.currency).includes(formatHappierDataValue(value.amountUsd, getPreferredLanguage())) }] : []),
+    ...(multiple?.status === 'available' ? [{ label: t('usage.board.plans.planValueTitle'),
+      exact: `${formatHappierDataValue(multiple.multiple, getPreferredLanguage())}× · ${money(multiple.priceAmount, multiple.currency)}`,
+      hidden: !valueText.includes(formatHappierDataValue(multiple.multiple, getPreferredLanguage()))
+        || !formatUsageCost(multiple.priceAmount, multiple.currency).includes(formatHappierDataValue(multiple.priceAmount, getPreferredLanguage())) }] : []),
+    ...props.value.weather.filter(row => row.status === 'available').map(row => ({ label: `${t('usage.board.plans.weatherTitle')} · ${row.label}`,
+      exact: `${percent(row.projectedUsedFraction)} · ${t('usage.board.plans.estimatedFrom', { count: row.sampleCount })}`,
+      hidden: formatPlanPercent(row.projectedUsedFraction) !== percent(row.projectedUsedFraction) })),
+    ...props.value.modelHeadroom.filter(row => row.status === 'available').map(row => ({ label: `${t('usage.board.plans.modelHeadroomTitle')} · ${usageDimensionLabel('model', row.modelId)}`,
+      exact: percent(row.remainingFraction), hidden: formatPlanPercent(row.remainingFraction) !== percent(row.remainingFraction) })),
+    ...props.value.pricePerReset.filter(row => row.status === 'available').map(row => ({ label: `${t('usage.board.plans.pricePerResetTitle')} · ${row.label}`,
+      exact: `${money(row.amount, row.currency)} · ${row.recordedResetCount} · ${money(row.priceAmount, row.currency)}`,
+      hidden: !formatUsageCost(row.amount, row.currency).includes(formatHappierDataValue(row.amount, getPreferredLanguage()))
+        || !formatUsageCost(row.priceAmount, row.currency).includes(formatHappierDataValue(row.priceAmount, getPreferredLanguage())) })),
+  ];
+  const visual = <View style={styles.rowFit}>
     {value.status === 'available' ? <Text testID={`${props.testID}.value`} accessibilityLabel={valueText}
       style={[styles.note, text.detail]} numberOfLines={props.compact ? 2 : undefined}>{valueText}</Text> : null}
     {props.value.weather.filter(row => row.status === 'available').map(row => <Text key={`weather:${row.meterId}`} testID={`${props.testID}.weather.${row.meterId}`}
@@ -321,6 +345,9 @@ function PlanExtras(props: Readonly<{ value: UsagePlanInsights['accounts'][numbe
               : t('usage.board.plans.planList', { amount: formatUsageCost(row.priceAmount, row.currency), date: formatWithCachedDateTimeFormatter(row.priceAsOfMs, getPreferredLanguage(), { day: 'numeric', month: 'short', year: 'numeric' }) })].join(' · ')}`}
     </Text>)}
   </View>;
+  return numericFacts.some(fact => fact.hidden)
+    ? <ChartDatum testID={`${props.testID}.values.detail`} datum={{ label: t('usage.board.plans.planDetails'),
+      value: numericFacts.map(fact => `${fact.label}: ${fact.exact}`).join(' · '), subtitle: valueText }}>{visual}</ChartDatum> : visual;
 }
 
 /** What one account has no basis for yet; the widget says the union once, under every plan. */

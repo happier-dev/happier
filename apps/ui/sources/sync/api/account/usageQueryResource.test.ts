@@ -2839,7 +2839,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => homeEntry.getSnapshot().pending).toBe('idle');
       const settled = projectionOf(homeEntry);
       expect.soft(settled.tightest?.window.remainingFraction).toBe(0.5);
-      const plans = await renderHook(() => useUsagePlans(sliceOf(homeEntry), { refresh: async () => {}, refreshing: false }), {
+      const plans = await renderHook(() => useUsagePlans(sliceOf(homeEntry), async () => {}), {
         wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials: captured.credentials, children }),
       });
       expect.soft(readPlanAccountsStatement(settled.accounts, plans.getCurrent().nameOf)?.kind).toBe('partial');

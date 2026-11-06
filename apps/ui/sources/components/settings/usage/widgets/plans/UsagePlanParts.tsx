@@ -6,6 +6,7 @@ import { ConnectedServiceMark } from '@/components/settings/connectedServices/Co
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '@/components/settings/connectedServices/account/accountBlockFormatters';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -244,6 +245,7 @@ export function planWindowStatement(
   };
 }
 
+
 const EXCLUSION_KEYS: Readonly<Record<string, Parameters<typeof t>[0]>> = {
   quota_exhausted: 'usage.board.plans.excludedUsedUp',
   cooldown: 'usage.board.plans.excludedCooldown',
@@ -324,6 +326,13 @@ export function UsagePlansNothingRead(
     readingShape?: UsageReadingShape;
     /** Unsupported secondary insights share one quiet statement, without another empty card. */
     missing?: readonly string[];
+    /**
+     * With nothing connected: the one line on what this widget will show (owner 10-31 first-run rules). Capacity
+     * owns the cause ("No subscription connected") and says this line under it; a widget derived from the same
+     * allowances says only this line, so a view of several never repeats the cause (Plans ×4).
+     */
+    promise: string;
+    ownsCause?: boolean;
     onRetry?: () => void | Promise<unknown>;
   }>,
 ) {
@@ -354,6 +363,29 @@ export function UsagePlansNothingRead(
   const reading = <UsageBodyReading testID={`${props.testID}.loading`} {...(props.readingShape ? { shape: props.readingShape } : {})} />;
   if (outstanding && pageHasDetail) return reading;
   if (outstanding) return <>{reading}{coverage}</>;
+  // Settled with no account and nothing failed: nothing is connected. The body is the widget empty state every
+  // frame uses (sized by the frame: the connect scene with room, one line when compact). Capacity owns the cause
+  // and carries the one sign-in (58d AF1); Home's Get set up drops its own item while Capacity is placed. The
+  // widgets derived from it say only what they will show. A history qualifier means nothing when nothing was read.
+  if (props.replacesContent !== false && !gaps.some((gap) => gap.status === 'error')) {
+    return (
+      <SurfaceStateCard
+        testID={props.testID}
+        kind="empty"
+        replacesContent
+        scene="connectAccount"
+        title={props.ownsCause ? t('usage.board.plans.capacitySignInTitle') : props.promise}
+        {...(props.ownsCause ? {
+          reason: props.promise,
+          action: {
+            label: t('usage.board.plans.capacitySignIn'),
+            testID: `${props.testID}.signIn`,
+            onPress: () => router.push(SETTINGS_ROUTES.connectedServicesAgentSignIn as Parameters<typeof router.push>[0]),
+          },
+        } : {})}
+      />
+    );
+  }
   return (
     <View style={styles.nothingRead}>
       <UsageBodyInsufficient

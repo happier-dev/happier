@@ -16,6 +16,7 @@ import { UsageRecapComposer } from './recap/UsageRecapComposer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import type { UsageBodyProps } from './usageBodyKit';
+import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
@@ -43,10 +44,10 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
   const slice = { key: getUsageQueryKey(shownQuery), requestedQuery: shownQuery, shownQuery, ...(hasAccounting ? { accounting: shownAccounting } : {}),
     pending: accountingStatus === 'pending', sources: [{ source: 'accounting', status: accountingStatus }] };
-  const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice,
-    model: { requestedQuery: { query: { ...shownQuery, period: { startMs: 1000, endMs: 1900 } }, authority },
+  const model: UsageWidgetBodyModel = { requestedQuery: { query: { ...shownQuery, period: { startMs: 1000, endMs: 1900 } }, authority },
       shownQuery: { query: shownQuery, authority }, slice,
-      pending: true, error: null, freshness: 'stale', updatingPreviousPeriod: true, refreshing: false, refresh: async () => {} } };
+      pending: true, error: null, freshness: 'stale', updatingPreviousPeriod: true, refreshing: false, refresh: async () => {} };
+  const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice, model };
   return await renderScreen(<UsageRecapWidget {...props} />);
 }
 

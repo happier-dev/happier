@@ -13,7 +13,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { useUsageWidgetModel } from './usageWidgetBatch';
-import { createCanonicalJsonSigningInput } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -23,7 +23,7 @@ import { ConnectedServiceQuotaGetResultV1Schema, ProviderAccountUsagePageProject
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
-import { IntervalTimeline } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, IntervalTimeline } from '@happier-dev/plugin-ui/presentation';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -49,9 +49,9 @@ beforeEach(() => {
         state: {}, members: [], activeConnectedAccountId: null, createdAt: 1, updatedAt: 1 })) }) });
 });
 
-it('keeps standalone Capacity independent of accounting across unrelated Account and current-record wakes', async () => {
+it('keeps standalone All Capacity independent of accounting across unrelated Account and current-record wakes', async () => {
   const previousMachines = storage.getState().machines;
-  const scope = { period: { startMs: 1000 }, agents: [], machines: [], projects: [], sources: [], session: null, costBasis: 'auto' } as const;
+  const scope = { period: { relative: 'all' }, agents: [], machines: [], projects: [], sources: [], session: null, costBasis: 'auto' } as const;
   const now = Date.now();
   const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'capacity' };
   const source = { bindingKind: 'account' as const, ref };
@@ -288,7 +288,7 @@ it('renders every overlapping pool membership without duplicating standalone Acc
   expect(screen.findAllHostsByTestId('capacity.cell.personal')).toHaveLength(2);
   expect(screen.findAllHostsByTestId('capacity.cell.standalone')).toHaveLength(1);
   const renderSlice = (next: typeof slice) => <InjectedAuthProvider credentials={null}>
-    <UsageCapacityWidget id="usage_capacity" model={{ ...model, slice: next }} slice={next} query={query} serverId="home" testID="capacity" />
+    <UsageCapacityWidget id="usage_capacity" model={model} slice={next} query={query} serverId="home" testID="capacity" />
   </InjectedAuthProvider>;
   await screen.update(renderSlice({ ...slice, pools: slice.pools!.map(pool => ({ ...pool,
     selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' },
@@ -401,8 +401,7 @@ it('names only pending accounts once in the held headline row, and drops it once
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const render = (slice: typeof settled) => renderScreen(<InjectedAuthProvider credentials={null}>
     <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
-      model={{ requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh',
-        updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel} />
+      model={{ refresh: async () => {} }} />
   </InjectedAuthProvider>);
   const screen = await render(reading);
   expect(screen.findByTestId('capacity.reading')).not.toBeNull();
@@ -506,8 +505,7 @@ it.each(['pending', 'not_loaded'] as const)('shows an observed headline with fir
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const body = (slice: typeof settled) => <InjectedAuthProvider credentials={null}>
     <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
-      model={{ requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh',
-        updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel} />
+      model={{ refresh: async () => {} }} />
   </InjectedAuthProvider>;
   const screen = await renderScreen(body(partial));
   expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();
@@ -527,4 +525,44 @@ it.each(['pending', 'not_loaded'] as const)('shows an observed headline with fir
   expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();
   expect(screen.getTextContent()).toContain('7%');
   expect(screen.findByTestId('capacity.reading')).toBeNull();
+});
+
+it('says a lone account once: the headline names it, no cell repeats its figure, name or reset (Home 0% ×2)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const now = Date.now();
+  const read = (accountId: string, usedPct = 100) => {
+    const recordKey = { providerId: 'anthropic', accountSubjectId: accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId }, bindingKind: 'account' },
+      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: accountId },
+        observedAtMs: now, fetchedAtMs: now, staleAfterMs: 600_000,
+        source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null,
+        meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
+          unit: 'count', status: 'ok', resetsAt: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  };
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const render = (accounts: readonly string[], usedPct = 100) => {
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: accounts.map(id => read(id, usedPct)) } }).results[0]!;
+    return renderScreen(<InjectedAuthProvider credentials={null}>
+      <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
+        model={{ refresh: async () => {} }} />
+    </InjectedAuthProvider>);
+  };
+  const lone = await render(['solo']);
+  expect(lone.findHostByTestId('capacity.tightest')).not.toBeNull();
+  // The headline says the figure and reset once; the cell keeps the bar and the account's name, with no figure.
+  expect(lone.getTextContent().split('0%').length - 1).toBe(1);
+  expect(lone.getTextContent()).not.toContain(t('usage.board.plans.cellUsedUp'));
+  expect(lone.findHostByTestId('capacity.cell.solo')).not.toBeNull();
+  // Two accounts still compare: each keeps its cell under the headline.
+  const two = await render(['solo', 'work']);
+  expect(two.findHostByTestId('capacity.cell.solo')).not.toBeNull();
+  expect(two.findHostByTestId('capacity.cell.work')).not.toBeNull();
+  expect(two.getTextContent().split('0%').length - 1).toBe(3);
+  const precise = await render(['solo'], 99.625);
+  expect(precise.findAllByType(ChartDatum).find(node => node.props.testID === 'capacity.tightest-datum')?.props.datum.value).toContain('0.375');
 });

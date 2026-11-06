@@ -1,58 +1,64 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import type { UsageCalendarExportInput } from '@happier-dev/protocol/usage/usageCalendarExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { NoticeLine } from '@/components/ui/lists/NoticeLine';
 import { Text } from '@/components/ui/text/Text';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ProviderAccountSubscriptionMonthlyPriceV1Schema } from '@happier-dev/protocol/connect/accountSubscription';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { UsagePlanDisclosure } from './UsagePlanParts';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { exportUsageTextDocument } from '../../usageExportFile';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useUsageSelectorMachineId } from './useUsagePlans';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { UsagePlanAccount } from './usagePlansModel';
 
+/** A write's outcome line: a failure is announced; a waiting approval says it is waiting. */
+function PlanNotice(props: Readonly<{ kind: 'error' | 'pending'; message: string; testID: string }>) {
+  const { theme } = useUnistyles();
+  const line = <NoticeLine testID={props.testID} iconName={props.kind === 'error' ? 'warning' : 'info'}
+    iconColor={props.kind === 'error' ? theme.colors.state.danger.foreground : theme.colors.text.secondary} title={props.message} />;
+  return props.kind === 'error' ? <View accessibilityRole="alert">{line}</View> : line;
+}
+
 /** Save is an explicit local operation after the same authorized, selected-fact Action read. */
 export function UsageCalendarExportButton(props: Readonly<{ input: UsageCalendarExportInput; serverId: string; testID: string }>) {
   const [state, setState] = React.useState<'idle' | 'pending' | 'failed' | 'saved'>('idle');
-  const pending = React.useRef<Readonly<{ cancel(): void; dispose(): void }> | null>(null);
-  React.useEffect(() => () => { pending.current?.cancel(); pending.current?.dispose(); }, []);
+  const pending = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => { pending.current?.abort(); }, []);
+  const { execute, isCurrent } = useMountedActionExecution(props.serverId, { openOnRequest: true });
   const save = async () => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.serverId) { setState('failed'); return; }
+    if (!isCurrent()) { setState('failed'); return; }
     setState('pending');
     const controller = new AbortController();
-    const retired = lifetime.onRetire(() => { controller.abort(); setState('idle'); });
-    const request = { cancel: () => controller.abort(), dispose: () => retired.dispose() };
-    pending.current = request;
+    pending.current?.abort();
+    pending.current = controller;
+    const current = () => !controller.signal.aborted && isCurrent();
     try {
-      const result = await createFrontDoorActionExecute()('usage.calendar.export', props.input, {
-        surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: controller.signal,
-      });
-      if (controller.signal.aborted || !lifetime.isCurrent()) return;
+      const result = await execute('usage.calendar.export', props.input, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!isCurrent()) { setState('idle'); return; }
+      if (!result.ok && isActionApprovalDeclinedErrorCode(result.errorCode)) { setState('idle'); return; }
       const file = result.ok ? UsageFileResultSchema.safeParse(result.result) : null;
       if (!file?.success || file.data.mediaType !== 'text/calendar') { setState('failed'); return; }
       const saved = await exportUsageTextDocument({ content: new TextDecoder().decode(decodeBase64(file.data.base64)),
-        fileName: file.data.fileName, mimeType: file.data.mediaType, isCurrent: () => !controller.signal.aborted && lifetime.isCurrent() });
-      if (!controller.signal.aborted && lifetime.isCurrent()) setState(saved ? 'saved' : 'failed');
-    } catch { if (!controller.signal.aborted && lifetime.isCurrent()) setState('failed'); }
-    finally { request.dispose(); if (pending.current === request) pending.current = null; }
+        fileName: file.data.fileName, mimeType: file.data.mediaType, isCurrent: current });
+      if (current()) setState(saved ? 'saved' : 'failed');
+    } catch { if (current()) setState('failed'); }
+    finally { if (pending.current === controller) pending.current = null; }
   };
   return <View>
     <RoundButton size="small" display="secondary" testID={props.testID} title={t('usage.board.plans.calendarExport')}
       loading={state === 'pending'} disabled={state === 'pending'} onPress={() => { void save(); }} />
-    {state === 'failed' ? <Text style={priceStyles.note} accessibilityRole="alert">{t('usage.board.plans.calendarFailed')}</Text> : null}
+    {state === 'failed' ? <PlanNotice kind="error" testID={`${props.testID}.failed`} message={t('usage.board.plans.calendarFailed')} /> : null}
     {state === 'saved' ? <Text style={priceStyles.note}>{t('usage.board.plans.calendarSaved')}</Text> : null}
   </View>;
 }
@@ -64,23 +70,23 @@ export function UsageBillingButton(props: Readonly<{ account: UsagePlanAccount; 
   const destinationKnown = registry.entries.some(entry => entry.service?.pluginId === props.account.service.pluginId
     && entry.service.localId === props.account.service.localId && entry.projectedDescriptor?.billingUrl && entry.executable === true);
   const [state, setState] = React.useState<'idle' | 'pending' | 'failed'>('idle');
-  const pending = React.useRef<Readonly<{ cancel(): void; dispose(): void }> | null>(null);
-  React.useEffect(() => () => { pending.current?.cancel(); pending.current?.dispose(); }, []);
+  const pending = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => { pending.current?.abort(); }, []);
+  const { execute, isCurrent } = useMountedActionExecution(props.serverId, { openOnRequest: true });
   const open = async () => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!machineId || !destinationKnown || !lifetime?.isCurrent() || lifetime.scope.serverId !== props.serverId) { setState('failed'); return; }
+    if (!machineId || !destinationKnown || !isCurrent()) { setState('failed'); return; }
     setState('pending');
     const controller = new AbortController();
-    const retired = lifetime.onRetire(() => { controller.abort(); setState('idle'); });
-    const request = { cancel: () => controller.abort(), dispose: () => retired.dispose() };
-    pending.current = request;
+    pending.current?.abort();
+    pending.current = controller;
     try {
-      const result = await createFrontDoorActionExecute()('connectedServices.billing.open', { account: props.account.source.ref, machineId }, {
-        surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: controller.signal,
-      });
-      if (!controller.signal.aborted && lifetime.isCurrent()) setState(result.ok ? 'idle' : 'failed');
-    } catch { if (!controller.signal.aborted && lifetime.isCurrent()) setState('failed'); }
-    finally { request.dispose(); if (pending.current === request) pending.current = null; }
+      const result = await execute('connectedServices.billing.open', { account: props.account.source.ref, machineId },
+        { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!isCurrent()) { setState('idle'); return; }
+      setState(result.ok || isActionApprovalDeclinedErrorCode(result.errorCode) ? 'idle' : 'failed');
+    } catch { if (!controller.signal.aborted && isCurrent()) setState('failed'); }
+    finally { if (pending.current === controller) pending.current = null; }
   };
   return <View style={priceStyles.billing}>
     <RoundButton size="small" display="secondary" testID={props.testID} title={t('usage.board.plans.billingOpen')}
@@ -93,57 +99,44 @@ export type UsagePlanActionState = 'idle' | 'pending' | 'approval' | 'failed';
 type UsagePlanWriteActionId = 'session.pending.resetStart.set' | 'session.pending.resetStart.cancel' | 'connectedServices.subscription.price.set';
 
 /**
- * One approval-gated Plans write through the UI front door, under the captured Account lifetime: the
- * same call for binding a pending start to a reset and for cancelling it. An approval request leaves
- * the row waiting; nothing is applied locally.
+ * One approval-gated Plans write through the mounted Action owner, under the Account lifetime it
+ * binds: the same call for binding a pending start to a reset and for cancelling it. The owner
+ * presents the approval and settles with its terminal result; until then the row waits and nothing
+ * is applied locally.
  */
 export function useUsagePlanAction(expectedServerId?: string): Readonly<{
   state: UsagePlanActionState;
+  failureMessage: string | null;
   run(actionId: UsagePlanWriteActionId, input: unknown, onSettled: () => void): Promise<void>;
 }> {
   const viewer = useActiveServerAccountScope();
   const scopeKey = JSON.stringify([viewer?.serverId ?? null, viewer?.accountId ?? null]);
-  const [presentation, setPresentation] = React.useState<Readonly<{ scopeKey: string; state: UsagePlanActionState }>>({ scopeKey, state: 'idle' });
-  const approvals = useActionApprovalContinuation({ scopeKey, serverId: viewer?.serverId ?? expectedServerId ?? '', onExecuted: () => {} });
-  const pending = React.useRef<Readonly<{ cancel(): void; dispose(): void }> | null>(null);
-  React.useEffect(() => () => { pending.current?.cancel(); pending.current?.dispose(); }, []);
+  const [presentation, setPresentation] = React.useState<Readonly<{ scopeKey: string; state: UsagePlanActionState; errorCode?: string }>>({ scopeKey, state: 'idle' });
+  const pending = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => { pending.current?.abort(); }, []);
   const state = presentation.scopeKey === scopeKey ? presentation.state : 'idle';
+  const onApprovalPending = React.useCallback(() => setPresentation({ scopeKey, state: 'approval' }), [scopeKey]);
+  const { execute, isCurrent } = useMountedActionExecution(expectedServerId ?? viewer?.serverId ?? null,
+    { openOnRequest: true, onApprovalPending });
   const run = React.useCallback(async (actionId: UsagePlanWriteActionId, input: unknown, onSettled: () => void) => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    const setState = (state: UsagePlanActionState) => setPresentation({ scopeKey, state });
-    if (!lifetime?.isCurrent() || scopeKey !== JSON.stringify([lifetime.scope.serverId, lifetime.scope.accountId])
-      || (expectedServerId !== undefined && lifetime.scope.serverId !== expectedServerId)) { setState('failed'); return; }
+    const setState = (next: UsagePlanActionState, errorCode?: string) => setPresentation({ scopeKey, state: next, errorCode });
+    if (!isCurrent()) { setState('failed'); return; }
     setState('pending');
     const controller = new AbortController();
-    const retired = lifetime.onRetire(() => { controller.abort(); setState('idle'); });
-    const request = { cancel: () => controller.abort(), dispose: () => retired.dispose() };
-    pending.current = request;
-    const current = () => !controller.signal.aborted && lifetime.isCurrent();
-    const release = () => { request.dispose(); if (pending.current === request) pending.current = null; };
-    let deferred = false;
+    pending.current?.abort();
+    pending.current = controller;
     try {
-      const result = await createFrontDoorActionExecute()(actionId, input, {
-        surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: controller.signal,
-      });
-      if (!current()) return;
-      if (!result.ok) { setState('failed'); return; }
-      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-      if (approval.success) {
-        deferred = true;
-        setState('approval');
-        approvals.requestApproval(createActionApprovalContinuation({ artifactId: approval.data.artifactId,
-          actionId, scope: lifetime.scope, expectedInput: input, signal: controller.signal, refreshAfterExecution: false,
-          onSucceeded: () => { if (current()) { setState('idle'); onSettled(); } release(); },
-          onFailed: () => { if (current()) setState('failed'); release(); },
-        }));
-        return;
-      }
-      setState('idle');
-      onSettled();
-    } catch { if (current()) setState('failed'); }
-    finally { if (!deferred) release(); }
-  }, [expectedServerId, scopeKey, approvals.requestApproval]);
-  return { state, run };
+      const result = await execute(actionId, input, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!isCurrent()) { setState('idle'); return; }
+      if (result.ok) { setState('idle'); onSettled(); return; }
+      setState('failed', result.errorCode);
+    } catch { if (!controller.signal.aborted && isCurrent()) setState('failed'); }
+    finally { if (pending.current === controller) pending.current = null; }
+  }, [execute, isCurrent, scopeKey]);
+  const failureMessage = state === 'failed' && isActionApprovalDeclinedErrorCode(presentation.errorCode)
+    ? t('usage.board.plans.approvalDeclined') : null;
+  return { state, failureMessage, run };
 }
 
 /** The entered price is personal metadata. Its Action owns Account-mode sealing and persistence. */
@@ -161,7 +154,7 @@ function SubscriptionPriceFields(props: React.ComponentProps<typeof UsageSubscri
   const entered = props.account.subscription?.enteredMonthlyPrice;
   const [amount, setAmount] = React.useState(entered ? String(entered.amount) : '');
   const [currency, setCurrency] = React.useState(entered?.currency ?? '');
-  const { state, run } = useUsagePlanAction(props.serverId);
+  const { state, failureMessage, run } = useUsagePlanAction(props.serverId);
   const viewer = useActiveServerAccountScope();
   const price = ProviderAccountSubscriptionMonthlyPriceV1Schema.safeParse({
     amount: amount.trim() ? Number(amount) : NaN, currency: currency.trim().toUpperCase(), enteredAtMs: Date.now(),
@@ -191,8 +184,8 @@ function SubscriptionPriceFields(props: React.ComponentProps<typeof UsageSubscri
       </View>
     </View>
     <Text style={priceStyles.note}>{t('usage.board.plans.monthlyPriceNote')}</Text>
-    {state === 'failed' ? <Text accessibilityRole="alert" style={priceStyles.note}>{t('common.saveError')}</Text> : null}
-    {state === 'approval' ? <Text style={priceStyles.note}>{t('usage.board.plans.waitingApproval')}</Text> : null}
+    {state === 'failed' ? <PlanNotice kind="error" testID={`${props.testID}.failed`} message={failureMessage ?? t('common.saveError')} /> : null}
+    {state === 'approval' ? <PlanNotice kind="pending" testID={`${props.testID}.approval`} message={t('usage.board.plans.waitingApproval')} /> : null}
   </View>;
 }
 

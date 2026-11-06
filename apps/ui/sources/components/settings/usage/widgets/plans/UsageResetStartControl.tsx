@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionPendingMessages } from '@/sync/store/hooks';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { PendingResetStartsReadResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -154,8 +155,10 @@ function AccountResetStartRow(props: Readonly<{
   testID: string;
 }>) {
   const session = useSession(props.entry.sessionId, props.serverId);
-  return <ResetStartRow title={session ? getSessionName(session, props.serverId) : t('usage.board.plans.waitingSession')}
-    detail={session ? props.entry.localId : `${props.entry.sessionId} · ${props.entry.localId}`}
+  const isSessionVisible = useSessionRecordingVisibility();
+  const visible = isSessionVisible({ sessionId: props.entry.sessionId, serverId: props.serverId });
+  return <ResetStartRow title={visible && session ? getSessionName(session, props.serverId) : t('usage.board.plans.waitingSession')}
+    detail={visible ? session ? props.entry.localId : `${props.entry.sessionId} · ${props.entry.localId}` : undefined}
     localId={props.entry.localId} authorityCurrent={props.entry.authorityCurrent}
     sessionId={props.entry.sessionId} options={props.options} serverId={props.serverId} onSettled={props.onSettled} testID={props.testID} />;
 }

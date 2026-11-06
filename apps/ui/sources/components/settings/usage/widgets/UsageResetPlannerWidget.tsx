@@ -2,16 +2,17 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { IntervalTimeline } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, IntervalTimeline, formatHappierDataExactShare, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { AccountUsageResetsLine } from '@/components/settings/connectedServices/usage/AccountUsageFacts';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { usageSignatureAccent } from '../usageAccent';
 import {
   UsageBodyInsufficient,
@@ -50,13 +51,22 @@ function eventText(event: UsagePlanEvent): string {
   }
 }
 
+/** The moment's exact precision and the current allowance stay in domain units, never generic milliseconds. */
+function resetEventDatum(event: UsagePlanEvent, title: string): HappierChartDatum | null {
+  const remaining = event.kind === 'reset' ? event.window?.remainingFraction : null;
+  const percent = remaining == null ? null : formatHappierDataExactShare(remaining, getPreferredLanguage());
+  if (event.atMs % 60_000 === 0 && (percent === null || formatPlanPercent(remaining!) === percent)) return null;
+  return { label: [title, eventText(event)].filter(Boolean).join(' · '), value: [new Date(event.atMs).toISOString(),
+    percent === null ? null : t('usage.board.plans.listLeftNow', { percent })].filter(Boolean).join(' · ') };
+}
+
 /**
  * Every known reset, renewal, ending and banked-reset expiry, from the accepted B reads. The span is
  * the facts' own (now to the last known moment); waiting work and banked resets act through their
  * existing owners.
  */
 export function UsageResetPlannerWidget(props: UsageBodyProps) {
-  const plans = useUsagePlans(props.slice, props.model);
+  const plans = useUsagePlans(props.slice, props.model.refresh);
   const { projection, nameOf, nowMs } = plans;
   const text = usePlanText();
   // A tile keeps to the shared timeline, whose own rows are the exact list at that size.
@@ -73,6 +83,7 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
         <UsagePlansNothingRead
           testID={`${props.testID}.none`}
           slice={props.slice}
+          promise={t('usage.board.plans.resetsNoneConnected')}
           onRetry={props.model.refresh}
         />
       </View>
@@ -260,8 +271,10 @@ function ResetTimeline(
     intervals={props.events.map(event => {
       const account = byKey.get(event.accountKey);
       const name = account ? props.nameOf(account) : null;
+      const datum = resetEventDatum(event, name?.title ?? '');
       return { id: event.key, kind: 'point' as const,
         label: [name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
+        ...(datum ? { datum } : {}),
         start: event.atMs, end: event.atMs };
     })}
     renderMarker={interval => <ResetMarker kind={eventsByKey.get(interval.id)!.kind} />} />;
@@ -290,7 +303,8 @@ function ResetList(
           ? t('usage.board.plans.listLeftNow', { percent: formatPlanPercent(event.window.remainingFraction) })
           : null;
         const what = [eventText(event), left].filter(Boolean).join(' · ');
-        return (
+        const datum = resetEventDatum(event, name?.title ?? '');
+        const visual = (
           <View
             key={event.key}
             testID={`${props.testID}.${index}`}
@@ -318,6 +332,7 @@ function ResetList(
             </View>
           </View>
         );
+        return datum ? <ChartDatum key={event.key} testID={`${props.testID}.${index}.detail`} datum={datum}>{visual}</ChartDatum> : visual;
       })}
     </View>
   );
@@ -336,6 +351,7 @@ function WaitingRow(
   }>,
 ) {
   const session = useSession(props.sessionId, props.serverId);
+  const isSessionVisible = useSessionRecordingVisibility();
   const text = usePlanText();
   const action = useUsagePlanAction();
   const state = action.state;
@@ -357,7 +373,7 @@ function WaitingRow(
     <View testID={props.testID} style={styles.waitingRow}>
       <View style={styles.listText}>
         <Text style={[styles.waitingName, text.title]} numberOfLines={1}>
-          {session
+          {session && isSessionVisible(props)
             ? getSessionName(session, props.serverId)
             : t('usage.board.plans.waitingSession')}
         </Text>

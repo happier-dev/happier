@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   BurnUpChart,
+  ChartDatum,
+  formatHappierDataExactShare,
   formatHappierDataValue,
   HAPPIER_PRESS_FEEDBACK_V1,
   HappierDataMetric,
@@ -18,11 +20,12 @@ import {
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { NoticeLine } from '@/components/ui/lists/NoticeLine';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useUsageChartDetails } from './usageMountedControls';
 import { usageSignatureAccent } from '../usageAccent';
@@ -155,7 +158,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   // Beside other widgets (Medium, Wide) Projections is the lab's Limits list (`wgusage-CD`): one meter
   // per reported window with its projection, no burn-up, no disclosures. Its own view keeps the chart.
   const list = presentation?.size === 'medium' || presentation?.size === 'wide';
-  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model);
+  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   useWidgetFrameBodyCaption(t('usage.board.plans.projectionsCaption'));
   const settled = projection.accounts.length > 0 && readPendingPlanAccountCount(projection.accounts) === 0;
   const paced = React.useMemo(() => settled ? [...selectUsagePacedWindows(projection.accounts)]
@@ -237,6 +240,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         <UsagePlansNothingRead
           testID={`${props.testID}.none`}
           slice={props.slice}
+          promise={t('usage.board.plans.projectionsNoneConnected')}
           {...(readingShape ? { readingShape } : {})}
           onRetry={props.model.refresh}
         />
@@ -271,19 +275,24 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         count: pace.sampleCount,
       })
     : null;
+  const exactRange = pace?.empiricalRange ? t('usage.board.plans.rangeAtReset', {
+    min: formatHappierDataExactShare(pace.empiricalRange.min, getPreferredLanguage()),
+    max: formatHappierDataExactShare(pace.empiricalRange.max, getPreferredLanguage()), count: pace.sampleCount,
+  }) : null;
+  const rangeInk = range ? <Text testID={`${props.testID}.range`} accessibilityLabel={range} style={[styles.quiet, text.detail]}>{range}</Text> : null;
   const depletingNote = depleting ? (
-    <View style={styles.paceNote} testID={`${props.testID}.ahead`}>
-      <Icon name="warning" size={13} color={theme.colors.state.danger.foreground} />
-      <Text style={[styles.paceNoteText, text.detail]}>
-        {[
-          `${depleting.name.title} · ${depleting.window.label}`,
-          t('usage.board.plans.projectionRunsOut', {
-            time: formatPlanMoment(depleting.window.pace!.depletesAtMs!, nowMs),
-          }),
-          t('usage.board.plans.projectionBeforeReset'),
-        ].join(' · ')}
-      </Text>
-    </View>
+    <NoticeLine
+      testID={`${props.testID}.ahead`}
+      iconName="warning"
+      iconColor={theme.colors.state.danger.foreground}
+      subject={`${depleting.name.title} · ${depleting.window.label}`}
+      title={[
+        t('usage.board.plans.projectionRunsOut', {
+          time: formatPlanMoment(depleting.window.pace!.depletesAtMs!, nowMs),
+        }),
+        t('usage.board.plans.projectionBeforeReset'),
+      ].join(' · ')}
+    />
   ) : null;
   if (list) {
     const lead = leadingUsageRows(rows, expanded);
@@ -405,11 +414,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             {...(axisTicks ? { axisTicks } : {})}
             showReadout={false}
           />
-          {range ? (
-            <Text testID={`${props.testID}.range`} accessibilityLabel={range} style={[styles.quiet, text.detail]}>
-              {range}
-            </Text>
-          ) : null}
+          {range && exactRange && exactRange !== range ? <ChartDatum testID={`${props.testID}.range.detail`}
+            datum={{ label: focusTitle, value: exactRange }}>{rangeInk}</ChartDatum> : rangeInk}
           {earlier && !tile ? (
             <Text
               testID={`${props.testID}.earlier`}
@@ -515,23 +521,23 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
       : null,
   ].filter(Boolean).join(' · ');
   const runsOut = pace.depletesAtMs !== null;
+  const figure = <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
+    label={runsOut ? t('usage.board.plans.projectionRunsOutLabel') : t('usage.board.plans.projectionUsedAtReset')}
+    value={runsOut ? formatPlanMoment(pace.depletesAtMs!, props.nowMs) : Math.round(pace.projectedUsedFraction * 100)}
+    {...(runsOut ? {} : { valueFormatter: (value: number) => `~${value}%` })} showLabel caption={basis} />;
+  const exact = runsOut ? new Intl.DateTimeFormat(getPreferredLanguage(), { dateStyle: 'full', timeStyle: 'long' }).format(pace.depletesAtMs!)
+    : formatHappierDataExactShare(pace.projectedUsedFraction, getPreferredLanguage());
   return (
     <View style={styles.headline}>
-      <HappierDataMetric
-        testID={props.testID}
-        theme={chartTheme}
-        size="stat"
-        label={runsOut ? t('usage.board.plans.projectionRunsOutLabel') : t('usage.board.plans.projectionUsedAtReset')}
-        value={runsOut ? formatPlanMoment(pace.depletesAtMs!, props.nowMs) : Math.round(pace.projectedUsedFraction * 100)}
-        {...(runsOut ? {} : { valueFormatter: (value: number) => `~${value}%` })}
-        showLabel
-        caption={basis}
-      />
+      {runsOut || exact !== `${Math.round(pace.projectedUsedFraction * 100)}%`
+        ? <ChartDatum testID={`${props.testID}.detail`} datum={{ label: props.window.label, value: exact, subtitle: basis }}>{figure}</ChartDatum> : figure}
       {runsOut ? (
-        <View style={styles.paceNote}>
-          <Icon name="warning" size={13} color={theme.colors.state.danger.foreground} />
-          <Text style={[styles.paceNoteText, text.detail]}>{t('usage.board.plans.projectionBeforeReset')}</Text>
-        </View>
+        <NoticeLine
+          testID={`${props.testID}.beforeReset`}
+          iconName="warning"
+          iconColor={theme.colors.state.danger.foreground}
+          title={t('usage.board.plans.projectionBeforeReset')}
+        />
       ) : null}
     </View>
   );
@@ -652,7 +658,7 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
           t('usage.board.plans.estimatedFrom', { count: value.sampleCount }),
         ].join(' · ')
       : t('usage.board.plans.pastCycleNotMeasured', { reason: planPaceReasonText(value.reason) });
-  return (
+  const visual = (
     <View testID={props.testID} style={styles.cycle} accessibilityLabel={`${ended}, ${detail}`}>
       <Text style={[styles.cycleWhen, text.detail]} numberOfLines={1}>
         {ended}
@@ -668,6 +674,9 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
       </View>
     </View>
   );
+  const exact = value.status === 'available' ? formatHappierDataExactShare(value.usedFraction, getPreferredLanguage()) : null;
+  return exact !== null && value.status === 'available' && formatPlanPercent(value.usedFraction) !== exact
+    ? <ChartDatum testID={`${props.testID}.detail`} datum={{ label: ended, value: exact, subtitle: detail }}>{visual}</ChartDatum> : visual;
 }
 
 function ProjectionRow(
@@ -683,7 +692,7 @@ function ProjectionRow(
 ) {
   const { window } = props;
   const statement = planWindowStatement(window, props.nowMs);
-  return (
+  const visual = (
     <UsageMeterRow
       testID={props.testID}
       label={`${props.name.title} · ${window.label}`}
@@ -710,6 +719,13 @@ function ProjectionRow(
         : {})}
     />
   );
+  const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, getPreferredLanguage());
+  return exact === null || !window.pace && formatPlanPercent(window.remainingFraction!).includes(exact) ? visual
+    : <ChartDatum testID={`${props.testID}.datum`} datum={{ label: `${props.name.title} · ${window.label}`,
+      value: t('usage.board.plans.cellLeft', { percent: exact }),
+      subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
+        window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
+        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>{visual}</ChartDatum>;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -747,11 +763,5 @@ const styles = StyleSheet.create((theme) => ({
     width: 96,
   },
   cycleBody: { flex: 1, minWidth: 0, gap: theme.space.s4 },
-  paceNote: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-  paceNoteText: {
-    ...Typography.default('medium'),
-    color: theme.colors.state.danger.foreground,
-    flexShrink: 1,
-  },
   targetNote: { ...Typography.default(), color: theme.colors.text.secondary },
 }));

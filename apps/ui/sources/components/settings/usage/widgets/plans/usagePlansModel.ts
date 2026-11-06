@@ -5,7 +5,7 @@ import {
   type ProviderAccountUsageEarlierWindowCurvesV1,
   type ProviderAccountUsagePaceV1,
 } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
-import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { projectUsageScheduledEvents } from '@happier-dev/protocol/usage/usageCalendarExport';
 import type { UsageQueryPoolSnapshot, UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -196,7 +196,6 @@ export function projectUsagePlans(
   nowMs: number,
   memberships?: readonly UsageQueryPoolSnapshot[],
   sourceStates?: readonly UsageQuerySourceState[],
-  isUsageCapable?: (service: UsagePlanAccount['service']) => boolean,
 ): UsagePlansProjection {
   const accounts: UsagePlanAccount[] = [];
   const pools = new Map<
@@ -224,7 +223,6 @@ export function projectUsagePlans(
   const sources = new Map([...states].map(([key, entry]) => [key, entry.source]));
   for (const [key, read] of reads) if (!sources.has(key)) sources.set(key, read.source);
   for (const [key, source] of sources) {
-    if (isUsageCapable && !isUsageCapable(source.ref.service)) continue;
     const read = reads.get(key) ?? null;
     const ref = source.ref;
     const groupId =

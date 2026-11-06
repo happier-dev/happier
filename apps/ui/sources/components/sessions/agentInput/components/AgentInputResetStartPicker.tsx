@@ -36,7 +36,7 @@ function ResetStartOptions(props: Props & Readonly<{
     slice: UsageQueryResultSlice;
     resource: Readonly<{ refreshing: boolean; refresh(): Promise<void> }>;
 }>) {
-    const plans = useUsagePlans(props.slice, props.resource);
+    const plans = useUsagePlans(props.slice, props.resource.refresh);
     const actions = plans.projection.accounts.flatMap(account => account.windows.flatMap(window => {
         const binding = resolveUsageResetStartBinding(account, window.meterId, plans.nowMs);
         if (binding.status !== 'available' || window.resetAtMs === null) return [];
