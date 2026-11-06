@@ -5,6 +5,16 @@ import { createProcessCensusReader, readProcessCensus, type ProcessCensusDepende
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
 
+export type ProcessGenerationWitness = Readonly<{ pid: number; processStartTimeMs: number }>;
+
+export function parseProcessGenerationWitness(value: unknown): ProcessGenerationWitness | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (!Number.isSafeInteger(record.pid) || (record.pid as number) <= 0
+        || !Number.isSafeInteger(record.processStartTimeMs) || (record.processStartTimeMs as number) < 0) return null;
+    return Object.freeze({ pid: record.pid as number, processStartTimeMs: record.processStartTimeMs as number });
+}
+
 type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';
 
 export type ReadProcessIdentityByPidDependencies = Pick<ProcessCensusDependencies,
