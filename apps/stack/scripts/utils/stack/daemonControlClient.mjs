@@ -5,9 +5,9 @@ import { parseDaemonLockSnapshot } from '@happier-dev/cli-common/process';
 
 import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from '../auth/stable_scope_id.mjs';
-import { resolvePidStackOwnership } from '../proc/ownership.mjs';
-import { isPidAlive } from '../proc/pids.mjs';
-import { readStackRuntimeStateFile } from './runtime_state.mjs';
+import { isRecordedStackProcessRetired, resolvePidStackOwnership } from '../proc/ownership.mjs';
+import { isPidAlive, observePidLiveness } from '../proc/pids.mjs';
+import { getStackRuntimeProcessInstanceFingerprint, readStackRuntimeStateFile } from './runtime_state.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import {
   processInstanceFingerprintMatches,
@@ -119,15 +119,8 @@ async function readDaemonProcessInstanceFingerprint({ pid, cliHomeDir, env } = {
   const baseDir = envPath ? dirname(envPath) : dirname(String(cliHomeDir ?? '').trim());
   if (!baseDir) return null;
   const runtime = await readStackRuntimeStateFile(join(baseDir, 'stack.runtime.json')).catch(() => null);
-  for (const key of ['daemonPid', 'daemonPids']) {
-    const identities = runtime?.processInstances?.processes?.[key];
-    for (const identity of Array.isArray(identities) ? identities : [identities]) {
-      if (Number(identity?.pid) === Number(pid)) {
-        return String(identity?.fingerprint ?? '').trim() || null;
-      }
-    }
-  }
-  return null;
+  return getStackRuntimeProcessInstanceFingerprint(runtime, 'daemonPid', pid)
+    ?? getStackRuntimeProcessInstanceFingerprint(runtime, 'daemonPids', pid);
 }
 
 function resolveDaemonControlStatePaths({
@@ -175,18 +168,25 @@ export async function readDaemonControlState({
   if (!Number.isFinite(pid) || pid <= 1) {
     return { ok: false, reason: 'missing_pid', statePath };
   }
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return { ok: false, reason: 'daemon_not_running', statePath, pid };
-  }
+  const liveness = observePidLiveness(pid);
+  const retiredControl = { ok: false, reason: 'daemon_not_running', statePath, recordedStartedAt: state?.startedAt, pid };
+  const retirementEvidence = {
+    recordedStartedAt: state?.startedAt,
+    isPidProvablyAbsentImpl: () => liveness.status === 'dead',
+  };
+  // Absence or a prior boot settles the record without reading runtime state
+  // or asking the process now holding its old control port.
+  if (isRecordedStackProcessRetired(pid, retirementEvidence)) return retiredControl;
   const ownershipContext = resolveDaemonControlOwnershipContext({ cliHomeDir, stackName, env });
+  const processInstanceFingerprint = ownershipContext
+    ? await readDaemonProcessInstanceFingerprint({ pid, cliHomeDir, env }) : null;
+  if (processInstanceFingerprint && isRecordedStackProcessRetired(pid, {
+    ...retirementEvidence,
+    processInstanceFingerprint,
+  })) return retiredControl;
+  if (liveness.status !== 'alive') return { ok: false,
+    reason: 'daemon_liveness_inconclusive', statePath, recordedStartedAt: state?.startedAt, pid };
   if (ownershipContext && typeof resolvePidStackOwnershipImpl === 'function') {
-    const processInstanceFingerprint = await readDaemonProcessInstanceFingerprint({
-      pid,
-      cliHomeDir,
-      env,
-    });
     if (processInstanceFingerprint) ownershipContext.processInstanceFingerprint = processInstanceFingerprint;
     const ownership = await resolvePidStackOwnershipImpl(pid, ownershipContext);
     if (ownership?.owned !== true) {
@@ -390,6 +390,8 @@ export async function restartDaemonViaControlServer({
       readDaemonControlStateImpl,
     });
   if (!controlState.ok) {
+    // With no incumbent, the start owner uses its ordinary launch path.
+    if (controlState.reason === 'missing_state' || controlState.reason === 'daemon_not_running') return null;
     throw new Error(`daemon control /restart unavailable (${controlState.reason})`);
   }
   const windowsProof = await proveWindowsDaemonControlState({

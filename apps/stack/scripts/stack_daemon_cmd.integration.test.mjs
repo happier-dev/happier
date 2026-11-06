@@ -74,6 +74,11 @@ test(`stack daemon ${action} reaches the observed remote daemon without local la
     assert.equal(state.remoteTargets[target.name].serviceStatus?.daemon, 'running');
     assert.deepEqual(state.remoteTargets[target.name].sourceRuntimeIdentities.daemon, { selected: 'current', loaded: 'current' });
   }
+  await writeFile(join(bin, 'ssh'), '#!/bin/sh\nexit 7\n');
+  const failed = await runHstack(['stack', 'daemon', stackName, action,
+    '--runtime=source', '--identity=account-b', '--json'], { env });
+  assert.notEqual(failed.code, 0, 'a remote daemon failure must fail the public command');
+  assert.match(failed.stderr, /remote daemon failed \(code=7\)/);
 });
 }
 

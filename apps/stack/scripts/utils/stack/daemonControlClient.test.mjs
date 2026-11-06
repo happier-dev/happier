@@ -35,6 +35,23 @@ async function writeDaemonState({ cliHomeDir, serverUrl, env, state }) {
   await writeFile(statePath, JSON.stringify(state), 'utf8');
 }
 
+test('daemon control does not contact a reused endpoint from a previous boot', async t => {
+  const { root: cliHomeDir } = await createTempFixture(t, { prefix: 'hstack-control-prior-boot-' });
+  const serverUrl = 'http://127.0.0.1:3005';
+  let requests = 0;
+  await withServer((_req, res) => {
+    requests++;
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: 'ok' }));
+  }, async ({ port }) => {
+    await writeDaemonState({ cliHomeDir, serverUrl,
+      state: { pid: process.pid, httpPort: port, startedAt: 1 } });
+    const result = await pingDaemon({ cliHomeDir, serverUrl });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'daemon_not_running');
+    assert.equal(requests, 0, 'a retired publication must produce zero requests to the replacement endpoint');
+  });
+});
+
 for (const outcome of ['ready', 'exited', 'wrong-fingerprint']) {
   test(`restart confirmation follows a live successor lock past its checkpoint until ${outcome}`, { timeout: 10_000 }, async (t) => {
     const { root: cliHomeDir } = await createTempFixture(t, { prefix: 'hstack-restart-checkpoint-' });
@@ -364,6 +381,31 @@ test('restartDaemonViaControlServer posts /restart without leaking token in fail
       },
     );
   });
+});
+
+test('restartDaemonViaControlServer leaves an absent incumbent to the canonical start owner', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-missing-' });
+  assert.equal(await restartDaemonViaControlServer({
+    cliHomeDir: fixture.path('cli'), serverUrl: 'http://127.0.0.1:3009',
+    env: {}, stackName: 'restart-missing',
+  }), null);
+});
+
+test('restartDaemonViaControlServer does not treat an inconclusive incumbent probe as absence', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-inconclusive-' });
+  const cliHomeDir = fixture.path('cli');
+  const serverUrl = 'http://127.0.0.1:3009';
+  await writeDaemonState({ cliHomeDir, serverUrl, env: {},
+    state: { pid: process.pid, httpPort: 3009, startedAt: Date.now() } });
+  // OS signal probes are a system boundary. A probe failure proves neither
+  // absence nor authority to launch a replacement.
+  const kill = process.kill;
+  t.mock.method(process, 'kill', (pid, signal) => {
+    if (pid === process.pid && signal === 0) throw Object.assign(new Error('probe failed'), { code: 'EIO' });
+    return kill.call(process, pid, signal);
+  });
+  await assert.rejects(restartDaemonViaControlServer({ cliHomeDir, serverUrl, env: {} }),
+    /daemon_liveness_inconclusive/);
 });
 
 test('restartDaemonViaControlServer resolves only after the replacement daemon is pingable', async () => {
