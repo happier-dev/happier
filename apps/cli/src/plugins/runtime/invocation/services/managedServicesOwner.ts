@@ -5,7 +5,7 @@ import { loadUndici } from '@/utils/loadUndici';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
 import { logger } from '@/ui/logger';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { selectVisibleMachineProjectServices, type MachineServiceDisclosureRequest } from '@/daemon/local/services/launch/machineServiceDisclosure';
+import type { MachineServiceDisclosureRequest } from '@/daemon/local/services/launch/machineServiceDisclosure';
 import { assertManagedServiceRequestBodySize, failManagedServiceRequestSize } from './managedServiceRequestSize';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import { LocalServiceEstablishmentFailureV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -4971,7 +4971,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 readiness: NonNullable<ManagedServiceProcessSnapshot['readiness']> }>> = [];
             // Authority coverage, not a health or restart-policy veto.
             let coverage: 'complete' | 'unknown' = permanentRetirementStarted ? 'unknown' : 'complete';
-            const visibleProjects = new Set(await selectVisibleMachineProjectServices(request, listProjectServices(), request));
             for (const entry of semanticEntries.values()) {
                 if (!isManagedServiceSemanticEntry(entry)) { coverage = 'unknown'; continue; }
                 const snapshot = entry.readProcessSnapshot?.();
@@ -4980,9 +4979,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 const target = entry.authority === 'machine' ? entry.machine
                     : entry.project.kind === 'workspace' ? entry.project.workspace : entry.project;
                 if (target.machineId !== request.machineId || !await isServerProfileHomeIdentity(request.serverId, target.serverId)) continue;
-                if (entry.authority === 'project' && (!entry.project.handle || !visibleProjects.has(entry.project.handle))) {
-                    coverage = 'unknown'; continue;
-                }
                 const serviceId = entry.authority === 'machine' ? entry.machine.handle?.serviceId : entry.project.handle?.serviceId;
                 if (!serviceId) { coverage = 'unknown'; continue; }
                 if (!snapshot) { coverage = 'unknown'; continue; }
