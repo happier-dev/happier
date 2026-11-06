@@ -234,6 +234,10 @@ export async function buildSessionOrganizationAccountEncryptionMigrationDirectiv
             kind: 'label' as const,
             row,
         })),
+        ...(params.inventory.sessionAppearances ?? []).map((row) => ({
+            kind: 'sessionAppearance' as const,
+            row,
+        })),
     ];
     if (rows.length === 0) return { action: 'assert_empty' };
     const expectedSourceEnvelopeType = params.toMode === 'plain'
@@ -312,6 +316,13 @@ export async function buildSessionOrganizationAccountEncryptionMigrationDirectiv
             expectedDisplay: label.display,
             display: reseal(label.display),
         })),
+        ...(params.inventory.sessionAppearances ? {
+            sessionAppearances: params.inventory.sessionAppearances.map((appearance) => ({
+                sessionId: appearance.sessionId,
+                expectedDisplay: appearance.display,
+                display: reseal(appearance.display),
+            })),
+        } : {}),
     };
 }
 
