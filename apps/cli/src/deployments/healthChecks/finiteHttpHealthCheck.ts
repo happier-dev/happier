@@ -27,7 +27,7 @@ export type HealthCheckFiniteLeafContextV1 = Readonly<{
     isCurrent(): Promise<boolean>;
     /** The existing HTTP owner bound by P50 to this exact saved endpoint,
      * observer and network policy, including destination/redirect admission. */
-    http: Pick<HttpService, 'request'>;
+    http: Pick<HttpService, 'request' | 'requestStream'>;
 }>;
 
 function endpoint(check: AdmittedHttpHealthCheckV1): Readonly<{ url: string; expectStatus: number }> | null {
@@ -87,11 +87,32 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     });
     const { url, expectStatus } = target;
     let response: HttpResponse;
+    let errorPrefix = '';
     try {
-        response = await context.http.request({ url, method: 'GET', redirect: 'manual',
-            responseBody: kind === 'http' && check.keyword !== undefined ? 'buffer' : 'discard',
-            ...(kind === 'certificate' ? { observeTlsPeer: true as const } : {}),
-        }, { signal: context.signal });
+        const request = { url, method: 'GET' as const, redirect: 'manual' as const,
+            headers: { 'User-Agent': 'Happier-Health-Check' } };
+        if (kind === 'http' && check.keyword === undefined) {
+            const stream = await context.http.requestStream(request, { signal: context.signal });
+            try {
+                // Healthy status-only probes still read no body. For Cloudflare's
+                // plaintext refusal, inspect only the code plus its delimiter.
+                if (stream.status === 403 && stream.headers.server?.toLowerCase() === 'cloudflare') {
+                    const prefixLength = 'error code: 1010'.length + 1;
+                    for await (const chunk of stream.chunks) {
+                        errorPrefix += new TextDecoder().decode(chunk.subarray(0, prefixLength - errorPrefix.length));
+                        if (errorPrefix.length >= prefixLength || !'error code: 1010'.startsWith(errorPrefix)) break;
+                    }
+                }
+                response = { status: stream.status, finalUrl: stream.finalUrl,
+                    headers: stream.headers, body: new Uint8Array() };
+            } finally { await stream.dispose(); }
+        } else {
+            response = await context.http.request({ ...request,
+                responseBody: kind === 'http' ? 'buffer' : 'discard',
+                ...(kind === 'certificate' ? { observeTlsPeer: true as const } : {}),
+            }, { signal: context.signal });
+            if (kind === 'http') errorPrefix = new TextDecoder().decode(response.body.subarray(0, 'error code: 1010'.length + 1));
+        }
     } catch (error) {
         await assertCurrent(context);
         // Authority/policy failures retain the transport's typed reason. A body
@@ -106,6 +127,13 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     }
     await assertCurrent(context);
     if (kind === 'http') {
+        if (response.status === 403 && response.headers.server?.toLowerCase() === 'cloudflare'
+            && /^error code: 1010(?:\s|$)/.test(errorPrefix)) {
+            return result(check, kind, context, startedAt, 'down', { httpStatus: response.status, expectStatus,
+                reason: 'cloudflare_browser_integrity', providerCode: 1010,
+                disclosure: 'Cloudflare blocked the HTTP client signature; the application response was not observed',
+                remedy: 'Review Cloudflare error 1010 guidance for this health client. Pages and workers.dev Browser Integrity Check cannot be disabled; other zones can adjust the blocking rule.' });
+        }
         const statusMatched = response.status === expectStatus;
         const keywordMatched = check.keyword === undefined || new TextDecoder().decode(response.body).includes(check.keyword);
         return result(check, kind, context, startedAt, statusMatched && keywordMatched ? 'up' : 'down',

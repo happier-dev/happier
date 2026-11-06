@@ -3,6 +3,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as undici from 'undici';
 import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
@@ -10,6 +11,18 @@ import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRun
 import { readHttpHealthCheckV1, readCertificateHealthCheckV1,
     type AdmittedHttpHealthCheckV1, type HealthCheckFiniteLeafContextV1 } from './finiteHttpHealthCheck';
 import { createEphemeralTlsServerFixture } from '../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
+
+// Genuine network boundary, matching the fetch runtime suite: preserve native
+// Agent/TLS and real fetch unless a test supplies a response stream.
+vi.mock('undici', async importOriginal => {
+    const runtime = await importOriginal<typeof import('undici')>();
+    return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+function stubFetch(fetchBoundary: typeof globalThis.fetch) {
+    vi.stubGlobal('fetch', fetchBoundary);
+    // Node and Bun expose different Fetch type declarations at this boundary.
+    vi.mocked(undici.fetch).mockImplementation(fetchBoundary as unknown as typeof undici.fetch);
+}
 
 const servers: ReturnType<typeof createServer>[] = [];
 async function endpoint(handle: (request: IncomingMessage, response: ServerResponse) => void) {
@@ -38,6 +51,7 @@ describe('finite saved HTTP and certificate health', () => {
     afterEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        vi.mocked(undici.fetch).mockReset().mockImplementation((await vi.importActual<typeof import('undici')>('undici')).fetch);
         await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
             server.closeAllConnections(); server.close(() => resolve());
         })));
@@ -58,10 +72,39 @@ describe('finite saved HTTP and certificate health', () => {
         expect(requests).toBe(2);
     });
 
+    it('identifies the health client on the wire instead of inheriting the HTTP library signature', async () => {
+        let userAgent: string | undefined;
+        const url = await endpoint((request, response) => { userAgent = request.headers['user-agent']; response.end(); });
+        expect((await readHttpHealthCheckV1(admitted(url), context(url))).status).toBe('up');
+        expect(userAgent).toMatch(/Happier/i);
+    });
+
+    it('explains a Cloudflare 1010 without disclosing the response or misclassifying an ordinary 403', async () => {
+        let body = 'error code: 1010\n';
+        const url = await endpoint((_request, response) => response.writeHead(403, { server: 'cloudflare' }).end(body));
+        for (const keyword of [undefined, 'private-keyword']) {
+            const result = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1({ ...admitted(url),
+                ...(keyword === undefined ? {} : { keyword }) }, context(url)));
+            expect(result.status).toBe('down');
+            expect(JSON.parse(result.evidence.items[0]?.text ?? '{}')).toMatchObject({ httpStatus: 403,
+                reason: 'cloudflare_browser_integrity', providerCode: 1010,
+                disclosure: expect.stringMatching(/client.*signature/i), remedy: expect.stringMatching(/Cloudflare/i) });
+            expect(JSON.stringify(result)).not.toContain('private-keyword');
+        }
+        for (const ordinaryBody of ['private-forbidden-response', 'error code: 10101']) {
+            body = ordinaryBody;
+            const ordinary = await readHttpHealthCheckV1({ ...admitted(url),
+                target: { ...admitted(url).target, expectStatus: 403 } }, context(url));
+            expect(ordinary.status).toBe('up');
+            expect(JSON.parse(ordinary.evidence.items[0]?.text ?? '{}')).not.toHaveProperty('providerCode');
+            expect(JSON.stringify(ordinary)).not.toContain(body);
+        }
+    });
+
     it('requests body bytes only for keyword checks, and never discloses the keyword or body', async () => {
         let pulls = 0;
         const url = 'https://service.example/health';
-        vi.stubGlobal('fetch', async () => new Response(new ReadableStream<Uint8Array>({
+        stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
             pull(controller) { pulls += 1; controller.enqueue(new TextEncoder().encode('private-keyword-sentinel')); controller.close(); },
         }, { highWaterMark: 0 })));
         expect((await readHttpHealthCheckV1(admitted(url), context(url))).status).toBe('up');
@@ -75,7 +118,7 @@ describe('finite saved HTTP and certificate health', () => {
 
     it('keeps incomplete keyword evidence unknown instead of claiming the keyword is absent', async () => {
         const url = 'https://service.example/health';
-        vi.stubGlobal('fetch', async () => new Response(new ReadableStream<Uint8Array>({
+        stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
             start(controller) { controller.error(Object.assign(new Error('private-response-error'), { code: 'ECONNRESET' })); },
         })));
         const result = await readHttpHealthCheckV1({ ...admitted(url), keyword: 'needle' }, context(url));
@@ -86,7 +129,7 @@ describe('finite saved HTTP and certificate health', () => {
     it('keeps certificate capture absence independent from successful HTTP and reads no body', async () => {
         const url = 'https://service.example/health';
         let pulls = 0;
-        vi.stubGlobal('fetch', async () => new Response(new ReadableStream<Uint8Array>({
+        stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
             pull(controller) { pulls += 1; controller.close(); },
         }, { highWaterMark: 0 })));
         const f = context(url);
@@ -154,7 +197,7 @@ describe('finite saved HTTP and certificate health', () => {
 
     it('keeps the Domain public authority and expected authentication challenge with same-Machine disclosure', async () => {
         const seen: string[] = [];
-        vi.stubGlobal('fetch', async (url: string) => { seen.push(url); return new Response(null, { status: 401 }); });
+        stubFetch(async (url) => { seen.push(String(url)); return new Response(null, { status: 401 }); });
         const check: AdmittedHttpHealthCheckV1 = { sourceInstanceId: 'domain-source', checkId: 'domain-http',
             subject: { kind: 'environment', environmentId: 'environment' },
             observer: { machineId: 'ingress-machine', installationId: 'ingress-installation' }, vantage: 'sameMachine',
@@ -170,10 +213,11 @@ describe('finite saved HTTP and certificate health', () => {
     it('reports absent Domain probes as unknown without sending HTTP or certificate requests', async () => {
         let requests = 0;
         // The HTTP transport is the external boundary; retain the real finite observer.
-        const observation = context('https://public.example', { http: { request: async () => {
+        const unavailable = async () => {
             requests += 1;
             throw new Error('Transport observation unavailable');
-        } } });
+        };
+        const observation = context('https://public.example', { http: { request: unavailable, requestStream: unavailable } });
         const check: AdmittedHttpHealthCheckV1 = { sourceInstanceId: 'domain-source', checkId: 'domain-http',
             subject: { kind: 'environment', environmentId: 'environment' },
             observer: { machineId: 'observer', installationId: 'installation' }, vantage: 'outside',
@@ -209,7 +253,7 @@ describe('finite saved HTTP and certificate health', () => {
     it('preserves transport policy refusals rather than converting lost authority to an outage', async () => {
         const url = 'https://service.example/health';
         const error = new PluginError({ code: 'plugin_final_generation_retired', message: 'Retired owner' });
-        const http = createPluginHttpService({ adapter: { async request() { throw error; } } });
+        const http = createPluginHttpService({ adapter: { async request() { throw error; }, async requestStream() { throw error; } } });
         await expect(readHttpHealthCheckV1(admitted(url), context(url, { http }))).rejects.toBe(error);
     });
 });
