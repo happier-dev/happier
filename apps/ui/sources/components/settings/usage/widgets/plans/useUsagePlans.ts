@@ -1,14 +1,17 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { presentConnectedAccountNames, presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import { storage, useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useActiveMachineFacts, useMachineListForServerSelection } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
-import { listUsagePoolSelectorMachineIds } from '@/sync/api/account/usageQueryInvalidation';
+import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { useMachinePresenceSummaries, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useProjectedConnectedServicesRegistry, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -164,21 +167,30 @@ export function useUsageSelectorMachineId(): string | null {
   );
 }
 
+function samePoolMachineReachability(left: readonly MachinePresenceSummary[], right: readonly MachinePresenceSummary[]): boolean {
+  return left.length === right.length && left.every((summary, index) => summary.reachability === right[index]?.reachability);
+}
+
 /**
  * The Machines a pool's switching order can be read on under this Machines filter, by the names the
  * Machines filter shows. Mounted only while a person is asked to choose one (`choose_machine`).
  */
 export function useUsagePoolMachineChoices(machineIds: readonly string[]): readonly Readonly<{ id: string; name: string }>[] {
-  const machines = useActiveMachineFacts();
-  const scope = useActiveServerAccountScope();
-  const reachabilityRevision = useMachineReachabilityRevision();
-  const nowMs = useMachinePresenceNowMs(machines);
-  return React.useMemo(() => {
-    if (!scope) return [];
-    const ids = listUsagePoolSelectorMachineIds(Object.fromEntries(machines.map(machine => [machine.id, machine])), machineIds, scope, nowMs);
+  const lifetime = useActiveServerAccountScopeLifetime();
+  const serverId = lifetime?.scope.serverId ?? '';
+  const selectNames = useShallow(React.useCallback((machines: readonly Machine[]) => {
+    // Peer names can change a displayed suffix; unrelated Machine facts cannot change this selection.
     const names = resolveMachineDisplayNames(machines);
-    return ids.map(id => ({ id, name: names.get(id) ?? id }));
-  }, [machines, machineIds, scope, reachabilityRevision, nowMs]);
+    return new Map(machines.filter(machine => !isMachineReplaced(machine)
+      && (machineIds.length === 0 || machineIds.includes(machine.id)))
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map(machine => [machine.id, names.get(machine.id) ?? machine.id] as const));
+  }, [machineIds]));
+  const names = useMachineListForServerSelection(serverId, selectNames);
+  const ids = React.useMemo(() => [...names.keys()], [names]);
+  const presence = useMachinePresenceSummaries(serverId, ids, lifetime, samePoolMachineReachability);
+  return React.useMemo(() => ids.flatMap((id, index) => presence[index]?.reachability === 'reachable'
+    ? [{ id, name: names.get(id) ?? id }] : []), [ids, names, presence]);
 }
 
 type ResolvedPoolSelection = Extract<ConnectedServicePoolSelectionGetResponseV1, { selection: unknown }>;
