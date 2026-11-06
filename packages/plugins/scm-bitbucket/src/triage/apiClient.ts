@@ -1,5 +1,4 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   BITBUCKET_CLOUD_API_BASE_URL,
@@ -149,8 +148,7 @@ export function createBitbucketTriageApiClient(
               ...headers,
             },
             ...(encodedBody === undefined ? {} : { body: encodedBody }),
-            // A JSON route that redirects is not a route this client follows: the raw-diff
-            // redirect is a separate, explicitly origin-checked reader.
+            // Only the provider's raw-diff endpoint has a documented redirect.
             redirect: 'error',
           },
           { ...(request.signal === undefined ? {} : { signal: request.signal }) },
@@ -231,43 +229,16 @@ export function createBitbucketTriageApiClient(
         return { ok: false, failure: classifyBitbucketTransportFailure(error) };
       }
 
-      const fetchRaw = async (target: string, redirect: 'manual' | 'error') => input.http.request({
-        url: target,
-        method: 'GET',
-        headers: { Accept: 'text/plain', ...headers },
-        redirect,
-      }, { ...(request.signal === undefined ? {} : { signal: request.signal }) });
-
-      let first: Awaited<ReturnType<typeof fetchRaw>>;
+      let redirected: Awaited<ReturnType<HttpService['request']>>;
       try {
-        first = await fetchRaw(url, 'manual');
-      } catch (error) {
-        return { ok: false, failure: classifyBitbucketTransportFailure(error) };
-      }
-      if (first.status === 555) return { ok: true, kind: 'tooLarge' };
-      if (first.status !== 302) {
-        return {
-          ok: false,
-          failure: classifyBitbucketHttpFailure({
-            status: first.status,
-            headers: first.headers,
-            body: null,
-            nowMs: input.now(),
-          }),
-        };
-      }
-      const location = readTriageResponseHeaderV1(first.headers, 'location');
-      const target = location === null ? null : readBitbucketApiUrl(location);
-      if (target === null) {
-        return {
-          ok: false,
-          failure: createBitbucketFailure('unsupportedContract', 'untrusted-diff-redirect'),
-        };
-      }
-
-      let redirected: Awaited<ReturnType<typeof fetchRaw>>;
-      try {
-        redirected = await fetchRaw(target, 'error');
+        // The HTTP owner preserves same-origin credentials and strips them across
+        // origins. Browser Fetch cannot expose a manual redirect's Location.
+        redirected = await input.http.request({
+          url,
+          method: 'GET',
+          headers: { Accept: 'text/plain', ...headers },
+          redirect: 'follow',
+        }, { ...(request.signal === undefined ? {} : { signal: request.signal }) });
       } catch (error) {
         return { ok: false, failure: classifyBitbucketTransportFailure(error) };
       }

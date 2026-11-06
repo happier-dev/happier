@@ -6,14 +6,15 @@ import { readBoundedPluginHttpResponseBody } from './responseBody.js';
 type FetchInit = NonNullable<Parameters<typeof globalThis.fetch>[1]>;
 type Fetch = (input: string, init?: FetchInit) => Promise<Response>;
 
-/** Fetch is a platform boundary: the HTTP owner, never the platform, follows redirects. */
+/** The HTTP owner selects native following only when Fetch preserves its credential policy. */
 export function createFetchPluginHttpRuntime(fetch: Fetch): PluginHttpRuntimeAdapter {
     const open = async (request: HttpRequest, signal?: AbortSignal) => {
         signal?.throwIfAborted();
         const response = await fetch(request.url, { method: request.method ?? 'GET', headers: request.headers,
             ...(request.body === undefined ? {} : { body: request.body as FetchInit['body'] }),
-            redirect: 'manual', credentials: 'omit', ...(signal ? { signal } : {}) });
-        if (response.type === 'opaqueredirect' || response.status === 0 || response.redirected) {
+            redirect: request.redirect, credentials: 'omit', ...(signal ? { signal } : {}) });
+        if (response.type === 'opaqueredirect' || response.status === 0
+            || (response.redirected && request.redirect !== 'follow')) {
             await response.body?.cancel().catch(() => undefined);
             throw new PluginError({ code: 'plugin_fetch_redirect_refused',
                 message: 'This transport cannot expose the redirect response safely' });

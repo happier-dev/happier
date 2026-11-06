@@ -23,6 +23,106 @@ afterEach(() => {
 });
 
 describe('runtimeFetch', () => {
+    it.each(['ios', 'android', 'tauri'] as const)('keeps native redirect credentials with the shared HTTP owner on %s', async (platformOS) => {
+        vi.resetModules();
+        vi.doMock('react-native', async () => {
+            const mocks = await import('@/dev/testkit/mocks/reactNative');
+            return platformOS === 'tauri'
+                ? mocks.createReactNativeWebMock()
+                : await mocks.createReactNativeNativeMock({ platformOS });
+        });
+        const received: Array<{ path: string; authorization: boolean }> = [];
+        const server = createServer((request, response) => {
+            received.push({ path: request.url ?? '', authorization: request.headers.authorization !== undefined });
+            if (request.url === '/start') {
+                response.writeHead(302, { location: '/same-origin' });
+            } else if (request.url === '/same-origin') {
+                const address = target.address();
+                if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+                // A different port is a different origin, even on the same host.
+                response.writeHead(302, { location: `http://127.0.0.1:${address.port}/diff` });
+            }
+            response.end('diff --git a/a.ts b/a.ts');
+        });
+        const target = createServer((request, response) => {
+            received.push({ path: request.url ?? '', authorization: request.headers.authorization !== undefined });
+            response.end('diff --git a/a.ts b/a.ts');
+        });
+        server.listen(0, '127.0.0.1');
+        target.listen(0, '127.0.0.1');
+        await Promise.all([once(server, 'listening'), once(target, 'listening')]);
+        const fetch = globalThis.fetch;
+        // Native transport boundary deliberately models an implementation that
+        // forwards headers on automatic redirects; manual mode exposes each hop.
+        const nativeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const response = await fetch(input, { ...init, redirect: 'manual' });
+            const location = response.headers.get('location');
+            if (init?.redirect !== 'follow' || !location) return response;
+            await response.body?.cancel();
+            return nativeFetch(new URL(location, String(input)), init);
+        };
+        vi.doMock('expo/fetch', () => ({ fetch: nativeFetch }));
+        vi.doMock('@tauri-apps/plugin-http', () => ({ fetch: nativeFetch }));
+        if (platformOS === 'tauri') setTauriInternals({ invoke: () => null });
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') {
+                throw new Error('Missing fixture address');
+            }
+            const { runtimeFetchManualResponse } = await import('./runtimeFetch');
+            const { createPluginHttpService, createFetchPluginHttpRuntime } = await import('@happier-dev/cli-common/plugins/http');
+            const http = createPluginHttpService({ adapter: createFetchPluginHttpRuntime(runtimeFetchManualResponse) });
+            const result = await http.request({ url: `http://127.0.0.1:${address.port}/start`,
+                headers: { Authorization: 'Bearer synthetic-request-credential' }, redirect: 'follow' });
+            expect(result.status).toBe(200);
+            expect(new TextDecoder().decode(result.body)).toContain('diff --git');
+            expect(received).toEqual([
+                { path: '/start', authorization: true },
+                { path: '/same-origin', authorization: true },
+                { path: '/diff', authorization: false },
+            ]);
+        } finally {
+            await Promise.all([server, target].map(async (fixture) => {
+                fixture.closeAllConnections();
+                await new Promise<void>((resolve, reject) => fixture.close(error => error ? reject(error) : resolve()));
+            }));
+        }
+    });
+
+    it('lets the plugin HTTP owner follow a browser redirect to the final resource', async () => {
+        const fetch = globalThis.fetch;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+            const response = await fetch(input, init);
+            // The substituted platform boundary matches Chromium's opaque manual response.
+            if (init?.redirect !== 'manual' || response.status !== 302) return response;
+            await response.body?.cancel();
+            return Object.defineProperties(new Response(null), {
+                status: { value: 0 }, type: { value: 'opaqueredirect' }, url: { value: '' },
+            });
+        });
+        const server = createServer((request, response) => {
+            if (request.url === '/redirect') {
+                response.writeHead(302, { location: '/diff' });
+                response.end();
+            } else response.end('diff --git a/a.ts b/a.ts');
+        });
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+            const { runtimeFetchManualResponse } = await import('./runtimeFetch');
+            const { createPluginHttpService, createFetchPluginHttpRuntime } = await import('@happier-dev/cli-common/plugins/http');
+            const http = createPluginHttpService({ adapter: createFetchPluginHttpRuntime(runtimeFetchManualResponse) });
+            const result = await http.request({ url: `http://127.0.0.1:${address.port}/redirect`, redirect: 'follow' });
+            expect(result.status).toBe(200);
+            expect(new TextDecoder().decode(result.body)).toContain('diff --git');
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it.each([302, 307, 308])('scopes credentials and secret-body replay on a cross-origin %i redirect', async (status) => {
         let initialHopRequests = 0;
         let secondHopRequests = 0;

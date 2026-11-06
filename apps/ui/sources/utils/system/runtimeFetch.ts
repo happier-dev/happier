@@ -72,7 +72,11 @@ export function runtimeFetch(input: RequestInfo | URL, init?: RequestInit): Prom
         : activeRuntimeFetch(input, init);
 }
 
-/** The plugin HTTP owner consumes each response and owns its redirect policy. */
-export function runtimeFetchManualResponse(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    return activeRuntimeFetch(input, { ...init, redirect: 'manual' });
+/** Browsers follow opaque hops; native responses use the shared HTTP redirect owner. */
+export async function runtimeFetchManualResponse(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const redirect = init?.redirect ?? 'manual';
+    // Expo's URLSession delegate does not establish cross-origin credential stripping.
+    // Native manual responses let nextPluginHttpRedirect apply that policy itself.
+    const nativeFollow = redirect === 'follow' && await readRuntimeFetchHost(input) === 'native';
+    return activeRuntimeFetch(input, { ...init, redirect: nativeFollow ? 'manual' : redirect });
 }

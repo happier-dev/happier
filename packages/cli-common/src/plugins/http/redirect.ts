@@ -1,6 +1,6 @@
 import { PluginError } from '../errors.js';
 import type { HttpRequest, HttpResponse } from './contracts.js';
-import { resolveCredentialRequestRedirect, CredentialRequestRedirectError } from '../../homeTarget/index.js';
+import { resolveCredentialRequestRedirect, CredentialRequestRedirectError, isCredentialRequestHeader } from '../../homeTarget/index.js';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -8,6 +8,22 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export const MAX_PLUGIN_FETCH_REDIRECTS = 10;
 
 export { isCredentialRequestHeader as isPluginHttpCredentialHeader } from '../../homeTarget/index.js';
+
+/** Fetch strips Authorization across origins, but cannot enforce our custom-secret policy. */
+export function canFollowPluginHttpRedirectsNatively(
+    request: HttpRequest,
+    privateCredentialHeaderNames: ReadonlySet<string>,
+    containsRegisteredSecret?: (value: string) => boolean,
+): boolean {
+    return request.redirect === 'follow'
+        && (request.body === undefined || request.body.byteLength === 0)
+        && Object.entries(request.headers ?? {}).every(([name, value]) => {
+            const normalized = name.trim().toLowerCase();
+            return normalized === 'authorization' || (normalized !== 'host'
+                && !isCredentialRequestHeader(normalized, privateCredentialHeaderNames)
+                && containsRegisteredSecret?.(value) !== true);
+        });
+}
 
 /** The public plugin boundary retains the shared refusal without transport data. */
 export function toPluginHttpRedirectFailure(error: unknown): unknown {

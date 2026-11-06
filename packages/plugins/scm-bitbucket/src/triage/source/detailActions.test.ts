@@ -701,9 +701,9 @@ describe('Bitbucket authoritative Overview and Diff planes', () => {
     const oversized = `diff --git a/a.ts b/a.ts\n${'"\\\n'.repeat(4_000_000)}🚀`;
     const seam = harness((url) => {
       if (url.endsWith('/pullrequests/42/diff')) {
-        return { status: 302, headers: { location: redirected } };
+        // HttpService follows the provider redirect and returns its final resource.
+        return { bodyBytes: oversized, finalUrl: redirected };
       }
-      if (url === redirected) return { bodyBytes: oversized };
       if (url.includes('/pullrequests/42/diffstat')) {
         return envelope([{
           status: 'modified',
@@ -732,8 +732,7 @@ describe('Bitbucket authoritative Overview and Diff planes', () => {
       raw: { ...settled.raw, text: `${settled.raw.text}${nextCodePoint}` },
     })).toBe(false);
     expect(seam.requests.find((request) => request.url.endsWith('/pullrequests/42/diff'))?.redirect)
-      .toBe('manual');
-    expect(seam.requests.some((request) => request.url === redirected)).toBe(true);
+      .toBe('follow');
   });
 
   it('fits file rows together with Bitbucket 555 raw-result framing', async () => {
@@ -779,21 +778,4 @@ describe('Bitbucket authoritative Overview and Diff planes', () => {
     expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
   });
 
-  it('refuses a raw-diff redirect outside the Bitbucket API origin before sending credentials', async () => {
-    const seam = harness((url) => {
-      if (url.endsWith('/pullrequests/42/diff')) {
-        return { status: 302, headers: { location: 'https://example.invalid/stolen.diff' } };
-      }
-      if (url.includes('/pullrequests/42/diffstat')) return envelope([]);
-      return undefined;
-    });
-    const settled = BitbucketDiffResultV1Schema.parse(
-      await readBitbucketDiff(planeInput(), seam.context),
-    );
-    expect(settled.kind).toBe('unavailable');
-    if (settled.kind !== 'unavailable') throw new Error('unreachable');
-    expect(settled.failure.code).toBe('untrusted-diff-redirect');
-    expect(seam.requests.every((request) => request.url.startsWith('https://api.bitbucket.org/')))
-      .toBe(true);
-  });
 });

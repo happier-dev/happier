@@ -14,7 +14,7 @@ import type {
 } from './contracts.js';
 import { PluginError } from '../errors.js';
 import { snapshotPluginHttpRequest } from './request.js';
-import { MAX_PLUGIN_FETCH_REDIRECTS, nextPluginHttpRedirect, toPluginHttpRedirectFailure } from './redirect.js';
+import { MAX_PLUGIN_FETCH_REDIRECTS, canFollowPluginHttpRedirectsNatively, nextPluginHttpRedirect, toPluginHttpRedirectFailure } from './redirect.js';
 import { snapshotPluginHttpStreamRequest, wrapPluginHttpStream } from './stream.js';
 import { createPluginHttpTraceDiagnostic, recordPluginHttpTraceResponse, type PluginHttpTraceDiagnostic } from './trace.js';
 
@@ -676,7 +676,8 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
                         for (let redirects = 0; ; redirects += 1) {
                             assertNotAborted(timeout.signal);
                             const response = await transport.request({ ...effectiveRequest,
-                                redirect: 'manual',
+                                redirect: canFollowPluginHttpRedirectsNatively(effectiveRequest, privateHeaderNames,
+                                    params.containsRegisteredSecret) ? 'follow' : 'manual',
                             }, { signal: timeout.signal });
                             let next: PluginHttpRequest | undefined;
                             try { next = nextPluginHttpRedirect(effectiveRequest, response, privateHeaderNames,

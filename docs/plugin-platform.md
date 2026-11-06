@@ -7155,6 +7155,28 @@ and headers and may rewrite either, including bound credential headers and the
 request method. Their declarations select which requests invoke them; they do
 not constrain the rewritten destination. The SDK interceptor request remains
 bodyless, and transcript/diagnostic redaction stays with its existing owner.
+The HTTP service binds host credentials once
+per call through their credential owner. Redirects use the shared release-runtime HTTP policy
+(also exposed through the Home facade): same-origin hops retain
+credentials; cross-origin hops drop Authorization, cookies and host-filled secret
+headers. Cross-origin redirects that would replay a filled secret body, including
+307/308, return the non-retryable `credential_request_redirect_refused` failure
+before sending that hop. Diagnostics retain only the status and fixed message,
+never the Location, request headers or body. Explicit manual mode returns the
+redirect response, and explicit error mode refuses it. Credential-free requests
+retain fetch method/body semantics and the host's redirect bound. Fetch transports
+delegate following to browser and Node Fetch for bodyless requests whose only credential
+header is Authorization (or has none).
+Browser and Node Fetch retain Authorization on same-origin hops and remove it
+across origins; the platform owns that chain's redirect bound. UI native hosts
+(Expo iOS/Android and Tauri) return manual responses to the shared HTTP redirect
+loop, which retains same-origin credentials and strips them across origins without
+depending on the native platform's automatic redirect behavior. Other credential
+headers and request bodies keep the inspected-hop path above. A browser
+cannot expose a manual redirect's Location, so that path returns the existing
+`plugin_fetch_redirect_refused` failure instead of forwarding credentials.
+The Bitbucket raw-diff client requests following through this owner and consumes
+the final 200/555 response; it does not implement a second redirect policy.
 
 In 0.3 development source, mounted renderers supplied by the app inventory
 use the app's current Plugin UI inventory, including direct Session and embedded
