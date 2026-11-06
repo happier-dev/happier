@@ -130,7 +130,7 @@ export type PluginUiResourceEntry = Readonly<{
   getSnapshot(): PluginUiResourceSnapshot;
   subscribe(listener: () => void, live: boolean): () => void;
   /** Settles after this requested canonical reread, including failure or retirement. */
-  refresh(): Promise<PluginUiResourceSnapshot>;
+  refresh(options?: Readonly<{ supersede?: boolean }>): Promise<PluginUiResourceSnapshot>;
   select<T, Selected>(projection: PluginUiResourceProjection<T>,
     selector: (snapshot: PluginUiResourceProjectionSnapshot<T>) => Selected): PluginUiResourceSelection<Selected>;
 }>;
@@ -966,12 +966,25 @@ export function createPluginUiResourceStore(input: Readonly<{
             }
           };
         },
-        refresh(): Promise<PluginUiResourceSnapshot> {
+        refresh(options?: Readonly<{ supersede?: boolean }>): Promise<PluginUiResourceSnapshot> {
           return new Promise(resolve => {
             if (!isEntryCurrent(entry!)) {
               resolve(Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended',
                 error: Object.freeze({ code: 'plugin_surface_retired', message: 'Resource surface is retired.' }) }));
               return;
+            }
+            if (options?.supersede && entry!.reading) {
+              // Explicit recovery consumes the queued invalidation demand. Keep
+              // the live watch and admitted value while retiring only this read.
+              entry!.readController?.abort();
+              entry!.readController = null;
+              entry!.reading = false;
+              entry!.readQueued = false;
+              entry!.readQueuedRetryOnFailure = false;
+              entry!.readQueuedRetainsFreshSnapshot = false;
+              entry!.readQueuedExpectedDigest = null;
+              settleRefreshWaiters(entry!, false, 'plugin_resource_aborted');
+              settleRefreshWaiters(entry!, true, 'plugin_resource_aborted');
             }
             if (entry!.snapshot.subscription === 'reconnecting') startWatch(entry!);
             (entry!.reading ? entry!.queuedRefreshWaiters : entry!.refreshWaiters).add(resolve);
