@@ -275,6 +275,50 @@ describe('Usage settings UI Action admission', () => {
         expect([...dismissed]).toEqual(['source']);
         await hook.unmount();
     });
+    it('retries model-price Refresh after approval rejection and refuses a retired control', async () => {
+        let refreshes = 0;
+        harness.answer(serverId, 'POST /v1/account/usage/prices/refresh', { select: () => {
+            refreshes++;
+            return { body: { v: 1, models: { reference: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 } },
+                provenance: { source: 'litellm', origin: 'bundled', asOfMs: 100, revision: 'refreshed', fetchStatus: 'ready' } } };
+        } });
+        await harness.requireUiApproval(serverId, 'usage.prices.refresh');
+        raw = { ...storage.getState().settings };
+        const { sync } = await import('@/sync/sync');
+        await (Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync).awaitQueue();
+        expect(storage.getState().settings.actionsSettingsV1.actions['usage.prices.refresh'])
+            .toMatchObject({ approvalRequiredSurfaces: ['ui'] });
+        const { slice } = priceSlice();
+        const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" />);
+        const refreshId = 'prices.provenance.refresh';
+        const approvals = () => harness.artifacts(serverId).list().filter(artifact => {
+            const request = ApprovalRequestV2Schema.safeParse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null'));
+            return request.success && request.data.actionId === 'usage.prices.refresh';
+        });
+        await act(async () => { screen.pressByTestId(refreshId); });
+        await waitForHomeGovernance(() => expect(approvals()).toHaveLength(1));
+        expect(refreshes).toBe(0);
+        expect(screen.findByTestId(refreshId)?.props.disabled).toBe(true);
+        const rejectedId = approvals()[0]!.id;
+        expect(await decideApprovalAsInbox(serverId, rejectedId, 'reject')).toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => expect(screen.findByTestId(refreshId)?.props.disabled).toBe(false));
+        expect(screen.getTextContent()).not.toContain(t('usage.board.page.pricesFetchFailed'));
+        await act(async () => { screen.pressByTestId(refreshId); });
+        await waitForHomeGovernance(() => expect(approvals()).toHaveLength(2));
+        expect(await decideApprovalAsInbox(serverId, approvals().find(artifact => artifact.id !== rejectedId)!.id, 'approve'))
+            .toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => {
+            expect(refreshes).toBe(1);
+            expect(screen.findByTestId(refreshId)?.props.disabled).toBe(false);
+        });
+        const retiredPress = screen.findByTestId(refreshId)!.props.onPress;
+        await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
+        const beforeRetiredPress = harness.artifacts(serverId).list().map(artifact => artifact.id);
+        await act(async () => { retiredPress(); });
+        expect(refreshes).toBe(1);
+        expect(harness.artifacts(serverId).list().map(artifact => artifact.id)).toEqual(beforeRetiredPress);
+        await screen.unmount();
+    });
     it.each([false, true])('sets and resets a model price through its Account owner (explicit Ask: %s)', async requireApproval => {
         if (!requireApproval) {
             raw.actionsSettingsV1 = { v: 1, actions: {} };

@@ -17,7 +17,8 @@ import { Text } from '@/components/ui/text/Text';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { Typography } from '@/constants/Typography';
 import { useSetting } from '@/sync/domains/state/storage';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import {
   buildUsagePriceEditorModel,
@@ -159,27 +160,15 @@ function UsagePriceProvenance(
       : props.provenance.fetchStatus === 'error' || state === 'failed'
         ? t('usage.board.page.pricesFetchFailed')
         : null;
+  const { execute, isCurrent } = useMountedActionExecution(props.serverId);
   const refresh = async () => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.serverId)
-      return;
+    if (!isCurrent()) return;
     setState('refreshing');
     try {
-      const { createDefaultActionExecutor } =
-        await import('@/sync/ops/actions/defaultActionExecutor');
-      const executed = await createDefaultActionExecutor().execute(
-        'usage.prices.refresh',
-        {},
-        {
-          surface: 'ui',
-          actionCaller: { kind: 'host' },
-          serverId: lifetime.scope.serverId,
-          expectedAccountId: lifetime.scope.accountId,
-        },
-      );
-      if (lifetime.isCurrent()) setState(executed.ok ? 'idle' : 'failed');
+      const executed = await execute('usage.prices.refresh', {});
+      if (isCurrent()) setState(executed.ok || isActionApprovalDeclinedErrorCode(executed.errorCode) ? 'idle' : 'failed');
     } catch {
-      if (lifetime.isCurrent()) setState('failed');
+      if (isCurrent()) setState('failed');
     }
   };
   return (
