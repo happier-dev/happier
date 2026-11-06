@@ -8,6 +8,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from './hooks';
 import { useSetting } from './settingsReadHooks';
+import { holdSettingWrite, useSettingsPreviewStore } from './settingsPreview';
 import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 
 import { useAgentUiSettings, getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
@@ -20,8 +21,48 @@ const collectionScope = { serverId: 'selector-home', accountId: 'selector-accoun
 
 beforeEach(async () => {
     getPersistenceStorage().clearAll();
+    useSettingsPreviewStore.setState({ scope: null, account: {}, local: {}, projects: {}, profiles: {} });
     await storage.getState().activateSettingsScope({ serverId: 'selector-home', accountId: 'selector-account' });
     storage.getState().applySettings(settingsDefaults, 1);
+});
+
+it.each([
+    { key: 'hideInactiveSessions', anchor: 'session.list.hideInactive' },
+    { key: 'useEnhancedSessionWizard', anchor: 'session.startWith' },
+] as const)('projects the held $key preference before commit without waking on unrelated keys', async ({ key, anchor }) => {
+    let computations = 0;
+    const stored = storage.getState().settings[key];
+    const select = (settings: Settings) => { computations++; return settings[key]; };
+    const counter = createRenderCommitCounter();
+    const hook = await renderHook(() => {
+        useRenderCommitCounter(counter);
+        return useSettingsSelector(select, [key]);
+    });
+    const gatedCounter = createRenderCommitCounter();
+    const gated = await renderHook(() => {
+        useRenderCommitCounter(gatedCounter);
+        return useSettingsSelector(() => false, [key]);
+    });
+    gatedCounter.reset();
+    const baseline = computations;
+    counter.reset();
+    let releaseUnrelated!: () => void;
+    await act(async () => { releaseUnrelated = holdSettingWrite({ anchor: 'session.list.density' }, 'cozy'); });
+    expect(computations).toBe(baseline);
+    expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+    let release!: () => void;
+    await act(async () => { release = holdSettingWrite({ anchor }, !stored, () => ({ [key]: !stored })); });
+    expect(storage.getState().settings[key]).toBe(stored);
+    expect(hook.getCurrent()).toBe(!stored);
+    expect(gatedCounter.read()).toEqual({ renders: 0, commits: 0 });
+    await act(async () => { release(); releaseUnrelated(); });
+    expect(hook.getCurrent()).toBe(stored);
+    await act(async () => { release = holdSettingWrite({ anchor }, !stored, () => ({ [key]: !stored })); });
+    await act(async () => { await storage.getState().activateSettingsScope({ serverId: 'other-home', accountId: 'other-account' }); });
+    expect(hook.getCurrent()).toBe(storage.getState().settings[key]);
+    await act(async () => { release(); });
+    await hook.unmount();
+    await gated.unmount();
 });
 
 it('does not recompute settings projections for other store domains', async () => {
@@ -30,11 +71,13 @@ it('does not recompute settings projections for other store domains', async () =
         computations++;
         return { density: settings.sessionListDensity };
     };
-    const hook = await renderHook(() => useSettingsSelector(selectDensity));
+    const hook = await renderHook(() => useSettingsSelector(selectDensity, ['sessionListDensity']));
     const baseline = computations;
     await act(async () => {
         storage.setState({ machines: { ...storage.getState().machines } });
     });
+    expect(computations).toBe(baseline);
+    await act(async () => { storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers }); });
     expect(computations).toBe(baseline);
     const nextDensity = hook.getCurrent().density === 'narrow' ? 'cozy' : 'narrow';
     await act(async () => {
@@ -42,6 +85,7 @@ it('does not recompute settings projections for other store domains', async () =
     });
     expect(hook.getCurrent().density).toBe(nextDensity);
     expect(computations).toBe(baseline + 1);
+    await hook.unmount();
 });
 
 it('keeps the mounted Session list source stable for unrelated Account settings', async () => {

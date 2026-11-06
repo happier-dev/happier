@@ -145,7 +145,7 @@ function LegacyProfileEditFormReady({
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const opencodeBackendMode = useSettingsSelector((settings) => (
         (settings as Record<string, unknown>).opencodeBackendMode
-    ));
+    ), ["opencodeBackendMode"]);
     const transcriptStorageSettings = React.useMemo(() => ({ opencodeBackendMode }), [opencodeBackendMode]);
     const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');

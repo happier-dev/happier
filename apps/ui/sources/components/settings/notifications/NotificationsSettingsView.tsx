@@ -54,7 +54,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     const settings = useSettingsSelector((settings) => ({
         attentionDeliveryPolicyV1: settings.attentionDeliveryPolicyV1,
         sessionRemoteAlertsEnabled: settings.sessionRemoteAlertsEnabled,
-    }));
+    }), ["attentionDeliveryPolicyV1","sessionRemoteAlertsEnabled"]);
     const localSettings = useLocalSettings();
     const scope = useAccountSettingsScope();
     const channelCatalog = useNotificationChannelCatalog(scope);

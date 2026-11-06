@@ -95,6 +95,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const getBackendEntryMachineAgent = React.useCallback((entry: ResolvedBackendCatalogEntry) =>
         findMachineAgentForBackendTargetKey(machineAgents.agents, entry.backendTargetKey), [machineAgents.agents]);
     const tmuxRequested = resolveTerminalHost({ settings: params.settings, machineId: params.selectedMachineId }) === 'tmux';
+    // Agent callbacks can read arbitrary released Account carriers; whole-snapshot demand is explicit.
     const relevantInstallableDepKeys = useSettingsSelector(React.useCallback((settings) => {
         if (!params.selectedMachineId || !behaviorAgentId) return [];
 
@@ -107,7 +108,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             resumeSessionId: params.resumeSessionId ?? '',
             machineId: params.selectedMachineId,
         });
-    }, [behaviorAgentId, params.pluginSettings, params.pluginProjectionV2, params.resumeSessionId, params.selectedMachineId]));
+    }, [behaviorAgentId, params.pluginSettings, params.pluginProjectionV2, params.resumeSessionId, params.selectedMachineId]), true);
     const selectedInstallables = React.useMemo(() => relevantInstallableDepKeys.length === 0 ? []
         : getInstallablesRegistryEntries({ pluginProjection: params.pluginProjectionV2 ?? undefined })
             .filter((entry) => relevantInstallableDepKeys.includes(entry.key)), [params.pluginProjectionV2, relevantInstallableDepKeys]);

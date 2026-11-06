@@ -47,7 +47,7 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
         connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
         connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    }));
+    }), ["connectedServicesDefaultProfileByServiceId","connectedServicesDefaultAuthByAgentIdV1","connectedServicesAdditionalDefaultAuthByAgentIdV1"]);
 
     /**
      * Only an omitted value inherits: the owner then seeds its preview from the

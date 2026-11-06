@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { Item } from '@/components/ui/lists/Item';
 import { PluginConfigurationSettingFieldV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 
@@ -58,6 +59,31 @@ const fields = z.array(PluginConfigurationSettingFieldV2Schema).parse([
 ]);
 
 describe('ConnectedAccountConfigurationForm', () => {
+    it('uses the shared schema dispatcher while retaining boolean and JSON option value models', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const configuredFields = z.array(PluginConfigurationSettingFieldV2Schema).parse([
+            { id: 'enabled', title: 'Enabled', schema: { type: 'boolean' } },
+            { id: 'tier', title: 'Tier', schema: { type: 'number', enum: [1, 2] }, presentation: { control: 'select' } },
+            { id: 'scopes', title: 'Scopes', schema: { type: 'array', items: { type: 'number', enum: [1, 2] } } },
+        ]);
+        const submitted = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountConfigurationForm title="Configuration"
+            fields={configuredFields} values={{ enabled: false, tier: 1, scopes: [1] }} configuredSecretFieldIds={[]}
+            saving={false} onSubmit={submitted} />);
+        expect(screen.tree.findAllByType(SchemaFieldControl).map(node => node.props.control)).toEqual(['switch', 'multiSelect', 'select']);
+        const enabled = screen.tree.findAllByType(Item).find(node => node.props.title === 'Enabled')!;
+        await pressTestInstanceAsync(enabled);
+        const scopeChoice = (title: string) => screen.tree.findAllByType(Item).find(node => node.props.title === title)!;
+        await pressTestInstanceAsync(scopeChoice('1'));
+        await pressTestInstanceAsync(scopeChoice('2'));
+        await act(async () => {
+            screen.tree.find(node => node.props.testID === 'connected-account-configuration:tier'
+                && typeof node.props.onSelect === 'function').props.onSelect(JSON.stringify(2));
+        });
+        await pressTestInstanceAsync(screen.findByTestId('connected-account-configuration:save'));
+        expect(submitted).toHaveBeenCalledWith({ values: { enabled: true, tier: 2, scopes: [2] }, secretValues: {} });
+    });
+
     afterEach(async () => {
         const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
         clearActiveUnsavedChangesGuard();
@@ -161,7 +187,7 @@ describe('ConnectedAccountConfigurationForm', () => {
         await act(async () => {
             endpoint.props.onChangeText('https://new.example');
             secret.props.onChangeText('replacement');
-            enabled.props.rightElement.props.onValueChange(true);
+            await pressTestInstanceAsync(enabled);
             region.props.onSelect(JSON.stringify('us'));
         });
 

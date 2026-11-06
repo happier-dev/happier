@@ -74,7 +74,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
 
     const profile = profileId ? resolveProfileById(profileId, profiles) : null;
 

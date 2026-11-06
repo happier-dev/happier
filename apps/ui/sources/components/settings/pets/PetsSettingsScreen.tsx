@@ -72,7 +72,7 @@ export function PetsSettingsScreen() {
         petsSelectedPetRef: settings.petsSelectedPetRef,
         petsEnabled: settings.petsEnabled,
         petsDesktopOverlayDefaultEnabled: settings.petsDesktopOverlayDefaultEnabled,
-    }));
+    }), ["petsSelectedPetRef","petsEnabled","petsDesktopOverlayDefaultEnabled"]);
     const localSettings = useLocalSettings();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.pets,

@@ -61,7 +61,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     const { open: openFile, canOpen: canOpenFile } = useWorkspaceFileOpener();
     // These are the inputs read by the canonical Action placement policy. Draft
     // and unrelated settings publications must not rebuild the controls.
-    const actionChipSettings = useSettingsSelector(selectActionChipSettings);
+    const actionChipSettings = useSettingsSelector(selectActionChipSettings, ['actionsSettingsV1', 'experiments', 'featureToggles']);
     const reviewWorkspaceCacheKey = React.useMemo(() => (
         params.reviewScope ? tryBuildWorkspaceCacheKey(params.reviewScope) : null
     ), [params.reviewScope]);

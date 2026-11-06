@@ -379,7 +379,7 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
 }>): React.ReactElement | null {
     const settings = useSettingsSelector((settings) => ({
         workspaceFileViewerPreferencesV1: settings.workspaceFileViewerPreferencesV1,
-    }));
+    }), ["workspaceFileViewerPreferencesV1"]);
     const settingsVersion = useSettingsVersion();
     const stage = usePluginDetailsDestinationLaunchStaging();
     const host = props.host;

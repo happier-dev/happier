@@ -73,7 +73,8 @@ const catalogApprovalSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
     'notifications.webhooks.remove': { approvalRequiredSurfaces: ['ui'] },
     'notifications.webhooks.signingSecret.clear': { approvalRequiredSurfaces: ['ui'] },
 } });
-async function openCatalogScreen(membership: Membership, independentlyEnabledPreferences = false, actionsSettingsV1?: ActionsSettingsV1) {
+async function openCatalogScreen(membership: Membership, independentlyEnabledPreferences = false, actionsSettingsV1?: ActionsSettingsV1,
+    onRender?: React.ProfilerOnRenderCallback) {
     const accountId = `notification-controls-${membership}`;
     const legacyNotifications = {
         v: 1, pushEnabled: false, ready: false, permissionRequest: false, userActionRequest: false,
@@ -108,7 +109,8 @@ async function openCatalogScreen(membership: Membership, independentlyEnabledPre
     });
     disposeHome = fixture.dispose;
     const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
-    const screen = await renderSettingsView(<NotificationsSettingsView />);
+    const content = <NotificationsSettingsView />;
+    const screen = await renderSettingsView(onRender ? <React.Profiler id="notifications" onRender={onRender}>{content}</React.Profiler> : content);
     disposeScreen = screen.unmount;
     // Retrieve callbacks only after their real scoped source is ready/current.
     const { refreshNotificationChannelCatalog } = await import('@/sync/engine/settings/notificationChannelCatalogEngine');
@@ -198,6 +200,34 @@ async function setControl(fixture: CatalogScreenFixture, idOrTitle: string, valu
 }
 
 describe('NotificationsSettingsView catalog control authority', () => {
+    it.each(['notifications', 'troubleshooting'] as const)('does zero %s commits for unrelated Account preferences and keeps notification policy live', async entry => {
+        let commits = 0;
+        const fixture = await openCatalogScreen('builtin', false, undefined, () => { commits++; });
+        if (entry === 'troubleshooting') {
+            await fixture.screen.unmount();
+            const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+            const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+            const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}>
+                <React.Profiler id="push-troubleshooting" onRender={() => { commits++; }}>
+                    <PushNotificationTroubleshootingView />
+                </React.Profiler>
+            </InjectedAuthProvider>);
+            disposeScreen = screen.unmount;
+        }
+        commits = 0;
+        await act(async () => {
+            storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers });
+        });
+        expect(commits).toBe(0);
+        await act(async () => {
+            const policy = storage.getState().settings.attentionDeliveryPolicyV1;
+            storage.getState().applySettingsLocal({ attentionDeliveryPolicyV1: { ...policy,
+                channels: { ...policy.channels, expo_push: { ...policy.channels.expo_push, enabled: !policy.channels.expo_push.enabled } },
+            } });
+        });
+        expect(commits).toBeGreaterThan(0);
+    });
+
     it('keeps URL and signing drafts on declined disclosure and departure, then discards only when accepted', async () => {
         const webhook = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'webhook-primary', kind: 'webhook',
             url: 'https://hooks.example.test/notify', signingSecretRef: null, topics: {} });

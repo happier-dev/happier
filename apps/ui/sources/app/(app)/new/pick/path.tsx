@@ -52,7 +52,7 @@ export default React.memo(function PathPickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);

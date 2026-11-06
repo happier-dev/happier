@@ -58,7 +58,7 @@ export default React.memo(function ProfileEditScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const spawnServerIdParam = resolveSpawnServerRouteParam(Array.isArray(params.spawnServerId) ? params.spawnServerId[0] : params.spawnServerId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({

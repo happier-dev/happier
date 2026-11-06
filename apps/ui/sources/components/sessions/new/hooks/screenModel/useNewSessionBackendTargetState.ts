@@ -73,7 +73,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
         }
-    ), [explicitRouteTarget, hasExplicitUserSelection]));
+    ), [explicitRouteTarget, hasExplicitUserSelection]), ["lastUsedAgent","lastUsedBackendTarget"]);
     const lastUsedAgent = rememberedDefaults?.lastUsedAgent;
     const lastUsedBackendTarget = rememberedDefaults?.lastUsedBackendTarget;
     const explicitRoutePluginTarget = React.useMemo(() => {

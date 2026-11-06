@@ -42,7 +42,7 @@ export default React.memo(function SecretPickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);

@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as consent from '@/sync/domains/settings/remoteImageConsent';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 import { act, renderHook } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -16,6 +18,36 @@ describe('workspace Markdown image consent wiring', () => {
             await hook.rerender(null);
             expect(hook.getCurrent()).toEqual({});
         } finally { await hook.unmount(); }
+    });
+
+    it('does zero consent projections or renders for unrelated device preferences and updates on explicit consent', async () => {
+        // Observe calls without replacing consent logic; the real store publishes both changes.
+        const reads = vi.spyOn(consent, 'hasRemoteImageConsent');
+        const counter = createRenderCommitCounter();
+        const state = getStorage().getState();
+        const previous = state.localSettings;
+        const scope = { serverId: 'markdown-count-home', machineId: 'markdown-count-machine', rootPath: '/repo' };
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useWorkspaceMarkdownImages({ scope, filePath: 'README.md' });
+        });
+        try {
+            reads.mockClear();
+            counter.reset();
+            await act(async () => {
+                getStorage().getState().applyLocalSettings({ uiFontScale: previous.uiFontScale === 1 ? 1.1 : 1 }, { source: 'ui' });
+            });
+            expect(reads).toHaveBeenCalledTimes(0);
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+            await act(async () => { hook.getCurrent().images.onLoadRemote(); });
+            expect(hook.getCurrent().images.remoteLoaded).toBe(true);
+            expect(reads.mock.calls.length).toBeGreaterThan(0);
+            expect(counter.read().commits).toBe(1);
+        } finally {
+            await hook.unmount();
+            reads.mockRestore();
+            getStorage().getState().applyLocalSettings({ uiFontScale: previous.uiFontScale, remoteImageConsentV1: previous.remoteImageConsentV1 }, { source: 'ui' });
+        }
     });
 
     it('writes only on explicit Load, persists by workspace/file, and preserves another document choice', async () => {

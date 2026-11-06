@@ -32,13 +32,13 @@ export const AppearanceLivePreview = React.memo(
     const [density] = useLocalSettingMutable('uiItemDensity');
     const [fontScale] = useLocalSettingMutable('uiFontScale');
     const transcriptLayout = useSettingsSelector((settings) =>
-      settings.transcriptGroupingMode === 'linear' ? 'linear' : 'turns',
+      settings.transcriptGroupingMode === 'linear' ? 'linear' : 'turns', ["transcriptGroupingMode"],
     );
-    const thinking = useSettingsSelector(resolveThinkingDisplayChoice);
+    const thinking = useSettingsSelector(resolveThinkingDisplayChoice, ['sessionThinkingDisplayMode', 'sessionThinkingInlinePresentation']);
     const toolChrome = useSettingsSelector((settings) =>
       settings.toolViewTimelineChromeMode === 'cards'
         ? 'cards'
-        : 'activity_feed',
+        : 'activity_feed', ["toolViewTimelineChromeMode"],
     );
     // The slice previews the app's look, not tool output: tool rows stay at their title line, so a
     // full detail setting never fills the window with a diff or a log (or its first-load state).

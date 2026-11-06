@@ -49,7 +49,7 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
         keyboardSingleKeyShortcutsEnabled: settings.keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutDisabledCommandIdsV1: settings.keyboardShortcutDisabledCommandIdsV1,
         keyboardShortcutOverridesV1: settings.keyboardShortcutOverridesV1,
-    }));
+    }), ["commandPaletteEnabled","keyboardShortcutsV2Enabled","keyboardSingleKeyShortcutsEnabled","keyboardShortcutDisabledCommandIdsV1","keyboardShortcutOverridesV1"]);
     const { setSetting } = useSettingActionFeedback();
     const reducedMotion = useReducedMotionPreference();
     const platform = React.useMemo(() => resolveKeyboardPlatform(), []);

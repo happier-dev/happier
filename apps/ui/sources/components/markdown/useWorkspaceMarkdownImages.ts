@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { addRemoteImageConsent, hasRemoteImageConsent } from '@/sync/domains/settings/remoteImageConsent';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -24,8 +25,8 @@ export function useWorkspaceMarkdownImages(input: Readonly<{ scope?: WorkspaceSc
     const identityPath = React.useMemo(() => filePath
         ? resolvePathRelativeToRoot({ path: `${rootPath.replace(/[\\/]+$/, '')}/${filePath}`, root: rootPath })
         : null, [filePath, rootPath]);
-    const remoteLoaded = getStorage()(state => Boolean(workspaceCacheKey && identityPath
-        && hasRemoteImageConsent(state.localSettings.remoteImageConsentV1, workspaceCacheKey, identityPath)));
+    const remoteLoaded = useLocalSetting('remoteImageConsentV1', consent => Boolean(workspaceCacheKey && identityPath
+        && hasRemoteImageConsent(consent, workspaceCacheKey, identityPath)));
     const onLoadRemote = React.useCallback(() => {
         if (!workspaceCacheKey || !identityPath) return;
         const state = getStorage().getState();

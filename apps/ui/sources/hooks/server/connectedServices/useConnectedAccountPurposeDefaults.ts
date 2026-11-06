@@ -22,7 +22,7 @@ export function useConnectedAccountPurposeDefaults(serverId?: string, options?: 
     const legacySettings = useSettingsSelector(settings => ({
         connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
         connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    }));
+    }), ["connectedServicesDefaultAuthByAgentIdV1","connectedServicesAdditionalDefaultAuthByAgentIdV1"]);
     const mutateDefaults = React.useCallback(async (intent: ConnectedAccountPurposeDefaultsIntent): Promise<boolean> => {
         let current = getConnectedAccountCatalogValue(scope, 'purposes');
         // An acknowledged default write invalidates this projection. A subsequent

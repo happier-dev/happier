@@ -716,7 +716,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const settings = useSettingsSelector((settings) => ({
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
         backendCliSourcePreferenceByTargetKey: settings.backendCliSourcePreferenceByTargetKey,
-    }));
+    }), ["backendEnabledByTargetKey","backendCliSourcePreferenceByTargetKey"]);
     const paneScopeId = React.useMemo(
         () => `settings:provider:${agentId}`,
         [agentId],
@@ -932,7 +932,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const params = useLocalSearchParams();
     const settings = useSettingsSelector((settings) => ({
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["backendEnabledByTargetKey"]);
     const administrationTargetSelection = useAgentsAdministrationTargetSelection(
         params.machineId !== undefined || params.serverIdentityId !== undefined ? params : undefined,
     );

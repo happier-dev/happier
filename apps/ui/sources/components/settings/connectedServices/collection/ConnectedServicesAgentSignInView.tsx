@@ -43,7 +43,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     const { agentEntries, qualifiedAccounts, qualifiedGroups } = index;
     const settings = useSettingsSelector((settings) => ({
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    }));
+    }), ["connectedServicesDefaultProfileByServiceId"]);
     const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
     const poolAdoptionDismissedByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataAcknowledgements);
     const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults();

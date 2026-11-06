@@ -38,7 +38,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;

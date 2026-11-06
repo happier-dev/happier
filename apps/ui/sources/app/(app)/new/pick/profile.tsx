@@ -65,7 +65,7 @@ export default React.memo(function ProfilePickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
     const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;

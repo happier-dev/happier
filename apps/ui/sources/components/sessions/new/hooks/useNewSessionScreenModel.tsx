@@ -729,14 +729,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // The wizard is a full page; an embedding host (Home) always shows the composer.
     const useEnhancedSessionWizard = useSettingsSelector(React.useCallback(settings => (
         !embeddedInHost && settings.useEnhancedSessionWizard
-    ), [embeddedInHost]));
+    ), [embeddedInHost]), ["useEnhancedSessionWizard"]);
     const newSessionPresentationModeV1 = useSetting('newSessionPresentationModeV1');
     const newSessionWizardSectionPresentationV1 = useSettingsSelector(React.useCallback(settings => (
         useEnhancedSessionWizard ? settings.newSessionWizardSectionPresentationV1 : undefined
-    ), [useEnhancedSessionWizard]));
+    ), [useEnhancedSessionWizard]), ["newSessionWizardSectionPresentationV1"]);
     const newSessionWizardColumnsEnabled = useSettingsSelector(React.useCallback(settings => (
         useEnhancedSessionWizard && settings.newSessionWizardColumnsEnabled
-    ), [useEnhancedSessionWizard]));
+    ), [useEnhancedSessionWizard]), ["newSessionWizardColumnsEnabled"]);
     const shouldBottomAnchor = resolveNewSessionShouldBottomAnchor({
         mode: newSessionPresentationModeV1,
         platformOs: Platform.OS,

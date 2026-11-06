@@ -41,7 +41,7 @@ export type SchemaFieldControlProps =
     | Readonly<{ control: 'select'; inputProps: React.ComponentProps<typeof DropdownMenu> }>
     | Readonly<{
         control: 'multiSelect';
-        options: readonly Readonly<{ id: string; title: string; subtitle?: string; accessibilityLabel: string }>[];
+        options: readonly Readonly<{ id: string; title: string; subtitle?: string; testID?: string; accessibilityLabel: string; accessibilityHint?: string }>[];
         selectedIds: ReadonlySet<string>;
         disabled: boolean;
         disabledReason?: string | null;
@@ -62,13 +62,14 @@ export function SchemaFieldControl(props: SchemaFieldControlProps): React.ReactN
                     title={option.title}
                     subtitle={[option.subtitle, props.disabledReason].filter(Boolean).join('\n') || undefined}
                     accessibilityLabel={option.accessibilityLabel}
-                    accessibilityHint={props.disabledReason ?? undefined}
+                    accessibilityHint={option.accessibilityHint ?? props.disabledReason ?? undefined}
                     rightElement={(
                         <Switch
+                            testID={option.testID}
                             value={props.selectedIds.has(option.id)}
                             disabled={props.disabled}
                             accessibilityLabel={option.accessibilityLabel}
-                            accessibilityHint={props.disabledReason ?? undefined}
+                            accessibilityHint={option.accessibilityHint ?? props.disabledReason ?? undefined}
                             onValueChange={toggle}
                         />
                     )}

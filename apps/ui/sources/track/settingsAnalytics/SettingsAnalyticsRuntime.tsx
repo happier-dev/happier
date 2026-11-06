@@ -30,7 +30,7 @@ function selectAnalyticsSettings(settings: Settings): Partial<Settings> & Featur
 }
 
 export function SettingsAnalyticsRuntime() {
-    const settings = useSettingsSelector(selectAnalyticsSettings);
+    const settings = useSettingsSelector(selectAnalyticsSettings, [...accountAnalyticsKeys, 'experiments', 'featureToggles']);
     const localSettings = useLocalSettings();
     const selection = useEffectiveServerSelection();
     const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: true });

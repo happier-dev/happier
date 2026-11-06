@@ -11,10 +11,9 @@ import type {
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields';
 import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from './ConnectedAccountGuide';
@@ -84,32 +83,35 @@ function ConfigurationSelectField(props: Readonly<{
     const title = resolveProjectedLocalizedText(props.field.title, props.localize);
     return (
         <View ref={props.registerTarget(props.field.id)}>
-            <DropdownMenu
-                testID={`connected-account-configuration:${props.field.id}`}
-                open={open}
-                onOpenChange={setOpen}
-                selectedId={selectedId}
-                variant="selectable"
-                search={false}
-                showCategoryTitles={false}
-                matchTriggerWidth
-                connectToTrigger
-                itemTrigger={{
-                    title,
-                    subtitle: resolveProjectedLocalizedText(props.field.description, props.localize) || undefined,
-                    itemProps: {
-                        subtitleLines: 0,
-                        accessibilityLabel: props.invalid
-                            ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
-                            : title,
+            <SchemaFieldControl
+                control="select"
+                inputProps={{
+                    testID: `connected-account-configuration:${props.field.id}`,
+                    open,
+                    onOpenChange: setOpen,
+                    selectedId,
+                    variant: 'selectable',
+                    search: false,
+                    showCategoryTitles: false,
+                    matchTriggerWidth: true,
+                    connectToTrigger: true,
+                    itemTrigger: {
+                        title,
+                        subtitle: resolveProjectedLocalizedText(props.field.description, props.localize) || undefined,
+                        itemProps: {
+                            subtitleLines: 0,
+                            accessibilityLabel: props.invalid
+                                ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
+                                : title,
+                        },
                     },
-                }}
-                items={items}
-                onSelect={(itemId) => {
-                    const option = options.find((candidate) => JSON.stringify(candidate.value) === itemId);
-                    if (!option || props.disabled) return;
-                    props.onChange(option.value);
-                    setOpen(false);
+                    items,
+                    onSelect: (itemId) => {
+                        const option = options.find((candidate) => JSON.stringify(candidate.value) === itemId);
+                        if (!option || props.disabled) return;
+                        props.onChange(option.value);
+                        setOpen(false);
+                    },
                 }}
             />
             {props.invalid ? (
@@ -235,18 +237,21 @@ export function useConnectedAccountConfigurationFields(
                         title={title}
                         subtitle={description || undefined}
                         rightElement={(
-                            <Switch
-                                testID={`connected-account-configuration:${field.id}`}
-                                nativeID={`connected-account-configuration:${field.id}`}
-                                value={value}
-                                disabled={disabled}
-                                accessibilityLabel={invalid
-                                    ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
-                                    : title}
-                                accessibilityHint={invalid
-                                    ? t('connectedServices.account.configurationInvalid')
-                                    : description || undefined}
-                                onValueChange={(next) => updateDraft(field.id, next)}
+                            <SchemaFieldControl
+                                control="switch"
+                                inputProps={{
+                                    testID: `connected-account-configuration:${field.id}`,
+                                    nativeID: `connected-account-configuration:${field.id}`,
+                                    value,
+                                    disabled,
+                                    accessibilityLabel: invalid
+                                        ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
+                                        : title,
+                                    accessibilityHint: invalid
+                                        ? t('connectedServices.account.configurationInvalid')
+                                        : description || undefined,
+                                    onValueChange: (next) => updateDraft(field.id, next),
+                                }}
                             />
                         )}
                         rightElementOutsidePressable
@@ -295,42 +300,31 @@ export function useConnectedAccountConfigurationFields(
                     key={field.id}
                     ref={registerInvalidFieldTarget(field.id)}
                 >
-                    {options.map((option) => {
-                        const optionId = JSON.stringify(option.value);
-                        const selected = selectedIds.has(optionId);
-                        const optionTitle = resolveProjectedLocalizedText(option.title, props.localize);
-                        const toggle = () => updateDraft(
-                            field.id,
-                            selected
-                                ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
-                                : [...selectedValues, option.value],
-                        );
-                        return (
-                            <Item
-                                key={`${field.id}:${optionId}`}
-                                title={optionTitle}
-                                subtitle={resolveProjectedLocalizedText(option.description, props.localize) || undefined}
-                                rightElement={(
-                                    <Switch
-                                        testID={`connected-account-configuration:${field.id}:${optionId}`}
-                                        value={selected}
-                                        disabled={disabled}
-                                        accessibilityLabel={invalid
-                                            ? `${optionTitle}: ${t('connectedServices.account.configurationInvalid')}`
-                                            : optionTitle}
-                                        accessibilityHint={invalid
-                                            ? t('connectedServices.account.configurationInvalid')
-                                            : undefined}
-                                        onValueChange={toggle}
-                                    />
-                                )}
-                                rightElementOutsidePressable
-                                showChevron={false}
-                                disabled={disabled}
-                                onPress={toggle}
-                            />
-                        );
-                    })}
+                    <SchemaFieldControl
+                        control="multiSelect"
+                        options={options.map(option => {
+                            const id = JSON.stringify(option.value);
+                            const optionTitle = resolveProjectedLocalizedText(option.title, props.localize);
+                            return {
+                                id,
+                                title: optionTitle,
+                                subtitle: resolveProjectedLocalizedText(option.description, props.localize) || undefined,
+                                testID: `connected-account-configuration:${field.id}:${id}`,
+                                accessibilityLabel: invalid
+                                    ? `${optionTitle}: ${t('connectedServices.account.configurationInvalid')}`
+                                    : optionTitle,
+                                accessibilityHint: invalid ? t('connectedServices.account.configurationInvalid') : undefined,
+                            };
+                        })}
+                        selectedIds={selectedIds}
+                        disabled={disabled}
+                        onToggle={optionId => {
+                            const option = options.find(candidate => JSON.stringify(candidate.value) === optionId)!;
+                            updateDraft(field.id, selectedIds.has(optionId)
+                                ? selectedValues.filter(value => JSON.stringify(value) !== optionId)
+                                : [...selectedValues, option.value]);
+                        }}
+                    />
                     {invalid ? (
                         <Text
                             testID={errorId}
@@ -357,20 +351,23 @@ export function useConnectedAccountConfigurationFields(
                 showChevron={false}
                 accessoryLayout={multiline || props.embedded ? 'stacked' : 'adaptive'}
                 rightElement={(
-                    <FieldTextInput
-                        testID={`connected-account-configuration:${field.id}`}
-                        ref={registerInvalidFieldTarget(field.id)}
-                        accessibilityLabel={invalid
-                            ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
-                            : title}
-                        error={invalid ? t('connectedServices.account.configurationInvalid') : null}
-                        value={typeof fieldDraft === 'string' ? fieldDraft : ''}
-                        onChangeText={(value) => updateDraft(field.id, value)}
-                        editable={!disabled}
-                        secureTextEntry={field.secret === true}
-                        multiline={multiline}
-                        monospace={control === 'json'}
-                        placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
+                    <SchemaFieldControl
+                        control="text"
+                        inputProps={{
+                            testID: `connected-account-configuration:${field.id}`,
+                            ref: registerInvalidFieldTarget(field.id),
+                            accessibilityLabel: invalid
+                                ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
+                                : title,
+                            error: invalid ? t('connectedServices.account.configurationInvalid') : null,
+                            value: typeof fieldDraft === 'string' ? fieldDraft : '',
+                            onChangeText: (value) => updateDraft(field.id, value),
+                            editable: !disabled,
+                            secureTextEntry: field.secret === true,
+                            multiline,
+                            monospace: control === 'json',
+                            placeholder: resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize),
+                        }}
                     />
                 )}
             />

@@ -15,7 +15,7 @@ export function useSlimProfileAgentEntries(machineId: string | null, serverId?: 
     const enabledAgentIds = useEnabledAgentIds();
     const settings = useSettingsSelector((settings) => ({
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }));
+    }), ["backendEnabledByTargetKey"]);
     const resolvedServerId = serverId ?? getActiveServerId();
     const { snapshot: acpCatalog } = useAcpCatalogForServer(serverId === undefined ? resolvedServerId : serverId);
     const projection = useDaemonMergedProjectionInputs({

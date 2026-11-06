@@ -15,5 +15,5 @@ export function useGlassMaterialSettings(): GlassMaterialSettings {
         glassTintIntensity: settings.glassTintIntensity,
         glassSurfaceMaterials: settings.glassSurfaceMaterials,
     }, [draft]);
-    return useSettingsSelector(select);
+    return useSettingsSelector(select, ["glassBlurEnabled","glassBlurIntensity","glassTintIntensity","glassSurfaceMaterials"]);
 }
