@@ -320,11 +320,13 @@ export const ProviderGatewaySections = React.memo(
 
         {props.usedBy ?? null}
 
-        <ItemGroup
-          title={t('settingsProvidersCollection.gateway.modelPickerTitle')}
-        >
-          {props.pickerRows}
-        </ItemGroup>
+        {props.pickerRows ? (
+          <ItemGroup
+            title={t('settingsProvidersCollection.gateway.modelPickerTitle')}
+          >
+            {props.pickerRows}
+          </ItemGroup>
+        ) : null}
 
         <ItemGroup
           title={t('settingsProvidersCollection.gateway.helperTitle')}

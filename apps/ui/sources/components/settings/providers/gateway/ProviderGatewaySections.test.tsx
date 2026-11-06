@@ -68,6 +68,15 @@ describe('ProviderGatewaySections (lab rgateway GW1/GW2)', () => {
         expect(onChangePlacement).toHaveBeenCalledWith(null);
     });
 
+    it('shows the Model picker section only when the page supplies its rows (a draft has none)', async () => {
+        const draft = await render({ pickerRows: null });
+        expect(draft.getTextContent()).not.toContain('Model picker');
+
+        const saved = await render({ pickerRows: React.createElement('Text', { testID: 'picker-row' }, 'Models') });
+        expect(saved.getTextContent()).toContain('Model picker');
+        expect(saved.findByTestId('picker-row')).toBeTruthy();
+    });
+
     it('resolves the chosen computer from the saved placement, including one that is no longer listed', () => {
         expect(resolveProviderGatewayChosenMachine(undefined, MACHINES)).toBeNull();
         expect(resolveProviderGatewayChosenMachine({ kind: 'sessionMachine' }, MACHINES)).toBeNull();
