@@ -446,7 +446,10 @@ function LayoutCurrentNameMenu(
       theme.colors.text.tertiary,
     ],
   );
-  const name = props.selected?.name ?? '';
+  // Under a page that already names itself (a Project's Overview tab), a lone default layout's name would
+  // say the page's name a second time; the menu names what it holds instead.
+  const namesList = props.heading === 'section' && layouts.length < 2 && props.selected?.isDefault === true;
+  const name = namesList ? labels.list : (props.selected?.name ?? '');
   const marker = props.selected ? editedMarker(props.selected) : undefined;
   return (
     <DropdownMenu
@@ -470,7 +473,7 @@ function LayoutCurrentNameMenu(
           }
           onBlur={() => setFocusVisible(false)}
           accessibilityRole="button"
-          accessibilityLabel={[labels.current(name), marker]
+          accessibilityLabel={[namesList ? labels.list : labels.current(name), marker]
             .filter(Boolean)
             .join(' ')}
           accessibilityState={{ expanded: open }}

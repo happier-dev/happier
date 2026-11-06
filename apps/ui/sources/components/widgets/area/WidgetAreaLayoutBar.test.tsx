@@ -84,6 +84,28 @@ describe('WidgetAreaLayoutBar', () => {
     expect(menu.props.items.map((item: { id: string }) => item.id)[0]).toBe('overview');
   });
 
+  it("under a page that already names itself, a lone default layout's menu names the list, not the page a second time", async () => {
+    const screen = await renderScreen(
+      <WidgetAreaLayoutBar
+        layouts={[DASHBOARDS[0]]}
+        labels={LABELS}
+        selectedId="overview"
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+        actions={null}
+        heading="section"
+        testID="bar"
+      />,
+    );
+    const trigger = screen.findHostByTestId('bar.current')!;
+    expect(screen.getTextContent()).toContain('Dashboards');
+    expect(screen.getTextContent()).not.toContain('Overview');
+    // The menu still holds the default and Create.
+    const menu = screen.root.findAllByType(DropdownMenu)[0]!;
+    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['overview', expect.any(String)]);
+    expect(trigger.props.accessibilityLabel).toBe('Dashboards');
+  });
+
   it('remeasures compact tabs after a rename or deletion and restores the strip when it fits', async () => {
     const props = { selectedId: 'overview', onSelect: () => {}, onCreate: null,
       actions: null, labels: LABELS, testID: 'bar' };
