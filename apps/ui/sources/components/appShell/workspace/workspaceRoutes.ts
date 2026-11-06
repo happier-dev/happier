@@ -96,6 +96,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "session/[id]/runs/[runId]": "./(app)/session/[id]/runs/[runId].tsx",
     "session/[id]/runs/new": "./(app)/session/[id]/runs/new.tsx",
     "session/[id]/sharing": "./(app)/session/[id]/sharing.tsx",
+    "session/[id]/template": "./(app)/session/[id]/template.tsx",
     "session/[id]/terminal": "./(app)/session/[id]/terminal.tsx",
     "session/[id]/usage": "./(app)/session/[id]/usage.tsx",
     "session/[id]/automations/when-turn-finishes": "./(app)/session/[id]/automations/when-turn-finishes.tsx",

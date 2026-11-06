@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ConnectedAccountActionApprovalNotice } from '@/components/settings/connectedServices/ConnectedAccountActionApprovalNotice';
 import { t } from '@/text';
 import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
+import { buildBotTemplateEditorRoute } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
 import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { WorkspaceAppShellProvider } from './WorkspaceAppShellProvider';
@@ -1593,6 +1594,23 @@ describe('consumed workspace navigation owner', () => {
         await screen.pressByTestIdAsync(operation === 'home' ? 'app-shell-logo' : `app-shell-${operation}`);
         expect(requestDecision).toHaveBeenCalledOnce();
         expect(boundary.mirrors).toEqual([operation === 'home' ? '/' : `/session/${operation === 'back' ? 'A2' : 'A3'}?serverId=home-a`]);
+    });
+    it.each([false, true])('expands a private template into its page while retaining the Session (phone=%s)', async phone => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const destination = buildBotTemplateEditorRoute({ draftArtifactId: 'private-draft',
+            sourceSessionRef: { serverId: 'home-a', sessionId: 'A1' }, presentation: 'page' });
+        const screen = await renderScreen(<WorkspaceProvider enabled={!phone} phone={phone} catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const before = navigation().state;
+        const sessionTabId = before.groups[before.focusedGroupId].activeTabId;
+        await act(async () => { navigation().navigationForTab(sessionTabId).pushRetainingCurrent!(destination); });
+        const after = navigation().state;
+        const page = after.tabs[after.groups[after.focusedGroupId].activeTabId];
+        expect(page.id).not.toBe(sessionTabId);
+        expect(hrefForDestinationRef(catalog, page.target)).toBe('/session/A1/template?serverId=home-a&artifactId=private-draft');
+        expect(after.tabs[sessionTabId]).toMatchObject({ target: before.tabs[sessionTabId].target, preview: false });
     });
     it('closes a batch under one discard decision and preserves pinned tabs', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
