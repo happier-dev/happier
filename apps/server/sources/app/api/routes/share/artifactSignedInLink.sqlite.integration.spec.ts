@@ -10,6 +10,11 @@ import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifa
 import { ArtifactHeaderMetadataV1Schema, ArtifactSignedInLinkJoinReadV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
+import { createBotTemplateActionExecuteV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { db } from '@/storage/db';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -24,6 +29,112 @@ describe('signed-in Artifact links through authenticated HTTP', () => {
             env: { HAPPIER_PUBLIC_SERVER_URL: 'https://home.example.test', HAPPIER_WEBAPP_URL: 'https://home.example.test' } });
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('preserves the original bearer through later reviewed releases while explicit rotation and revocation stop joins', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const headers = (accountId: string) => ({ 'x-test-user-id': accountId,
+            'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) });
+        await withAuthenticatedTestApp(app => { publicShareRoutes(app); artifactsRoutes(app); }, async app => {
+            // The Fastify fixture exposes untyped JSON; canonical schemas narrow each response below.
+            const parseJson = (body: string): unknown => JSON.parse(body);
+            const request = async (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) => {
+                const response = await app.inject({ method, url, headers: headers(owner.id),
+                    ...(payload === undefined ? {} : { payload: JSON.stringify(payload),
+                        headers: { ...headers(owner.id), 'content-type': 'application/json' } }) });
+                expect(response.statusCode, response.body).toBe(200);
+                return parseJson(response.body);
+            };
+            const open = (value: unknown) => {
+                const row = ArtifactHttpReadV1Schema.parse(value);
+                return { artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, shared: false,
+                    header: ArtifactHeaderMetadataV1Schema.parse(decodePlainArtifactStoredContent(row.header)),
+                    body: ArtifactBodyEnvelopeV1StoredSchema.parse(decodePlainArtifactStoredContent(row.body)).body,
+                    revision: { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } };
+            };
+            // Only HTTP and Session-metadata persistence are boundaries; release, child admission and link ownership stay real.
+            const artifacts: HomeHubArtifactTransportV1 = {
+                read: async artifactId => {
+                    const response = await app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`, headers: headers(owner.id) });
+                    if (response.statusCode === 404) return null;
+                    expect(response.statusCode, response.body).toBe(200);
+                    return open(parseJson(response.body));
+                },
+                create: async input => open(await request('POST', '/v1/artifacts', { id: input.artifactId,
+                    kind: deriveArtifactStoredKindV1(input.header), header: encodePlainArtifactStoredContent(input.header),
+                    body: encodePlainArtifactStoredContent({ body: input.body }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER })),
+                update: async input => {
+                    await request('POST', `/v1/artifacts/${input.artifactId}`, {
+                        kind: deriveArtifactStoredKindV1(input.header), header: encodePlainArtifactStoredContent(input.header),
+                        body: encodePlainArtifactStoredContent({ body: input.body }),
+                        expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion });
+                    const current = await artifacts.read(input.artifactId);
+                    if (!current) throw new Error('Updated Artifact missing');
+                    return { ok: true, revision: current.revision };
+                },
+            };
+            const issued: ArtifactPublicLinkIssuedV1[] = [];
+            const links = createArtifactPublicLinkActionsV1({ randomBytes: tweetnacl.randomBytes,
+                onPublicLinkIssued: link => { issued.push(link); },
+                request: input => request(input.method, input.path, input.body),
+                read: async artifactId => {
+                    const artifact = await artifacts.read(artifactId);
+                    return artifact ? { ...artifact, encryptionMode: 'plain', dataKey: null } : null;
+                } });
+            let draftRef: { serverId: string; artifactId: string } | null = null;
+            const operations = createBotTemplateActionExecuteV1({ artifacts, randomId: () => crypto.randomUUID(),
+                readSourceDraftRef: async () => draftRef, writeSourceDraftRef: async (_source, ref) => { draftRef = ref; },
+                grant: async () => { throw new Error('No named grants selected'); },
+                signedInLink: async (input, context) => {
+                    if (!context.hostReviewedChild) throw new Error('Missing reviewed child');
+                    const result = await context.hostReviewedChild.invoke({ action: 'artifact.public_link.create', role: 'signed_in_link',
+                        input });
+                    expect(result).toMatchObject({ ok: true });
+                } });
+            const executor = createActionExecutor({ botTemplateAction: args => operations(args),
+                prepareBotTemplateRelease: operations.prepareRelease,
+                artifactAction: args => {
+                    if (args.actionId !== 'artifact.public_link.create' && args.actionId !== 'artifact.public_link.revoke')
+                        throw new Error(`Unexpected Artifact Action: ${args.actionId}`);
+                    return links({ actionId: args.actionId, input: args.input, signal: args.signal });
+                } });
+            const run = (actionId: 'template.draft' | 'template.release' | 'artifact.public_link.create' | 'artifact.public_link.revoke', input: unknown) =>
+                executor.execute(actionId, input, { surface: 'ui', serverId: 'home', authority: 'present_user',
+                    actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {} }), presentUserConfirmation: { actionId } });
+            const draftArtifactId = crypto.randomUUID();
+            for (const version of ['1.0.0', '1.1.0']) {
+                const current = await artifacts.read(draftArtifactId);
+                const drafted = await run('template.draft', { draftArtifactId, sourceSessionRef: { serverId: 'home', sessionId: 'author-session' },
+                    ...(current ? { expectedRevision: current.revision } : {}),
+                    content: { v: 1, identity: { name: 'Garden', description: '' }, instructions: { markdown: `Grow herbs ${version}` },
+                        skills: [], memoryRules: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } } });
+                expect(drafted, JSON.stringify(drafted)).toMatchObject({ ok: true });
+                const draft = await artifacts.read(draftArtifactId);
+                if (!draft) throw new Error('Draft missing');
+                expect(await run('template.release', { draftArtifactId, expectedRevision: draft.revision, version, changelog: '',
+                    share: { recipients: [], signedInLink: true } })).toMatchObject({ ok: true });
+                const original = issued[0];
+                if (!original) throw new Error('First release did not issue link');
+                const joined = await app.inject({ method: 'GET', url: `/v1/artifact-signed-in-links/${original.lookupId}/join`,
+                    headers: headers(recipient.id) });
+                expect(joined.statusCode, `${version}: ${joined.body}`).toBe(200);
+                const prepared = ArtifactSignedInLinkJoinReadV1Schema.parse(parseJson(joined.body));
+                if (prepared.content.kind !== 'artifact') throw new Error('Join returned non-Artifact content');
+                expect(decodePlainArtifactStoredContent(prepared.content.body)).toEqual({ body: expect.stringContaining(`Grow herbs ${version}`) });
+                expect(issued).toHaveLength(1);
+            }
+            const artifactId = issued[0]!.shareId;
+            expect(await run('artifact.public_link.create', { artifactId, audience: 'signed_in' })).toMatchObject({ ok: true });
+            expect(issued).toHaveLength(2);
+            const join = (lookupId: string) => app.inject({ method: 'GET', url: `/v1/artifact-signed-in-links/${lookupId}/join`,
+                headers: headers(recipient.id) });
+            expect((await join(issued[0]!.lookupId)).statusCode).toBe(404);
+            expect((await join(issued[1]!.lookupId)).statusCode).toBe(200);
+            expect(await run('artifact.public_link.revoke', { artifactId, audience: 'signed_in', shareId: artifactId }))
+                .toMatchObject({ ok: true });
+            expect((await join(issued[1]!.lookupId)).statusCode).toBe(404);
+        });
+    });
 
     it.each(['plain', 'e2ee'] as const)('joins %s links only as self, isolates anonymous routes and separates link from grant revocation', async mode => {
         const account = (accountMode = mode) => db.account.create({ data: { encryptionMode: accountMode,
