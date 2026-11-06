@@ -507,7 +507,7 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('does not materialize or publish through a newly selected Connected Account mid-invocation', async () => {
+  it('keeps an admitted catalog receipt while refusing fresh materialization through a newly selected Connected Account', async () => {
     const { handlers, registrar } = manager();
     const principal = PluginInstallReviewPrincipalDigestSchema.parse('c'.repeat(64));
     const manifest = speechManifest({ requirement: { kind: 'optional' } });
@@ -614,7 +614,7 @@ describe('unified Voice speech machine RPC', () => {
     expect(materialize).toHaveBeenCalledWith(expect.objectContaining({
       account: expect.objectContaining({ accountId: 'google-a' }),
     }));
-    expect(response).toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
+    expect(response).toEqual({ ok: true, items: [] });
     await registration.dispose();
   });
 
@@ -782,7 +782,7 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('retires publication and the bound HTTP service when the settings snapshot changes', async () => {
+  it('keeps an admitted catalog receipt after settings change and closes its settled HTTP scope', async () => {
     const { handlers, registrar } = manager();
     let boundHttp: Pick<HttpService, 'request'> | undefined;
     const list = vi.fn<NonNullable<SpeechProviderRuntime['catalog']>['list']>(async (_request, context) => {
@@ -803,8 +803,8 @@ describe('unified Voice speech machine RPC', () => {
 
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
       target, catalog: 'models',
-    })).resolves.toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
-    await expect(boundHttp?.request({ method: 'GET', url: 'https://speech.example.test', redirect: 'error' })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+    })).resolves.toEqual({ ok: true, items: [] });
+    await expect(boundHttp?.request({ method: 'GET', url: 'https://speech.example.test', redirect: 'error' })).rejects.toMatchObject({ name: 'AbortError' });
     await registration.dispose();
   });
 
@@ -839,16 +839,19 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('cancels provider work when the admitted generation retires', async () => {
+  it('keeps an admitted finite catalog pending across retirement and refuses the next acquisition', async () => {
     const { handlers, registrar } = manager();
     let markStarted: (() => void) | null = null;
     const started = new Promise<void>((resolve) => { markStarted = resolve; });
-    const list = vi.fn<NonNullable<SpeechProviderRuntime['catalog']>['list']>(async (_request, context) => await new Promise<never>((_resolve, reject) => {
+    let complete: (() => void) | undefined;
+    const completed = new Promise<void>((resolve) => { complete = resolve; });
+    let providerSignal: AbortSignal | undefined;
+    const list = vi.fn<NonNullable<SpeechProviderRuntime['catalog']>['list']>(async (_request, context) => {
+      providerSignal = context.signal;
       markStarted?.();
-      const rejectAbort = () => reject(Object.assign(new Error('catalog retired'), { name: 'AbortError' }));
-      if (context.signal.aborted) rejectAbort();
-      else context.signal.addEventListener('abort', rejectAbort, { once: true });
-    }));
+      await completed;
+      return [];
+    });
     await admitSpeech({ kind: 'speech' as const, catalog: { list }, transcribe: unexpectedTranscribe }, contribution({ catalogs: [{ kind: 'models', settingFieldId: 'model', allowCustom: true }] }), { settings: settings });
     const registration = registerMachineVoiceSpeechRpcHandlers({
       rpcHandlerManager: registrar,
@@ -856,48 +859,109 @@ describe('unified Voice speech machine RPC', () => {
     const pending = handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
       target, catalog: 'models',
     });
-    await started;
-    await retireSpeech();
-
-    await expect(pending).resolves.toEqual({
-      ok: false,
-      errorCode: 'provider_unavailable',
-      error: 'provider_unavailable',
-      retryable: false,
-    });
-    expect(pluginReloadController.getState().activeRegistry?.voiceSpeechProviders?.read(target)).toBeNull();
-    await registration.dispose();
+    try {
+      await started;
+      await retireSpeech();
+      expect(providerSignal?.aborted).toBe(false);
+      complete?.();
+      await expect(pending).resolves.toEqual({ ok: true, items: [] });
+      expect(pluginReloadController.getState().activeRegistry?.voiceSpeechProviders?.read(target)).toBeNull();
+      await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+        target, catalog: 'models',
+      })).resolves.toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
+    } finally {
+      complete?.();
+      await pending;
+      await registration.dispose();
+    }
   });
 
-  it('cancels provider work at the host operation deadline', async () => {
+  it.each(['transcribe', 'synthesize'] as const)('keeps admitted finite %s alive through retirement and returns its receipt', async (kind) => {
+    const { handlers, registrar } = manager();
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
+    let complete: (() => void) | undefined;
+    const completed = new Promise<void>(resolve => { complete = resolve; });
+    let providerSignal: AbortSignal | undefined;
+    const awaitProvider = async (signal: AbortSignal) => {
+      providerSignal = signal;
+      markStarted?.();
+      await completed;
+    };
+    const runtime: SpeechProviderRuntime = kind === 'transcribe'
+      ? { kind: 'speech', async transcribe(request, context) {
+          await awaitProvider(context.signal);
+          return { requestId: request.requestId, text: 'retained editable transcript' };
+        } }
+      : { kind: 'speech', async synthesize(request, context) {
+          await awaitProvider(context.signal);
+          return { requestId: request.requestId, bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/wav' };
+        } };
+    await admitSpeech(runtime, contribution({ roles: [kind === 'transcribe' ? 'dictation_stt' : 'conversation_tts'] }));
+    const registration = registerMachineVoiceSpeechRpcHandlers({ rpcHandlerManager: registrar });
+    const recipient = createTransferRecipientKeyPair();
+    const pending = kind === 'transcribe'
+      ? handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE)?.({
+          target, requestId: 'finite-receipt', mimeType: 'audio/wav',
+          uploadId: await upload(handlers, new Uint8Array([1, 2, 3])),
+        })
+      : handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+          target, requestId: 'finite-receipt', input: 'Hello',
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+        });
+    try {
+      await started;
+      await retireSpeech();
+      expect(providerSignal?.aborted).toBe(false);
+      complete?.();
+      await expect(pending).resolves.toMatchObject(kind === 'transcribe'
+        ? { ok: true, requestId: 'finite-receipt', text: 'retained editable transcript' }
+        : { ok: true, requestId: 'finite-receipt', mimeType: 'audio/wav', sizeBytes: 3 });
+    } finally {
+      complete?.();
+      await pending;
+      await registration.dispose();
+    }
+  });
+
+  it('keeps finite synthesis pending without a host deadline and releases it on caller cancellation', async () => {
     try {
       const { handlers, registrar } = manager();
       let markStarted: (() => void) | null = null;
       const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      const list = vi.fn<NonNullable<SpeechProviderRuntime['catalog']>['list']>(async (_request, context) => await new Promise<never>((_resolve, reject) => {
+      let providerSignal: AbortSignal | undefined;
+      const synthesize = vi.fn<NonNullable<SpeechProviderRuntime['synthesize']>>(async (_request, context) => await new Promise<never>((_resolve, reject) => {
+        providerSignal = context.signal;
         markStarted?.();
         const rejectAbort = () => reject(Object.assign(new Error('catalog timed out'), { name: 'AbortError' }));
         if (context.signal.aborted) rejectAbort();
         else context.signal.addEventListener('abort', rejectAbort, { once: true });
       }));
-      await admitSpeech({ kind: 'speech', catalog: { list }, transcribe: unexpectedTranscribe }, contribution({ catalogs: [{ kind: 'models', settingFieldId: 'model', allowCustom: true }] }));
+      await admitSpeech({ kind: 'speech', synthesize }, contribution({ roles: ['conversation_tts'] }));
       vi.useFakeTimers();
       const registration = registerMachineVoiceSpeechRpcHandlers({
         rpcHandlerManager: registrar,
       });
-      const pending = handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
-        target, catalog: 'models',
-      });
+      const controller = new AbortController();
+      const recipient = createTransferRecipientKeyPair();
+      let settled = false;
+      const pending = handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+        target, requestId: 'tts-pending', input: 'Hello',
+        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+      }, { signal: controller.signal });
+      void pending?.then(() => { settled = true; });
       await started;
-      await vi.advanceTimersByTimeAsync(30_000);
-
-      await expect(pending).resolves.toEqual({
-        ok: false,
-        errorCode: 'request_timeout',
-        error: 'request_timeout',
-        retryable: true,
-      });
-      await registration.dispose();
+      try {
+        await vi.advanceTimersByTimeAsync(60_001);
+        expect(settled).toBe(false);
+        expect(providerSignal?.aborted).toBe(false);
+      } finally {
+        controller.abort();
+        await pending;
+        await registration.dispose();
+      }
+      expect(providerSignal?.aborted).toBe(true);
+      await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
     } finally {
       vi.useRealTimers();
     }
@@ -1220,28 +1284,7 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('rejects stale or malformed provider output before publishing a download', async () => {
-    const { handlers, registrar } = manager();
-    const synthesize = vi.fn<NonNullable<SpeechProviderRuntime['synthesize']>>(async () => {
-      await retireSpeech();
-      return { requestId: 'tts-2', bytes: new Uint8Array([1]), mimeType: 'audio/wav' as const };
-    });
-    await admitSpeech({ kind: 'speech', synthesize }, contribution({ roles: ['conversation_tts'] }));
-    const registration = registerMachineVoiceSpeechRpcHandlers({
-      rpcHandlerManager: registrar,
-    });
-    const recipient = createTransferRecipientKeyPair();
-    const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-2', input: 'Hello',
-      recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
-    });
-
-    expect(response).toEqual({ ok: false, errorCode: 'provider_unavailable' });
-    expect(response).not.toHaveProperty('downloadId');
-    await registration.dispose();
-  });
-
-  it('fences an optional no-source settings action when Account Settings selects a source during execution', async () => {
+  it('returns an admitted settings patch when Account Settings selects a source during execution', async () => {
     const { handlers, registrar } = manager();
     const settingsAction = {
       id: 'refresh-voice',
@@ -1345,18 +1388,19 @@ describe('unified Voice speech machine RPC', () => {
     });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(response).toEqual({
-      ok: false,
-      errorCode: 'provider_unavailable',
+      ok: true,
+      patch: { model: 'refreshed-model' },
     });
     await registration.dispose();
   });
 
-  it('executes a declared speech settings action with its exact daemon snapshot and fences a lagging revision', async () => {
+  it('refuses a lagging settings revision before execution and returns an admitted patch through retirement', async () => {
     const { handlers, registrar } = manager();
     const settingsActionCredentials: VoiceCredentialAccess<'settings'> = Object.freeze({
       phase: 'settings', mediated: null, raw: null,
     });
     let retireAfterExecution = false;
+    let cancelAfterExecution: AbortController | null = null;
     const execute: NonNullable<VoiceSpeechRuntimeLease['runtime']['settingsActions']>['execute'] = vi.fn(async (input, context) => {
       expect(input).toEqual({
         actionId: 'refresh-voice',
@@ -1367,6 +1411,7 @@ describe('unified Voice speech machine RPC', () => {
       expect(context.signal.aborted).toBe(false);
       expect(context.tools).toEqual([]);
       if (retireAfterExecution) await retireSpeech();
+      cancelAfterExecution?.abort();
       return { patch: { voiceName: 'refreshed-voice' } };
     });
     const definition = contribution({
@@ -1427,14 +1472,25 @@ describe('unified Voice speech machine RPC', () => {
     });
     expect(execute).toHaveBeenCalledTimes(1);
 
+    cancelAfterExecution = new AbortController();
+    await expect(executeSettingsAction({
+      target,
+      actionId: 'refresh-voice',
+      expectedSettingsVersion: 7,
+    }, { signal: cancelAfterExecution.signal })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'cancelled',
+    });
+    cancelAfterExecution = null;
+
     retireAfterExecution = true;
     await expect(executeSettingsAction({
       target,
       actionId: 'refresh-voice',
       expectedSettingsVersion: 7,
     })).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'provider_unavailable',
+      ok: true,
+      patch: { voiceName: 'refreshed-voice' },
     });
     await registration.dispose();
   });

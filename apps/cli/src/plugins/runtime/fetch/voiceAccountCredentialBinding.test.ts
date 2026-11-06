@@ -1366,13 +1366,14 @@ describe('Voice account Plugin fetch credential binding', () => {
         }
     });
 
-    it('preserves cancellation, generation retirement, and account-switch truth in flight', async () => {
+    it('finishes admitted Voice catalog HTTP after permission or source retirement while preserving cancellation and fresh acquisition', async () => {
         const runInFlightChange = async (
             change: (input: Readonly<{
                 caller: AbortController;
                 retire: () => void;
             }>) => void,
-            expectedCode: string,
+            expectedCode?: string,
+            nextCode = 'plugin_final_generation_retired',
         ) => {
             publishCredential();
             let release!: () => void;
@@ -1393,10 +1394,11 @@ describe('Voice account Plugin fetch credential binding', () => {
                 });
             });
             const caller = new AbortController();
-            const pending = createCatalogService(adapter, {
+            const service = createCatalogService(adapter, {
                 signal: caller.signal,
                 isOccurrenceCurrent: () => current,
-            }).request(catalogRequest());
+            });
+            const pending = service.request(catalogRequest());
             await started;
             change({
                 caller,
@@ -1405,13 +1407,19 @@ describe('Voice account Plugin fetch credential binding', () => {
                 },
             });
             release();
-            await expect(pending).rejects.toMatchObject({ code: expectedCode });
+            if (expectedCode) await expect(pending).rejects.toMatchObject({ code: expectedCode });
+            else {
+                await expect(pending).resolves.toMatchObject({ status: 200 });
+                await expect(service.request(catalogRequest())).rejects.toMatchObject({ code: nextCode });
+                expect(adapter).toHaveBeenCalledTimes(1);
+            }
         };
 
         await runInFlightChange(({ caller }) => caller.abort(), 'plugin_fetch_voice_account_operation_cancelled');
-        await runInFlightChange(({ retire }) => retire(), 'plugin_final_generation_retired');
+        await runInFlightChange(({ retire }) => retire());
         await runInFlightChange(
             () => publishDormantCredentialSelection('none', 2),
+            undefined,
             'plugin_voice_credential_unavailable',
         );
     });

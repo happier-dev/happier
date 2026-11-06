@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as undici from 'undici';
 import { accountSettingsParse, VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import type { PinnedHttpStreamTransport } from '@/network/pinnedHttp';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
@@ -11,6 +11,12 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/openai-compat/src/manifest';
 import { registerMachineVoiceSpeechRpcHandlers } from './rpcHandlers.voiceSpeech';
 import { readVoiceSpeechSettingsSnapshot } from './voiceSpeechSettings';
+
+// Genuine network boundary; retain the runtime's real Agent and TLS adapters.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
 
 const target = { pluginId: PLUGIN_MANIFEST.id, localId: 'stt' };
 const providerId = `${target.pluginId}/${target.localId}`;
@@ -30,6 +36,7 @@ function snapshot(language: string | null, settingsVersion = 1): ActiveAccountSe
 describe('registered speech recognition language at the real daemon/plugin boundary', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(undici.fetch).mockReset();
     clearActiveAccountSettingsSnapshot();
   });
 
@@ -44,7 +51,7 @@ describe('registered speech recognition language at the real daemon/plugin bound
     expect(conversation.isCurrent()).toBe(true);
   });
 
-  it('sends independent conversation, Dictation and engine-default language without writing provider settings', async () => {
+  it('sends independent recognition languages and applies changes at the next request without writing provider settings', async () => {
     let current = snapshot('de');
     const bodies: string[] = [];
     let changeLanguageDuringRequest = false;
@@ -53,21 +60,20 @@ describe('registered speech recognition language at the real daemon/plugin bound
       setActiveAccountSettingsSnapshot(current);
     };
     setActiveAccountSettingsSnapshot(current);
-    // Only the DNS/socket and Account inputs are fixtures; source admission,
+    // Fetch and Account inputs are external boundaries; source admission,
     // the first-party module, codec, HTTP policy, RPC and upload stay real.
-    const openPinnedStream: PinnedHttpStreamTransport = async (request) => {
-      if (!(request.body instanceof Uint8Array)) throw new Error('expected actual multipart bytes');
-      bodies.push(new TextDecoder().decode(request.body));
+    const fetchBoundary: typeof globalThis.fetch = async (_url, init) => {
+      if (!(init?.body instanceof Uint8Array)) throw new Error('expected actual multipart bytes');
+      bodies.push(new TextDecoder().decode(init.body));
       if (changeLanguageDuringRequest) publishLanguage('it');
-      let body: Uint8Array | null = new TextEncoder().encode(JSON.stringify({ text: 'recognized' }));
-      return { status: 200, headers: { 'content-type': 'application/json' }, contentLength: body.byteLength,
-        async read() { const next = body; body = null; return next; }, cancel() { body = null; } };
+      return Response.json({ text: 'recognized' });
     };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchBoundary);
+    // Node uses Undici fetch; Bun uses the global Fetch surface.
+    vi.mocked(undici.fetch).mockImplementation(fetchBoundary as unknown as typeof undici.fetch);
     const fixture = await createAdmittedPluginRuntimeFixture({
       controller: pluginReloadController,
-      runtimeOptions: { pluginIds: [target.pluginId], networkDependencies: {
-        resolveNetworkAddresses: async () => ['93.184.216.34'], openPinnedStream,
-      } },
+      runtimeOptions: { pluginIds: [target.pluginId] },
     });
     const handlers = new RpcHandlerManager({ scopePrefix: 'speech-language-test', encryptionMode: 'plain', logger: () => {} });
     const registration = registerMachineVoiceSpeechRpcHandlers({
@@ -95,7 +101,13 @@ describe('registered speech recognition language at the real daemon/plugin bound
       expect(root).toMatchObject({ assistantLanguage: 'es', providers: { [providerId]: { config: { language: 'fr' } } } });
       publishLanguage('de');
       changeLanguageDuringRequest = true;
-      await expect(invoke('dictation')).resolves.toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
+      // Admitted finite work finishes with its captured settings; withdrawal or
+      // preference changes take effect at the next natural request boundary.
+      await expect(invoke('dictation')).resolves.toEqual({ ok: true, requestId: 'language-request', text: 'recognized' });
+      expect(bodies[3]).toContain('name="language"\r\n\r\nde\r\n');
+      changeLanguageDuringRequest = false;
+      await expect(invoke('dictation')).resolves.toEqual({ ok: true, requestId: 'language-request', text: 'recognized' });
+      expect(bodies[4]).toContain('name="language"\r\n\r\nit\r\n');
     } finally {
       await registration.dispose();
       await fixture.dispose();

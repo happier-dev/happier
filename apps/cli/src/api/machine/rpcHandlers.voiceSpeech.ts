@@ -499,11 +499,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     transportSignal?: AbortSignal,
   ): Promise<T> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    timer.unref?.();
     const signal = AbortSignal.any([
       controller.signal,
-      lease.retirementSignal,
       ...(transportSignal ? [transportSignal] : []),
     ]);
     try {
@@ -515,12 +512,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       if (transportSignal?.aborted) {
         throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       }
-      if (controller.signal.aborted) {
-        throw Object.assign(new Error('request_timeout'), { code: 'request_timeout' });
-      }
       throw error;
     } finally {
-      clearTimeout(timer);
       if (!controller.signal.aborted) controller.abort();
     }
   };
@@ -531,10 +524,9 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
   const assertOperationMayPublish = (
     lease: VoiceSpeechRuntimeLease,
     signal: AbortSignal,
-    isOperationCurrent: (() => boolean) | undefined = undefined,
   ) => {
     throwIfTransportCancelled(signal);
-    if (!lease.isCurrent() || isOperationCurrent?.() === false) {
+    if (!lease.isCurrent()) {
       throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
     }
   };
@@ -593,7 +585,6 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       return Object.freeze({
         correspondence,
         appliedVoice,
-        isCurrent,
         context: Object.freeze({
           credentials,
           settings: correspondence.settings,
@@ -675,7 +666,9 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           { catalog },
           operation.context,
         );
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        // The catalog is the receipt of the admitted finite read. New HTTP
+        // and credential acquisition still use the captured operation owner.
+        throwIfTransportCancelled(signal);
         const validated = VoiceProviderCatalogResponseSchema.safeParse({ ok: true, items: result });
         if (!validated.success) {
           throw Object.assign(new Error('provider_response_invalid'), { code: 'provider_response_invalid' });
@@ -742,7 +735,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
             tools: Object.freeze([]),
           },
         );
-        assertOperationMayPublish(lease!, signal, isCurrent);
+        throwIfTransportCancelled(signal);
         const validated = DaemonVoiceSpeechSettingsActionResponseSchema.safeParse({
           ok: true,
           patch: result.patch,
@@ -864,7 +857,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           },
           operation.context,
         );
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        throwIfTransportCancelled(signal);
         return Object.freeze({ ok: true as const, ...validateTranscriptionResult(providerResult, requestId) });
       }, lease, context?.signal);
       return DaemonVoiceSpeechTranscribeResponseSchema.parse(result);
@@ -919,7 +912,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           },
           operation.context,
         );
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        throwIfTransportCancelled(signal);
         const synthesized = validateAndCopySynthesisResult(
           providerResult,
           requestId,
@@ -929,11 +922,11 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           ),
         );
         const root = await outputRoot();
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        throwIfTransportCancelled(signal);
         filePath = join(root, `${randomUUID()}.audio`);
         await writeFile(filePath, synthesized.bytes, { mode: 0o600, signal });
         outputFiles.add(filePath);
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        throwIfTransportCancelled(signal);
         const session = await downloads.openDownloadTransferSession({
           source: { filePath, deleteFileOnClose: true, sizeBytes: synthesized.bytes.byteLength, name: 'voice-speech-audio' },
           recipientPublicKeyBase64,
@@ -941,7 +934,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         downloadId = session.downloadId;
         downloadFiles.set(session.downloadId, filePath);
         scheduleDownloadExpiry(session.downloadId);
-        assertOperationMayPublish(lease!, signal, operation.isCurrent);
+        throwIfTransportCancelled(signal);
         return DaemonVoiceSpeechSynthesizeResponseSchema.parse(Object.freeze({
           ok: true as const, requestId, downloadId: session.downloadId,
           chunkSizeBytes: session.chunkSizeBytes, sizeBytes: synthesized.bytes.byteLength, mimeType: synthesized.mimeType,
