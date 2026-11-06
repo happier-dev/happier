@@ -13771,6 +13771,7 @@ const voicePresenceTranslations = { 'zh-Hant': {
         end: "結束",
         captions: { connecting: "正在開啟音訊通道", listening: "請說", transcribing: "正在轉成文字", thinking: "正在思考回答", speaking: "你可以隨時打斷", interrupted: "請說", muted: "取消靜音即可說話 · 語音仍可說話", reconnecting: "連線中斷 · 正在重試", blocked: "允許存取麥克風即可說話", failed: "請重試，或檢查語音設定" },
         recovery: { allow: "允許", setUp: "設定" },
+        readAloud: { preparing: "正在準備朗讀", speaking: "正在朗讀", stop: "停止朗讀" },
         containerA11y: ({ status }) => `語音，${status}`,
     } } satisfies Pick<Readonly<Record<string, VoicePresenceTranslation>>, "zh-Hant">;
 

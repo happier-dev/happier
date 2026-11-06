@@ -36,6 +36,8 @@ export type VoicePresenceTranslation = Readonly<{
     captions: Readonly<{ connecting: string; listening: string; transcribing: string; thinking: string; speaking: string; interrupted: string; muted: string; reconnecting: string; blocked: string; failed: string }>;
     /** The transport's short recovery verbs; the full recovery label stays the accessible name. */
     recovery: Readonly<{ allow: string; setUp: string }>;
+    /** Read-aloud (Say) outside a conversation: its status word and Stop. */
+    readAloud: Readonly<{ preparing: string; speaking: string; stop: string }>;
     containerA11y: (params: Readonly<{ status: string }>) => string;
 }>;
 
@@ -73,5 +75,6 @@ export const voicePresenceTranslationsEnglish = { en: {
         end: "End",
         captions: { connecting: "Opening the audio channel", listening: "Go ahead", transcribing: "Turning that into text", thinking: "Working out an answer", speaking: "You can interrupt any time", interrupted: "Go ahead", muted: "Unmute to talk · Voice can still speak", reconnecting: "Lost the connection · trying again", blocked: "Allow microphone access to talk", failed: "Try again, or check Voice settings" },
         recovery: { allow: "Allow", setUp: "Set up" },
+        readAloud: { preparing: "Getting ready to read", speaking: "Reading aloud", stop: "Stop reading" },
         containerA11y: ({ status }) => `Voice, ${status}`,
     } } satisfies Pick<Readonly<Record<string, VoicePresenceTranslation>>, "en">;

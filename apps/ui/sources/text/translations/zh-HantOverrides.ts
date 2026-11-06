@@ -2321,6 +2321,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       contextUpdatePlaceholder: "選用的後續內容更新",
       actionsTitle: "動作",
       sendContext: "傳送內容",
+      readPromptAloud: "朗讀文字",
       usesCurrentProvider: "這個測試台一律使用你目前的語音設定與真實執行階段整合。",
       localModeHint: "本地 QA 需要將 Local voice 的對話模式設為 Agent。",
       elevenLabsHint: "ElevenLabs QA 需要先設定 ElevenLabs 提供者，且即時工作階段必須成功連線。",

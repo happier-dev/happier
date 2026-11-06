@@ -48,7 +48,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readEndpointFromMachineState } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
 import { readPeerEndpointForServerScope } from '@/sync/domains/machines/peer/mediation/readPeerEndpointForServerScope';
 import { resolveVoiceQaTransportReadiness } from './voiceQaTransportReadiness';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+
+const executeVoiceQaAction = createFrontDoorUiActionExecutor();
 
 function VoiceQaField(props: Readonly<{ label: string; value: string; onChangeText: (value: string) => void; placeholder: string; multiline?: boolean; testID?: string }>) {
   const { theme } = useUnistyles();
@@ -702,6 +705,14 @@ export function VoiceQaScreen() {
                     });
                   })
                 }
+              />
+              <RoundButton
+                testID="voiceQa.readAloud"
+                title={t('devVoiceQa.readPromptAloud')}
+                size="normal"
+                display="inverted"
+                // Read-aloud runs until it finishes or Stop; the presence shows it meanwhile.
+                onPress={() => { void executeVoiceQaAction('ui.voice_global.say.start', { text: promptRef.current }); }}
               />
             </View>
             <Text style={[styles.noteText, { color: theme.colors.text.secondary }]}>{t('devVoiceQa.usesCurrentProvider')}</Text>

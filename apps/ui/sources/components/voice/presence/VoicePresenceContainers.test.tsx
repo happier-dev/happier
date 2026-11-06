@@ -529,6 +529,18 @@ describe('VoiceOrb', () => {
 });
 
 describe('the ended conversation', () => {
+    it('keeps a running call controllable alongside its separate read-aloud Stop', async () => {
+        const voice = projection('listening');
+        const stop = vi.fn();
+        screen = await renderScreen(<VoiceTopBarPresence voice={voice} readAloud={{ phase: 'speaking', stop }} />);
+        expect(screen.findByTestId('voice-top-bar-read-aloud')).toBeNull();
+        screen.pressByTestId('voice-top-bar-transport-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(voice.onPrimaryAction).not.toHaveBeenCalled();
+        screen.pressByTestId('voice-top-bar-transport-end');
+        expect(voice.onToggle).toHaveBeenCalledTimes(1);
+    });
+
     function ended(): VoiceAttemptControlProjection {
         return {
             ...projection('idle'),
@@ -556,6 +568,49 @@ describe('the ended conversation', () => {
         screen = await renderScreen(<VoiceTopBarPresence voice={voice} />);
         expect(screen.findByTestId('voice-top-bar-rest')).toBeTruthy();
         expect(screen.findByTestId('voice-top-bar-label')).toBeNull();
+    });
+
+    it.each(['top_bar', 'island', 'orb'] as const)('keeps read-aloud and Stop reachable over retained ended and failed calls in %s', async (container) => {
+        for (const retained of [ended(), projection('failed')]) {
+            let phase: 'preparing' | 'speaking' | 'idle' = 'preparing';
+            const stop = vi.fn(() => { phase = 'idle'; });
+            const render = () => {
+                const readAloud = { phase, stop };
+                if (container === 'top_bar') return <VoiceTopBarPresence voice={retained} readAloud={readAloud} />;
+                if (container === 'island') return <VoiceIsland voice={retained} readAloud={readAloud} phone width={358}
+                    anchorRef={React.createRef()} sectionOpen={false} onOpenSection={() => {}} shouldSuppressPress={() => false} />;
+                return <VoiceOrb voice={retained} readAloud={readAloud} anchorRef={React.createRef()}
+                    sectionOpen={false} onOpenSection={() => {}} shouldSuppressPress={() => false}
+                    translateX={makeMutable(0)} hostWidth={390} />;
+            };
+            screen = await renderScreen(render());
+            expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.preparing'));
+            phase = 'speaking';
+            await screen.update(render());
+            expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.speaking'));
+            if (container === 'orb' && retained.canDismissFailedAttempt) {
+                const body = screen.findByTestId('voice-orb-body')!;
+                expect(body.props.accessibilityActions).toContainEqual({ name: 'activate', label: t('voicePresence.readAloud.stop') });
+                await act(async () => { body.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }); });
+            } else {
+                screen.pressByTestId(container === 'orb' ? 'voice-orb-body'
+                    : container === 'top_bar' ? 'voice-top-bar-read-aloud-stop' : 'voice-island-read-aloud-stop');
+            }
+            expect(stop).toHaveBeenCalledTimes(1);
+            expect(retained.onPrimaryAction).not.toHaveBeenCalled();
+            await screen.update(render());
+            expect(screen.findByTestId('voice-read-aloud-status')).toBeNull();
+            if (container !== 'orb') {
+                const prefix = container === 'top_bar' ? 'voice-top-bar' : 'voice-island';
+                screen.pressByTestId(`${prefix}-transport-dismiss`);
+                expect(retained.ended ? retained.onDismissEnded : retained.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
+            } else {
+                screen.pressByTestId('voice-orb-body');
+                expect(retained.onPrimaryAction).toHaveBeenCalledTimes(1);
+            }
+            await screen.unmount();
+            screen = null;
+        }
     });
 });
 

@@ -13788,6 +13788,7 @@ const voicePresenceTranslations = { it: {
         end: "Termina",
         captions: { connecting: "Apertura del canale audio", listening: "Vai pure", transcribing: "Conversione in testo", thinking: "Sto preparando una risposta", speaking: "Puoi interrompere in qualsiasi momento", interrupted: "Vai pure", muted: "Riattiva il microfono per parlare · Voce può ancora parlare", reconnecting: "Connessione persa · nuovo tentativo", blocked: "Consenti l'accesso al microfono per parlare", failed: "Riprova o controlla le impostazioni di Voce" },
         recovery: { allow: "Consenti", setUp: "Configura" },
+        readAloud: { preparing: "Preparazione della lettura", speaking: "Lettura ad alta voce", stop: "Interrompi la lettura" },
         containerA11y: ({ status }) => `Voce, ${status}`,
     } } satisfies Pick<Readonly<Record<string, VoicePresenceTranslation>>, "it">;
 

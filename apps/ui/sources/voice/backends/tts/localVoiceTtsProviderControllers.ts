@@ -82,6 +82,10 @@ export type LocalVoiceTtsProviderController = Readonly<{
 
 export type LocalVoiceTtsController = Readonly<{
     speak: (ctx: LocalVoiceTtsRequest) => Promise<void>;
+    say: (ctx: Omit<LocalVoiceTtsRequest, 'registerPlaybackStopper'> & { signal?: AbortSignal }) => Promise<Readonly<{ status: 'completed' | 'cancelled' }>>;
+    stopSay: () => boolean;
+    readSay: () => 'idle' | 'preparing' | 'speaking';
+    subscribeSay: (listener: () => void) => () => void;
 }>;
 
 async function speakWithDeviceSpeech(ctx: LocalVoiceTtsRequest): Promise<void> {

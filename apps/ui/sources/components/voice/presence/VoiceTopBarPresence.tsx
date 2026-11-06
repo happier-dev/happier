@@ -20,6 +20,8 @@ import { VoiceMark, VoiceMarkArt } from './VoiceMark';
 import { VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTransport } from './VoiceTransport';
 import { VoiceTargetIdentity } from './VoiceTargetIdentity';
+import { useVoiceReadAloud, VoiceReadAloudGlyph, VoiceReadAloudStatus, VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
 
@@ -47,12 +49,25 @@ const REST_TARGET_EDGES_PX = { leading: 8, trailing: 8, top: 6, bottom: 4 } as c
  */
 export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props: Readonly<{
     voice: VoiceAttemptControlProjection;
+    /** Read-aloud outside a conversation grows the rest mic into its own pill: what Voice is doing, and Stop. */
+    readAloud?: VoiceReadAloud;
     testID?: string;
 }>): React.ReactElement | null {
-    const { voice } = props;
+    const { voice, readAloud } = props;
     const testID = props.testID ?? 'voice-top-bar';
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
     if (voice.availability === 'unavailable') return null;
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
+    if (reading) {
+        return (
+            <VoiceTopBarAnatomy testID={`${testID}-read-aloud`}
+                mark={<View style={stylesheet.readAloudMark}><VoiceReadAloudGlyph size="pill" /></View>}
+                label={<VoiceReadAloudStatus phase={reading.phase} size="pill" />}
+                showDivider
+                transport={<VoiceReadAloudStop readAloud={reading} size="pill" testID={`${testID}-read-aloud-stop`} />}
+            />
+        );
+    }
     if (!voice.live && !voice.ended) {
         return (
             <IconButton
@@ -72,11 +87,12 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
             />
         );
     }
-    return <VoiceTopBarPill voice={voice} testID={testID} />;
+    return <VoiceTopBarPill voice={voice} readAloud={readAloud} testID={testID} />;
 });
 
 const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
     voice: VoiceAttemptControlProjection;
+    readAloud?: VoiceReadAloud;
     testID: string;
 }>) {
     const styles = stylesheet;
@@ -126,7 +142,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
                 </View>
             </HappierPressable>}
             showDivider={(voice.canStop && !voice.recoveryAvailable) || (!voice.live && Boolean(voice.ended))}
-            transport={<VoiceTransport voice={voice} size="pill" testID={`${props.testID}-transport`} />}
+            transport={<VoiceTransport voice={voice} readAloud={props.readAloud} size="pill" testID={`${props.testID}-transport`} />}
             overlay={<VoiceGlancePopover open={open} anchorRef={anchorRef} placement="bottom" onRequestClose={close} />}
         />
     );
@@ -142,6 +158,8 @@ const stylesheet = StyleSheet.create({
     },
     labelPressed: { opacity: 0.7 },
     labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+    // The glyph stands in the mark's square, so the word starts where the live pill's label does.
+    readAloudMark: { width: PILL_HEIGHT, height: PILL_HEIGHT, alignItems: 'center', justifyContent: 'center' },
 });
 
 /**
@@ -158,5 +176,6 @@ export function VoiceTopBarPresenceMount(): React.ReactElement | null {
 
 function VoiceTopBarPresenceRuntime(): React.ReactElement | null {
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_DEFAULT);
-    return <VoiceTopBarPresence voice={voice} />;
+    const readAloud = useVoiceReadAloud();
+    return <VoiceTopBarPresence voice={voice} readAloud={readAloud} />;
 }

@@ -9260,6 +9260,7 @@ localTailscale: {
     contextUpdatePlaceholder: "任意の追加入力コンテキスト",
     actionsTitle: "アクション",
     sendContext: "コンテキストを送信",
+    readPromptAloud: "テキストを読み上げる",
     usesCurrentProvider: "このハーネスは常に現在の音声設定と実際のランタイム統合を使用します。",
     localModeHint: "ローカル QA には、会話モードを Agent に設定した Local voice が必要です。",
     elevenLabsHint: "ElevenLabs QA には、ElevenLabs プロバイダーが設定済みで、リアルタイムセッションが正常に接続できることが必要です。",

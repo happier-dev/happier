@@ -7,6 +7,7 @@ import {
   type LocalVoiceTtsProviderController,
   type LocalVoiceTtsProviderId,
 } from './localVoiceTtsProviderControllers';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 
 export function createLocalVoiceTtsController(options?: Readonly<{
   controllers?: Partial<Record<LocalVoiceTtsProviderId, LocalVoiceTtsProviderController>>;
@@ -16,7 +17,15 @@ export function createLocalVoiceTtsController(options?: Readonly<{
     if (controller) controllers.set(providerId, controller);
   }
 
-  return {
+  const playback = createVoicePlaybackController();
+  let sayState: ReturnType<LocalVoiceTtsController['readSay']> = 'idle';
+  const listeners = new Set<() => void>();
+  const publish = (next: ReturnType<LocalVoiceTtsController['readSay']>) => {
+    if (sayState === next) return;
+    sayState = next;
+    for (const listener of listeners) listener();
+  };
+  const controller: LocalVoiceTtsController = {
     speak: async (ctx) => {
       const preparation = prepareLocalVoiceTtsRequest(ctx);
       if (!preparation) return;
@@ -38,7 +47,40 @@ export function createLocalVoiceTtsController(options?: Readonly<{
       if (await speakWithBundledSpeechTts(ctx.tts.provider, ctx, preparation)) return;
       throw Object.assign(new Error('voice_tts_provider_unavailable'), { code: 'provider_unavailable' });
     },
+    readSay: () => sayState,
+    subscribeSay: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    stopSay: () => {
+      if (sayState === 'idle') return false;
+      playback.interrupt();
+      publish('idle');
+      return true;
+    },
+    say: async (ctx) => {
+      if (ctx.signal?.aborted) return { status: 'cancelled' };
+      controller.stopSay();
+      const epoch = playback.captureEpoch();
+      const current = () => playback.isEpochCurrent(epoch);
+      const abort = () => { if (current()) controller.stopSay(); };
+      publish('preparing');
+      ctx.signal?.addEventListener('abort', abort, { once: true });
+      try {
+        await controller.speak({ ...ctx, registerPlaybackStopper: playback.registerStopper.captureAttempt!(),
+          onSpeaking: () => { if (current()) { publish('speaking'); ctx.onSpeaking(); } },
+        });
+        return { status: current() ? 'completed' : 'cancelled' };
+      } catch (error) {
+        if (!current()) return { status: 'cancelled' };
+        throw error;
+      } finally {
+        ctx.signal?.removeEventListener('abort', abort);
+        if (current()) publish('idle');
+      }
+    },
   };
+  return controller;
 }
 
 let sharedController: LocalVoiceTtsController | null = null;
@@ -48,5 +90,15 @@ export const localVoiceTtsController: LocalVoiceTtsController = {
   speak: (ctx) => {
     sharedController ??= createLocalVoiceTtsController();
     return sharedController.speak(ctx);
+  },
+  say: (ctx) => {
+    sharedController ??= createLocalVoiceTtsController();
+    return sharedController.say(ctx);
+  },
+  stopSay: () => sharedController?.stopSay() ?? false,
+  readSay: () => sharedController?.readSay() ?? 'idle',
+  subscribeSay: (listener) => {
+    sharedController ??= createLocalVoiceTtsController();
+    return sharedController.subscribeSay(listener);
   },
 };

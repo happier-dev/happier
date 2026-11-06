@@ -15,6 +15,9 @@ import { VoiceMark } from './VoiceMark';
 import { VOICE_PRESENCE_NO_DRAG_PROPS } from './VoicePresenceFloat';
 import { readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTargetIdentity } from './VoiceTargetIdentity';
+import { VoiceReadAloudStatus, type VoiceReadAloud } from './VoiceReadAloud';
+import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import { VoiceOrbAnatomy, VOICE_ORB_BODY_SIZE, VOICE_ORB_MARK_SIZE, VOICE_ORB_CAPTION_WIDTH, VOICE_ORB_OPTIONS_GAP, resolveVoiceOrbContainerWidth } from './voicePresenceAnatomy';
 export { VOICE_ORB_BODY_SIZE, VOICE_ORB_MARK_SIZE, VOICE_ORB_CAPTION_WIDTH } from './voicePresenceAnatomy';
@@ -36,6 +39,8 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
     /** The orb's live x and its host width: the caption opens toward the window's centre. */
     translateX: SharedValue<number>;
     hostWidth: number;
+    /** Read-aloud outside a call: the caption says so and the Orb itself is Stop. */
+    readAloud?: VoiceReadAloud;
     testID?: string;
 }>): React.ReactElement {
     const styles = stylesheet;
@@ -47,7 +52,9 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
     const onOpenSection = props.onOpenSection;
     const [focused, setFocused] = React.useState(false);
     const { translateX, hostWidth } = props;
-    const showOptions = voice.live || Boolean(voice.ended);
+    const readAloud = resolveVoicePresenceReadAloud(voice, props.readAloud);
+    const readingOnly = readAloud !== null;
+    const showOptions = voice.live || Boolean(voice.ended) || readingOnly;
     const width = resolveVoiceOrbContainerWidth(Platform.OS, showOptions);
     const captionInset = (width - VOICE_ORB_BODY_SIZE) / 2 + VOICE_ORB_BODY_SIZE + VOICE_ORB_OPTIONS_GAP;
     // Each side releases the other edge explicitly: on web the first side's offsets become the
@@ -58,22 +65,24 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
             : { left: captionInset, right: 'auto' as const, justifyContent: 'flex-start' as const }
     ));
 
+    const stopReading = readingOnly ? readAloud.stop : null;
     const onPress = React.useCallback(() => {
         if (suppress()) return;
-        voice.onPrimaryAction();
-    }, [suppress, voice]);
+        if (stopReading) stopReading();
+        else voice.onPrimaryAction();
+    }, [stopReading, suppress, voice]);
     const openSection = React.useCallback(() => {
         if (suppress()) return;
         onOpenSection();
     }, [onOpenSection, suppress]);
     const accessibilityActions = React.useMemo(() => [
-        { name: 'activate', label: voice.primaryActionLabel ?? t('voicePresence.talkWithVoice') },
+        { name: 'activate', label: stopReading ? t('voicePresence.readAloud.stop') : voice.primaryActionLabel ?? t('voicePresence.talkWithVoice') },
         { name: 'options', label: t('voicePresence.options') },
-    ], [voice.primaryActionLabel]);
+    ], [stopReading, voice.primaryActionLabel]);
     const onAccessibilityAction = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ actionName: string }> }>) => {
-        if (event.nativeEvent.actionName === 'activate') voice.onPrimaryAction();
+        if (event.nativeEvent.actionName === 'activate') onPress();
         else if (event.nativeEvent.actionName === 'options') onOpenSection();
-    }, [onOpenSection, voice]);
+    }, [onOpenSection, onPress]);
     const onKeyDown = React.useCallback((event: unknown) => {
         const key = (event as { nativeEvent?: { key?: string }; key?: string }).nativeEvent?.key
             ?? (event as { key?: string }).key;
@@ -105,7 +114,7 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                         {/* The chip is the options target and keeps saying what the call is doing
                             (lab: "Speaking 2:14"); its accessible name is "Voice options". */}
                         <GlassPanel radius={13} shadowLevel={2} innerShadow={false} style={styles.caption}>
-                            {voice.targetSessionAddress ? (
+                            {readingOnly ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress ? (
                                 // The same admitted name remains after End, with the ended status in place of a live clock.
                                 <View style={voice.live ? styles.targetCaption : styles.endedTargetCaption}>
                                     <View style={styles.targetName}>
@@ -124,7 +133,9 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
             <Pressable
                 testID={`${testID}-body`}
                 accessibilityRole="button"
-                accessibilityLabel={voice.live
+                accessibilityLabel={readingOnly
+                    ? t('voicePresence.readAloud.stop')
+                    : voice.live
                     ? t('voicePresence.containerA11y', { status: voice.statusLabel })
                     : voice.primaryActionLabel ?? t('voicePresence.talkWithVoice')}
                 accessibilityHint={voice.primaryActionHint ?? undefined}
@@ -142,7 +153,13 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                     focusRingStyle({ focused, color: theme.colors.border.focus }),
                 ]}
             >
-                <VoiceMark voice={voice} size={VOICE_ORB_MARK_SIZE} />
+                {readingOnly
+                    // The Orb is Stop while it reads: the same floating glass as its caption, a stop glyph inside.
+                    ? <GlassPanel radius={VOICE_ORB_BODY_SIZE / 2} shadowLevel={2} innerShadow={false}
+                        frameStyle={styles.readAloudBody} style={styles.readAloudBodyContent}>
+                        <Icon name="stop" size={Math.round(VOICE_ORB_MARK_SIZE * 0.6)} color={theme.colors.text.primary} />
+                    </GlassPanel>
+                    : <VoiceMark voice={voice} size={VOICE_ORB_MARK_SIZE} />}
             </Pressable>
         </VoiceOrbAnatomy>
     );
@@ -159,6 +176,8 @@ const stylesheet = StyleSheet.create({
     // status out of view rather than squeezing the name down to an initial and a dot.
     endedTargetCaption: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 7, height: 16, overflow: 'hidden', minWidth: 0, flexShrink: 1 },
     targetName: { maxWidth: '100%', minWidth: 0, flexShrink: 1 },
+    readAloudBody: { width: VOICE_ORB_BODY_SIZE, height: VOICE_ORB_BODY_SIZE },
+    readAloudBodyContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     body: {
         width: VOICE_ORB_BODY_SIZE,
         height: VOICE_ORB_BODY_SIZE,

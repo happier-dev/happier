@@ -26,6 +26,7 @@ import { VoiceGlancePopover } from './VoiceGlancePopover';
 import { VoiceIsland, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './VoiceIsland';
 import { VoiceOrb, VOICE_ORB_BODY_SIZE } from './VoiceOrb';
 import { VoicePresenceFloat } from './VoicePresenceFloat';
+import { useVoiceReadAloud } from './VoiceReadAloud';
 import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -63,6 +64,7 @@ export function VoicePresenceAppShellMount(): React.ReactElement | null {
 function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'orb' }>): React.ReactElement | null {
     // Idle starts honor the shared scope preference; a running attempt retains its admitted binding.
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_DEFAULT);
+    const readAloud = useVoiceReadAloud();
     const phone = useDeviceType() === 'phone';
     const insets = useChromeSafeAreaInsets();
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
@@ -95,7 +97,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     // One visibility fact governs both the container and its measured composer clearance.
     // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
     const visible = voice.availability !== 'unavailable'
-        && (orb || voice.live || Boolean(voice.ended));
+        && (orb || voice.live || Boolean(voice.ended) || readAloud.phase !== 'idle');
     // The keyboard scaffold already lifts the composer. In that state the float clears the
     // measured composer instead of reporting the keyboard height back as composer reservation.
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;
@@ -136,7 +138,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 restingBottomInset={restingBottomInset}
                 edgeInset={orb ? ORB_EDGE : ISLAND_EDGE}
                 minimumTop={FLOAT_MIN_TOP + insets.top}
-                interactionPaddingHorizontal={orb ? resolveVoiceOrbInteractionPadding(Platform.OS, voice.live || Boolean(voice.ended)) : 0}
+                interactionPaddingHorizontal={orb ? resolveVoiceOrbInteractionPadding(Platform.OS, voice.live || Boolean(voice.ended) || readAloud.phase !== 'idle') : 0}
                 restCentred={!orb && phone}
                 anchors={orb ? 'orb' : 'island'}
                 bottomChromeInset={insets.bottom + bottomChromeHeight}
@@ -146,6 +148,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 {(render) => orb ? (
                     <VoiceOrb
                         voice={voice}
+                        readAloud={readAloud}
                         anchorRef={anchorRef}
                         sectionOpen={open}
                         onOpenSection={toggleSection}
@@ -156,6 +159,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 ) : (
                     <VoiceIsland
                         voice={voice}
+                        readAloud={readAloud}
                         phone={phone}
                         width={width}
                         anchorRef={anchorRef}

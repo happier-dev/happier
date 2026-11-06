@@ -12,6 +12,8 @@ import { VoiceMark } from './VoiceMark';
 import { VOICE_PRESENCE_NO_DRAG_PROPS } from './VoicePresenceFloat';
 import { VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTransport } from './VoiceTransport';
+import { VoiceReadAloudGlyph, VoiceReadAloudStatus, VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 
 import { VoiceIslandAnatomy, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './voicePresenceAnatomy';
 export { VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './voicePresenceAnatomy';
@@ -33,10 +35,13 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
     sectionOpen: boolean;
     onOpenSection: () => void;
     shouldSuppressPress: () => boolean;
+    /** Read-aloud: outside a call the island shows only the reading and its Stop; during one, Stop joins the transport. */
+    readAloud?: VoiceReadAloud;
     testID?: string;
 }>): React.ReactElement {
     const styles = stylesheet;
-    const { voice } = props;
+    const { voice, readAloud } = props;
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
     const height = props.phone ? VOICE_ISLAND_PHONE.height : VOICE_ISLAND_DESKTOP.height;
     const markSize = props.phone ? VOICE_ISLAND_PHONE.mark : VOICE_ISLAND_DESKTOP.mark;
     const markTarget = Math.max(40, resolveMinimumInteractiveTargetSize(Platform.OS));
@@ -51,6 +56,22 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
         if (suppress()) return;
         onOpenSection();
     }, [onOpenSection, suppress]);
+    if (reading) {
+        return (
+            <View ref={props.anchorRef} collapsable={false} style={{ width: props.width, height }}>
+                <VoiceIslandAnatomy
+                    testID={`${testID}-read-aloud`}
+                    width={props.width}
+                    height={height}
+                    mark={<VoiceReadAloudGlyph size="island" />}
+                    body={<View style={styles.body}><VoiceReadAloudStatus phase={reading.phase} size="island" /></View>}
+                    transport={<CompanionNoDragRegion {...VOICE_PRESENCE_NO_DRAG_PROPS}>
+                        <VoiceReadAloudStop readAloud={reading} size="island" testID={`${testID}-read-aloud-stop`} />
+                    </CompanionNoDragRegion>}
+                />
+            </View>
+        );
+    }
     return (
         <View ref={props.anchorRef} collapsable={false} style={{ width: props.width, height }}>
             <VoiceIslandAnatomy
@@ -80,7 +101,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
                     <VoiceCompactTranscript voice={voice} />
                 </Pressable>}
                 transport={<CompanionNoDragRegion {...VOICE_PRESENCE_NO_DRAG_PROPS}>
-                    <VoiceTransport voice={voice} size={props.phone ? 'touch' : 'island'} testID={`${testID}-transport`} />
+                    <VoiceTransport voice={voice} readAloud={readAloud} size="island" testID={`${testID}-transport`} />
                 </CompanionNoDragRegion>}
             />
         </View>

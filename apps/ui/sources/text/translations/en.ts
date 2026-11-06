@@ -10580,6 +10580,7 @@ const enDevVoiceQa = {
   contextUpdatePlaceholder: 'Optional follow-up context update',
   actionsTitle: 'Actions',
   sendContext: 'Send context',
+  readPromptAloud: "Read the prompt aloud",
   usesCurrentProvider:
     'This harness always uses your current voice settings and the real runtime integrations.',
   localModeHint:

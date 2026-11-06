@@ -12,6 +12,7 @@ import { VoiceGlance } from '@/components/voice/presence/VoiceGlance';
 import { VoiceIsland, VOICE_ISLAND_DESKTOP } from '@/components/voice/presence/VoiceIsland';
 import { VoiceOrb } from '@/components/voice/presence/VoiceOrb';
 import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
+import type { VoiceReadAloud, VoiceReadAloudPhase } from '@/components/voice/presence/VoiceReadAloud';
 import { resolveVoiceMarkPose } from '@/components/voice/presence/resolveVoiceMarkPose';
 import { t } from '@/text';
 
@@ -41,6 +42,8 @@ export function VoicePresenceContainerFrame(props: Readonly<{ frame: string }>):
         case 'Rp': return <PhoneFrame kind="rest" />;
         case 'STp': return <PhoneStates />;
         case 'END': return <EndedFrame />;
+        case 'SAY': return <ReadAloudFrame />;
+        case 'SAYp': return <ReadAloudPhoneFrame />;
         default: return null;
     }
 }
@@ -199,7 +202,69 @@ function EndedFrame() {
     );
 }
 
+const READ_ALOUD = (phase: VoiceReadAloudPhase): VoiceReadAloud => ({ phase, stop: NOOP });
+
+/** Read-aloud (Say) in every container: on its own while Voice is idle, and as a Stop beside a call. */
+function ReadAloudFrame() {
+    const styles = stylesheet;
+    const anchor = React.useRef<View | null>(null);
+    const translateX = React.useMemo(() => makeMutable(1000), []);
+    const rest = buildVoicePresenceFixture('rest');
+    const live = buildVoicePresenceFixture('listening');
+    return (
+        <View style={styles.sayBoard}>
+            {(['preparing', 'speaking'] as const).map((phase) => (
+                <View key={phase} style={styles.sayRow}>
+                    <Text style={styles.stateName}>{`Top bar · ${phase}`}</Text>
+                    <VoiceTopBarPresence voice={rest} readAloud={READ_ALOUD(phase)} />
+                </View>
+            ))}
+            <View style={styles.sayRow}>
+                <Text style={styles.stateName}>Top bar · during a call</Text>
+                <VoiceTopBarPresence voice={live} readAloud={READ_ALOUD('speaking')} />
+            </View>
+            <View style={styles.sayRow}>
+                <Text style={styles.stateName}>Island · speaking</Text>
+                <VoiceIsland voice={rest} readAloud={READ_ALOUD('speaking')} phone={false} width={VOICE_ISLAND_DESKTOP.width} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} />
+            </View>
+            <View style={styles.sayRow}>
+                <Text style={styles.stateName}>Island · during a call</Text>
+                <VoiceIsland voice={live} readAloud={READ_ALOUD('speaking')} phone={false} width={VOICE_ISLAND_DESKTOP.width} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} />
+            </View>
+            <View style={[styles.sayRow, { alignItems: 'flex-end', width: 420 }]}>
+                <Text style={styles.stateName}>Orb · speaking</Text>
+                <VoiceOrb voice={rest} readAloud={READ_ALOUD('speaking')} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} translateX={translateX} hostWidth={1100} />
+            </View>
+        </View>
+    );
+}
+
+function ReadAloudPhoneFrame() {
+    const styles = stylesheet;
+    const { width } = useWindowDimensions();
+    const anchor = React.useRef<View | null>(null);
+    const translateX = React.useMemo(() => makeMutable(width), [width]);
+    const rest = buildVoicePresenceFixture('rest');
+    return (
+        <View style={styles.phone}>
+            <View style={styles.transcriptLine} />
+            <View style={[styles.transcriptLine, { width: '70%' }]} />
+            <View style={styles.grow} />
+            <Composer state="rest" phone />
+            <View style={styles.phoneIsland}>
+                <VoiceIsland voice={rest} readAloud={READ_ALOUD('speaking')} phone width={width - 32} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} />
+            </View>
+            <View style={styles.phoneOrb}>
+                <VoiceOrb voice={rest} readAloud={READ_ALOUD('speaking')} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} translateX={translateX} hostWidth={width} />
+            </View>
+            <View style={styles.bar} />
+        </View>
+    );
+}
+
 const stylesheet = StyleSheet.create((theme) => ({
+    sayBoard: { gap: theme.space.s24, alignItems: 'flex-start' },
+    sayRow: { gap: theme.space.s6 },
     window: { height: 860, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.colors.background.canvas, borderWidth: 1, borderColor: theme.colors.border.default },
     strip: { height: 40, flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.space.s12, gap: theme.space.s8 },
     tabs: { flex: 1, flexDirection: 'row', gap: theme.space.s6, minWidth: 0 },

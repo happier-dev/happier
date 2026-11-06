@@ -8,6 +8,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { t } from '@/text';
 
+import { VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+
 /**
  * How large the transport is drawn, by the container that hosts it.
  *
@@ -36,9 +38,14 @@ const GEOMETRY: Readonly<Record<VoiceTransportSize, Readonly<{ size: number; ico
 export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly<{
     voice: VoiceAttemptControlProjection;
     size: VoiceTransportSize;
+    /** Read-aloud running during a call: its Stop leads, so stopping the reading never ends the call. */
+    readAloud?: VoiceReadAloud;
     testID?: string;
 }>): React.ReactElement | null {
     const { voice, size } = props;
+    const readAloudStop = props.readAloud && props.readAloud.phase !== 'idle' && size !== 'touch'
+        ? <VoiceReadAloudStop readAloud={props.readAloud} size={size} testID={`${props.testID ?? 'voice-transport'}-read-aloud-stop`} />
+        : null;
     const geometry = GEOMETRY[size];
     const testID = props.testID ?? 'voice-transport';
     const filled = size !== 'pill';
@@ -89,6 +96,7 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
 
     return (
         <View testID={testID} style={[styles.row, { gap: geometry.gap }]}>
+            {readAloudStop}
             {recovery ?? (
                 <IconButton
                     testID={`${testID}-mute`}

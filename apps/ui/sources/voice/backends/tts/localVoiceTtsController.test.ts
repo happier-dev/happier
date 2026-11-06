@@ -149,6 +149,61 @@ describe('localVoiceTtsController', () => {
         }
     });
 
+    it('speaks agent-chosen text through the default Voice Action executor and stops the same output', async () => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { localVoiceTtsController } = await import('./localVoiceTtsController');
+        const { createDeferred } = await import('@/dev/testkit');
+        const started = createDeferred<void>();
+        expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); started.resolve(); });
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: {
+            ...storage.getState().settings.voice, providerId: 'local_conversation', providers: {
+                ...storage.getState().settings.voice.providers,
+                local_conversation: { schemaVersion: 1, config: { tts: { provider: 'device' } } },
+            },
+        } }, storage.getState().settings));
+        const executor = createDefaultActionExecutor();
+        const React = await import('react');
+        const { renderScreen } = await import('@/dev/testkit');
+        const { VoiceTopBarPresence } = await import('@/components/voice/presence/VoiceTopBarPresence');
+        const { useVoiceReadAloud } = await import('@/components/voice/presence/VoiceReadAloud');
+        const { buildVoicePresenceFixture } = await import('@/components/dev/voicePresence/voicePresenceFixtures');
+        const { t } = await import('@/text');
+        const retained = buildVoicePresenceFixture('ended');
+        const dismiss = vi.fn();
+        function Presence() {
+            return React.createElement(VoiceTopBarPresence, {
+                voice: { ...retained, onDismissEnded: dismiss }, readAloud: useVoiceReadAloud(),
+            });
+        }
+        const presence = await renderScreen(React.createElement(Presence));
+        // This deliberately exceeds Paseo's speak cap: Happier adds no text ceiling.
+        const text = 'A chosen progress note. '.repeat(200);
+        const speaking = executor.execute('ui.voice_global.say.start', { text }, { surface: 'ui' });
+        try {
+            await Promise.race([started.promise, speaking.then(result => {
+                expect(result).toMatchObject({ ok: true });
+                throw new Error('Say settled before audio started');
+            })]);
+            expect(expoSpeechSpeak).toHaveBeenCalledWith(text.trim(), expect.anything());
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+            await vi.waitFor(() => expect(presence.getTextContent()).toContain(t('voicePresence.readAloud.speaking')));
+            await presence.pressByTestIdAsync('voice-top-bar-read-aloud-stop');
+            expect(await speaking).toMatchObject({ ok: true, result: { status: 'cancelled' } });
+            expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
+            expect(localVoiceTtsController.readSay()).toBe('idle');
+            await presence.pressByTestIdAsync('voice-top-bar-transport-dismiss');
+            expect(dismiss).toHaveBeenCalledTimes(1);
+            expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); options.onDone?.(); });
+            expect(await executor.execute('ui.voice_global.say.start', { text: 'Ready again.' }, { surface: 'ui' }))
+                .toMatchObject({ ok: true, result: { status: 'completed' } });
+            expect(localVoiceTtsController.readSay()).toBe('idle');
+        } finally {
+            localVoiceTtsController.stopSay();
+            await speaking;
+            await presence.unmount();
+        }
+    });
+
     it('dispatches a current external dual-role speech provider through normal Local Voice TTS', async () => {
         const declaration = VoiceProviderContributionSchema.parse({
             id: 'speech',

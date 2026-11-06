@@ -13771,6 +13771,7 @@ const voicePresenceTranslations = { 'zh-Hans': {
         end: "结束",
         captions: { connecting: "正在打开音频通道", listening: "请说", transcribing: "正在转成文字", thinking: "正在思考回答", speaking: "你可以随时打断", interrupted: "请说", muted: "取消静音即可说话 · 语音仍可说话", reconnecting: "连接中断 · 正在重试", blocked: "允许访问麦克风即可说话", failed: "请重试，或检查语音设置" },
         recovery: { allow: "允许", setUp: "设置" },
+        readAloud: { preparing: "正在准备朗读", speaking: "正在朗读", stop: "停止朗读" },
         containerA11y: ({ status }) => `语音，${status}`,
     } } satisfies Pick<Readonly<Record<string, VoicePresenceTranslation>>, "zh-Hans">;
 

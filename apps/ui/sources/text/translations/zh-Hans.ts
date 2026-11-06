@@ -8628,6 +8628,7 @@ export const zhHans: TranslationStructure = {
     contextUpdatePlaceholder: "可选的后续上下文更新",
     actionsTitle: "操作",
     sendContext: "发送上下文",
+    readPromptAloud: "朗读文字",
     usesCurrentProvider: "此测试台始终使用你当前的语音设置和真实的运行时集成。",
     localModeHint: "本地 QA 需要将 Local voice 的对话模式设置为 Agent。",
     elevenLabsHint: "ElevenLabs QA 需要先配置 ElevenLabs 提供方，并且实时会话能够成功连接。",

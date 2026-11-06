@@ -9359,6 +9359,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         contextUpdatePlaceholder: "Необязательное последующее обновление контекста",
         actionsTitle: "Действия",
         sendContext: "Отправить контекст",
+        readPromptAloud: "Прочитать текст вслух",
         usesCurrentProvider: "Этот стенд всегда использует ваши текущие голосовые настройки и реальные интеграции рантайма.",
         localModeHint: "Для локального QA требуется Local voice с режимом разговора Agent.",
         elevenLabsHint: "Для QA ElevenLabs провайдер ElevenLabs должен быть настроен, а сеанс реального времени должен успешно подключиться.",
