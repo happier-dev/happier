@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Socket } from "socket.io";
@@ -33,6 +36,12 @@ import { callSocketRpc } from '../../../../../../../packages/sync-client/src/rpc
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerStatusResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
+import { registerExecutionRunRpcHandlers } from '../../../../../../cli/src/rpc/handlers/executionRuns/registerExecutionRunRpcHandlers';
+import { retainExecutionRunState } from '../../../../../../cli/src/daemon/executionRunRegistry';
+import { reloadConfiguration } from '../../../../../../cli/src/configuration';
+import type { ExecutionRunState } from '../../../../../../cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
+import type { ExecutionRunHostBridge } from '../../../../../../cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 
 // These fake transport peers advertise the same declaration as current clients;
 // Plain Machine routing must retain its real compatibility admission underneath.
@@ -61,6 +70,123 @@ describe("Session RPC final access admission on SQLite", () => {
     }, 120_000);
     beforeEach(() => harness.resetEnv());
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each([
+        SESSION_RPC_METHODS.EXECUTION_RUN_GET, SESSION_RPC_METHODS.EXECUTION_RUN_LIST,
+        SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
+        SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+    ])('admits requester-owned detached %s through real Account admission without exposing foreign Runs', async rpcMethod => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const third = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'run-worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: guest.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const directory = await mkdtemp(join(tmpdir(), 'happier-run-route-'));
+        vi.stubEnv('HAPPIER_HOME_DIR', directory);
+        reloadConfiguration();
+        const rpc = new RpcHandlerManager({ scopePrefix: machine.id, encryptionMode: 'plain' });
+        let manager: ExecutionRunHostBridge | undefined;
+        const registration = registerExecutionRunRpcHandlers(rpc, { sessionId: null, serverId: 'home',
+            cwd: directory, runtimeAccountId: owner.id, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
+            onManagerCreated: created => { manager = created; } });
+        try {
+            for (const account of [owner, guest, third]) {
+                const run: ExecutionRunState = { runId: account.id, callId: randomUUID(), sidechainId: randomUUID(), sessionId: null,
+                    depth: 0, intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+                    instructions: 'Private child result', permissionMode: 'read_only', retentionPolicy: 'resumable',
+                    runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2,
+                    requesterWorkAttributionV1: { serverId: 'home', accountId: account.id, machineId: machine.id,
+                        installationId: machine.installationId! } };
+                await retainExecutionRunState(run);
+            }
+            if (rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
+                await manager!.recoverRetainedRuns();
+                for (const account of [owner, guest]) {
+                    const run = manager!.get(account.id)!;
+                    run.status = 'running';
+                    await retainExecutionRunState(run);
+                }
+            }
+            // Only Socket.IO is substituted. Real token issuance, SQLite grants,
+            // Home admission, daemon registration and retained store remain composed.
+            const target = { id: 'run-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+                machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
+                timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) =>
+                    rpc.invokeLocal(rpcMethod, request.params, { rpcContext: { signal: new AbortController().signal,
+                        callerAuthority: request.callerAuthority, machineAdmission: request.machineAdmission } }) }) };
+            const method = `${machine.id}:${rpcMethod}`;
+            const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+            const call = async (accountId: string, runId: string) => {
+                const token = await createAccountTokenForTests(accountId, { kind: 'account', authority: 'present_user' });
+                const caller = Object.assign(createAuthenticatedFakeSocket({ id: `run-${randomUUID()}`, data: {
+                    clientType: 'user-scoped', accountStoredContentCompatibility,
+                } }), { handshake: { auth: { token } } });
+                registerSocketRpcHandlers({ userId: accountId, socket: caller as unknown as Socket, io });
+                const callback = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: {
+                    sessionId: null,
+                    ...(rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_LIST ? {} : { runId }),
+                    ...(rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_SEND ? { message: 'Continue', localInputId: randomUUID() } : {}),
+                } }, callback);
+                expect(callback).toHaveBeenCalledOnce();
+                return callback.mock.calls[0]![0];
+            };
+            const own = await call(guest.id, guest.id);
+            expect(own).toMatchObject({ ok: true });
+            if (rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
+                expect(own.result.runs).toMatchObject([{ runId: guest.id }]);
+                expect(own.result.runs).toHaveLength(1);
+                expect((await call(owner.id, owner.id)).result.runs).toMatchObject([{ runId: owner.id }]);
+            } else {
+                // A completed Run rejects new input through its normal lifecycle,
+                // proving own Send reached the owner without inventing an Agent runtime.
+                expect(own.result, JSON.stringify(own.result)).toMatchObject(rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_SEND
+                    ? { ok: false, errorCode: 'execution_run_not_allowed' }
+                    : rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_STOP ? { ok: true }
+                    : rpcMethod === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT ? { ok: true, status: 'succeeded', result: { run: { runId: guest.id } } }
+                    : { run: { runId: guest.id } });
+                const missing = await call(guest.id, 'missing-run');
+                expect(missing).toMatchObject({ ok: true, result: { ok: false, errorCode: 'execution_run_not_found' } });
+                expect(await call(guest.id, owner.id)).toEqual(missing);
+                expect(await call(guest.id, third.id)).toEqual(missing);
+                expect(await call(owner.id, guest.id)).toEqual(missing);
+                expect((await call(owner.id, owner.id)).result).not.toMatchObject({ errorCode: 'execution_run_not_found' });
+            }
+        } finally {
+            await registration.dispose();
+            await manager?.dispose();
+            vi.unstubAllEnvs();
+            reloadConfiguration();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves the typed Machine admission refusal through the RPC error path', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'private-worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: guest.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const token = await createAccountTokenForTests(guest.id, { kind: 'account', authority: 'present_user' });
+        const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'refused-run-client', data: {
+            clientType: 'user-scoped', accountStoredContentCompatibility,
+        } }), { handshake: { auth: { token } } });
+        registerSocketRpcHandlers({ userId: guest.id, socket: caller as unknown as Socket,
+            io: createSocketRoomDiscoveryHarness(async () => []) });
+        const callback = vi.fn();
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+            method: `${machine.id}:${RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE}`, params: {},
+        }, callback);
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }) }));
+    });
 
     it.each(['skills.read', 'session.user_action.answer'] as const)('admits a paired terminal daemon Session %s and rechecks credential, installation and Session binding', async (rpcMethod) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

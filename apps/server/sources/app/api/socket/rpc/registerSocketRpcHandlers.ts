@@ -8,7 +8,7 @@ import { isLiveCliApprovalOriginMethod } from '@happier-dev/protocol/approvals/a
 import type { Server, Socket } from "socket.io";
 
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
-import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -22,7 +22,7 @@ import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { isUiBrowserAutomationDispatchMethod, UI_BROWSER_AUTOMATION_DISPATCH_KEY_MAX_LENGTH } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { isCurrentUiContextClientRpcMethod, isSessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { type MachineAccessRefusalCode, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { VerifiedEphemeralSessionRunnerPrincipalSchema } from "@happier-dev/protocol/ephemeralRunner/principal";
 import { canCredentialDecideV1 } from "@happier-dev/protocol/actions/decisionAuthority";
@@ -729,11 +729,15 @@ function writeSocketRegisteredRpcMethods(socket: Socket, methods: ReadonlySet<st
     ensureMutableSocketData(socket)[RPC_REGISTERED_METHODS_SOCKET_DATA_KEY] = [...methods];
 }
 
-function buildForbiddenRpcResponse(): Readonly<{ ok: false; error: string; errorCode: string }> {
+function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode): Readonly<{
+    ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1;
+}> {
     return {
         ok: false,
         error: RPC_ERROR_MESSAGES.FORBIDDEN,
         errorCode: RPC_ERROR_CODES.FORBIDDEN,
+        ...(reason ? { failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error' as const,
+            errorCode: reason, httpStatus: 403 } } : {}),
     };
 }
 
@@ -1967,7 +1971,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         ...(requiredRole ? { requiredRole } : { rpcMethod }),
                         requireOnline: finiteWake?.kind === 'ready' ? false : requireOnline });
                     if (admitted.kind !== 'admitted') {
-                        callback?.(buildForbiddenRpcResponse());
+                        callback?.(buildForbiddenRpcResponse(admitted?.kind === 'denied' ? admitted.code : undefined));
                         return;
                     }
                     const { kind: _kind, ...context } = admitted;

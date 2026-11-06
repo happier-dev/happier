@@ -904,6 +904,14 @@ const REQUESTER_EXECUTION_METHODS = new Set<string>([
   ...Object.values(PROJECT_FINITE_ACTION_RPC_METHODS_V1),
 ]);
 
+const REQUESTER_OWNED_EXECUTION_RUN_METHODS = new Set<string>([
+  SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+  SESSION_RPC_METHODS.EXECUTION_RUN_LIST,
+  SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
+  SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
+  SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+]);
+
 function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRoutePolicyV1 {
   // Home admits the requester; the receiving daemon requires the exact active
   // private relationship capture before this automatic recovery can run.
@@ -920,9 +928,10 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
     || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
     || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
     || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT;
-  // The daemon's detached Run manager is custodian-scoped, not partitioned by
-  // Machine requester. Attached Runs keep their separate exact Session access.
-  const custodianOnly = resolveSocketRpcSessionAuthorization(policy.method)?.machineScope === true
+  // These detached Run reads and existing controls use the daemon store's
+  // starting-Account accessors. Attached Runs retain exact Session access.
+  const requesterOwnedRun = REQUESTER_OWNED_EXECUTION_RUN_METHODS.has(policy.method);
+  const custodianOnly = resolveSocketRpcSessionAuthorization(policy.method)?.machineScope === true && !requesterOwnedRun
     || MACHINE_CUSTODIAN_ONLY_METHODS.has(policy.method)
     || policy.method.startsWith('daemon.workspaceSync.') && !retainedWorkspaceRecovery
     || policy.method.startsWith('daemon.terminal.') && !requesterTerminal

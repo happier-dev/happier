@@ -2450,6 +2450,13 @@ contract does not certify cancellation in an already-loaded daemon.
 Recovery uses the installed exact Machine Action transport for detached reads,
 stops and waits, as normal Workflow execution does; raw remote execution-run
 RPC methods need not be exposed by the daemon.
+In current 0.3 development, shared Machine Use also admits detached Run get,
+list, wait, send and stop through the authenticated Machine RPC route. The
+daemon's request-scoped Run store restricts these operations to the starting
+Account; another Account's Run has the same not-found result as a missing Run,
+including when the caller is the Machine custodian. Attached Runs retain their
+Session authorization. Machine admission refusals preserve the typed permission
+reason in the existing RPC `failureCause` envelope.
 The direct transport preserves the admitted Workflow caller and original Action
 request identity through the host-private RPC context. Native start uses that
 identity for its existing deterministic Run id, so observation after a lost
