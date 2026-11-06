@@ -197,3 +197,10 @@ test('rejects exact and namespace-prefix collisions', () => {
     /conflict at SDK namespace/,
   );
 });
+
+test('the public Action catalog fits the generated method namespaces', () => {
+  assert.doesNotThrow(() => validateSdkMethodRows(PUBLIC_ACTION_IDS.map(actionId => ({
+    actionId,
+    methodPath: resolveActionSdkMethodName(getActionSpec(actionId)),
+  }))));
+});
