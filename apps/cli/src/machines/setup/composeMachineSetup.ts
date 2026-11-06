@@ -2,6 +2,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, 
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -238,23 +239,44 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         return failure('machine_setup_unavailable');
       const result = { operationId: acceptance.operationId, runId };
       acceptance.accept(result);
-      const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(await host.waitForRun(request));
-      if (!settled.success || settled.data.observation !== 'terminal') return failure('outcome_unknown');
+      // Losing the observer does not settle the Run or release its native child.
+      // The existing Run remains the recovery/cancellation owner.
+      const uncertain = (cause?: ActionExecuteFailure): ActionExecuteFailure => ({
+        ok: false, errorCode: context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain',
+        error: 'Setup has no confirmed terminal outcome. Its child may still be changing the Machine. Open the Workflow Run to cancel or recover it before retrying.',
+        details: { runId, ...(cause ? { observationFailure: cause } : {}) },
+        ...(cause?.failureCause ? { failureCause: cause.failureCause } : {}),
+      });
+      let observed: unknown;
+      try { observed = await host.waitForRun(request); }
+      catch (error) { return uncertain({ ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.wait') }); }
+      const waitFailure = ActionExecuteFailureSchema.safeParse(observed);
+      if (waitFailure.success) return uncertain(waitFailure.data);
+      const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
+      if (!settled.success) return uncertain({ ok: false,
+        ...normalizeActionExecutorThrownError(settled.error, 'workflow.run.wait') });
+      if (settled.data.observation !== 'terminal') return uncertain();
+      if (settled.data.run.workflowCustodyState !== 'settled') return uncertain();
       if (settled.data.run.state === 'succeeded') return result;
       if (settled.data.run.state === 'cancelled') return failure('cancelled');
       // Failed Runs have no final output. Their retained Action invocation owns
       // the typed failure and native details; do not replace it with parent prose.
       let cursor: string | undefined;
       do {
-        const observed = await host.readInvocations(request, { runId, lifecycles: ['failed'], includeContent: true,
-          ...(cursor ? { cursor } : {}) });
+        let observed: unknown;
+        try { observed = await host.readInvocations(request, { runId, lifecycles: ['failed'], includeContent: true,
+          ...(cursor ? { cursor } : {}) }); }
+        catch (error) { return { ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.invocations.list') }; }
         const refused = ActionExecuteFailureSchema.safeParse(observed);
-        if (refused.success) return failure('outcome_unknown');
+        if (refused.success) return refused.data;
         const page = WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].safeParse(observed);
-        if (!page.success || !page.data.invocationDetails) return failure('outcome_unknown');
+        if (!page.success) return { ok: false,
+          ...normalizeActionExecutorThrownError(page.error, 'workflow.run.invocations.list') };
+        if (!page.data.invocationDetails) return failure('content_unavailable');
         for (const { progress } of page.data.invocationDetails) {
           if (progress.blockKind !== 'action' || !progress.reason) continue;
           return { ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
+            ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
             ...(progress.result === undefined ? {} : { details: progress.result }) };
         }
         cursor = page.data.nextCursor;

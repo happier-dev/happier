@@ -8,9 +8,10 @@ import {
 } from '@happier-dev/protocol';
 import { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
 import { workflowInvocationKey } from '@/daemon/workflows/coordinator';
@@ -20,7 +21,7 @@ import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from 
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error, pendingNative = false, failureCause?: ActionFailureCauseV1) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId, targets: [{
     homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }],
@@ -66,11 +67,18 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorC
   await store.ensureIntent({ key, recordId: 'setup-child', runId, blockId: 'setup-0', memberOrdinal: '0',
     parentKey: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
     path: { blockId: 'setup-0', scope: [] }, blockKind: 'action', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
-  await store.commitFact({ key, lifecycle, reason: errorCode, ...(details === undefined ? {} : { result: details }) });
+  await store.commitFact({ key, lifecycle: pendingNative ? 'running' : lifecycle, reason: errorCode,
+    ...(failureCause ? { failureCause } : {}),
+    ...(details === undefined ? {} : { result: details }) });
   await store.commitFact({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }), lifecycle });
   await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision,
-    state, checkpointEnvelope: storage.checkpointEnvelope() });
-  const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId, storage,
+    state, ...(!pendingNative && state !== 'running' ? { custodyState: 'settled' as const } : {}),
+    checkpointEnvelope: storage.checkpointEnvelope() });
+  const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
+    storage: { ...storage, execute: async (operation, options) => {
+      if (operation.operation === 'wait' && waitError) throw waitError;
+      return storage.execute(operation, options);
+    } },
     definitions: { get: async () => { throw new Error('inline_run_has_no_saved_definition'); } },
     resolveEncryption: async () => ({ kind: 'available', witness }), normalizeAbsolutePath: directory => directory,
     randomBytes: () => { throw new Error('plain_account_has_no_keys'); } });
@@ -85,10 +93,58 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorC
       ? Promise.resolve(ActionExecuteFailureSchema.parse({ ok: false, errorCode: readRefusalCode, error: readRefusalCode }))
       : reader.execute({ actionId: 'workflow.run.invocations.list', input, context }),
   });
-  return { apply: () => deps.machineSetupApply!({ input, context }), runId, storage };
+  return { apply: () => deps.machineSetupApply!({ input, context }), runId, storage, store, key };
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('retains the child failureCause through stored Workflow content and the parent operation', async () => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new Error('denied'), { code: 'EACCES' }), 'machines.setup.apply');
+    const details = { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } };
+    const fixture = await retainedSetup('failed', 'native_effect_failed', details, undefined, undefined, false, failureCause);
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.apply');
+    const scope = { accountId: 'actor', machineId: 'guest' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'setup-operation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+      execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
+    expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
+      error: { errorCode: 'native_effect_failed', details, failureCause } });
+  });
+  it('does not declare cancellation terminal while the Run retains child custody', async () => {
+    const fixture = await retainedSetup('cancelled', 'cancelled', undefined, undefined, undefined, true);
+    expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
+      details: { runId: fixture.runId } });
+  });
+  it('keeps a lost Workflow observation nonterminal while native work still holds admission', async () => {
+    const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
+      Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
+    const admission = createMachineNativeEffectAdmission();
+    let finishNative!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const native = admission.run({ operation: { operationId: 'native-child', kind: 'setup' }, keys: [], allNative: true },
+      async () => { entered(); await new Promise<void>(resolve => { finishNative = resolve; }); });
+    await started;
+    let nextEntered = false;
+    const next = admission.run({ operation: { operationId: 'next-native', kind: 'setup' }, keys: [] },
+      async () => { nextEntered = true; });
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.apply');
+    const scope = { accountId: 'actor', machineId: 'guest' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'setup-operation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    try {
+      const result = await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+        execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
+      expect(result).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
+        details: { runId: fixture.runId }, failureCause: { phase: 'workflow.run.wait', errorCode: 'ECONNRESET' } });
+      expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'running',
+        observation: { kind: 'outcome_uncertain' } });
+      expect(nextEntered).toBe(false);
+    } finally { finishNative(); await native; await next; }
+    expect(nextEntered).toBe(true);
+  });
   it.each([
     { actionId: 'machines.setup.apply', errorCode: 'target_unavailable', reason: 'credentials' },
     { actionId: 'machines.setup.apply', errorCode: 'native_check_unavailable', reason: 'required_fact_unavailable' },
@@ -115,9 +171,9 @@ describe('Combined Machine setup child settlement', () => {
     expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
       error: { errorCode, error: errorCode, details } });
   });
-  it('reports an unknown outcome when the failed-child content read is refused', async () => {
+  it('retains the classified refusal when the failed-child content read is refused', async () => {
     const fixture = await retainedSetup('failed', 'native_effect_failed', undefined, 'permission_denied');
-    expect(await fixture.apply()).toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+    expect(await fixture.apply()).toEqual({ ok: false, errorCode: 'permission_denied', error: 'permission_denied' });
   });
 
   it.each<{ errorCode: string; details: Record<string, string | number> }>([

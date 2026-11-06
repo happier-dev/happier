@@ -3470,6 +3470,15 @@ the incumbent producer's proof. Docker installers and repairs can therefore run
 before Docker is readable and report their own execution failures. Known engine
 coordinates retain the existing conflict behavior.
 
+Combined Setup retains its accepted Workflow Run as the recovery owner when
+the wait observer fails. The parent Action requires settled Run custody before
+projecting a terminal outcome. Recovery locates pre-acceptance native work by
+its original Home, Account, Machine and Action request identity; cancellation
+uses that operation's existing abort path. Confirmed cancellation stops the
+interpreter's owned subprocess tree. An unverified stop retains native admission
+and a nonterminal uncertain operation observation. Cancellation leaves already
+created vendor Docker resources in place.
+
 Setup releases native admission when the interpreter and its owned native work
 have stopped, including failed and unknown effect outcomes. Partial package facts
 remain on the operation; they do not retain a Machine-wide lock without a live
