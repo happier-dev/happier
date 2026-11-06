@@ -304,6 +304,43 @@ export type ProjectExecutionActionResultById = {
                     status?: number | undefined;
                     code?: string | undefined;
                 } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'native_execution';
+                    requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+                    failure?: undefined | {
+                        kind: 'native_effect_failed' | 'native_observation_unavailable';
+                        reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                        requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                        errorCode?: string | undefined;
+                        stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'docker';
+                            phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                            exitCode: null | number;
+                        };
+                        containerExitCode?: number | undefined;
+                        containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                        port?: number | undefined;
+                    };
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
                     kind: 'machineSetup';
                     failure: {
                         kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
@@ -339,6 +376,9 @@ export type ProjectExecutionActionResultById = {
                         httpStatus: 400;
                     } | {
                         grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 10 | 7 | 14 | 8 | 12 | 13 | 15 | 16;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
                         sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
                     };
@@ -827,6 +867,43 @@ export type ProjectExecutionActionResultById = {
                     status?: number | undefined;
                     code?: string | undefined;
                 } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'native_execution';
+                    requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+                    failure?: undefined | {
+                        kind: 'native_effect_failed' | 'native_observation_unavailable';
+                        reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                        requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                        errorCode?: string | undefined;
+                        stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'docker';
+                            phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                            exitCode: null | number;
+                        };
+                        containerExitCode?: number | undefined;
+                        containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                        port?: number | undefined;
+                    };
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
                     kind: 'machineSetup';
                     failure: {
                         kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
@@ -862,6 +939,9 @@ export type ProjectExecutionActionResultById = {
                         httpStatus: 400;
                     } | {
                         grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 10 | 7 | 14 | 8 | 12 | 13 | 15 | 16;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
                         sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
                     };
@@ -1350,6 +1430,43 @@ export type ProjectExecutionActionResultById = {
                     status?: number | undefined;
                     code?: string | undefined;
                 } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
+                    environmentId: string;
+                    domainId: string;
+                    step: 'native_execution';
+                    requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+                    failure?: undefined | {
+                        kind: 'native_effect_failed' | 'native_observation_unavailable';
+                        reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                        requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                        errorCode?: string | undefined;
+                        stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'docker';
+                            phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                            exitCode: null | number;
+                        };
+                        containerExitCode?: number | undefined;
+                        containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                        port?: number | undefined;
+                    };
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                } | {
                     kind: 'machineSetup';
                     failure: {
                         kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
@@ -1385,6 +1502,9 @@ export type ProjectExecutionActionResultById = {
                         httpStatus: 400;
                     } | {
                         grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 10 | 7 | 14 | 8 | 12 | 13 | 15 | 16;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
                         sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
                     };

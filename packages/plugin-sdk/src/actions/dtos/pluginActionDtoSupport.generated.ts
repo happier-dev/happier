@@ -1190,7 +1190,7 @@ export type SessionSpawnNewInputV2 = {
                         hostType: 'usageQuery';
                         field?: 'session' | 'period' | undefined;
                     } | {
-                        hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -5895,7 +5895,7 @@ export type SessionServerStartSpawnDraftV1 = {
                         hostType: 'usageQuery';
                         field?: 'session' | 'period' | undefined;
                     } | {
-                        hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -6315,7 +6315,7 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ("unknown" | "waiting" | "locked" | "failed" | "stale" | "preparing" | "repair_needed" | "access_pending" | "setup_required" | "content_unavailable" | "permission_required" | "action_required" | "usage_limited" | "stopped" | "finished_unseen" | "mentioned" | "unread" | "ready" | "pending_input" | "archiving" | "waiting_for_startup_lock" | "archived" | "recoverable_unservable" | "resuming" | "disconnected" | "background_active" | "thinking")[] | undefined;
+        statuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
         excludedStatuses?: readonly ("unknown" | "waiting" | "locked" | "failed" | "stale" | "preparing" | "repair_needed" | "access_pending" | "setup_required" | "content_unavailable" | "permission_required" | "action_required" | "usage_limited" | "stopped" | "finished_unseen" | "mentioned" | "unread" | "ready" | "pending_input" | "archiving" | "waiting_for_startup_lock" | "archived" | "recoverable_unservable" | "resuming" | "disconnected" | "background_active" | "thinking")[] | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
@@ -6410,7 +6410,7 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ("unknown" | "waiting" | "locked" | "failed" | "stale" | "preparing" | "repair_needed" | "access_pending" | "setup_required" | "content_unavailable" | "permission_required" | "action_required" | "usage_limited" | "stopped" | "finished_unseen" | "mentioned" | "unread" | "ready" | "pending_input" | "archiving" | "waiting_for_startup_lock" | "archived" | "recoverable_unservable" | "resuming" | "disconnected" | "background_active" | "thinking")[] | undefined;
+        statuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
         excludedStatuses?: readonly ("unknown" | "waiting" | "locked" | "failed" | "stale" | "preparing" | "repair_needed" | "access_pending" | "setup_required" | "content_unavailable" | "permission_required" | "action_required" | "usage_limited" | "stopped" | "finished_unseen" | "mentioned" | "unread" | "ready" | "pending_input" | "archiving" | "waiting_for_startup_lock" | "archived" | "recoverable_unservable" | "resuming" | "disconnected" | "background_active" | "thinking")[] | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
@@ -6566,7 +6566,7 @@ export type SessionTargetSelectorV1 = {
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ('unknown' | 'waiting' | 'locked' | 'failed' | 'stale' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'background_active' | 'thinking')[] | undefined;
+        statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
         excludedStatuses?: readonly ('unknown' | 'waiting' | 'locked' | 'failed' | 'stale' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'background_active' | 'thinking')[] | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
@@ -7686,7 +7686,7 @@ export type UsageCoachEvaluation = {
                         hostType: 'usageQuery';
                         field?: 'session' | 'period' | undefined;
                     } | {
-                        hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -8607,7 +8607,7 @@ export type PluginActionContributionV2 = {
                 hostType: 'usageQuery';
                 field?: 'session' | 'period' | undefined;
             } | {
-                hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
             } | undefined;
             contextMode?: 'follow' | 'own' | undefined;
             required?: boolean | undefined;
@@ -8754,7 +8754,7 @@ export type PluginToolContributionV2 = {
                 hostType: 'usageQuery';
                 field?: 'session' | 'period' | undefined;
             } | {
-                hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
             } | undefined;
             contextMode?: 'follow' | 'own' | undefined;
             required?: boolean | undefined;
@@ -8915,7 +8915,7 @@ export type PluginActionWorkflowDefinitionV1 = {
             hostType: 'usageQuery';
             field?: 'session' | 'period' | undefined;
         } | {
-            hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
         } | undefined;
     }[];
     readonly defaults: {
@@ -11087,7 +11087,7 @@ export type ActionSpec = {
                 hostType: 'usageQuery';
                 field?: 'session' | 'period' | undefined;
             } | {
-                hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
             } | undefined;
             contextMode?: 'follow' | 'own' | undefined;
             required?: boolean | undefined;
@@ -11506,7 +11506,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                                     hostType: "usageQuery";
                                     field?: "session" | "period" | undefined;
                                 } | {
-                                    hostType: "workspace" | "session" | "machine" | "agentParticipant";
+                                    hostType: "agentParticipant" | "machine" | "savedSecretReference" | "session" | "workspace";
                                 } | undefined;
                                 contextMode?: "follow" | "own" | undefined;
                                 required?: boolean | undefined;
@@ -11814,7 +11814,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                                     hostType: "usageQuery";
                                     field?: "session" | "period" | undefined;
                                 } | {
-                                    hostType: "workspace" | "session" | "machine" | "agentParticipant";
+                                    hostType: "agentParticipant" | "machine" | "savedSecretReference" | "session" | "workspace";
                                 } | undefined;
                                 contextMode?: "follow" | "own" | undefined;
                                 required?: boolean | undefined;

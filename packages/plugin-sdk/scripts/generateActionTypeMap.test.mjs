@@ -964,6 +964,10 @@ test('Action DTO projection scopes mapped keys without hiding external declarati
   );
   assert.match(withExternalConstraint, /type K = \{/u);
   validateGeneratedModuleSyntax(withExternalConstraint);
+
+  const abortable = project('export type AbortableDto = Readonly<{ signal?: AbortSignal }>;');
+  assert.match(abortable, /signal\?: AbortSignal/u);
+  validateGeneratedModuleSyntax(abortable);
 });
 
 test('generated Plugin Action projection does not publish the host Action census', () => {

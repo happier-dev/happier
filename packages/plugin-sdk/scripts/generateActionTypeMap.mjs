@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
-import { captureActionSchemaInputs, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
+import { ACTION_DTO_BUILTINS, captureActionSchemaInputs, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
 
 import {
   resolveWorkspaceBundleLockPath,
@@ -83,8 +83,6 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     }
     throw new ActionTypeProjectionValidationError(`Unresolved DTO declaration ${name} in ${relative(repoRoot, path)}`);
   };
-  const builtins = new Set(['Readonly', 'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract',
-    'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer', 'Date']);
   const references = (node) => {
     const names = new Set();
     const parameters = new Set(node.typeParameters?.map((item) => item.name.text));
@@ -104,7 +102,7 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
       if (ts.isTypeReferenceNode(child) || ts.isExpressionWithTypeArguments(child)) {
         const name = child.typeName ?? child.expression;
         if (!ts.isIdentifier(name)) throw new ActionTypeProjectionValidationError('DTO declarations must not contain qualified validator types.');
-        if (!bound.has(name.text) && !builtins.has(name.text)) names.add(name.text);
+        if (!bound.has(name.text) && !ACTION_DTO_BUILTINS.has(name.text)) names.add(name.text);
       }
       ts.forEachChild(child, nested => visit(nested, bound));
     };

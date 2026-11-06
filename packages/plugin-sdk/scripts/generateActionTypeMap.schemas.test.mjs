@@ -252,6 +252,25 @@ test('retained registry install publishes a concrete current author input', asyn
     'released source declarations are ingress-only, not current author authority');
 });
 
+test('Action DTO derivation retains the platform AbortSignal identity', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-abort-signal-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] } as const;");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from 'zod/mini';
+    const input = z.custom<Readonly<{ signal?: AbortSignal }>>();
+    export const ACTION_SPECS = [{ id: 'fixture.read', inputSchema: input, outputSchema: input }];`);
+  const result = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['fixture'] });
+  const dto = result.outputs.get(resolve(actions, 'fixtureActionDtos.ts'));
+  assert.ok(dto);
+  assert.match(dto, /signal\?: AbortSignal/u);
+  assert.doesNotMatch(dto, /import type \{[^}]*\bAbortSignal\b/u);
+});
+
 test('Account operand mapped keys stay lexical in public support projections', t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
   mkdirSync(cache, { recursive: true });

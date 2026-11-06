@@ -318,8 +318,8 @@ const neutralImports = {
   AgentExternalSessionTranscriptRawRecord: 'sessions/messages/agentExternalSessionTranscriptRawRecord.ts',
   PluginUiJsonValueV1: 'plugins/contributions/ui/json.ts',
 };
-const builtins = new Set(['Readonly', 'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract',
-  'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer', 'Date']);
+export const ACTION_DTO_BUILTINS = new Set(['Readonly', 'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract',
+  'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer', 'Date', 'AbortSignal']);
 
 export function readActionCatalog(repoRoot, recordInput = () => {}, readSource = path => readFileSync(path, 'utf8')) {
   const sources = new Map();
@@ -696,7 +696,7 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
           }
           if (!ts.isIdentifier(node.typeName)) throw Error(`Private schema reference: ${name}`);
           const base = input && name === 'PluginJsonValueV2' ? 'JsonValue' : renames.get(name) ?? name;
-          const isReference = !builtins.has(base) && !parameters.has(base);
+          const isReference = !ACTION_DTO_BUILTINS.has(base) && !parameters.has(base);
           // Recursive support aliases must retain the caller's projection.
           // Output aliases can contain mutable JSON while author inputs use
           // JsonValue; sharing that alias silently loses nested input typing.
