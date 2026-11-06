@@ -1440,6 +1440,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         admissionClass: await resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd: packageDir, env, repoRoot: monorepoRoot }),
         inheritedAdmission,
         stdio: ['inherit', 'pipe', 'inherit'],
+        captureStdout: false,
         onStdout: consumeStdout,
       });
       buffered += decoder.end();

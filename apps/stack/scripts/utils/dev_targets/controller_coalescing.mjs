@@ -63,7 +63,6 @@ async function serve(address) {
     });
     const publish = (stream, chunk) => {
       const event = { stream, data: chunk.toString('base64') };
-      job.output.push(event);
       for (const socket of job.clients) send(socket, event);
     };
     job.child.stdout.on('data', chunk => publish('stdout', chunk));
@@ -71,7 +70,6 @@ async function serve(address) {
     job.child.on('error', () => {}); // The close event settles spawn failure too.
     job.child.once('close', (code, signal) => {
       for (const socket of job.clients) socket.end(JSON.stringify({ exit: code ?? 128 + (constants.signals[signal] ?? 0) }) + '\n');
-      job.output.length = 0;
       group.running = group.following;
       group.following = null;
       if (group.running) start(group, group.running);
@@ -126,14 +124,13 @@ async function serve(address) {
       const queued = Boolean(group.running);
       let job = queued ? group.following : group.running;
       if (!job) {
-        job = { key, request, clients: new Set(), output: [], child: null };
+        job = { key, request, clients: new Set(), child: null };
         if (queued) group.following = job;
         else group.running = job;
       }
       attached = { job, group };
       job.clients.add(socket);
       send(socket, { attached: queued ? 'queued' : 'running' });
-      for (const event of job.output) send(socket, event);
       if (!queued && !job.child) start(group, job);
     });
   });
