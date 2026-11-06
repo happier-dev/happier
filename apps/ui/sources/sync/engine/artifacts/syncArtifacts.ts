@@ -53,6 +53,7 @@ import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, g
 import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
+import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
 import { ArtifactPublicAudienceV1ReadSchema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { isArtifactHtmlHeaderV1, artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { listArtifactHeadersV1, selectArtifactHeaderPageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -1427,7 +1428,8 @@ export async function restoreArtifactBodyRevisionViaApi(params: ArtifactRevision
         : await new ArtifactEncryption(key!).encryptBody(envelope);
     const privateMetadata = await prepareArtifactProvenanceWrite({ ...params, mode: artifact.encryptionMode,
         existingArtifact: current, bodyVersion: params.expectedRevision.bodyVersion + 1,
-        provenance: artifactRevisionProvenance(params.credentials, params.savedBy, params.bodyVersion, selected.provenance?.source) });
+        provenance: preserveSkillCreatorV1({ header: rawHeader, isCreate: false, currentProvenance: current.provenance,
+            provenance: artifactRevisionProvenance(params.credentials, params.savedBy, params.bodyVersion, selected.provenance?.source) }) });
     const kind = tryDeriveArtifactStoredKindV1(rawHeader);
     const revision = await restoreArtifactRevision(params.credentials, { artifactId: artifact.id,
         ...(kind === undefined ? {} : { kind }),
@@ -1502,7 +1504,8 @@ export async function createArtifactWithHeaderViaApi(params: {
     await requireArtifactHtmlWriteContent(params);
     const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body), body);
     const envelope = { body };
-    const provenance = artifactRevisionProvenance(credentials, params.savedBy, undefined, params.source);
+    const provenance = preserveSkillCreatorV1({ header: rawHeader, isCreate: true,
+        provenance: artifactRevisionProvenance(credentials, params.savedBy, undefined, params.source) });
 
     try {
         // Generate unique artifact ID
@@ -1673,7 +1676,11 @@ export async function updateArtifactWithHeaderViaApi(params: {
     }
     const context = await sharedArtifactWriteContext({ ...params, current: currentArtifact, candidateBody: body });
     const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body, context), body);
-    const provenance = artifactRevisionProvenance(credentials, params.savedBy, undefined, currentArtifact.provenance?.source);
+    let currentProvenance = currentArtifact.provenance;
+    // Background headers intentionally omit private metadata; absence there is
+    // not the legacy absence established by an opened revision.
+    const needsPrivateMetadata = currentArtifact.body === undefined && !Object.hasOwn(currentArtifact, 'provenance');
+    let recoveredArtifact: Artifact | undefined;
 
     // Get the data encryption key from memory for encrypted artifacts only.
     let dataEncryptionKey = artifactDataKeys.get(artifactId)?.dataKey;
@@ -1688,9 +1695,11 @@ export async function updateArtifactWithHeaderViaApi(params: {
         || bodyVersion === undefined
         || storageMode === undefined
         || (storageMode === 'e2ee' && !dataEncryptionKey)
+        || needsPrivateMetadata
     ) {
         const fullArtifact = await fetchArtifactApi(credentials, artifactId, { request: params.request,
             readTransport: params.readTransport, signal: params.signal, fresh: true });
+        recoveredArtifact = fullArtifact;
         // Key recovery must never rebase the full CAS token supplied by the caller.
         if (!params.expectedRevision) {
             headerVersion = fullArtifact.headerVersion;
@@ -1711,11 +1720,15 @@ export async function updateArtifactWithHeaderViaApi(params: {
             }
             dataEncryptionKey = decryptedKey;
         }
+        if (needsPrivateMetadata) currentProvenance = await openArtifactProvenance({ ...params,
+            artifact: fullArtifact, mode: storageMode });
     }
 
     if (!storageMode) {
         throw new Error('Artifact storage mode is unavailable');
     }
+    const provenance = preserveSkillCreatorV1({ header: rawHeader, isCreate: false, currentProvenance,
+        provenance: artifactRevisionProvenance(credentials, params.savedBy, undefined, currentProvenance?.source) });
     const currentStorageMode = storageMode;
     await requireArtifactHtmlWriteContent({ ...params,
         readReference: reference => openFetchedArtifactBinary({ ...params, reference }, currentStorageMode),
@@ -1749,7 +1762,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     if (params.expectedRevision || bodyChanged) {
         // Recover the private custody before a write; legacy rows initialize it in this same CAS.
         if (provenance && storageMode === 'e2ee' && !artifactDataKeys.get(artifactId)?.provenanceDataKey) {
-            const stored = await fetchArtifactApi(credentials, artifactId, { request: params.request,
+            const stored = recoveredArtifact ?? await fetchArtifactApi(credentials, artifactId, { request: params.request,
                 readTransport: params.readTransport, signal: params.signal, fresh: true });
             await resolveArtifactProvenanceDataKey({ ...params, artifact: stored });
         }

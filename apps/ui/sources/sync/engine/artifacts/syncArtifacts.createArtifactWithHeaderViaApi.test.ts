@@ -58,27 +58,42 @@ describe('createArtifactWithHeaderViaApi', () => {
     for (const write of writes) expect(write).not.toHaveProperty('kind');
   });
 
-  it('derives the indexed kind from the actual header for create and update', async () => {
+  it.each([false, true])('derives the indexed kind from the actual header for create and update (omit actor: %s)', async omitActor => {
     const writes: Record<string, unknown>[] = [];
     let current: DecryptedArtifact | undefined;
+    let stored: Artifact | undefined;
     const request = async (path: string, init?: RequestInit) => {
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-      const wire = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      writes.push(wire);
-      return Response.json(path === '/v1/artifacts'
-        ? { ...wire, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
-            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }
-        : { success: true, headerVersion: 2, bodyVersion: 2 });
+      if (stored && path === `/v1/artifacts/${stored.id}` && (init?.method ?? 'GET') === 'GET') return Response.json(stored);
+      const wire = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
+      writes.push({ ...wire });
+      if (path === '/v1/artifacts') {
+        stored = { ...wire, ...projectArtifactStoredKind(wire.kind), ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        return Response.json(stored);
+      }
+      return Response.json({ success: true, headerVersion: 2, bodyVersion: 2 });
     };
     const { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
     const shared = { credentials: { token: 't' }, serverId: 'artifact-kind-home', encryption: null,
       artifactDataKeys: new Map(), request };
+    const creator = { kind: 'agent' as const, accountId: 'owner', sessionId: 'creator-session' };
+    const editor = { kind: 'person' as const, accountId: 'owner' };
     const artifactId = await createArtifactWithHeaderViaApi({ ...shared,
-      header: { kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Skill' },
-      body: 'skill', addArtifact: artifact => { current = artifact; } });
+      header: { v: 1, kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Skill' },
+      body: JSON.stringify({ v: 1, createdAtMs: 1, updatedAtMs: 1, entries: [{ path: 'SKILL.md', contentKind: 'utf8',
+        contentBase64: encodeBase64(new TextEncoder().encode('---\nname: skill\ndescription: Example skill\n---\nInstructions'), 'base64') }] }),
+      savedBy: creator, addArtifact: artifact => { current = artifact; } });
+    expect(current?.provenance).toEqual({ savedBy: creator, skillCreator: creator });
+    // The warm header inventory has no private metadata. A write must acquire its
+    // existing revision basis before replacing metadata, rather than erase creator.
+    if (!current) throw new Error('Missing created skill');
+    const { provenance: _privateMetadata, body: _body, ...headerOnly } = current;
+    current = headerOnly;
     await updateArtifactWithHeaderViaApi({ ...shared, artifactId,
-      header: { kind: 'prompt_doc.v2', title: 'Prompt' }, body: 'prompt',
+      header: { kind: 'prompt_doc.v2', title: 'Prompt' }, body: 'prompt', savedBy: omitActor ? null : editor,
       getArtifact: () => current, updateArtifact: artifact => { current = artifact; } });
+    expect(current?.provenance).toEqual({ savedBy: omitActor ? creator : editor, skillCreator: creator });
     expect(writes.map(write => write.kind)).toEqual(['v1:skill:prompt_bundle.v2', 'v1:prompt:prompt_doc.v2']);
   });
   it('writes approval state and Session hints in the same header revision on creation and settlement', async () => {
