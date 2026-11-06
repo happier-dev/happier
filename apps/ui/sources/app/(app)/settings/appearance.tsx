@@ -82,7 +82,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     // On a phone the theme counts would be squeezed beside the summary, so they join it instead.
     const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
     const scope = storage(state => state.settingsScope);
-    const resetAction = useMountedActionExecution(scope, { openOnRequest: true, retainInvocation: true });
+    const resetAction = useMountedActionExecution(scope, { retainInvocation: true });
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const { arrangement: paneArrangement, setArrangement: setPaneArrangement } = usePaneArrangement();

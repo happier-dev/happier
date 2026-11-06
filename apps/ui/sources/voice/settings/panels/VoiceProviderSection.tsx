@@ -345,7 +345,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const accountSettings = React.useMemo(() => ({ voiceSettingsV1, secrets, backendEnabledByTargetKey }),
     [voiceSettingsV1, secrets, backendEnabledByTargetKey]);
   const settingsScope = useAccountSettingsScope();
-  const credentialSelectionAction = useMountedActionExecution(settingsScope, { openOnRequest: true });
+  const credentialSelectionAction = useMountedActionExecution(settingsScope);
   const purposes = useConnectedAccountCatalog('purposes', settingsScope);
   const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);

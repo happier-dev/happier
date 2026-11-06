@@ -107,7 +107,6 @@ export function useLocalServiceEntryActions(
     scopeKey: actionScopeKey,
     serverId: serverId ?? '',
     onExecuted: refreshAfterApproval,
-    openOnRequest: true,
   });
   const isActionScopeCurrent = React.useCallback(
     () =>

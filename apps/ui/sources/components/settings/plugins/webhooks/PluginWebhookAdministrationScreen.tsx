@@ -531,7 +531,7 @@ export const PluginWebhookAdministrationScreen = React.memo(function PluginWebho
     client?: PluginWebhookAdministrationHttpClient;
 }>) {
     const scope = useActiveServerAccountScope();
-    const { executeValue: executeAction } = useMountedActionExecution(scope, { openOnRequest: true });
+    const { executeValue: executeAction } = useMountedActionExecution(scope);
     const client = React.useMemo(
         () => props.client ?? createPluginWebhookAdministrationHttpClient({ executeAction }),
         [executeAction, props.client],

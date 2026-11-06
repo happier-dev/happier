@@ -413,7 +413,7 @@ type DeviceNotificationPermission = Readonly<{
 
 /** This device's OS notification permission, from the owner each host already uses. */
 function useDeviceNotificationPermission(): DeviceNotificationPermission {
-    const execution = useMountedActionExecution(useActiveServerAccountScope(), { openOnRequest: true });
+    const execution = useMountedActionExecution(useActiveServerAccountScope());
     const tauri = Platform.OS === 'web' && desktopHostKind() === 'tauri';
     const desktop = useTauriNotificationPermissionDiagnostics(tauri);
     const native = isPushNotificationRuntimeSupported();

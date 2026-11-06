@@ -161,7 +161,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
   const secrets = useSetting('secrets');
   const settings = React.useMemo(() => ({ voiceSettingsV1, secrets }), [voiceSettingsV1, secrets]);
   const expectedSettingsScope = useAccountSettingsScope();
-  const credentialAction = useMountedActionExecution(expectedSettingsScope, { openOnRequest: true });
+  const credentialAction = useMountedActionExecution(expectedSettingsScope);
   const purposes = useConnectedAccountCatalog('purposes', expectedSettingsScope);
   const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const savedSecretCatalog = useSavedSecretCatalog();

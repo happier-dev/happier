@@ -80,7 +80,7 @@ export function VoiceProviderSettingsActions(props: Readonly<{
   const settingRef = useVoiceContributedSettingRefs(props.providerId);
   const registration = getExternalVoiceProviderRegistration(props.providerId);
   const settingsScope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(settingsScope, { openOnRequest: true });
+  const { execute } = useMountedActionExecution(settingsScope);
   const [busyActionIds, setBusyActionIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const lifecycleRef = React.useRef(new AbortController());
   // Whether this panel is still on screen. `signal.aborted` cannot answer that:

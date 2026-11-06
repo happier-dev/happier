@@ -60,7 +60,7 @@ it('resumes the exact mounted console after an Inbox approval through default UI
     const view = state.viewsById.view_1;
     if (!view) throw new Error('Canonical Browser control owner did not create the fixture view');
     const hook = await renderHook(() => {
-        const actions = useMountedActionExecution(scope, { retainInvocation: true, openOnRequest: true });
+        const actions = useMountedActionExecution(scope, { retainInvocation: true });
         const diagnostics = useBrowserDiagnosticsRuntime({ view, enabled: true, actionExecute: actions.execute });
         React.useEffect(() => registerBrowserRuntimeControlAdapter({ browserSessionId: view.browserSessionId,
             control: { readState: () => state, applyDispatchResult: () => {} }, diagnostics: diagnostics?.runtimeAdapter,

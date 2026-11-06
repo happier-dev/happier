@@ -273,7 +273,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       reviewServerId,
     ]);
     const accountScope = [...accountBindings.values()][0]?.scope;
-    const { executeValue: frontDoorActionExecutor } = useMountedActionExecution(accountScope, { openOnRequest: true });
+    const { executeValue: frontDoorActionExecutor } = useMountedActionExecution(accountScope);
     const pluginPermissionGrantActions = React.useMemo(
       () =>
         createPluginPermissionGrantActions({

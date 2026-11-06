@@ -170,7 +170,7 @@ function BundledSpeechSettings(props: Readonly<{
   const settingRef = useVoiceContributedSettingRefs(props.descriptor.providerId);
   const machine = useVoiceExecutionMachinePresentation();
   const endpointScope = useAccountSettingsScope();
-  const catalogActions = useMountedActionExecution(endpointScope, { openOnRequest: true });
+  const catalogActions = useMountedActionExecution(endpointScope);
   const endpointSettingsRef = React.useRef({ ...props, scope: endpointScope });
   endpointSettingsRef.current = { ...props, scope: endpointScope };
   const endpointMountedRef = React.useRef(true);

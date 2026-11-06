@@ -136,7 +136,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const { page } = input;
     const descendantCommands = useCurrentUiContextComposedCommands();
     const reader = useOptionalCurrentUiContextReader();
-    const { execute } = useMountedActionExecution(input.authority?.scope, { openOnRequest: true });
+    const { execute } = useMountedActionExecution(input.authority?.scope);
     const latest = React.useRef(input);
     latest.current = input;
     const mounted = React.useRef(true);

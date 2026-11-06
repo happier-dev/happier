@@ -64,7 +64,7 @@ export async function settleEntityReorderWrite(write: () => Promise<void>): Prom
 
 /** Every flat-list Action joins the incumbent mounted approval and Account lifetime owner. */
 export function useEntityReorderAction(scope: EntityDragScopeV1 | null) {
-    const { execute } = useMountedActionExecution(scope, { openOnRequest: true });
+    const { execute } = useMountedActionExecution(scope);
     return React.useCallback((effect: EntityDropEffectV1) => executeEntityReorderAction(effect, execute), [execute]);
 }
 

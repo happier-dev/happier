@@ -35,7 +35,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
     const machineId = machine.id;
     const machineServerId = props.serverId;
     const shouldContinue = useMountedShouldContinue();
-    const stopExecution = useMountedActionExecution(machineServerId, { openOnRequest: true });
+    const stopExecution = useMountedActionExecution(machineServerId);
     const [isStoppingDaemon, setIsStoppingDaemon] = React.useState(false);
     const presence = useMachinePresenceSummary(machineServerId, machineId);
 

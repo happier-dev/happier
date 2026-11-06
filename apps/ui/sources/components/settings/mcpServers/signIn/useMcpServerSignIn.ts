@@ -101,7 +101,7 @@ export function useMcpServerSignIn(
     () => (homeId && accountId ? { serverId: homeId, accountId } : null),
     [homeId, accountId],
   );
-  const execution = useMountedActionExecution(scope, { openOnRequest: true });
+  const execution = useMountedActionExecution(scope);
   const execute = execution.execute;
   const profiles = getStorage()((state) => areServerAccountScopesEqual(scope, state.profileScope) ? state.profile.connectedAccountsV4 : null);
   const grant = server ? findMcpSignInGrant(profiles, server.id) : null;

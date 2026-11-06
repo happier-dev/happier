@@ -39,7 +39,7 @@ export function useWorkspaceFileShareActions(input: WorkspaceFileShareActionsInp
     const mention = useEntityComposerMention();
     const transfers = useWorkspaceFileTransfers({ workspaceScope: input.workspaceScope });
     const actionScope = resolveFileShareActionScope(input.actionScope, input.composer?.scope);
-    const execution = useMountedActionExecution(actionScope, { openOnRequest: true, retainInvocation: true });
+    const execution = useMountedActionExecution(actionScope, { retainInvocation: true });
     const report = async (run: () => Promise<void>) => {
         try { await run(); }
         catch (error) { Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed')); }

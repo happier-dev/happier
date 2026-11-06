@@ -125,7 +125,7 @@ export function useApplySettings(): (change: SettingsWrite) => void {
 /** Voice editors submit their change, not a stale replacement of the Account-owned profile. */
 export function useApplyVoiceSettingsEdit(): (before: VoiceSettings, next: VoiceSettings) => Promise<void> {
   const expectedScope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(expectedScope, { openOnRequest: true });
+  const { execute } = useMountedActionExecution(expectedScope);
   const providerId = getStorage()((state) => state.settings.voice.providerId);
   const registryRevision = React.useSyncExternalStore(
     voiceSettingsEditRegistry.subscribe ?? (() => () => {}),
@@ -202,7 +202,7 @@ export function useApplyProfileSave(options?: ProfileActionExecutionOptions): (i
 /** One thin mounted ingress; Profile decisions remain in the admitted domain owner. */
 export function useProfileActionExecute(options?: ProfileActionExecutionOptions) {
   const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope, { ...options, openOnRequest: options?.onApprovalPending === undefined });
+  const { execute } = useMountedActionExecution(scope, options);
   return React.useCallback(async (request: ProfileActionRequestV1): Promise<unknown> => {
     const result = await execute(request.actionId, request.input);
     if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode, result });

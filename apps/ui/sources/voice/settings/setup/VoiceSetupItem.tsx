@@ -55,7 +55,7 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; spa
     const router = useRouter();
     const voiceEnabled = useFeatureEnabled('voice');
     const accountScope = useActiveServerAccountScope();
-    const { executeValue } = useMountedActionExecution(accountScope, { openOnRequest: true });
+    const { executeValue } = useMountedActionExecution(accountScope);
     const [panelOpen, setPanelOpen] = React.useState(false);
     const [voiceSettings, setVoiceSettings] = useVoiceSettingsMutable();
     const inputs = useVoiceSettingsReadinessInputs(voiceSettings, { purpose: 'conversation', probeMachine: panelOpen });

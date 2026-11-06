@@ -69,7 +69,7 @@ export const SidebarNavigator = React.memo(function SidebarNavigator() {
 const FullSidebarNavigator = React.memo(() => {
 
     const accountScope = useActiveServerAccountScope();
-    const { execute, isCurrent } = useMountedActionExecution(accountScope, { openOnRequest: true });
+    const { execute, isCurrent } = useMountedActionExecution(accountScope);
     const workspace = useOptionalWorkspaceNavigation();
     // The onboarding journey host owns the whole viewport until its session ends
     // (visual spec v3 §5): the post-auth setup beats must never render beside the

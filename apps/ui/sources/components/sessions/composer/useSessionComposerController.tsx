@@ -2455,7 +2455,7 @@ export function useSessionComposerController({
         markCurrentUsageLimitRecoveryOperationStatus(status);
         return true;
     }, [markCurrentUsageLimitRecoveryOperationStatus, markUsageLimitRecoveryIssueResolved]);
-    const { execute: executeRecoveryAction } = useMountedActionExecution(sessionAccountScope, { openOnRequest: true });
+    const { execute: executeRecoveryAction } = useMountedActionExecution(sessionAccountScope);
     const executeUsageLimitRecoveryAction = React.useCallback(async (
         actionId: 'session.usageLimit.checkNow' | 'session.usageLimit.waitResume.enable'
             | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.consumeResetCredit',

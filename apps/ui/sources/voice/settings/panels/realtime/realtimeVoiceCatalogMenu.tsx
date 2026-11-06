@@ -60,7 +60,7 @@ export function useRealtimeCatalogPreview(providerId: string, options?: Readonly
   retirePreview: () => void;
 }> {
   const scope = useAccountSettingsScope();
-  const actions = useMountedActionExecution(scope, { openOnRequest: true });
+  const actions = useMountedActionExecution(scope);
   const snapshot = React.useSyncExternalStore(
     subscribeRealtimeCatalogPreview,
     readRealtimeCatalogPreview,
@@ -270,7 +270,7 @@ export function useRealtimeVoiceCatalog(params: Readonly<{
 }> {
   const { providerId, catalogAvailable, credentialUsable, targetKey, declaredRows } = params;
   const scope = useAccountSettingsScope();
-  const actions = useMountedActionExecution(scope, { openOnRequest: true });
+  const actions = useMountedActionExecution(scope);
   const subscribeRetainedRows = React.useCallback((listener: () => void) => {
     const listeners = retainedCatalogListeners.get(targetKey) ?? new Set<() => void>();
     retainedCatalogListeners.set(targetKey, listeners);

@@ -34,7 +34,7 @@ export function UsageCalendarExportButton(props: Readonly<{ input: UsageCalendar
   const [state, setState] = React.useState<'idle' | 'pending' | 'failed' | 'saved'>('idle');
   const pending = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => { pending.current?.abort(); }, []);
-  const { execute, isCurrent } = useMountedActionExecution(props.serverId, { openOnRequest: true });
+  const { execute, isCurrent } = useMountedActionExecution(props.serverId);
   const save = async () => {
     if (!isCurrent()) { setState('failed'); return; }
     setState('pending');
@@ -72,7 +72,7 @@ export function UsageBillingButton(props: Readonly<{ account: UsagePlanAccount; 
   const [state, setState] = React.useState<'idle' | 'pending' | 'failed'>('idle');
   const pending = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => { pending.current?.abort(); }, []);
-  const { execute, isCurrent } = useMountedActionExecution(props.serverId, { openOnRequest: true });
+  const { execute, isCurrent } = useMountedActionExecution(props.serverId);
   const open = async () => {
     if (!machineId || !destinationKnown || !isCurrent()) { setState('failed'); return; }
     setState('pending');
@@ -117,7 +117,7 @@ export function useUsagePlanAction(expectedServerId?: string): Readonly<{
   const state = presentation.scopeKey === scopeKey ? presentation.state : 'idle';
   const onApprovalPending = React.useCallback(() => setPresentation({ scopeKey, state: 'approval' }), [scopeKey]);
   const { execute, isCurrent } = useMountedActionExecution(expectedServerId ?? viewer?.serverId ?? null,
-    { openOnRequest: true, onApprovalPending });
+    { onApprovalPending });
   const run = React.useCallback(async (actionId: UsagePlanWriteActionId, input: unknown, onSettled: () => void) => {
     const setState = (next: UsagePlanActionState, errorCode?: string) => setPresentation({ scopeKey, state: next, errorCode });
     if (!isCurrent()) { setState('failed'); return; }

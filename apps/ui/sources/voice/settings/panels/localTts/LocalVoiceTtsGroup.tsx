@@ -48,7 +48,7 @@ export function LocalVoiceTtsGroup(props: {
 }) {
   const searchPrerequisite = useVoiceSettingsSearchPrerequisite();
   const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope, { openOnRequest: true });
+  const { execute } = useMountedActionExecution(scope);
   const { theme } = useUnistyles();
   const providerSpecs = useLocalTtsProviderSpecs();
   const declarations = useVoiceContributedSettingsDeclarations('voiceConversations');

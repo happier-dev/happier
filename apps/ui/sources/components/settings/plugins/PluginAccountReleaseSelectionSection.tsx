@@ -86,7 +86,6 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
         scopeKey: accountScope ? serverAccountScopeKeySuffix(accountScope) : '',
         serverId: accountScope?.serverId ?? '',
         onExecuted: () => {},
-        openOnRequest: true,
     });
 
     React.useEffect(() => {

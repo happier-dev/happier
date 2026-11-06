@@ -140,7 +140,7 @@ export function createVoiceRawCredentialReviewDetailRows(
 export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessReviewProps) {
   const client = props.client ?? rawCredentialAuthorizationClient;
   const scope = useActiveServerAccountScope();
-  const { executeValue } = useMountedActionExecution(scope, { openOnRequest: true });
+  const { executeValue } = useMountedActionExecution(scope);
   const defaultActions = React.useMemo(() => createPluginPermissionGrantActions({
     execute: executeValue,
   }), [executeValue]);

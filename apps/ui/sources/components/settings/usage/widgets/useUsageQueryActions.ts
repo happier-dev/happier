@@ -46,7 +46,7 @@ export function useUsageQueryActions(
 ): void {
   const key = query ? JSON.stringify(normalizeUsageQuery(query)) : null;
   const lifetime = query ? captureActiveServerAccountScopeLifetime() : null;
-  const execution = useMountedActionExecution(lifetime?.scope, { openOnRequest: true });
+  const execution = useMountedActionExecution(lifetime?.scope);
   const actions = React.useMemo((): readonly ItemAction[] | null => {
     if (!query || !lifetime?.isCurrent()) return null;
     const base: ItemAction[] = [

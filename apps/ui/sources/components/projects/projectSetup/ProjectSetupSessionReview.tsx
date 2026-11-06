@@ -159,7 +159,7 @@ export const ProjectSetupConsentReviewCard = React.memo(
     const lifetime = React.useMemo(() => new AbortController(), [scope.serverId, scope.accountId]);
     React.useEffect(() => () => lifetime.abort(), [lifetime]);
     const approval = useActionApprovalContinuation({ scopeKey: JSON.stringify([scope, testID]),
-      serverId: scope.serverId, onExecuted: () => {}, openOnRequest: true });
+      serverId: scope.serverId, onExecuted: () => {} });
 
     const allow = React.useCallback(async () => {
       const workspace = attachment?.sourceWorkspace;

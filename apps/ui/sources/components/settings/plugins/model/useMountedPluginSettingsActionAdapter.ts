@@ -12,7 +12,7 @@ export function useMountedPluginSettingsActionAdapter(params: Readonly<{
     target: ScopedPluginSettingsTarget | null;
 }>): ScopedPluginSettingsAdapter {
     const scope = params.target?.kind === 'daemon' ? params.target.serverId : params.accountLifetime?.scope;
-    const { execute } = useMountedActionExecution(scope, { retainInvocation: true, openOnRequest: true });
+    const { execute } = useMountedActionExecution(scope, { retainInvocation: true });
     return React.useMemo(() => createScopedPluginSettingsActionAdapter({
         adapter: params.adapter,
         accountLifetime: params.accountLifetime,

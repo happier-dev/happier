@@ -85,7 +85,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
   const settings = React.useMemo(() => ({ voiceSettingsV1, secrets }), [voiceSettingsV1, secrets]);
   const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const expectedSettingsScope = useAccountSettingsScope();
-  const sourceAction = useMountedActionExecution(expectedSettingsScope, { openOnRequest: true });
+  const sourceAction = useMountedActionExecution(expectedSettingsScope);
   const purposes = useConnectedAccountCatalog('purposes', expectedSettingsScope);
   const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const savedSecretCatalog = useSavedSecretCatalog();

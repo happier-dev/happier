@@ -27,7 +27,7 @@ export function VoiceSpeechModelsSection(props: Readonly<{
 }>) {
   const machineId = useVoiceExecutionMachineId();
   const scope = useAccountSettingsScope();
-  const actions = useMountedActionExecution(scope, { openOnRequest: true });
+  const actions = useMountedActionExecution(scope);
   const catalog = useDaemonVoiceModelCatalogState({ enabled: Boolean(machineId), refreshKey: machineId });
   if (!machineId) return (
     <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.models}>

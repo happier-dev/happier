@@ -220,7 +220,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     );
     const presentedEnded = snap.status === 'disconnected' ? ended : null;
     const currentAccountScope = useActiveServerAccountScope();
-    const { executeValue } = useMountedActionExecution(currentAccountScope, { openOnRequest: true });
+    const { executeValue } = useMountedActionExecution(currentAccountScope);
     const executeControl = React.useCallback(async (
         actionId: VoiceConversationActionId, input: unknown, tag: string, operation?: UiActionOperation,
     ) => {

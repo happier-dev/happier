@@ -172,7 +172,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const saveExport = props.saveExportArtifact ?? saveVoiceHistoryExportArtifact;
   const scope = useActiveServerAccountScope();
   const executorOptions = React.useMemo(() => ({ voiceHistory: { consumer, saveExportArtifact: saveExport } }), [consumer, saveExport]);
-  const actions = useMountedActionExecution(scope, { executorOptions, openOnRequest: true });
+  const actions = useMountedActionExecution(scope, { executorOptions });
   const executeAction = actions.executeValue;
   const [query, setQuery] = React.useState('');
   const [appliedQuery, setAppliedQuery] = React.useState('');

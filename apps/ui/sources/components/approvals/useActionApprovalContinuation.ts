@@ -16,8 +16,6 @@ export function useActionApprovalContinuation(input: Readonly<{
     scopeKey: string;
     serverId: string;
     onExecuted: () => void;
-    /** Direct controls without an inline decision surface open the existing Inbox review. */
-    openOnRequest?: boolean;
 }>) {
     const language = usePreferredLanguage();
     const router = useRouter();
@@ -43,14 +41,8 @@ export function useActionApprovalContinuation(input: Readonly<{
     }, [observer]);
     const requestApproval = React.useCallback((registration: ActionApprovalRegistration) => {
         if (currentObserver.current !== observer) return;
-        const previous = observer.getSnapshot().approval?.artifactId;
         observer.requestApproval(registration);
-        const registered = observer.getSnapshot().approval;
-        if (input.openOnRequest && registered && registered.artifactId !== previous) {
-            const serverId = registered.continuation?.scope?.serverId ?? input.serverId;
-            router.pushRetainingCurrent(buildApprovalHref(registered.artifactId, serverId));
-        }
-    }, [observer, input.openOnRequest, input.serverId, router]);
+    }, [observer]);
     const { approval, settlement } = React.useSyncExternalStore(observer.subscribe, observer.getSnapshot, observer.getSnapshot);
     const approvalId = approval?.artifactId ?? null;
     const artifactScope = approval?.continuation?.scope;
@@ -72,6 +64,11 @@ export function useActionApprovalContinuation(input: Readonly<{
         const matched = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
         return matched?.family === 'built_in' ? readApprovalPreviewSummary(matched.request.preview, matched.request) : null;
     }, [approvalId, artifactBinding.artifact, language]);
+    const approvalServerId = artifactScope?.serverId ?? input.serverId;
+    /** Opens the waiting approval's Inbox review, keeping the page that asked underneath it. */
+    const openApproval = React.useCallback(() => {
+        if (approvalId) router.pushRetainingCurrent(buildApprovalHref(approvalId, approvalServerId));
+    }, [approvalId, approvalServerId, router]);
     return { ...artifactBinding, approvalId, approvalStatus, approvalPending, approvalSummary,
-        requestApproval };
+        requestApproval, openApproval };
 }

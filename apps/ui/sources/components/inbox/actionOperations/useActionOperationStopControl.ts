@@ -26,7 +26,7 @@ export function useActionOperationStopControl(
     const stopRequested = live && feedback === 'requested' && !retryUnconfirmedStop;
     const scopeKey = JSON.stringify([operation?.serverId, operation?.snapshot.operationId]);
     const approval = useActionApprovalContinuation({ scopeKey, serverId: operation?.serverId ?? '',
-        onExecuted: NO_APPROVAL_REFRESH, openOnRequest: true });
+        onExecuted: NO_APPROVAL_REFRESH });
     const awaitingApproval = approval.approvalId !== null && (approval.approvalStatus === undefined || approval.approvalStatus === 'open');
 
     React.useEffect(() => {

@@ -229,7 +229,6 @@ function useUsageCoachController(
     scopeKey: JSON.stringify([viewer?.serverId ?? null, viewer?.accountId ?? null]),
     serverId: viewer?.serverId ?? '',
     onExecuted: () => settled.current(),
-    openOnRequest: true,
   });
   const requestApproval = React.useRef(approvals.requestApproval);
   requestApproval.current = approvals.requestApproval;

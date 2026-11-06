@@ -246,7 +246,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
 }>): PluginEventAutomationComposerModel {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
-    const { executeValue: executeWebhookAction } = useMountedActionExecution(accountLifetime?.scope, { openOnRequest: true });
+    const { executeValue: executeWebhookAction } = useMountedActionExecution(accountLifetime?.scope);
     const availabilityReader = useActivePluginAccountAvailabilityReader();
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const machineSnapshots = useAllProfileMachineInventorySnapshots();

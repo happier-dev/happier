@@ -348,7 +348,7 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
     const machineListByServerId = useMachineListByServerId();
     const machine = target.machine;
     const machineId = target.machineId;
-    const execution = useMountedActionExecution(target.serverId, { openOnRequest: true });
+    const execution = useMountedActionExecution(target.serverId);
     const [replacingMachineId, setReplacingMachineId] = React.useState<string | null>(null);
     const [isClearingReplacement, setIsClearingReplacement] = React.useState(false);
     const allMachines = React.useMemo(

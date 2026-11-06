@@ -187,7 +187,7 @@ function useEditSetCommit(params: Readonly<{
   const { op, stage, setStage, latest, alive, options } = params;
   // Reuse the mounted author's existing Account/interest and Inbox owner. The
   // domain clients below retain their native, typed Machine receipts.
-  const author = useMountedActionExecution(options.serverId ?? latest.current.scope.serverId, { openOnRequest: true });
+  const author = useMountedActionExecution(options.serverId ?? latest.current.scope.serverId);
   const scopeKey = JSON.stringify([author.binding?.scope, author.binding?.revision,
     latest.current.scope.machineId, latest.current.scope.rootPath, options.accountId]);
   const currentScopeKey = React.useRef(scopeKey);

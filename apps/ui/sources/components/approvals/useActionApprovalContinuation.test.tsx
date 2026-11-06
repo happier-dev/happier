@@ -587,12 +587,18 @@ describe('useActionApprovalContinuation', () => {
         } finally { controller.dispose(); account.dispose(); await hook.unmount(); }
     });
 
-    it('claims and clears an executed result before delivering it exactly once', async () => {
+    it('retains the approval in its originating flow without navigation and delivers its executed result exactly once', async () => {
         const serverId = await addApprovalHome();
         answerRename(serverId);
         const artifactId = await openRenameApproval(serverId, 'rename-executed');
         const refresh = vi.fn();
-        const hook = await renderContinuation(serverId, refresh);
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        // A caller retaining the removed flag must still wait for a deliberate Review.
+        const continuationInput = {
+            scopeKey: `${serverId}:${ACCOUNT_ID}`, serverId, onExecuted: refresh, openOnRequest: true,
+        };
+        const hook = await renderHook(() => useActionApprovalContinuation(continuationInput));
         const deliveryObservedCustody = vi.fn();
         const onExecuted = vi.fn<ActionApprovalContinuation['onExecuted']>(async (_artifact) => {
             deliveryObservedCustody(hook.getCurrent().approvalId);
@@ -601,6 +607,15 @@ describe('useActionApprovalContinuation', () => {
 
         act(() => hook.getCurrent().requestApproval({ artifactId, onExecuted }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().approvalStatus).toBe('open'));
+        expect(hook.getCurrent().approvalPending).toBe(true);
+        expect(hook.getCurrent().artifact?.id).toBe(artifactId);
+        expect(router.push).not.toHaveBeenCalled();
+
+        act(() => hook.getCurrent().openApproval());
+        expect(router.push).toHaveBeenCalledExactlyOnceWith(
+            `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(serverId)}`,
+        );
+        expect(hook.getCurrent().approvalId).toBe(artifactId);
         expect(hook.getCurrent().approvalPending).toBe(true);
 
         await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
@@ -622,9 +637,10 @@ describe('useActionApprovalContinuation', () => {
             execution: { ok: true },
         });
 
-        await hook.rerender({ scopeKey: `${serverId}:${ACCOUNT_ID}` });
+        await hook.rerender();
         expect(onExecuted).toHaveBeenCalledTimes(1);
         expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
+        expect(router.push).toHaveBeenCalledTimes(1);
     });
 
     it('leaves projection refresh with a caller that owns completion beyond Action admission', async () => {

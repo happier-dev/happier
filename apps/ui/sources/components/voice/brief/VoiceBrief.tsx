@@ -33,7 +33,7 @@ export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Read
     block?: boolean;
 }>): React.ReactElement | null {
     const voiceEnabled = useFeatureEnabled('voice');
-    const { execute, ready } = useMountedActionExecution(getActiveServerAccountScope(), { openOnRequest: true });
+    const { execute, ready } = useMountedActionExecution(getActiveServerAccountScope());
     const request = React.useCallback(() => {
         const expectedAttemptId = getVoiceSessionPresentedAttemptId();
         return execute('ui.voice_global.brief.request', expectedAttemptId ? { expectedAttemptId } : {});

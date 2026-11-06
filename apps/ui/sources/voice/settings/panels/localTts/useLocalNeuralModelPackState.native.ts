@@ -36,7 +36,7 @@ export function useLocalNeuralModelPackState(params: {
   const sttSettings = useVoiceSttSettingRefs();
   const approval = useActionApprovalContinuation({
     scopeKey: JSON.stringify(settingsScope), serverId: settingsScope?.serverId ?? '',
-    onExecuted: () => {}, openOnRequest: true,
+    onExecuted: () => {},
   });
   const selectionRef = React.useRef({ packId: params.packId, role, enabled });
   React.useLayoutEffect(() => {

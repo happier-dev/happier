@@ -82,7 +82,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         [providedClient],
     );
     const settingsScope = useAccountSettingsScope();
-    const actions = useMountedActionExecution(settingsScope, { openOnRequest: true });
+    const actions = useMountedActionExecution(settingsScope);
     const capturedAccount = captureActiveServerAccountScopeLifetime();
     const account = capturedAccount && areServerAccountScopesEqual(settingsScope, capturedAccount.scope)
         ? capturedAccount : null;

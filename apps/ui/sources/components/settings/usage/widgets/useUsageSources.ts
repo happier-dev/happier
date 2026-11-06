@@ -34,7 +34,7 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
         context.signal?.throwIfAborted();
         return resolveUsageSourceDismiss(input, { machineId, lifetime, snapshot: controllerRef.current?.getSnapshot() });
     } }), [machineId, lifetime]);
-    const mountedExecution = useMountedActionExecution(lifetime?.scope, { openOnRequest: true, executorOptions });
+    const mountedExecution = useMountedActionExecution(lifetime?.scope, { executorOptions });
     const executor = options.executor ?? mountedExecution;
     const execute = executor.execute;
     const [mounted, setMounted] = useState<MountedController | null>(null);

@@ -24,7 +24,7 @@ export function useMachineAgentRowActions(input: Readonly<{
 }>): (agent: MachineAgent, action: MachineAgentRowAction) => void {
     const terminalHost = useAgentSignInTerminalHost();
     const { serverId, machineId, machineName, onOpenForm } = input;
-    const { binding, execute, isCurrent } = useMountedActionExecution(serverId, { openOnRequest: true });
+    const { binding, execute, isCurrent } = useMountedActionExecution(serverId);
     return React.useCallback((agent, action) => {
         const target = { serverId, machineId, agentId: agent.agentId, definitionId: agent.definitionId };
         switch (action.kind) {

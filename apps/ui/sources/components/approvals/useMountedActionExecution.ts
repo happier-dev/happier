@@ -17,7 +17,7 @@ type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; 
 
 /** Reconnect a mounted author's original public Action to its typed approval result. */
 export function useMountedActionExecution(scopeOrHome: ServerAccountScope | string | null | undefined,
-    options?: Readonly<{ onApprovalPending?: (registration: ActionApprovalContinuation) => void; openOnRequest?: boolean; runner?: SystemTaskRunner;
+    options?: Readonly<{ onApprovalPending?: (registration: ActionApprovalContinuation) => void; runner?: SystemTaskRunner;
         /** Retain this mounted invocation's private operands/target across approval. */
         retainInvocation?: true;
         /** Existing local delivery ports; admission and approval presentation stay with this owner. */
@@ -40,8 +40,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     // Read at invocation because development effect replay can replace the controller.
     const getSignal = React.useCallback(() => lifetime.controller.signal, [lifetime]);
     const scopeKey = binding ? `${serverAccountScopeKeySuffix(binding.scope)}:${binding.revision}` : JSON.stringify(['unbound', scopeOrHome]);
-    const approval = useActionApprovalContinuation({ scopeKey, serverId: scope?.serverId ?? '', onExecuted,
-        openOnRequest: options?.openOnRequest });
+    const approval = useActionApprovalContinuation({ scopeKey, serverId: scope?.serverId ?? '', onExecuted });
     const presentBlockingApproval = React.useCallback((capturedBinding: ServerCredentialAccountScopeBinding,
         current: () => boolean, fallbackSignal: AbortSignal,
         pending: Readonly<{ artifactId: string; signal?: AbortSignal }>) => {

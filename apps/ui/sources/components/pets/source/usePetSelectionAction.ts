@@ -8,7 +8,7 @@ import { storage } from '@/sync/domains/state/storage';
 /** The existing mounted Action lifetime holds a device choice through Inbox approval. */
 export function usePetSelectionAction(): (input: PetChooseInputV1, operation?: Readonly<{ signal?: AbortSignal }>) => Promise<ActionExecuteResult> {
     const scope = storage(state => state.settingsScope);
-    const mounted = useMountedActionExecution(scope, { openOnRequest: true, retainInvocation: true });
+    const mounted = useMountedActionExecution(scope, { retainInvocation: true });
     return React.useCallback((input: PetChooseInputV1, operation?: Readonly<{ signal?: AbortSignal }>) =>
         mounted.execute('ui.pet.choose', input, operation), [mounted.execute]);
 }

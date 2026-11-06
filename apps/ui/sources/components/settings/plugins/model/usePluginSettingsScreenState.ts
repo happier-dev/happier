@@ -263,7 +263,7 @@ export type PluginSettingsScreenState = Readonly<{
 
 export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean }> = {}): PluginSettingsScreenState {
     const activeServer = useActiveServerSnapshot();
-    const discoverExecution = useMountedActionExecution(activeServer.serverId, { openOnRequest: true });
+    const discoverExecution = useMountedActionExecution(activeServer.serverId);
     const discoverAccountKey = discoverExecution.binding ? JSON.stringify([
         discoverExecution.binding.scope.serverId, discoverExecution.binding.scope.accountId,
     ]) : null;
@@ -289,7 +289,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const executionTarget = administration.executionTarget;
     // Installed controls belong to the selected Machine's Home, which may
     // differ from the Account currently supplying Discover's registry reads.
-    const installedExecution = useMountedActionExecution(executionTarget?.serverId, { openOnRequest: true });
+    const installedExecution = useMountedActionExecution(executionTarget?.serverId);
     const selectedServerIdentityId = administration.selectedServerIdentityId;
     const installedAvailabilityReader = usePluginAccountAvailabilityReader(installedExecution.binding?.scope ?? null);
     const executionMachineId = executionTarget?.machine.id ?? null;

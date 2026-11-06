@@ -77,7 +77,6 @@ export function useSessionBoardMutationApproval(input: Readonly<{
         scopeKey,
         serverId: input.address.serverId,
         onExecuted: input.onExecuted,
-        openOnRequest: true,
     });
     const requestInFlightRef = React.useRef(false);
     const [requestInFlight, setRequestInFlight] = React.useState(false);

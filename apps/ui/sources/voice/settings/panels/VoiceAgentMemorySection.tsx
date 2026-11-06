@@ -41,7 +41,7 @@ export function VoiceAgentMemorySection(props: Readonly<{
   setVoice: (next: VoiceSettings) => void;
 }>) {
   const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope, { openOnRequest: true });
+  const { execute } = useMountedActionExecution(scope);
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
   const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
   const { snapshot: acpCatalog } = useAcpCatalog();

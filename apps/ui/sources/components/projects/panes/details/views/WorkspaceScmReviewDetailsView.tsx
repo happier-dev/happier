@@ -219,7 +219,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     currentReadingIdentity.current = readingIdentity;
     const readingIsCurrent = React.useCallback(() => bound.isCurrent() && currentReadingIdentity.current === readingIdentity,
         [bound.isCurrent, readingIdentity]);
-    const { executeValue } = useMountedActionExecution(bound.scope, { openOnRequest: true });
+    const { executeValue } = useMountedActionExecution(bound.scope);
     const frontDoorActionExecutor = React.useMemo(() => {
         return ((...args: Parameters<typeof executeValue>) => {
             if (!bound.isCurrent()) return Promise.reject(new Error('action_account_scope_unavailable'));

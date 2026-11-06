@@ -44,7 +44,7 @@ export function useProjectServiceManagedMachine(input: Readonly<{
       return failure.success ? failure.data : { ok: true, result };
     } }) : createFrontDoorActionExecute(), [input.runtimeActionExecute]);
   const approval = useActionApprovalContinuation({ scopeKey: input.scopeKey, serverId: input.serverId,
-    onExecuted: () => {}, openOnRequest: true });
+    onExecuted: () => {} });
   const approvalRef = React.useRef(approval.requestApproval);
   approvalRef.current = approval.requestApproval;
   const cancel = React.useCallback(() => {

@@ -320,7 +320,7 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         draftOrigin?: string;
     }>();
     const { draftScope, onDraftIdentityResolved } = props;
-    const draftAction = useMountedActionExecution(draftScope, { openOnRequest: true });
+    const draftAction = useMountedActionExecution(draftScope);
     const resolveOrdinaryEntry = useResolveNewSessionOrdinaryEntryRoute();
     const expectedSettingsScope = useAccountSettingsScope();
     const draftIdentity = React.useMemo(() => {

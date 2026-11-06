@@ -44,7 +44,7 @@ export const ExecutionRunStopFailedState = React.memo((props: Readonly<{
         ? t('runPage.stopFailed.reasonWithOthers', { machine: props.machineName, count: otherLiveAgents })
         : t('runPage.stopFailed.reasonAlone', { machine: props.machineName });
     const { machineId, sessionId, serverId, onSessionStopped } = props;
-    const { execute, isCurrent } = useMountedActionExecution(serverId, { openOnRequest: true });
+    const { execute, isCurrent } = useMountedActionExecution(serverId);
 
     const stopSession = React.useCallback(async () => {
         if (!machineId || !isCurrent()) return;

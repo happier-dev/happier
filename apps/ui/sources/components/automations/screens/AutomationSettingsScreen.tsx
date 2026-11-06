@@ -39,7 +39,7 @@ export function AutomationSettingsScreen(): React.ReactElement {
     // remounts this route-local projection even when the route itself stays put.
     useActiveServerAccountScope();
     const accountLifetime = captureActiveServerAccountScopeLifetime();
-    const { executeValue: executeAction } = useMountedActionExecution(accountLifetime?.scope, { openOnRequest: true });
+    const { executeValue: executeAction } = useMountedActionExecution(accountLifetime?.scope);
     const [settings, setSettings] = React.useState<AutomationV3Settings | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [loadFailed, setLoadFailed] = React.useState(false);

@@ -67,7 +67,7 @@ export function useFileBlame(input: UseFileBlameInput): UseFileBlameResult {
     const pageActive = input.active !== false;
     const invocation = React.useRef<Readonly<{ key: string; controller: AbortController }> | null>(null);
     const approval = useActionApprovalContinuation({ scopeKey: key ?? 'blame-disabled', serverId: serverId ?? '',
-        onExecuted: retainedResultDeliveredByInvocation, openOnRequest: true });
+        onExecuted: retainedResultDeliveredByInvocation });
     const requestApproval = React.useRef(approval.requestApproval);
     requestApproval.current = approval.requestApproval;
 

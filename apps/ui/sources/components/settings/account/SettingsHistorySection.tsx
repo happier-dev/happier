@@ -52,7 +52,7 @@ export const SettingsHistorySection = React.memo(function SettingsHistorySection
     )>({ owner: null, scope: null, status: 'loading' });
     const [restoringVersion, setRestoringVersion] = React.useState<number | null>(null);
     const settingsScope = useAccountSettingsScope();
-    const action = useMountedActionExecution(settingsScope, { openOnRequest: true });
+    const action = useMountedActionExecution(settingsScope);
     const mountedRef = React.useRef(true);
     const credentialsRef = React.useRef(params.credentials);
     credentialsRef.current = params.credentials;

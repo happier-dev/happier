@@ -26,7 +26,7 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
     const suppliedExecutorOptions = options.executorOptions;
     const executorOptions = React.useMemo(() => ({ ...suppliedExecutorOptions, beforeLocalSettingCommit: beforeLocalCommit }), [beforeLocalCommit, suppliedExecutorOptions]);
     // A setting control has no inline decision surface: an Ask-first wait opens the existing Inbox review.
-    const mounted = useMountedActionExecution(scope, { executorOptions, openOnRequest: true });
+    const mounted = useMountedActionExecution(scope, { executorOptions });
     const localFrontDoor = React.useMemo(() => createFrontDoorActionExecute(undefined, executorOptions), [executorOptions]);
     const localLifetime = React.useMemo(() => ({ controller: new AbortController() }), [scope]);
     React.useEffect(() => {

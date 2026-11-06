@@ -64,7 +64,7 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
         controllerMachineId: scope.controllerMachineId,
         relationshipId: scope.relationshipId,
     }), [scope.controllerMachineId, scope.relationshipId]);
-    const actionExecution = useMountedActionExecution(scope.serverId, { openOnRequest: true });
+    const actionExecution = useMountedActionExecution(scope.serverId);
     const snapshot = getWorkspaceSyncStatusSnapshot(scope);
     const status = props.summary.status;
     const modeKey = resolveWorkspaceSyncModeTranslationKey(props.summary.relationship.mode);
