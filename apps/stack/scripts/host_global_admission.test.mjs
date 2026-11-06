@@ -12,6 +12,7 @@ import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
 import { withWorkspaceBundleLock } from '../../../packages/cli-common/workspaceBundleLock.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from './utils/dev_targets/remote_commands.mjs';
+import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../packages/cli-common/fileChangeObserver.mjs';
 
 // Standalone fixture leases are not the routed runner's charged workspace
 // leases. Native-admission fixtures explicitly supply their own restrictions.
@@ -91,9 +92,13 @@ async function createSocketAdmissionFixture(t, totalSlots = 3) {
     socket.write(JSON.stringify({ kind: 'acquire', className: 'validation', floorKiB: floor, pid: process.pid,
       repoDir: `${fixture.root}/native-owner`, cacheBaseDir: fixture.root, locks: [], env: buildNativeAdmissionFixtureEnv() }) + '\n');
     const admitted = (async () => {
-      const first = await messages.next();
-      if (first.done) return { kind: 'closed' };
-      const reserved = JSON.parse(first.value);
+      let reserved;
+      for (;;) {
+        const first = await messages.next();
+        if (first.done) return { kind: 'closed' };
+        reserved = JSON.parse(first.value);
+        if (reserved.kind !== 'queued') break;
+      }
       if (reserved.kind !== 'reserved') return reserved;
       witness = createServer(peer => { peers.add(peer); peer.on('error', () => {}); peer.once('close', () => peers.delete(peer)); });
       await new Promise((resolve, reject) => { witness.once('error', reject); witness.listen(reserved.slotAddress, resolve); });
@@ -116,42 +121,46 @@ async function createSocketAdmissionFixture(t, totalSlots = 3) {
     physicalReads: () => physicalReads, setAvailable: value => { availableMemoryKiB = value; } };
 }
 
-test('broker samples once per arrival or release and performs zero walks for idle queued demand', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+test('broker samples once per arrival, release or shared recovery tick at the observed queue scale', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  // The clock is the substituted boundary; socket and capacity decisions stay real.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const fixture = await createSocketAdmissionFixture(t);
   const holder = fixture.acquire(3 * fixture.floorKiB);
   assert.equal((await holder.admitted).kind, 'admitted');
   // LOAD-AUDIT E1 observed 273 waiters on nl3. Keep that actual queue scale.
   const waiters = Array.from({ length: 273 }, () => fixture.acquire());
-  await waitForJointAdmission(() => fixture.broker.status().waitingCount === waiters.length, null,
-    () => JSON.stringify(fixture.broker.status()));
+  while (fixture.broker.status().waitingCount !== waiters.length) await new Promise(setImmediate);
   assert.equal(fixture.physicalReads(), 1 + 1 + waiters.length, 'one startup sample plus one per actual arrival');
   const before = fixture.physicalReads();
-  await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal(fixture.physicalReads(), before, 'connected idle waiters perform no resource walks');
+  t.mock.timers.tick(100);
+  await new Promise(setImmediate);
+  assert.equal(fixture.physicalReads(), before, 'queued demand performs no walks between recovery ticks');
+  t.mock.timers.tick(DEFAULT_FILE_CHANGE_CATCH_UP_MS);
+  while (fixture.broker.status().sampleCount === before) await new Promise(setImmediate);
+  assert.equal(fixture.physicalReads(), before + 1, 'one shared recovery tick samples once for all 273 waiters');
   await holder.release();
   assert.equal((await waiters[0].admitted).kind, 'admitted', 'closing the holder pushes the oldest fitting request forward');
-  await waitForJointAdmission(() => fixture.broker.status().sampleCount === before + 1, null,
-    () => JSON.stringify(fixture.broker.status()));
-  assert.equal(fixture.physicalReads(), before + 1, 'one release performs exactly one new sample');
+  assert.equal(fixture.physicalReads(), before + 2, 'one release performs exactly one new sample');
 });
 
-test('broker admits oldest fitting demand without backfill envelopes and keeps measured floors reserved', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+test('broker reserves the waiting head floor before backfill and keeps admitted floors reserved', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const fixture = await createSocketAdmissionFixture(t, 4);
   const holder = fixture.acquire(3 * fixture.floorKiB);
   assert.equal((await holder.admitted).kind, 'admitted');
   const large = fixture.acquire(2 * fixture.floorKiB);
   await waitForJointAdmission(() => fixture.broker.status().waitingCount === 1, null, () => JSON.stringify(fixture.broker.status()));
-  for (let completed = 0; completed < 4; completed++) {
-    const fitting = fixture.acquire();
-    assert.equal((await fitting.admitted).kind, 'admitted', 'fitting work never consumes a cumulative head allowance');
-    assert.equal(fixture.broker.status().reservedMemoryKiB, 4 * fixture.floorKiB, 'all admitted floors count even with no resident pages');
-    await fitting.release();
-    await waitForJointAdmission(() => fixture.broker.status().activeCount === 1, null, () => JSON.stringify(fixture.broker.status()));
-  }
-  const later = fixture.acquire(3 * fixture.floorKiB);
+  const fitting = fixture.acquire();
   await waitForJointAdmission(() => fixture.broker.status().waitingCount === 2, null, () => JSON.stringify(fixture.broker.status()));
+  assert.equal(fixture.broker.status().activeCount, 1, 'younger work cannot consume the waiting head floor');
+  assert.equal(fixture.broker.status().reservedMemoryKiB, 3 * fixture.floorKiB);
   await holder.release();
   assert.equal((await large.admitted).kind, 'admitted');
+  assert.equal((await fitting.admitted).kind, 'admitted', 'backfill uses spare memory after covering the older floor');
+  assert.equal(fixture.broker.status().reservedMemoryKiB, 3 * fixture.floorKiB, 'all admitted floors count even with no resident pages');
+  const later = fixture.acquire(3 * fixture.floorKiB);
+  await waitForJointAdmission(() => fixture.broker.status().waitingCount === 1, null, () => JSON.stringify(fixture.broker.status()));
+  await fitting.release();
+  await waitForJointAdmission(() => fixture.broker.status().activeCount === 1, null, () => JSON.stringify(fixture.broker.status()));
   assert.equal(fixture.broker.status().waitingCount, 1, 'the older fitting request takes capacity before its newer peer');
   assert.equal(fixture.broker.status().reservedMemoryKiB, 2 * fixture.floorKiB);
   await large.release();
@@ -250,20 +259,21 @@ test('payload exit and cancellation release the socket slot without replay', { s
   await waitForJointAdmission(async () => (await fixture.brokerStatus()).activeCount === 0, null, running.stderr);
 });
 
-test('a nested request cannot enlarge its containing floor or disturb its parent slot', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+test('nested compilation reuses its containing validation slot without enlarging its floor', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const fixture = await createJointAdmissionFixture(t, 73400320);
   const payload = `import { spawnSync } from 'node:child_process';
 import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(fixture.admissionClientPath).href)};
+const before = await requestAdmissionSample(${JSON.stringify(fixture.admissionRoot)});
 const result = spawnSync('/bin/sh', [${JSON.stringify(fixture.launcher)}, '--heavyweight-admission', '--class=compilation',
- '--machine=worker', '--', '/usr/bin/printf', 'unexpected'], { env: process.env, encoding: 'utf8' });
-process.stdout.write(JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr,
+ '--machine=worker', '--', '/usr/bin/printf', 'nested'], { env: process.env, encoding: 'utf8' });
+process.stdout.write(JSON.stringify({ before, status: result.status, stdout: result.stdout, stderr: result.stderr,
  sample: await requestAdmissionSample(${JSON.stringify(fixture.admissionRoot)}) }));`;
   const run = fixture.start(null, [process.execPath, '--input-type=module', '-e', payload], 'validation');
   assert.deepEqual(await run.exited, { status: 0, signal: null }, run.stderr());
   const result = JSON.parse(run.stdout());
-  assert.equal(result.status, 1);
-  assert.equal(result.stdout, '');
-  assert.match(result.stderr, /HSTACK_NESTED_ADMISSION_CAPACITY/);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'nested');
+  assert.equal(result.sample.sampleCount, result.before.sampleCount, 'an admitted compiler phase does not request capacity again');
   assert.equal(result.sample.activeCount, 1);
   assert.equal(result.sample.reservedMemoryKiB, resolveHeavyweightMemoryFloorKiB('validation'));
 });
@@ -634,9 +644,9 @@ test('in-process cancellation removes priority without releasing a foreign publi
   assert.deepEqual(await readdir(fixture.root), []);
 });
 
-test('connected admission waiters perform zero resource samples while idle', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
-  // LOAD-AUDIT D1/D2 replaces per-waiter catch-up with socket release events.
-  // Keep the real launcher and capacity decision; count the OS census boundary.
+test('connected admission waiters recover external memory without a holder release', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  // Memory can recover without a socket release. Keep the real shared broker
+  // recovery clock and substitute only the OS memory observation.
   const fixture = await createJointAdmissionFixture(t, 0);
   const memory = await holdNativeAdmissionFixtureMemory(t, fixture, { totalKiB: 73400320, availableKiB: 0 });
   const samples = fixture.resourceSamplesPath;
@@ -644,15 +654,14 @@ test('connected admission waiters perform zero resource samples while idle', { s
   await waitForJointAdmission(async () => (await fixture.brokerStatus()).waitingCount === waiters.length,
     waiters[0].child, () => waiters.map(run => run.stderr()).join('\n'));
   const before = await readFile(samples, 'utf8');
-  // This observation spans the existing native 2–4 s retry cadence. A socket
-  // waiter has no census deadline; release below is the positive wake control.
-  await new Promise(resolve => setTimeout(resolve, 4500));
-  assert.equal(await readFile(samples, 'utf8'), before, 'quiet waiters must not repeat host resource walks');
-  await memory.release(() => writeFile(fixture.memory, '73400320 73400320\n'));
+  await fixture.setMemoryObservation({ availableMemoryKiB: 73400320, totalMemoryKiB: 73400320 });
   for (const run of waiters) {
     assert.deepEqual(await run.exited, { status: 0, signal: null }, run.stderr());
-    assert.equal(run.stdout(), 'admitted', 'a real release still wakes waiting commands');
+    assert.equal(run.stdout(), 'admitted', 'shared recovery wakes already-connected waiters without a new arrival');
   }
+  assert.ok((await readFile(samples, 'utf8')).length > before.length, 'the broker resamples external memory pressure');
+  assert.equal(memory.child.exitCode, null, 'the original holder has not released its slot');
+  await memory.release();
 });
 
 test('native non-Linux execution preserves its existing path without resolving Linux host state', async t => {
