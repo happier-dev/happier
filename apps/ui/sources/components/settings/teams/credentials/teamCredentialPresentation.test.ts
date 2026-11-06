@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { teamCredentialResourceFixture } from '@/dev/testkit';
+import { TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
 
 import {
     audienceSummary,
@@ -14,9 +15,18 @@ import {
     recoveryDestinationIsNavigable,
     teamCredentialRecoveryPresentation,
     resourceConnectedServiceMarkId,
+    resolveTeamCredentialUsageStartTimeSeconds,
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('preserves the explicit Team All epoch and host-local Today bounds', () => {
+        const nowMs = new Date(2026, 10, 4, 13, 30).getTime();
+        const all = TeamCredentialUsageQueryInputV1Schema.parse({ resourceId: 'resource',
+            startMs: resolveTeamCredentialUsageStartTimeSeconds('all', nowMs) * 1000, endMs: nowMs });
+        expect(all.startMs).toBe(0);
+        expect(resolveTeamCredentialUsageStartTimeSeconds('today', nowMs)).toBe(new Date(2026, 10, 4).getTime() / 1000);
+    });
+
     it('resolves a recipient-safe service presentation through the connected-service mark owner', () => {
         expect(resourceConnectedServiceMarkId({
             sourcePresentation: { kind: 'connected_service', service: {

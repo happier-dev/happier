@@ -29,7 +29,6 @@ import {
 } from '@/sync/api/account/usageAnalytics';
 import {
     getUsagePeriodDefinition,
-    resolveUsagePeriodStartTimeSeconds,
     USAGE_PERIODS,
     type UsagePeriod,
 } from '@/sync/api/account/usagePeriods';
@@ -47,6 +46,7 @@ import {
     limitReached,
     limitSubjectLine,
     offeredTeamCredentialUsageBreakdowns,
+    resolveTeamCredentialUsageStartTimeSeconds,
     orderTeamCredentialLimitsByRemaining,
     usageBreakdownLabel,
     usageBreakdownPresentation,
@@ -154,7 +154,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const [nowMs, setNowMs] = React.useState(() => Date.now());
 
     const range = React.useMemo(() => Object.freeze({
-        startMs: resolveUsagePeriodStartTimeSeconds(period, nowMs) * 1000,
+        startMs: resolveTeamCredentialUsageStartTimeSeconds(period, nowMs) * 1000,
         endMs: nowMs,
         granularity: getUsagePeriodDefinition(period).granularity,
     }), [nowMs, period]);

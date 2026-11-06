@@ -1,4 +1,4 @@
-import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
 
 export type UsagePeriod = UsageRelativePeriod;
 export type UsagePeriodGranularity = 'hour' | 'day' | 'month';
@@ -55,7 +55,7 @@ const usagePeriodDefinitions = {
         granularity: 'month',
         legacyGranularity: 'day',
     },
-    // Everything retained: the range starts at the epoch, so no recorded fact is outside it.
+    // Everything retained; the accounting owner resolves the observed calendar span.
     all: {
         period: 'all',
         translationKey: 'usage.allTime',
@@ -76,16 +76,4 @@ export function isUsagePeriod(value: string | null | undefined): value is UsageP
 
 export function getUsagePeriodDefinition(period: UsagePeriod): UsagePeriodDefinition {
     return usagePeriodDefinitions[period];
-}
-
-export function resolveUsagePeriodStartTimeSeconds(period: UsagePeriod, nowMs: number, timeZoneOffsetMinutes?: number): number {
-    if (period === 'today' && timeZoneOffsetMinutes === undefined) {
-        // Team's incumbent local-day request has no fixed-offset query contract.
-        // Personal usage readers always pass the selected query offset explicitly.
-        const today = new Date(nowMs);
-        today.setHours(0, 0, 0, 0);
-        return Math.floor(today.getTime() / 1000);
-    }
-
-    return resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes: timeZoneOffsetMinutes ?? 0 }, nowMs).startMs! / 1000;
 }

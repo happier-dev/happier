@@ -24,6 +24,18 @@ import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedS
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
+
+/** Team Usage requires explicit numeric bounds; its All range keeps the existing epoch contract. */
+export function resolveTeamCredentialUsageStartTimeSeconds(period: UsageRelativePeriod, nowMs: number): number {
+    if (period === 'all') return 0;
+    if (period === 'today') {
+        const today = new Date(nowMs);
+        today.setHours(0, 0, 0, 0);
+        return Math.floor(today.getTime() / 1000);
+    }
+    return resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes: 0 }, nowMs).startMs! / 1000;
+}
 
 /** Member keys are Account identities; their titles consume the Members presentation rule. */
 export function usageBreakdownPresentation(
