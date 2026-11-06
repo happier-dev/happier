@@ -560,7 +560,7 @@ describe('Sentry event projection — what may leave this source', () => {
             type: 'ChargeDeclined',
             // A provider-valid message far past the display bound, carrying a
             // newline the strict single-line contract would otherwise reject.
-            value: `first line\n${'x'.repeat(4_000)}`,
+            value: `first line\n${'x'.repeat(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes + 1)}`,
             stacktrace: { frames: [] },
           }],
         },

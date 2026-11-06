@@ -1,4 +1,4 @@
-import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
@@ -637,7 +637,7 @@ describe('Bitbucket detail entity proof', () => {
 
 describe('Bitbucket authoritative Overview and Diff planes', () => {
   it.each([
-    { description: `## Fresh description\n\n${'Useful markdown paragraph.\n\n'.repeat(200)}**Final detail**`, truncated: false },
+    { description: `## Fresh description\n\n${'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1)}\n\n**Final detail**`, truncated: false },
     { description: `## Large description\n${'"\\\n🚀'.repeat(Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 10))}`, truncated: true },
     { description: '', truncated: false },
   ])('keeps native Overview markdown independently of list-summary bounds ($truncated)', async ({ description, truncated }) => {

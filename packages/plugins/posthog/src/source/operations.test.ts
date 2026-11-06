@@ -6,6 +6,8 @@ import {
 // The published result schemas live on the protocol entry point; `testing/v1` publishes
 // only the conformance helpers and the fixture builder.
 import {
+    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TriageGetResultV1Schema,
     TriageListInstancesResultV1Schema,
     TriageScanResultV1Schema,
@@ -501,12 +503,13 @@ describe('PostHog Triage source operations', () => {
         // first-time reader with no row, so no draft, so no way to open the native
         // editor and choose the smaller subset that would fit — a dead end that no
         // amount of retrying escapes. The bound itself is correct and stays.
-        const environments = Array.from({ length: 12 }, (_unused, index) => ({
+        const environmentCount = 12;
+        const environments = Array.from({ length: environmentCount }, (_unused, index) => ({
             id: 5000 + index,
             uuid: `00000000-0000-4000-8000-0000000000${(0xd0 + index).toString(16)}`,
             organization: '00000000-0000-4000-8000-0000000000b1',
             project_id: 4820,
-            name: `Storefront environment ${String(index).padStart(2, '0')}`,
+            name: `Storefront environment ${String(index).padStart(2, '0')} ${'x'.repeat(Math.ceil(MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 / environmentCount))}`,
         }));
         const host = context([
             { ...organizationsPage, next: null },
@@ -756,7 +759,7 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).toHaveBeenCalledTimes(2);
     });
 
-    it('preserves a wide continuation and leaves size to the Action envelope', async () => {
+    it('preserves a continuation at the shared paging boundary', async () => {
         const geometry = (offset: number, pad: number): string => JSON.stringify({
             v: 1,
             sourceInstanceDigest: deriveTriageConfiguredSourceInstanceDigestV1(configuredInstance()),
@@ -769,7 +772,8 @@ describe('PostHog Triage source operations', () => {
             // the geometry whose width decides whether the NEXT one still fits.
             walkHealth: [],
         });
-        const pad = 32 * 1024;
+        const pad = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
+            - new TextEncoder().encode(geometry(12, 0)).byteLength;
 
         const host = context([{ ...queryIssuesPage1, nextOffset: 12 }]);
         const result = await scanPosthogSource({
