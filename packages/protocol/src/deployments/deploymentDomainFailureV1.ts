@@ -15,6 +15,7 @@ const domainFailureSteps = Object.keys(deploymentDomainFailureFactsV1) as [Deplo
 const deploymentDomainServiceFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
     environmentId: id, domainId: id, step: z.enum(domainFailureSteps),
     requiredFact: z.enum(Object.values(deploymentDomainFailureFactsV1)),
+    remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
     operation: z.optional(ActionOperationAddressV1Schema),
 }).check(z.refine(value => deploymentDomainFailureFactsV1[value.step] === value.requiredFact)));
 export const deploymentDomainCaddyRequiredFactsV1 = [

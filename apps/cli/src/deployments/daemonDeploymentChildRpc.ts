@@ -23,6 +23,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
     resolveRequesterRuntime(ingress: RpcHandlerContext): Promise<AdmittedRequesterAccountReadRuntime | null>;
     resolveInstalledRuntime(signal: AbortSignal, accountId: string): Promise<InstalledRuntime | null>;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
+    ensureServiceObservations?(): Promise<void>;
     captureNativeSetup?(): import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;
     signal?: AbortSignal;
 }>): void {
@@ -82,6 +83,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             serverId: job.input.serverId, externalActionTarget: authority.binding.target,
             externalActionExecutionAuthorization: requesterRuntime.accountAuthorization });
         const deps = createDaemonDeploymentActionDeps({ credentials: requester.credentials,
+            ...(host.ensureServiceObservations ? { ensureServiceObservations: host.ensureServiceObservations } : {}),
             ...(host.captureNativeSetup ? { captureNativeSetup: host.captureNativeSetup } : {}),
             resolveRequesterIdentity: host.resolveRequesterIdentity,
             installedCredentials: installed.credentials,

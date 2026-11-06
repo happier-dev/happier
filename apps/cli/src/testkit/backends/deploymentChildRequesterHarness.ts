@@ -29,14 +29,16 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     rootActionId?: 'deployments.templates.instantiate' | 'deployments.publish' | 'deployments.environments.create';
     rootInput?: unknown;
     source?: Readonly<{ id: string; revision: number }>;
+    receivingIdentity?: Readonly<{ machineId: string; installationId: string; homeIdentityId: string }>;
 }> = {}) {
     const encryptionMode = options.encryptionMode ?? 'e2ee';
     const serverHttpBaseUrl = options.serverHttpBaseUrl ?? 'https://requester-home.test';
     const profileId = options.profileId ?? 'home-profile';
-    const homeIdentityId = 'srv_archive_home';
+    const homeIdentityId = options.receivingIdentity?.homeIdentityId ?? 'srv_archive_home';
+    const machineId = options.receivingIdentity?.machineId ?? 'receiver';
     const receiver = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(71));
     const controller = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(72));
-    const installed = { version: 1 as const, installationId: 'receiver-installation', createdAt: 1,
+    const installed = { version: 1 as const, installationId: options.receivingIdentity?.installationId ?? 'receiver-installation', createdAt: 1,
         publicKey: Buffer.from(receiver.publicKey).toString('base64url'), privateKey: Buffer.from(receiver.secretKey).toString('base64url') };
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installed);
     const secret = new Uint8Array(32).fill(73);
@@ -46,11 +48,11 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
         encryption: encryptionMode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(74) } };
     const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
     const job = DeploymentChildRpcV1Schema.parse(options.job ?? { v: 1, kind: 'member', actionId: 'deployments.deploy',
-        machineId: 'receiver', installationId: installed.installationId, phase: 'activate', deploymentId: 'deployment',
+        machineId, installationId: installed.installationId, phase: 'activate', deploymentId: 'deployment',
         selectedDeploymentId: 'deployment', actionOperationId: 'operation', input: {
             serverId: homeIdentityId, environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
             expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
-    if (job.machineId !== 'receiver' || job.installationId !== installed.installationId) {
+    if (job.machineId !== machineId || job.installationId !== installed.installationId) {
         throw new Error('Deployment fixture job must target its installed receiver');
     }
     const binding = { accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 1 },
@@ -74,7 +76,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
         ...(options.rootActionId || deploymentOperationForRootActionV1(job.actionId) === undefined ? {} : { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ ...binding, requestEnvelopeDigest,
             environmentId: job.input.environmentId, source: options.source ?? { id: 'source', revision: 1 } }) }) } });
     const purpose = { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job,
-        recipient: { machineId: 'receiver', installationId: installed.installationId } } as const;
+        recipient: { machineId, installationId: installed.installationId } } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
         credentials: encodeStoredCredentials(bob), installationPublicKey: receiver.publicKey, randomBytes: nacl.randomBytes });
     const receiverEncryption = encryptionMode === 'plain' ? { encryptionMode: 'plain' as const }
@@ -83,7 +85,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     const receiverContent = receiverCodec.mode === 'plain' ? { mode: 'plain' as const } : {
         mode: 'e2ee' as const, cipher: { encryptRaw: async (value: unknown) => receiverCodec.encodeRpc(value),
             decryptRaw: async (value: string) => receiverCodec.decodeRpc(value) } };
-    const method = `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+    const method = `${machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
     const encodedJob = await socketRpcCodec.encodeParams(receiverContent, job, { method, callId: '71'.repeat(16) });
     const execution = createExternalActionMachineRpcExecution({ context: {
         externalActionExecutionAuthorization: sealed, externalActionTarget: root.binding.target },

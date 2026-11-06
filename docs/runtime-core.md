@@ -1616,6 +1616,11 @@ entries. Built-in Project services do not fabricate plugin identities. Their
 actual supervisor-issued instance id, not the stable declaration id, identifies
 current controls; feed and preview consumers project the same handle and snapshot.
 
+Workload-consuming Domain reads join the installed Machine's existing
+Environment-service recovery before selecting the managed Compose service.
+Domain verification and removal do not require workload recovery. An unavailable
+service retains its typed failure step, cause and recovery remedy.
+
 Native liveness inspection continues under the service watchdog. The supervisor
 publishes lifecycle observations only when state, native phase, readiness or the
 admitted endpoint changes. Successful ready samples still refresh

@@ -2761,6 +2761,7 @@ export class ApiMachineClient {
     registerDeploymentChildRoutes(daemonWorkSignal: AbortSignal): void {
         registerDaemonDeploymentChildRpcHandler(this.rpcHandlerManager, {
             machineId: this.machine.id, signal: daemonWorkSignal,
+            ensureServiceObservations: () => this.ensureEnvironmentServices(),
             captureNativeSetup: () => {
                 const desired = this.captureMachineSetupDesired();
                 const elevation = this.captureMachineAdminAccess();

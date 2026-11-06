@@ -66,8 +66,9 @@ const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCa
 const serviceUnavailable = (job: DomainJob, step: DeploymentDomainFailureStepV1): never => refuse('service_unavailable', {
     environmentId: job.input.environmentId, domainId: job.input.domainId,
     step, requiredFact: deploymentDomainFailureFactsV1[step],
+    remedy: 'Inspect the Environment Machine services, restore the unavailable service, then retry the Domain operation.',
 } satisfies DeploymentDomainFailureDetailsV1, {
-    phase: `deployment.domain.${step}`, errorClass: 'Error', errorCode: null, httpStatus: null,
+    phase: `deployment.domain.${step}`, errorClass: 'Error', errorCode: 'service_unavailable', httpStatus: null,
 });
 
 /** Deployment cutover consumes the same complete Domain inventory and native
@@ -131,6 +132,7 @@ export function createOwnServerDomainNative(host: Readonly<{
     installedCredentials?: StoredCredentials;
     runtime?: Pick<OwnServerDeploymentRuntime, 'prepareDomainCaddy'>;
     captureNativeSetup?(): DomainNativeSetupForHost;
+    ensureServiceObservations?(): Promise<void>;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
@@ -168,10 +170,11 @@ export function createOwnServerDomainNative(host: Readonly<{
             environmentContent = environment.content;
             members = job.topology.members.map(member => ({ ...member, state: 'active' }));
         }
+        const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
+        if (!withoutWorkload && member) await host.ensureServiceObservations?.();
         const lease = await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
         const custody = createProjectNativeInvocationCustody({ signal });
         try {
-            const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
             const service = !withoutWorkload && member ? lease.registry.projectManagedServices.listProjectServices().find(service =>
                 service.kind === 'environment' && service.environmentId === job.input.environmentId
                 && service.composeService === opened.content.target.service && service.machineId === host.machineId) : undefined;
