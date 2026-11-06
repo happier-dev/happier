@@ -2,9 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { readVoiceDiagnosticsSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { VOICE_CONVERSATIONS_SETTINGS, VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 describe('Diagnostic recording settings declarations', () => {
+    it('loads the opt-in waiting preference through the Protocol producer and UI settings entry', () => {
+        const setting = VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue;
+        expect(readBuiltInSettingDeclarationV1(setting.anchor)?.storage).toMatchObject({
+            owner: 'voiceSettingBinding', options: ['audibleWaitingCue'], scope: 'account', access: 'read_write',
+        });
+        const binding = setting.storage;
+        if (!binding || !('kind' in binding) || binding.kind !== 'owner') throw new Error('Expected Voice preference owner');
+        const settings = { ...settingsDefaults, voice: voiceSettingsParse({}) };
+        expect(binding.read(settings)).toBe(false);
+        const next = binding.mutate(settings, true);
+        expect(next?.voice?.audibleWaitingCue).toBe(true);
+    });
+
     it('turns recording off and revokes consent when its final capture direction is disabled', () => {
         const setting = Object.values(VOICE_PRIVACY_SETTINGS.settings)
             .find((candidate) => candidate.anchor === 'voicePrivacy.diagnosticsSttInput');

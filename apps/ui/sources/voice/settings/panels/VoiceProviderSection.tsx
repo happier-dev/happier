@@ -1272,6 +1272,22 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
         />
       </ItemGroup>
       </SettingAnchor>
+      {/* Any service: the cue follows the conversation's own phases, so it sits with the service choice. */}
+      {isOff ? null : (
+        <ItemGroup>
+          <SettingRow
+            setting={VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue}
+            rightElement={(
+              <Switch
+                testID="settings.voice.audibleWaitingCue"
+                accessibilityLabel={t(VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue.titleKey)}
+                value={voice.audibleWaitingCue === true}
+                onValueChange={(audibleWaitingCue) => props.setVoice({ ...voice, audibleWaitingCue })}
+              />
+            )}
+          />
+        </ItemGroup>
+      )}
       {serviceTiles.filter((tile) => !tile.selected).map((tile) => (
         searchPrerequisite({ settings: getVoiceContributedSettingRefs(declarations, tile.id), reason: t('settingsVoice.pages.search.select', { choice: tile.title, control: t('settingsVoice.providerSectionTitle') }), group: true })
       ))}

@@ -14275,6 +14275,8 @@ const pl: VoiceSettingsPagesCopy = {
       approvalsTitle: "Zatwierdzenia",
       approvalsDescription: "Gdy sesja prosi o pozwolenie, kiedy mówisz.",
       canApproveRequestsTitle: "Agent głosowy może zatwierdzać prośby",
+      audibleWaitingCueTitle: "Dźwięk oczekiwania",
+      audibleWaitingCueDescription: "Odtwarza cichy dźwięk, gdy Głos zaczyna przetwarzać Twoje słowa lub przygotowywać odpowiedź.",
       canApproveRequestsDescription: "Odczytuje każdą prośbę na głos i odpowiada na nią tak, jak powiesz. Po wyłączeniu decydujesz o każdej dotknięciem.",
       itMaySafe: 'Bezpieczne zmiany',
       itMaySafeDescription: 'Sam wprowadza bezpieczne zmiany w obszarze roboczym, o resztę pyta.',

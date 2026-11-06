@@ -23,6 +23,9 @@ import {
     recordVoiceRuntimeFailure,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
+import { playWaitingCue } from '@/voice/output/playWaitingCue';
+import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import {
     areSessionAddressesEqual,
     type SessionAddress,
@@ -223,6 +226,19 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         controller: AbortController;
         failed: boolean;
     }>();
+
+    const waitingPlayback = createVoicePlaybackController();
+    const reconcileWaitingCue = () => {
+        // The visual and audible presentations consume the same actual phase.
+        // A finite cue marks entry to processing; silence never manufactures work.
+        const phase = resolveVoiceSurfaceState(publishedSnapshot);
+        const providerId = publishedSnapshot.adapterId ?? 'voice';
+        void waitingPlayback.setWaitingCue(!disposed
+            && storage.getState().settings.voice.audibleWaitingCue === true
+            && (phase === 'transcribing' || phase === 'thinking'), playWaitingCue).catch(() => {
+                recordVoiceRuntimeFailure(providerId, 'provider_error', 'tts_failed', 'audio_playback_failed');
+            });
+    };
 
     const releaseRealtimeCaptureAdmission = (match?: Readonly<{
         adapterId?: string;
@@ -898,6 +914,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 });
             }
         }
+        reconcileWaitingCue();
         emitChange();
         reconcilePendingSwitch();
         return publishedSnapshot;
@@ -1133,6 +1150,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         await startConfiguredAdapter(requestedTargetSessionAddress, conversationSelection);
     };
     refreshAdapterSubscriptions();
+    const unsubscribeWaitingPreference = storage.subscribe(reconcileWaitingCue, { settings: ['voice'] });
     const unsubscribeRegistry = getRegistry().subscribe?.(() => {
         refreshAdapterSubscriptions();
         const withdrawnStart = startingAdapter;
@@ -1210,6 +1228,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 });
             }
             disposed = true;
+            unsubscribeWaitingPreference();
+            waitingPlayback.interrupt();
             recoveryBinding = null;
             muteAttemptOwner = null;
             heldInput = null;

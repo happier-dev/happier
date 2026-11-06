@@ -27,6 +27,8 @@ export type VoicePlaybackController = Readonly<{
     interrupt: () => void;
     registerTarget: (target: VoicePlaybackTarget) => () => void;
     registerStopper: VoicePlaybackStopperRegistrar;
+    /** A finite earcon on entry, never a timer or an inference from silence. */
+    setWaitingCue: (waiting: boolean, play: (register: VoicePlaybackStopperRegistrar) => Promise<void>) => Promise<void>;
 }>;
 
 export function createVoicePlaybackController(): VoicePlaybackController {
@@ -40,6 +42,7 @@ export function createVoicePlaybackController(): VoicePlaybackController {
     let pendingInterrupt = false;
     let candidateActive = false;
     let candidateMode: VoicePlaybackInterruptionMode = 'unsupported';
+    let waitingCue = false;
 
     const stopTarget = (target: VoicePlaybackTarget): void => {
         try {
@@ -169,5 +172,11 @@ export function createVoicePlaybackController(): VoicePlaybackController {
         interrupt,
         registerTarget,
         registerStopper,
+        setWaitingCue: async (waiting, play) => {
+            if (waitingCue === waiting) return;
+            waitingCue = waiting;
+            interrupt();
+            if (waiting) await play(registerStopper.captureAttempt!());
+        },
     };
 }

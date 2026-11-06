@@ -66,6 +66,7 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
             settings: {
                 provider: { storage: voiceSettingBinding('providerId') },
                 greeting: { storage: voiceGreetingBinding },
+                audibleWaitingCue: { storage: voiceSettingBinding('audibleWaitingCue') },
             },
         },
         approvals: {

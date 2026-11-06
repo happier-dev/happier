@@ -14256,6 +14256,8 @@ const pt: VoiceSettingsPagesCopy = {
       approvalsTitle: "Aprovações",
       approvalsDescription: "Quando uma sessão pede permissão enquanto você fala.",
       canApproveRequestsTitle: "O agente de Voz pode aprovar solicitações",
+      audibleWaitingCueTitle: "Som de espera",
+      audibleWaitingCueDescription: "Reproduz um som suave quando a Voz começa a processar suas palavras ou a preparar uma resposta.",
       canApproveRequestsDescription: "Ele lê cada solicitação em voz alta e responde do jeito que você disser. Desativado: você decide cada uma com um toque.",
       itMaySafe: 'Mudanças seguras',
       itMaySafeDescription: 'Faz sozinho as mudanças seguras no espaço de trabalho e pergunta pelo resto.',

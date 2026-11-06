@@ -14239,6 +14239,8 @@ const zhHans: VoiceSettingsPagesCopy = {
       approvalsTitle: "批准",
       approvalsDescription: "当会话在你说话时请求权限。",
       canApproveRequestsTitle: "语音代理可以批准请求",
+      audibleWaitingCueTitle: "等待提示音",
+      audibleWaitingCueDescription: "语音开始处理你的话语或准备回答时，播放轻柔的提示音。",
       canApproveRequestsDescription: "它会朗读每个请求，并按你说的方式回复。关闭后，每个请求都由你点按决定。",
       itMaySafe: '安全更改',
       itMaySafeDescription: '它会自行进行安全的工作区更改，其余会先询问。',

@@ -14239,6 +14239,8 @@ const zhHant: VoiceSettingsPagesCopy = {
       approvalsTitle: "核准",
       approvalsDescription: "當工作階段在你說話時請求權限。",
       canApproveRequestsTitle: "語音代理可以核准請求",
+      audibleWaitingCueTitle: "等待提示音",
+      audibleWaitingCueDescription: "語音開始處理你的話語或準備回答時，播放輕柔的提示音。",
       canApproveRequestsDescription: "它會朗讀每個請求，並按你說的方式回覆。關閉後，每個請求都由你點按決定。",
       itMaySafe: '安全變更',
       itMaySafeDescription: '它會自行進行安全的工作區變更，其餘會先詢問。',

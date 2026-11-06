@@ -176,6 +176,8 @@ export type VoiceSettingsPagesCopy = Readonly<{
       approvalsTitle: string;
       approvalsDescription: string;
       canApproveRequestsTitle: string;
+      audibleWaitingCueTitle: string;
+      audibleWaitingCueDescription: string;
       canApproveRequestsDescription: string;
       itMaySafe: string;
       itMaySafeDescription: string;
@@ -433,6 +435,8 @@ export const en: VoiceSettingsPagesCopy = {
       approvalsTitle: "Approvals",
       approvalsDescription: "When a session asks for permission while you talk.",
       canApproveRequestsTitle: "Voice agent can approve requests",
+      audibleWaitingCueTitle: "Waiting sound",
+      audibleWaitingCueDescription: "Play a quiet sound when Voice starts processing your words or preparing an answer.",
       canApproveRequestsDescription: "It reads each request out and answers it the way you say. Off: you decide each one with a tap.",
       itMaySafe: 'Safe changes',
       itMaySafeDescription: 'It makes safe workspace changes on its own and asks for the rest.',

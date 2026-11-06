@@ -3,6 +3,33 @@ import { describe, expect, it, vi } from 'vitest';
 import { createVoicePlaybackController } from './VoicePlaybackController';
 
 describe('VoicePlaybackController', () => {
+    it('plays one waiting cue on a real phase edge, does no idle work, and stops on departure', async () => {
+        vi.useFakeTimers();
+        const controller = createVoicePlaybackController();
+        const stopped = vi.fn();
+        // The only substitute is physical audio playback and its completion.
+        const play = vi.fn(async (register: typeof controller.registerStopper) => {
+            register(stopped);
+        });
+        try {
+            controller.setWaitingCue(false, play);
+            expect(play).not.toHaveBeenCalled();
+            controller.setWaitingCue(true, play);
+            for (let i = 0; i < 20; i++) controller.setWaitingCue(true, play);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(play).toHaveBeenCalledTimes(1);
+            expect(vi.getTimerCount()).toBe(0);
+            controller.setWaitingCue(false, play);
+            expect(stopped).toHaveBeenCalledTimes(1);
+            controller.setWaitingCue(true, play);
+            expect(play).toHaveBeenCalledTimes(2);
+            controller.setWaitingCue(false, play);
+        } finally {
+            controller.interrupt();
+            vi.useRealTimers();
+        }
+    });
+
     it('increments the playback epoch even when no stopper is registered', () => {
         const controller = createVoicePlaybackController();
 

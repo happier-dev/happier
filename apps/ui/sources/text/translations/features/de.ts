@@ -13747,6 +13747,8 @@ const de: VoiceSettingsPagesCopy = {
       approvalsTitle: "Genehmigungen",
       approvalsDescription: "Wenn eine Session um Erlaubnis bittet, während du sprichst.",
       canApproveRequestsTitle: "Der Voice-Agent darf Anfragen genehmigen",
+      audibleWaitingCueTitle: "Warteton",
+      audibleWaitingCueDescription: "Spielt einen leisen Ton ab, wenn Voice deine Worte verarbeitet oder eine Antwort vorbereitet.",
       canApproveRequestsDescription: "Er liest jede Anfrage vor und beantwortet sie so, wie du es sagst. Aus: Du entscheidest jede per Tippen.",
       itMaySafe: 'Sichere Änderungen',
       itMaySafeDescription: 'Er macht sichere Änderungen im Arbeitsbereich selbst und fragt beim Rest.',

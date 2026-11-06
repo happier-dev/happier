@@ -14243,6 +14243,8 @@ const ja: VoiceSettingsPagesCopy = {
       approvalsTitle: "承認",
       approvalsDescription: "話している間にセッションが許可を求めたとき。",
       canApproveRequestsTitle: "音声エージェントにリクエストの承認を任せる",
+      audibleWaitingCueTitle: "待機音",
+      audibleWaitingCueDescription: "音声が言葉の処理や回答の準備を始めると、控えめな音を鳴らします。",
       canApproveRequestsDescription: "リクエストを読み上げ、あなたの指示どおりに応答します。オフにすると、毎回タップで決めます。",
       itMaySafe: '安全な変更',
       itMaySafeDescription: 'ワークスペースの安全な変更は自分で行い、それ以外は確認します。',

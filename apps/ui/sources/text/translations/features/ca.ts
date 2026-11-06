@@ -14279,6 +14279,8 @@ const ca: VoiceSettingsPagesCopy = {
       approvalsTitle: "Aprovacions",
       approvalsDescription: "Quan una sessió demana permís mentre parles.",
       canApproveRequestsTitle: "L’agent de Veu pot aprovar sol·licituds",
+      audibleWaitingCueTitle: "So d’espera",
+      audibleWaitingCueDescription: "Reprodueix un so suau quan Veu comença a processar les teves paraules o a preparar una resposta.",
       canApproveRequestsDescription: "Llegeix cada sol·licitud en veu alta i la respon com tu diguis. Desactivat: decideixes cadascuna amb un toc.",
       itMaySafe: 'Canvis segurs',
       itMaySafeDescription: 'Fa pel seu compte els canvis segurs a l’espai de treball i pregunta per la resta.',

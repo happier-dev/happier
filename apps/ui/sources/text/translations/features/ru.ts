@@ -14287,6 +14287,8 @@ const ru: VoiceSettingsPagesCopy = {
       approvalsTitle: "Одобрения",
       approvalsDescription: "Когда сеанс просит разрешения, пока вы говорите.",
       canApproveRequestsTitle: "Голосовой агент может одобрять запросы",
+      audibleWaitingCueTitle: "Звук ожидания",
+      audibleWaitingCueDescription: "Тихий звук, когда Голос начинает обрабатывать ваши слова или готовить ответ.",
       canApproveRequestsDescription: "Он зачитывает каждый запрос и отвечает на него так, как вы скажете. Выключено: вы решаете каждый касанием.",
       itMaySafe: 'Безопасные изменения',
       itMaySafeDescription: 'Сам вносит безопасные изменения в рабочую область, об остальном спрашивает.',

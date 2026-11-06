@@ -104,6 +104,51 @@ describe('localVoiceTtsController', () => {
         storage.setState({ settings: initialSettings, machines: initialMachines, machineListByServerId: initialMachineLists });
     });
 
+    it('drives opt-in waiting audio from real lifecycle pushes and retires it on phase or preference change', async () => {
+        const { createLocalDirectVoiceAdapter } = await import('@/voice/adapters/localDirect/localDirectAdapter');
+        const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        const { voiceConversationRuntimeMachine: machine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const previousAdapters = getVoiceAdapterRegistry().list();
+        const settings = storage.getState().settings;
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+            voice: { ...settings.voice, providerId: 'local_direct', audibleWaitingCue: true },
+        }, settings));
+        expect(storage.getState().settings.voice.audibleWaitingCue).toBe(true);
+        registerVoiceAdapters([createLocalDirectVoiceAdapter()]);
+        const lifecycle = (await import('@/voice/session/voiceSessionLifecycleController')).createVoiceSessionLifecycleController();
+        lifecycle.setConfiguredProviderId('local_direct');
+        try {
+            machine.transitionToListening({ controlSessionId: 'cue' });
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening' });
+            expect(encodedAudio.start).not.toHaveBeenCalled();
+            const firstCue = speechBoundary.holdNextPlayback('encoded');
+            machine.transitionToThinking({ controlSessionId: 'cue' });
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'thinking' });
+            await vi.waitFor(() => expect(encodedAudio.start).toHaveBeenCalledTimes(1));
+            await firstCue.started;
+            for (let i = 0; i < 20; i++) machine.transitionToThinking({ controlSessionId: 'cue' });
+            expect(encodedAudio.start).toHaveBeenCalledTimes(1);
+            machine.transitionToSpeaking({ controlSessionId: 'cue' });
+            await vi.waitFor(() => expect(encodedAudio.stop).toHaveBeenCalledTimes(1));
+            const secondCue = speechBoundary.holdNextPlayback('encoded');
+            machine.transitionToThinking({ controlSessionId: 'cue' });
+            await vi.waitFor(() => expect(encodedAudio.start).toHaveBeenCalledTimes(2));
+            await secondCue.started;
+            const current = storage.getState().settings;
+            storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+                voice: { ...current.voice, audibleWaitingCue: false },
+            }, current));
+            await vi.waitFor(() => expect(encodedAudio.stop).toHaveBeenCalledTimes(2));
+            machine.transitionToListening({ controlSessionId: 'cue' });
+            machine.transitionToThinking({ controlSessionId: 'cue' });
+            expect(encodedAudio.start).toHaveBeenCalledTimes(2);
+        } finally {
+            machine.reset();
+            await lifecycle.dispose();
+            registerVoiceAdapters(previousAdapters);
+        }
+    });
+
     it('dispatches a current external dual-role speech provider through normal Local Voice TTS', async () => {
         const declaration = VoiceProviderContributionSchema.parse({
             id: 'speech',
