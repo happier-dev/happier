@@ -346,26 +346,63 @@ describe('ProviderConnectionAuthoringScreen', () => {
         }).toMatchObject({ title: expect.stringContaining('Boundary provider') }));
     });
 
-    it('edits a built-in connection name in the shared draft and writes it only on Connect', async () => {
+    it('edits a built-in connection name without re-describing its named preview and writes it only on Connect', async () => {
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
         const screen = await renderScreen(
             <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" displayName="Local models" />,
         );
         const name = screen.findByTestId('settings-provider-authoring-name');
         expect(name?.props.value).toBe('Local models');
-        await React.act(async () => {
-            name?.props.onChangeText('Renamed local models');
-            await flushHookEffects();
-        });
-        expect(run).not.toHaveBeenCalled();
         await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
-            authoringPreview: expect.objectContaining({ displayName: 'Renamed local models' }),
+            authoringPreview: expect.objectContaining({ displayName: 'Local models' }),
         })));
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(false));
+        describeProviderConnections.mockClear();
+        for (const value of ['Renamed', 'Renamed local', 'Renamed local models']) {
+            await React.act(async () => {
+                screen.findByTestId('settings-provider-authoring-name')?.props.onChangeText(value);
+                await flushHookEffects();
+            });
+        }
+        expect(describeProviderConnections).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('settings-provider-authoring-connect');
         await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({
             action: 'createContribution', displayName: 'Renamed local models',
         }), 'save'));
+    });
+
+    it('re-describes the preview when a default draft becomes named and when discarding restores its default role', async () => {
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(false));
+        expect(describeProviderConnections.mock.calls.at(-1)?.[0]).toMatchObject({
+            authoringPreview: { displayName: null },
+        });
+        describeProviderConnections.mockClear();
+        await React.act(async () => {
+            screen.findByTestId('settings-provider-authoring-name')?.props.onChangeText('Local models');
+            await flushHookEffects();
+        });
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ displayName: 'Local models' }),
+        })));
+        describeProviderConnections.mockClear();
+        await React.act(async () => {
+            runGuardedNavigation(() => { routerPush('/settings/providers'); });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+        const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
+        await React.act(async () => {
+            buttons.find(button => button.style === 'destructive')?.onPress?.();
+            await flushHookEffects();
+        });
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ displayName: null }),
+        })));
+        expect(screen.findByTestId('settings-provider-authoring-name')?.props.value).toBe('');
+        expect(run).not.toHaveBeenCalled();
     });
 
     it('cancels a named built-in draft without creating a connection', async () => {

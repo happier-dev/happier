@@ -422,7 +422,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             authoringPreviewGenerationRef.current += 1;
             controller.abort();
         };
-    }, [accountLifetime, accountStillCurrent, describeProviderConnections, authoringPreviewRefreshNonce, connectionId, contributionDisplayName, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, focused, machineId, props.contributionKey, selectedCandidateId, serverId]);
+    }, [accountLifetime, accountStillCurrent, describeProviderConnections, authoringPreviewRefreshNonce, connectionId, contributionDisplayName === null, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, focused, machineId, props.contributionKey, selectedCandidateId, serverId]);
     const retryAuthoringPreview = React.useCallback(async (): Promise<void> => {
         if (!accountStillCurrent()) return;
         setAuthoringPreviewRefreshNonce((current) => current + 1);
