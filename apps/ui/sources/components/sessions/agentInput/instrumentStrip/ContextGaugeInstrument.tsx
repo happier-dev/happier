@@ -57,7 +57,9 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
     }, [props]);
 
     const { model } = props;
-    const percentLabel = model.stale ? null : formatPercent(model.usedPct);
+    // Before the session has used any context the empty ring says so; a bare "0%" beside the quota
+    // ring's "0% left" read as a second, contradicting number (FIN-DESIGN-REVIEW M8).
+    const percentLabel = model.stale || model.usedTokens <= 0 ? null : formatPercent(model.usedPct);
 
     return (
         <>
