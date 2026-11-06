@@ -9128,6 +9128,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const zhHant: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: ({ count }: { count: number }) => count === 1 ? `1個模型` : `${count}個模型`,
+            modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1個模型，連線後更多` : `${count}個模型，連線後更多`,
+            modelsOnConnect: '連線後列出',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier 從 ${provider} 讀取模型列表`,
+            modelsManual: '你自行指定使用的模型',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `在 ${machine} 上執行`,
             statusOff: '已關閉',

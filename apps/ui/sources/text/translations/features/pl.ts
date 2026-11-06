@@ -9156,6 +9156,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const pl: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = count === 1 ? 'model' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'modele' : 'modeli'; return `${count} ${w}`; }),
+            modelsCountMore: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = count === 1 ? 'model' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'modele' : 'modeli'; return `${count} ${w}, więcej po połączeniu`; }),
+            modelsOnConnect: 'Wyświetlane po połączeniu',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier odczytuje listę modeli z ${provider}`,
+            modelsManual: 'Sam podajesz modele, których używasz',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Działa na ${machine}`,
             statusOff: 'Wyłączona',

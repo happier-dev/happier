@@ -3,6 +3,7 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contribut
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { buildSessionModelPickerSections } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import {
+    readAccountAgentProviderDeclarations,
     readAccountAgentProviderRequirements,
     readAccountProviderDeclarations,
     readProviderConnectionPickerKind,
@@ -75,6 +76,9 @@ describe('admitted Provider declarations', () => {
             } } },
         });
         expect(readAccountAgentProviderRequirements('agent:acme.agent/codex', { kind: 'machine', projection: projection })).toEqual(requirements);
+        expect(readAccountAgentProviderDeclarations({ kind: 'machine', projection })).toEqual([
+            { agentTargetKey: 'agent:acme.agent/codex', requirements },
+        ]);
         expect(readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'machine', projection: projection })).toBeNull();
         const declarations = readAccountProviderDeclarations({ kind: 'machine', projection: projection });
         expect(declarations.find(row => row.contributionKey === 'acme.gateway/managed')).toMatchObject({ provenance: 'external', definition: { id: 'managed' } });
@@ -82,6 +86,7 @@ describe('admitted Provider declarations', () => {
         expect(readProviderContributionIcon('acme.gateway/managed', { kind: 'machine', projection: projection })).toBe('cloud-outline');
         const withdrawn = PluginProjectionV2Schema.parse({ ...projection, agentsById: { installed: { id: 'installed', identity: { pluginId: 'acme.agent', localId: 'codex' } } } });
         expect(readAccountAgentProviderRequirements('agent:acme.agent/codex', { kind: 'machine', projection: withdrawn })).toBeNull();
+        expect(readAccountAgentProviderDeclarations({ kind: 'machine', projection: withdrawn })).toEqual([]);
     });
 
     it('does not admit Team models when the exact Agent requirements are unknown', () => {

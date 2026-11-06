@@ -1,6 +1,6 @@
 import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
-import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ProviderModelPickerSourceKind } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
 import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
@@ -60,6 +60,28 @@ export function readProviderContributionIcon(contributionKey: string | null | un
 export type AccountAgentProviderRequirements =
     | Readonly<{ kind: 'known'; requirements: AgentProviderRequirementsV1 }>
     | Readonly<{ kind: 'unknown' }>;
+
+export type AccountAgentProviderDeclaration = Readonly<{
+    agentTargetKey: string;
+    name?: string;
+    requirements: AgentProviderRequirementsV1;
+}>;
+
+/** Portable Agent fit facts, without loading an Agent runtime or asserting installation/readiness. */
+export function readAccountAgentProviderDeclarations(context: ProviderDeclarationContext): readonly AccountAgentProviderDeclaration[] {
+    if (context.kind === 'account') return Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).flatMap(declaration =>
+        declaration.providerRequirements ? [{
+            agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: declaration.identity }),
+            ...(declaration.cli?.displayName ? { name: declaration.cli.displayName } : {}),
+            requirements: declaration.providerRequirements,
+        }] : []);
+    return Object.values(context.projection?.agentsById ?? {}).flatMap(declaration =>
+        declaration.identity && declaration.providerRequirements ? [{
+            agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: declaration.identity }),
+            ...(declaration.title ? { name: declaration.title } : {}),
+            requirements: declaration.providerRequirements,
+        }] : []);
+}
 
 /** Absence is a missing declaration, never evidence that every model is compatible. */
 export function resolveAccountAgentProviderRequirements(agentTargetKey: string, context: ProviderDeclarationContext): AccountAgentProviderRequirements {

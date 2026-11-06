@@ -9167,6 +9167,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ru: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = n === 1 && h !== 11 ? 'модель' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'модели' : 'моделей'; return `${count} ${w}`; }),
+            modelsCountMore: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = n === 1 && h !== 11 ? 'модель' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'модели' : 'моделей'; return `${count} ${w}, больше после подключения`; }),
+            modelsOnConnect: 'Список появится после подключения',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier читает список моделей у ${provider}`,
+            modelsManual: 'Вы сами указываете модели',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Работает на ${machine}`,
             statusOff: 'Выключен',

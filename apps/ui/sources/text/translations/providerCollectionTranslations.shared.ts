@@ -6,6 +6,13 @@ export type ProviderCollectionCopy = typeof en;
 
 export const en = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: ({ count }: { count: number }) => count === 1 ? `1 model` : `${count} models`,
+            modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 model, more once connected` : `${count} models, more once connected`,
+            modelsOnConnect: 'Listed once connected',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier reads the model list from ${provider}`,
+            modelsManual: 'You name the models you use',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Running on ${machine}`,
             statusOff: 'Off',

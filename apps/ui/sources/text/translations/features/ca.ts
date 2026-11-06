@@ -9140,6 +9140,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ca: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: ({ count }: { count: number }) => count === 1 ? `1 model` : `${count} models`,
+            modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 model, més un cop connectat` : `${count} models, més un cop connectat`,
+            modelsOnConnect: 'Es llisten un cop connectat',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier llegeix la llista de models de ${provider}`,
+            modelsManual: 'Tu anomenes els models que fas servir',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `S’executa a ${machine}`,
             statusOff: 'Desactivada',

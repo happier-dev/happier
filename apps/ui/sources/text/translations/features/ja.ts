@@ -9133,6 +9133,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ja: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: ({ count }: { count: number }) => count === 1 ? `1 モデル` : `${count} モデル`,
+            modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 モデル（接続後にさらに追加）` : `${count} モデル（接続後にさらに追加）`,
+            modelsOnConnect: '接続後に一覧表示',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier が ${provider} からモデル一覧を読み込みます`,
+            modelsManual: '使うモデルを自分で指定します',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `${machine} で実行中`,
             statusOff: 'オフ',

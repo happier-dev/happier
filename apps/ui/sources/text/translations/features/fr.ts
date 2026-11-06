@@ -9136,6 +9136,13 @@ const en = Shared_providerCollectionTranslations.en;
 
 const fr: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        addDetail: {
+            modelsCount: ({ count }: { count: number }) => count === 1 ? `1 modèle` : `${count} modèles`,
+            modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 modèle, d’autres une fois connecté` : `${count} modèles, d’autres une fois connecté`,
+            modelsOnConnect: 'Listés une fois connecté',
+            modelsReadFrom: ({ provider }: { provider: string }) => `Happier lit la liste des modèles de ${provider}`,
+            modelsManual: 'Vous nommez les modèles que vous utilisez',
+        },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `S’exécute sur ${machine}`,
             statusOff: 'Désactivée',
