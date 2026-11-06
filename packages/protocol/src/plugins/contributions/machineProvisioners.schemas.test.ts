@@ -139,6 +139,18 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('retains optional declared enrollment roles through strict manifest admission', () => {
+    const manifest = nativeDurationManifest();
+    expect(PluginManifestV2Schema.parse(manifest).contributes.machineProvisioners[0]).not.toHaveProperty('enrollmentRole');
+    for (const enrollmentRole of ['server', 'personal', 'sandbox']) {
+      const declared = { ...manifest, contributes: { ...manifest.contributes,
+        machineProvisioners: [{ ...manifest.contributes.machineProvisioners[0], enrollmentRole }] } };
+      expect(PluginManifestV2Schema.parse(declared).contributes.machineProvisioners[0]).toHaveProperty('enrollmentRole', enrollmentRole);
+    }
+    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({
+      ...manifest.contributes.machineProvisioners[0], enrollmentRole: 'guessed',
+    }).success).toBe(false);
+  });
   it('admits Account and native provisioner roles through the same strict contribution owner', () => {
     const base = nativeDurationManifest().contributes;
     const portable = { ...base,

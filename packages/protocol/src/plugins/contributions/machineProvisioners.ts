@@ -91,9 +91,11 @@ function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical
   return sameStrictJsonValue(writer, projectWriterShape(reader, writer));
 }
 
+const enrollmentRole = lazyDefinition(() => mini.enum(['server', 'personal', 'sandbox']));
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
   resourceKind: z.string().check(z.trim(), z.minLength(1)),
+  enrollmentRole: z.optional(enrollmentRole),
   kindTitle: z.optional(PluginLocalizedStringV2Schema), description: z.optional(PluginLocalizedStringV2Schema),
   launchSchema: strictPortableSchema, resourceSchema: strictPortableSchema,
   schemaVersion: z.number().check(z.int(), z.positive()),
