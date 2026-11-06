@@ -536,6 +536,7 @@ export const RunnerDaemonScmCommandV1Schema = lazyZodSchema(() => z.strictObject
 export const RunnerDaemonScmCommandResultV1Schema = lazyZodSchema(() => z.strictObject({
     success: z.boolean(), stdout: z.string(), stderr: z.string(), exitCode: z.number().check(z.int()),
     timedOut: z.optional(z.boolean()), outputLimitExceeded: z.optional(z.boolean()),
+    aborted: z.optional(z.boolean()), signal: z.optional(z.string()),
     executableMissing: z.optional(z.literal(true)), workingDirectoryMissing: z.optional(z.literal(true)),
     stoppedEarly: z.optional(z.boolean()),
 }));
