@@ -17,6 +17,30 @@ function mountTabs(element: React.ReactElement, context = createSurfaceContext()
 }
 
 describe('controlled Tabs', () => {
+  it('includes a text-only active panel in tab order and yields to asynchronously arriving controls', async () => {
+    let showControl: (value: boolean) => void = () => {};
+    function Body() {
+      const [interactive, setInteractive] = useState(false);
+      showControl = setInteractive;
+      return <>
+        <p>Sampled sessions are not recordings.</p>
+        <button disabled>Replay unavailable</button>
+        <div hidden><button>Hidden replay</button></div>
+        {interactive ? <input aria-label="Session filter" /> : null}
+      </>;
+    }
+    const mount = mountTabs(<Tabs value="sessions" onValueChange={() => {}} ariaLabel="Issue sections">
+      <Tabs.Item value="sessions" title="Affected sessions"><Body /></Tabs.Item>
+    </Tabs>);
+    try {
+      const panel = mount.container.querySelector<HTMLElement>('[role="tabpanel"]');
+      expect(panel?.getAttribute('tabindex')).toBe('0');
+      await act(async () => { showControl(true); });
+      expect(panel?.hasAttribute('tabindex')).toBe(false);
+      await act(async () => { showControl(false); });
+      expect(panel?.getAttribute('tabindex')).toBe('0');
+    } finally { mount.unmount(); }
+  });
   it('renders a quiet state marker and includes its meaning in the tab name without changing the visible title', () => {
     const theme = createSurfaceContext().theme;
     function TabDescriptor(_props: HappierTabDescriptor) { return null; }

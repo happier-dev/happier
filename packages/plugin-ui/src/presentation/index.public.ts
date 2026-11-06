@@ -1485,3 +1485,5 @@ export {
   type RemoteViewerModifier,
   type RemoteViewerModifierState,
 } from './media/useRemoteViewerActions.js';
+
+export { isEligibleFocusTarget, listWebFocusableElements } from './interaction/webFocusableElements.js';

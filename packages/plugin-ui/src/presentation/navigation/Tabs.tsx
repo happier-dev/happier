@@ -12,7 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { I18nManager, View, type ViewStyle } from 'react-native';
+import { I18nManager, Platform, View, type ViewStyle } from 'react-native';
 
 import {
   HappierUiAnimationActivityProviderInternal,
@@ -25,6 +25,7 @@ import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
+import { listWebFocusableElements } from '../interaction/webFocusableElements.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from '../text/typeRole.js';
@@ -144,6 +145,25 @@ function HappierTabPanel(props: Readonly<{
 }>): ReactElement {
   const ancestorActivity = useOptionalHappierTabPanelActivityInternal();
   const active = props.active && ancestorActivity?.active !== false;
+  const panelRef = useRef<View>(null);
+  useLayoutEffect(() => {
+    const panel: unknown = panelRef.current;
+    if (Platform.OS !== 'web' || !active || props.labelledBy === undefined
+      || typeof HTMLElement === 'undefined' || !(panel instanceof HTMLElement)) return;
+    const updateTabStop = (): void => {
+      const tabIndex = listWebFocusableElements(panel).length === 0 ? '0' : null;
+      if (panel.getAttribute('tabindex') === tabIndex) return;
+      if (tabIndex === null) panel.removeAttribute('tabindex');
+      else panel.setAttribute('tabindex', tabIndex);
+    };
+    updateTabStop();
+    // A mounted source receives controls asynchronously without rerendering
+    // this parent. Observe only its active panel; no polling or React state.
+    const observer = new MutationObserver(updateTabStop);
+    observer.observe(panel, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['tabindex', 'disabled', 'aria-disabled', 'hidden', 'aria-hidden', 'inert', 'href', 'type', 'contenteditable', 'style', 'class'] });
+    return () => { observer.disconnect(); panel.removeAttribute('tabindex'); };
+  }, [active, props.labelledBy]);
   const [openInterval, setOpenInterval] = useState(() => new AbortController());
   let controller = openInterval;
   if (active && controller.signal.aborted) {
@@ -178,6 +198,7 @@ function HappierTabPanel(props: Readonly<{
     <HappierTabPanelActivityContext.Provider value={activity}>
       <HappierUiAnimationActivityProviderInternal active={props.active}>
       <View
+        ref={panelRef}
         role={props.labelledBy === undefined ? undefined : 'tabpanel'}
         nativeID={props.nativeID}
         aria-labelledby={props.labelledBy}
@@ -424,11 +445,16 @@ export function HappierTabs(props: Readonly<{
   }, [fallbackTabValue, tabs]);
 
   const hideStrip = props.tabList === 'host' || props.hideStrip === true;
+  const trailingBeforeTabs = props.sharedPanel !== null;
   return (
     <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
-      {hideStrip ? null : <View style={props.trailing === undefined ? undefined : { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
+      {hideStrip ? null : <View style={props.trailing === undefined ? undefined : { flexDirection: trailingBeforeTabs ? 'row-reverse' : 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
       {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
       {pageStrip ? null : <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />}
+      {/* With an owned panel, More precedes the tablist in keyboard order;
+          reversing the row preserves its visual placement. Strip-only hosts
+          keep their existing order because the destination lives elsewhere. */}
+      {trailingBeforeTabs ? props.trailing : null}
       <View style={props.trailing === undefined ? undefined : { flex: 1, minWidth: 0 }}>
       <HappierScrollArea horizontal testID={`${props.testID ?? 'tabs'}:viewport`}
         onLayout={(event) => { reportStrip('viewport', event.nativeEvent.layout.width); }}>
@@ -523,7 +549,7 @@ export function HappierTabs(props: Readonly<{
         </View>
       </HappierScrollArea>
       </View>
-      {props.trailing}
+      {trailingBeforeTabs ? null : props.trailing}
       </View>}
       {/* `null`: the strip selects something its host draws elsewhere (a page's widget area), so no empty panel or gap follows it. */}
       {props.sharedPanel === null ? null : props.sharedPanel !== undefined && selected !== undefined ? (
