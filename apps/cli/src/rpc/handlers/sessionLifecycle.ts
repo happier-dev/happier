@@ -223,9 +223,14 @@ export function createSessionLifecycleRpcActionExecutor(
                         ...(context.sessionActionOrigin ? { sessionActionOrigin: context.sessionActionOrigin } : {}),
                         ...(context.callerInputAuthorization ? { callerInputAuthorization: context.callerInputAuthorization } : {}),
                         callerAuthority: context.authority ?? 'account_automation',
-                        ...(context.operationProgress || context.operationOwnerUpdate || context.operationAcceptance || context.operationReview
+                        ...(context.surface || context.actionCaller || context.approvalOrigin || context.approvedActionReplay
+                            || context.operationProgress || context.operationOwnerUpdate || context.operationAcceptance || context.operationReview
                             ? {
                                 localActionContext: {
+                                    surface: context.surface,
+                                    ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}),
+                                    ...(context.approvalOrigin ? { approvalOrigin: context.approvalOrigin } : {}),
+                                    ...(context.approvedActionReplay ? { approvedActionReplay: context.approvedActionReplay } : {}),
                                     ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
                                     ...(context.operationAcceptance ? { operationAcceptance: context.operationAcceptance } : {}),
                                     ...(context.operationCancellation ? { operationCancellation: context.operationCancellation } : {}),

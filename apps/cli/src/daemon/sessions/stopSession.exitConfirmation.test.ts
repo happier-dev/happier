@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -43,6 +44,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     let timestampAtSignal: number | undefined;
     let durableIntentAtSignal = false;
     let durableIntentRecorded = false;
+    const diagnostic = vi.spyOn(logger, 'infoFile');
     const originalKill = process.kill.bind(process);
     const kill = vi.spyOn(process, 'kill').mockImplementation((targetPid, signal) => {
       if (targetPid === pid && signal === 'SIGTERM') {
@@ -64,11 +66,16 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
         registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
         recordExplicitStopIntent: async () => { durableIntentRecorded = true; }, stopSession: stop });
       await expect(lifecycle.stopExactSession({ sessionId: tracked.happySessionId!, pid,
-        start: { startTimeMs: identity.processStartTimeMs } })).resolves.toEqual({ status: 'stopped' });
+        start: { startTimeMs: identity.processStartTimeMs }, actionContext: { surface: 'cli', authority: 'present_user',
+          actionCaller: { kind: 'host' }, defaultSessionId: 'not-the-caller' } })).resolves.toEqual({ status: 'stopped' });
+      expect(diagnostic.mock.calls).toContainEqual(['[DAEMON STOP] Physical Stop phase started', expect.objectContaining({
+        phase: 'signal_request', requestTransport: 'process_action', requestSource: { surface: 'cli', callerKind: 'host' },
+      })]);
       expect(timestampAtSignal).toEqual(expect.any(Number));
       expect(durableIntentAtSignal).toBe(true);
       expect(respawn.handleUnexpectedExit(tracked, { reason: 'process-exited', code: null, signal: 'SIGTERM' })).toBe('ignored');
     } finally {
+      diagnostic.mockRestore();
       kill.mockRestore();
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       await exited;

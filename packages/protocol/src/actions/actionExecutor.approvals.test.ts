@@ -3584,6 +3584,29 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('restores the requesting transcript correlation when an approved Stop executes', async () => {
+    const origin = { kind: 'transcript_tool_call' as const, sessionId: 'requesting-session', toolCallId: 'requesting-tool',
+      toolInput: { sessionId: 'target-session', privateInput: 'never-log-this' } };
+    let stored = ApprovalRequestV2Schema.parse(createApprovalRequest('open', {
+      actionId: 'session.stop', actionArgs: { sessionId: 'target-session' },
+      createdBy: { surface: 'mcp', sessionId: 'requesting-session' }, origin,
+    }));
+    let stoppedContext: ActionExecutorContext | undefined;
+    const executor = createExecutor({
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      // Native Session control is the effect boundary; approval and replay remain real.
+      sessionStop: async ({ context }) => { stoppedContext = context; return { ok: true, stopped: true }; },
+    });
+    const result = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'approving-session', toolCallId: 'approving-tool' },
+    });
+    expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(stoppedContext?.approvalOrigin).toEqual(origin);
+    expect(stoppedContext?.approvedActionReplay?.origin?.surface).toBe('mcp');
+  });
+
   it('executes the underlying action when an approval is approved', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest());
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));

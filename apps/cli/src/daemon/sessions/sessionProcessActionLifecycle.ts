@@ -4,6 +4,7 @@ import type { TrackedSession } from '../types';
 import type { ExactTrackedRunnerStopWitness, StopSessionOptions } from './stopSession';
 import type { StopSessionResult } from './stopSessionContract';
 import type { ProcessActionExecution } from '../processes/actions/processActionExecutor';
+import { readSessionStopRequestSource } from './stopSessionDiagnostics';
 
 type ExactTarget = Readonly<{ pid: number; start: ProcessStartIdentity }>;
 type VerifyCurrent = () => boolean | Promise<boolean>;
@@ -119,6 +120,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
       if (input.physicalStopEffect) params.registerPhysicalStopEffect(input.sessionId, input.physicalStopEffect.completion);
       const recorded = input.physicalStopEffect?.recordedSessionIds ?? new Set<string>();
       return await params.stopSession(input.sessionId, {
+        source: readSessionStopRequestSource(input.actionContext), transport: 'process_action',
         expectedTrackedRunner: witness,
         beforeSignalExactTrackedRunner: async () => {
           if (!await executionCurrent(input) || !current(witness)) return false;

@@ -1,5 +1,6 @@
 
 import { logger } from '@/ui/logger';
+import { sessionStopRequestDiagnostics, type SessionStopRequestDiagnostics } from './stopSessionDiagnostics';
 import { configuration } from '@/configuration';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
 import {
@@ -58,7 +59,7 @@ export type ExactTrackedRunnerStopWitness = Readonly<{
   processCommandHash?: string;
 }>;
 
-export type StopSessionOptions = Readonly<{
+export type StopSessionOptions = SessionStopRequestDiagnostics & Readonly<{
   /** Captured authenticated metadata authority for this Stop; never transported. */
   metadataContext?: Pick<Parameters<typeof retireExactTerminalControlServiceability>[0],
     'credentials' | 'currentness' | 'resolveAuthorizationHeaders'>;
@@ -232,15 +233,17 @@ export function createStopSession(params: Readonly<{
     options?: StopSessionOptions,
   ): Promise<StopSessionResult> => {
     const stopStartedAtMs = Date.now();
+    const requestDiagnostics = sessionStopRequestDiagnostics(options);
+    logger.infoFile('[DAEMON STOP] Attempting Stop', { event: 'session_stop_attempt', sessionId, ...requestDiagnostics });
     logger.debug(`[DAEMON RUN] Attempting to stop session ${sessionId}`);
     const observeStopPhase = async <T>(phase: string, operation: () => Promise<T>): Promise<T> => {
       const startedAtMs = Date.now();
-      logger.infoFile('[DAEMON STOP] Physical Stop phase started', { sessionId, phase });
+      logger.infoFile('[DAEMON STOP] Physical Stop phase started', { sessionId, phase, ...requestDiagnostics });
       try {
         return await operation();
       } finally {
         logger.infoFile('[DAEMON STOP] Physical Stop phase settled', {
-          sessionId, phase, elapsedMs: Date.now() - startedAtMs,
+          sessionId, phase, ...requestDiagnostics, elapsedMs: Date.now() - startedAtMs,
           totalElapsedMs: Date.now() - stopStartedAtMs,
         });
       }

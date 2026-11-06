@@ -45,6 +45,7 @@ import { createSessionProcessActionLifecycle, type SessionProcessActionLifecycle
 import { clearSessionExplicitStopIntentAfterResume, recordSessionStopIntent, resolveSessionExplicitControlIntent, resolveSessionResumeControlIntent } from '@/session/services/sessionExplicitStopIntent';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { resolveSessionOwningMachineId } from '@/session/services/resolveSessionOwningMachine';
+import { sessionStopRequestDiagnostics } from '@/daemon/sessions/stopSessionDiagnostics';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readSessionExplicitStopV1FromMetadata, resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
@@ -7882,6 +7883,8 @@ daemonWorkSignal: AbortSignal;
     recordExplicitIntent?: () => Promise<void | false>,
     stopCredentials = params.credentials,
   ): Promise<StopSessionResult> => {
+    logger.infoFile('[DAEMON STOP] Received Stop', { event: 'session_stop_received', sessionId,
+      ...sessionStopRequestDiagnostics(options) });
     const request = { reason: 'daemon_stop_session', requestedAtMs: Date.now() } as const;
     // Physical Stops coalesce; each external Stop must still retire launch admission.
     // Exact Action/handoff stops claim their process-specific intent before signalling.
@@ -8068,7 +8071,7 @@ daemonWorkSignal: AbortSignal;
           },
         });
         const candidateStopResult =
-          await stopDisconnectedHost(normalizedSessionId);
+          await stopDisconnectedHost(normalizedSessionId, options);
         return isTerminalHostPhysicallyRetiredStopResult(candidateStopResult)
           ? {
               stopResult: candidateStopResult,
@@ -8085,7 +8088,7 @@ daemonWorkSignal: AbortSignal;
     try {
       return await withSessionStopMetadataContext(sessionId, async metadataContext => {
         const { credentials } = metadataContext;
-        return await stopSession(sessionId, { metadataContext }, undefined, async () => {
+        return await stopSession(sessionId, { metadataContext, transport: 'local_http' }, undefined, async () => {
           const stopRawSession = await fetchSessionByIdCompat({ reason: 'session-control', token: credentials.token, sessionId, signal });
           if (!stopRawSession || stopRawSession.id !== sessionId) {
             throw new Error('Explicit Stop intent could not be persisted for the exact Session');
@@ -16020,9 +16023,12 @@ daemonWorkSignal: AbortSignal;
       },
       // Process Actions exercise host custody, not the custodian's Account
       // recovery/history mutations performed by the ordinary Stop API wrapper.
-      stopSession: async (sessionId, options, physicalEffect) =>
-        await disconnectedTerminalHostResumeLifecycle.runStop(sessionId,
-          async () => ({ stopResult: await stopSessionCore(sessionId, options) }), physicalEffect),
+      stopSession: async (sessionId, options, physicalEffect) => {
+        logger.infoFile('[DAEMON STOP] Received Stop', { event: 'session_stop_received', sessionId,
+          ...sessionStopRequestDiagnostics(options) });
+        return await disconnectedTerminalHostResumeLifecycle.runStop(sessionId,
+          async () => ({ stopResult: await stopSessionCore(sessionId, options) }), physicalEffect);
+      },
     }),
     managedMachinePolicyAdapter,
     ...(externalActionIngressOwner ? { externalActionIngressOwner } : {}),

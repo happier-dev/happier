@@ -1620,6 +1620,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         })) } : {}) }
       : reviewedSessionTargets;
     let executionContext: ActionExecutorContext = {
+      approvalOrigin: request.origin ?? null,
       ...(retainsHostInvocation && retainedLogsLifetime && origin?.success && originIsCurrent
         && origin.data.externalActionExecutionAuthorization?.token === args.ctx.externalActionExecutionAuthorization?.token
         && sameStrictJsonValue(origin.data.externalActionExecutionAuthorization?.binding, args.ctx.externalActionExecutionAuthorization?.binding)

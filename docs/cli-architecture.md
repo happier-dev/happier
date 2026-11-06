@@ -5304,6 +5304,18 @@ available. A guarded refusal to signal does not authorize an unsafe kill: Stop
 rechecks positive runner exit before reporting incomplete termination. Transport
 timeout or disconnect never proves physical termination.
 
+In 0.3 development source, Stop diagnostics project the original admitted Action
+surface, caller kind, requesting Session and transcript tool-call id when known.
+Approval replay retains the requesting origin rather than attributing the Stop to
+the person approving it. These fields are diagnostic correlation, never authority;
+unknown legacy callers remain unknown and the target Session is not a caller.
+The receiving daemon logs each request before physical Stop coalescing, and its
+existing physical phase file diagnostics retain the receiver transport and source.
+Logs exclude tool inputs, credentials and full Action contexts. Local
+`/stop-session` records its HTTP transport without inventing a caller; daemon-wide
+administrative shutdown retains the internal unknown-caller path. This does not
+change Stop approval policy or the ability to stop a busy Session.
+
 In 0.3 development source, a positively dead runner leaves the daemon's local
 inventory once its resources and durable exit staging are complete, even if Home
 terminal publication remains pending. Its exact retained Session marker owns

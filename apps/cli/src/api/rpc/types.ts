@@ -33,7 +33,7 @@ import type {
 export type RpcLocalActionContext = Readonly<Partial<Pick<
     ActionExecutorContext,
     'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
-    | 'externalActionExecutionAuthorization'
+    | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
 >> & {
     /** Captured authenticated private-root identity; never serialized in an RPC request. */
