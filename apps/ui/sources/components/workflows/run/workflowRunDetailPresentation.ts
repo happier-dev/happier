@@ -462,7 +462,7 @@ export function formatWorkflowRunConsequenceSentence(params: Readonly<{
         let definition: WorkflowDefinitionV1 | undefined = params.definition;
         for (const coordinate of entry.occurrence) {
             if (coordinate.kind !== 'workflow' || !definition) continue;
-            const call = findWorkflowBlock({ ...definition, name: '' }, coordinate.blockId);
+            const call = findWorkflowBlock(definition, coordinate.blockId);
             definition = call?.kind === 'workflow' ? params.frozenChildren?.[call.workflowRef] : undefined;
         }
         if (!definition) continue;
@@ -620,6 +620,18 @@ export function describeWorkflowInvocationCause(params: Readonly<{
  * The label shown on the Run's status pill: the terminal composition when the
  * children warrant it, otherwise the canonical state label.
  */
+/** Whether a Run's outcome is its hold, rather than something of its own such as stopping. */
+export function workflowRunOutcomeIsAttention(params: Readonly<{
+    state: WorkflowRunStateV1;
+    cancelRequested?: boolean;
+    workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState'];
+    inAttentionWindow?: boolean;
+}>): boolean {
+    if (isWorkflowRunStopPending(params)) return false;
+    return params.state === 'waiting_for_review'
+        || ((params.state === 'queued' || params.state === 'claimed') && params.inAttentionWindow === true);
+}
+
 export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     state: WorkflowRunStateV1;
     coverage: WorkflowRunCoverage;
@@ -640,8 +652,7 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     if (params.state === 'succeeded' && params.coverage.knownFailure) {
         return t('workflows.runState.completed_with_failures');
     }
-    if (params.state === 'waiting_for_review'
-        || ((params.state === 'queued' || params.state === 'claimed') && params.inAttentionWindow === true)) {
+    if (workflowRunOutcomeIsAttention(params)) {
         return describeWorkflowRunState(params.state, {
             // Until the held items are known, the Run only waits; "your review" would name a kind of hold
             // nothing has read yet (DESIGN-16 D10).

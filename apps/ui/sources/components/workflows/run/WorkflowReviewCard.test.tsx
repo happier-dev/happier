@@ -2,10 +2,12 @@ import * as React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JsonValue, WorkflowProgressEnvelopeV1, WorkflowResultContract } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowProgressEnvelopeV1} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalProvider } from '@/modal';
-import { WorkflowReviewCard, type WorkflowReviewCardProps } from './WorkflowReviewCard';
+import { WorkflowReviewCard, WorkflowReviewValue, type WorkflowReviewCardProps } from './WorkflowReviewCard';
 
 const retireCards: Array<() => Promise<void>> = [];
 beforeEach(() => {
@@ -70,6 +72,73 @@ async function changeText(screen: Awaited<ReturnType<typeof renderScreen>>, id: 
 }
 
 describe('WorkflowReviewCard', () => {
+    it('reads a for-each result as one row per item, never as raw JSON with internal keys', async () => {
+        const value = [
+            { index: 0, status: 'completed', results: { answer: 'Cedar is ready' } },
+            { index: 1, status: 'completed', results: { answer: 'Maple is ready' } },
+        ];
+        const screen = await renderScreen(<WorkflowReviewValue value={value} contract={undefined} testIDPrefix="result" />);
+        const read = screen.getTextContent();
+        expect(read.includes('Cedar is ready')).toBe(true);
+        expect(read.includes('Maple is ready')).toBe(true);
+        for (const internal of ['"index"', 'status', 'results', '{', '[']) expect(read.includes(internal)).toBe(false);
+        expect(screen.findHostByTestId('result-value-0')).toBeTruthy();
+        expect(screen.findHostByTestId('result-value-1')).toBeTruthy();
+    });
+    it('reads object fields by their human names and nested values as words', async () => {
+        const screen = await renderScreen(<WorkflowReviewValue value={{ releaseTitle: 'Happier 0.3', counts: { fixed: 491, reopened: 9 } }}
+            contract={undefined} testIDPrefix="result" />);
+        const read = screen.getTextContent();
+        expect(read.includes('releaseTitle')).toBe(false);
+        expect(read.includes('Release')).toBe(true);
+        expect(read.includes('Fixed: 491')).toBe(true);
+        expect(read.includes('{')).toBe(false);
+    });
+    it('reads authored input without disclosing provider rendering or resolved context values', async () => {
+        const authored = { document: { text: 'Authored objective @source today', displayText: 'Authored objective @source today',
+            references: [{ kind: 'external.reference', ref: 'external:identity-only', token: '@source', label: 'Source reference' }], attachments: [] },
+            renderedText: 'provider-only-envelope', input: [{ privateContext: 'resolved-only-context' }] };
+        const screen = await renderScreen(<WorkflowReviewValue value={authored} contract={undefined} testIDPrefix="input" />);
+        const visible = screen.getTextContent();
+        expect(visible.includes('Authored objective')).toBe(true);
+        expect(visible.includes(authored.renderedText)).toBe(false);
+        expect(visible.includes('resolved-only-context')).toBe(false);
+        expect(visible.includes('privateContext')).toBe(false);
+        expect(visible.includes('Source reference')).toBe(true);
+        expect(visible.includes('external:identity-only')).toBe(false);
+    });
+    it('reads an authored input as one document with its references as inline chips, not separate rows', async () => {
+        const authored = { document: { text: 'Compare with @source before answering', references: [
+            { kind: 'external.reference', ref: 'external:identity-only', token: '@source', label: 'Source reference' }], attachments: [] },
+            input: [] };
+        const screen = await renderScreen(<WorkflowReviewValue value={authored} contract={undefined} testIDPrefix="input" />);
+        const document = screen.findHostByTestId('agent-input-document-preview-text');
+        expect(document).toBeTruthy();
+        const read = screen.getTextContent();
+        // One document: the chip label replaces its token inside the sentence.
+        expect(read.indexOf('Compare with')).toBeLessThan(read.indexOf('Source reference'));
+        expect(read.indexOf('Source reference')).toBeLessThan(read.indexOf('before answering'));
+        expect(read.includes('@source')).toBe(false);
+        expect(screen.findHostByTestId('input-value-input-0')).toBeFalsy();
+    });
+    it('leads with the result and one decision; the other choices are quiet words, not described rows (owner 09.16.46)', async () => {
+        const { screen } = await mount({ onDiscuss: () => {} });
+        const text = screen.getTextContent();
+        // The label says the consequence itself, so no paragraph competes with the result.
+        expect(text).not.toContain('workflows.review.generateBody');
+        expect(text).not.toContain('workflows.review.discussBody');
+        expect(text).toContain('workflows.review.generate');
+        expect(screen.findByTestId('review-state')).toBeTruthy();
+        expect(screen.findByTestId('review-copy')).toBeTruthy();
+        expect(screen.findByTestId('review-show-full')).toBeTruthy();
+        const quiet = screen.findByTestId('review-quiet-actions')!;
+        for (const testID of ['review-edit', 'review-generate', 'review-discuss']) {
+            expect(quiet.findAll((node) => node.props.testID === testID).length).toBeGreaterThan(0);
+        }
+        const order = screen.getTextContent();
+        expect(order.indexOf('Published')).toBeLessThan(order.indexOf('workflows.review.useResult'));
+        expect(order.indexOf('workflows.review.useResult')).toBeLessThan(order.indexOf('workflows.review.generate'));
+    });
     it('reads declared result fields in schema order while keeping undeclared output values', async () => {
         const { screen } = await mount({ contract: { kind: 'json', schema: { type: 'object', properties: {
             version: { type: 'string', title: 'Version' }, summary: { type: 'string', title: 'Summary' },
@@ -77,9 +146,10 @@ describe('WorkflowReviewCard', () => {
         const text = screen.getTextContent();
         expect(text).toContain('Version');
         expect(text).toContain('Summary');
-        expect(text).toContain('extra');
+        // An undeclared value keeps its row under its human name (FIN-DESIGN-REVIEW H2: no raw keys).
+        expect(text).toContain('Extra');
         expect(text.indexOf('Version')).toBeLessThan(text.indexOf('Summary'));
-        expect(text.indexOf('Summary')).toBeLessThan(text.indexOf('extra'));
+        expect(text.indexOf('Summary')).toBeLessThan(text.indexOf('Extra'));
         expect(text).toContain('Retained');
     });
     it('retains fieldless Wait Continue while exact evidence is unconfirmed without treating edit access as revoked', async () => {
@@ -90,23 +160,28 @@ describe('WorkflowReviewCard', () => {
         expect(onComplete).not.toHaveBeenCalled();
         expect(screen.findAllHostsByTestId('review-editor')).toHaveLength(0);
     });
-    it('keeps the draft and exact reading until an explicit newer-value choice', async () => {
-        const { screen, onComplete, publish } = await mount();
+    it('keeps the revision 8 draft against publication 9 after Keep, then warns for revision 10', async () => {
+        const { screen, onComplete, publish } = await mount({ contentRevision: '8' });
         await screen.pressByTestIdAsync('review-edit');
         await changeText(screen, 'review-field-summary', 'My edits');
         const editor = screen.findByTestId('review-field-summary');
-        await publish(progress({ result: { summary: 'Newer', approved: true } }), '8');
+        await publish(progress({ result: { summary: 'Newer', approved: true } }), '9');
         expect(screen.findByTestId('review-field-summary')?.props.value).toBe('My edits');
         expect(screen.findByTestId('review-field-summary')).toBe(editor);
         await screen.pressByTestIdAsync('review-keep-edits');
+        expect(screen.findByTestId('review-newer')).toBeNull();
         await screen.pressByTestIdAsync('review-use');
-        expect(onComplete).toHaveBeenLastCalledWith({ mode: 'use_result', expectedContentRevision: '7',
+        expect(onComplete).toHaveBeenLastCalledWith({ mode: 'use_result', expectedContentRevision: '9',
             value: { summary: 'My edits', approved: false, retained: { exact: [1, 2] } } });
-        await publish(progress({ result: { summary: 'Latest', approved: true } }), '9');
+        await publish(progress({ result: { summary: 'Latest', approved: true } }), '10');
+        expect(screen.findByTestId('review-newer')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-use');
+        expect(onComplete).toHaveBeenLastCalledWith({ mode: 'use_result', expectedContentRevision: '9',
+            value: { summary: 'My edits', approved: false, retained: { exact: [1, 2] } } });
         await screen.pressByTestIdAsync('review-use-newer');
         expect(screen.findByTestId('review-field-summary')).toBeNull();
         await screen.pressByTestIdAsync('review-use');
-        expect(onComplete).toHaveBeenLastCalledWith({ mode: 'use_result', expectedContentRevision: '9' });
+        expect(onComplete).toHaveBeenLastCalledWith({ mode: 'use_result', expectedContentRevision: '10' });
         expect(screen.getTextContent()).toContain('Latest');
     });
     it('preserves an invalid raw buffer when inspecting and keeping a newer result', async () => {
@@ -367,5 +442,11 @@ describe('WorkflowReviewCard', () => {
         expect(primary).not.toBeNull();
         expect(scroll).not.toBeNull();
         expect(scroll?.findAll((node) => node.props.testID === 'review-primary')).toHaveLength(0);
+    });
+    it('scrolls one thing in the pane: the value and its facts, while the decision stays reachable (owner 09.16.46)', async () => {
+        const { screen } = await mount({ primaryActionPlacement: 'footer', belowResult: <></> });
+        expect(screen.findByTestId('review-scroll')).not.toBeNull();
+        // A second bounded scroller inside the first would clip the value with nothing to reach it.
+        expect(screen.findByTestId('review-preview-scroll')?.props.style).not.toEqual(expect.objectContaining({ maxHeight: expect.any(Number) }));
     });
 });

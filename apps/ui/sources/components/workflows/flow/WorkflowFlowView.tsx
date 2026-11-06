@@ -19,6 +19,7 @@ import {
     describeWorkflowInvocationAttempt,
     describeWorkflowInvocationLifecycle,
     type WorkflowInvocationLifecycleContext,
+    workflowLifecycleAwaitsDecision,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -379,7 +380,7 @@ export function WorkflowFlowView(props: Readonly<{
                                     blockKind={node.kind}
                                     context={props.invocationStatusContext}
                                     chrome="plain"
-                                    markerOnly={runState.lifecycle === 'completed'}
+                                    markerOnly={runState.lifecycle === 'completed' || workflowLifecycleAwaitsDecision(runState.lifecycle)}
                                 />}
                             </View>
                         ) : stateLabel === null ? (props.notStartedLabel !== undefined && props.runStates !== undefined && FLOW_MARKED_KINDS.has(node.kind) && !node.observed && occurrencesOf(node).length === 0

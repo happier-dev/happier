@@ -1062,7 +1062,15 @@ describe('workflow editor body', () => {
         expect(screen.getTextContent()).toContain('~/project');
     });
 
-    it('leads with identity and one primary Run now; Save is the status, rare operations are in ⋯', async () => {
+    it('offers Start from an example only while the document is untouched (owner 09.16.21)', async () => {
+        const harness = await loadHarness();
+        const pristine = await renderBody(harness, { draft: buildDraft(harness, { text: '' }) });
+        expect(pristine.findByTestId('workflow-editor-add-root-examples')).not.toBeNull();
+        const authored = await renderBody(harness, { draft: buildDraft(harness, { text: 'Check the build' }) });
+        expect(authored.findByTestId('workflow-editor-add-root-examples')).toBeNull();
+    });
+
+    it('leads with identity and one primary; rare operations are in ⋯', async () => {
         const harness = await loadHarness();
         const exported = vi.fn();
         const screen = await renderBody(harness, {
@@ -1096,13 +1104,14 @@ describe('workflow editor body', () => {
                 body: [{ kind: 'step', id: 'inside', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
             }],
         });
-        const screen = await renderBody(harness, { draft, onChange: changed });
+        const screen = await renderBody(harness, { draft: { ...draft, inputs: [{ name: 'rounds', valueType: 'number', required: true }] }, onChange: changed });
 
         // The document reads the loop as a sentence; its options open beside it.
         expect(screen.getTextContent()).toContain('workflows.page.inspector.repeatTimes');
         await screen.pressByTestIdAsync('workflow-editor-loop-repeat-summary');
-        const source = dropdownField(screen, 'workflow-editor-inspector-loop-repeat-count-input-0-kind');
-        await act(async () => { source.props.onSelect('input'); });
+        const source = dropdownField(screen, 'workflow-editor-inspector-loop-repeat-count-input-0-value');
+        const input = source.props.items.find((item) => item.category === 'workflows.condition.fromRun')!;
+        await act(async () => { source.props.onSelect(input.id as string); });
         expect(changed.mock.calls[0]?.[0].blocks[0].repetition.count.kind).toBe('input');
     });
 
@@ -1490,8 +1499,9 @@ describe('workflow editor body', () => {
         // The binding editors show on the selected step (DESIGN-13).
         const screen = await renderBody(harness, { draft, onChange: changed, selectedBlockId: 'implement' });
 
-        const source = dropdownField(screen, 'workflow-editor-step-implement-input-0-kind');
-        await act(async () => { source.props.onSelect('workspace'); });
+        const source = dropdownField(screen, 'workflow-editor-step-implement-input-0-value');
+        const folder = source.props.items.find((item) => item.category === 'workflows.condition.whereItWorks')!;
+        await act(async () => { source.props.onSelect(folder.id as string); });
         expect(changed.mock.calls[0]?.[0].blocks[1].input).toEqual([{
             kind: 'workspace',
             producer: { blockId: 'analyze', scope: { kind: 'current' } },
@@ -2323,7 +2333,7 @@ describe('workflow editor body', () => {
         expect(draft.blocks[0]).toHaveProperty('onlyWhen');
         // The document states the condition quietly; it is edited in Step options only.
         expect(screen.findByTestId('workflow-editor-step-analyze-only-when')).not.toBeNull();
-        await screen.pressByTestIdAsync('workflow-editor-inspector-condition-remove-condition');
+        await screen.pressByTestIdAsync('workflow-editor-inspector-condition-remove');
         expect(draft.blocks[0]).not.toHaveProperty('onlyWhen');
     });
 

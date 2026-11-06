@@ -1,14 +1,18 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, type WorkflowInvocationLifecycleV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, type WorkflowAuthoredInputV1, type WorkflowInvocationLifecycleV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { workflowInputTitle, type WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import { resolveHappierChoiceControl, resolveHappierStateAnnouncement } from '@happier-dev/plugin-ui/presentation';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -19,13 +23,16 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { Text } from '@/components/ui/text/Text';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-import { workStatusSurfaceStyle } from '@/components/work/status/workStatusTreatment';
+import { AgentInputDocumentPreviewText } from '@/components/sessions/agentInput/components/AgentInputDocumentPreviewText';
+import { projectAuthoringDocumentPreview } from '@/components/sessions/authoring/authoringDocumentPreview';
 import { projectWorkflowRunInputFields } from '@/sync/domains/workflows/workflowAuthoring';
 import { formatWorkflowInputValue, parseWorkflowInputTextDraft } from '@/sync/domains/workflows/workflowInputText';
 import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanReview';
 import { t } from '@/text';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { useWorkflowCardModal } from './useWorkflowCardModal';
+import { readWorkflowResultRows } from '../presentation/workflowResultReading';
+import { describeWorkflowInvocationLifecycle } from '../presentation/workflowLifecyclePresentation';
 
 export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string }>;
 export type WorkflowReviewReading = Readonly<{ value: JsonValue | undefined; revision: string }>;
@@ -71,14 +78,30 @@ export type WorkflowReviewCardProps = Readonly<{
     machineName?: string | null;
     resultSourceLabel?: string;
     primaryActionPlacement?: 'inline' | 'footer';
+    /** A sheet's height is its owner's: the card fills it rather than sizing to its content. */
+    fillHeight?: boolean;
+    /** The step's other facts, scrolled with the value above the pinned decision. */
+    belowResult?: React.ReactNode;
     testIDPrefix?: string;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
     root: { minWidth: 0 },
     filled: { flex: 1, minHeight: 0 },
+    /** Sized to its content inside a bounded region, and the first thing to give way when the region is short. */
+    fitted: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
     actions: { gap: theme.space.s8, alignItems: 'stretch' },
+    /** The decision: the primary, its one consequence, then the quiet choices. */
+    decision: { gap: theme.space.s8, paddingTop: theme.space.s12, alignItems: 'stretch' },
+    quietActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', columnGap: theme.space.s4 },
     head: { gap: theme.space.s4 },
+    /** The one place that says this needs the person: amber on the word and the hand, nothing else. */
+    stateLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s6, paddingBottom: theme.space.s12 },
+    stateWord: { color: theme.colors.state.warning.foreground },
+    /** Where the value came from, with its Copy and Expand, directly above it. */
+    valueHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, paddingBottom: theme.space.s4, minHeight: theme.space.s32 },
+    valueSource: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
     secondary: { color: theme.colors.text.secondary },
     /** A value read back (a step's input, a published result): primary ink in both themes. */
     value: { color: theme.colors.text.primary },
@@ -130,6 +153,16 @@ function isLongTextField(schema: PluginJsonSchemaV2, value: unknown): boolean {
 type ReviewValueProps = Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined; testIDPrefix: string }>;
 
 /**
+ * Provider rendering and resolved values belong to execution custody. The reading projection is the
+ * authored document itself, drawn by the composer's own picture: its words with each reference as the
+ * inline chip the editor shows, never a separate row.
+ */
+function WorkflowAuthoredInputReading({ document, testID }: Readonly<{ document: WorkflowAuthoredInputV1['document']; testID: string }>): React.ReactElement {
+    const preview = projectAuthoringDocumentPreview(document);
+    return <View testID={testID}><AgentInputDocumentPreviewText value={preview.text} references={preview.references} placeholder="" fieldInset={false} /></View>;
+}
+
+/**
  * Both the bounded reading and full inspection render the same exact value with the established viewers;
  * a settled or stopped attempt's detail reads its answer through the same rows (DESIGN-16 D5).
  */
@@ -137,27 +170,19 @@ export function WorkflowReviewValue({ value, contract, testIDPrefix: prefix }: R
     // A step's authored input reads as the words it was given, never as its wire envelope (DESIGN-17 R1).
     const authored = contract === undefined ? WorkflowAuthoredInputV1Schema.safeParse(value) : null;
     if (authored?.success) {
-        const text = authored.data.renderedText ?? authored.data.document.text;
-        return <>
-            <SectionContentRow><Text selectable style={styles.value} testID={`${prefix}-value`}>{text}</Text></SectionContentRow>
-            {authored.data.input.map((entry, index) => <SectionContentRow key={index}>
-                <Text selectable style={styles.value} testID={`${prefix}-value-input-${index}`}>{formatWorkflowInputValue(entry)}</Text>
-            </SectionContentRow>)}
-        </>;
+        return <SectionContentRow><WorkflowAuthoredInputReading document={authored.data.document} testID={`${prefix}-value`} /></SectionContentRow>;
     }
     const plan = contract?.kind === 'json' ? readWorkflowPlanResult(value) : null;
-    const fields = objectValue(value);
-    // Read authored fields in declaration order, then retain any additional published values.
-    const fieldNames = fields ? [...new Set([
-        ...Object.keys(contract?.kind === 'json' ? contract.schema.properties ?? {} : {}),
-        ...Object.keys(fields),
-    ])].filter(name => Object.hasOwn(fields, name)) : [];
-    return plan ? <SectionContentRow><MarkdownView testID={`${prefix}-plan-document`} markdown={plan.document} /></SectionContentRow>
-        : fields ? <>{fieldNames.map(name =>
-            <Item key={name} title={(contract?.kind === 'json' ? contract.schema.properties?.[name]?.title : undefined) ?? name}
-                showChevron={false} accessoryLayout="stacked"
-                rightElement={<Text selectable style={styles.value} testID={`${prefix}-value-${name}`}>{formatWorkflowInputValue(fields[name])}</Text>} />)}</>
-            : <SectionContentRow><Text selectable style={styles.value} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>;
+    if (plan) return <SectionContentRow><MarkdownView testID={`${prefix}-plan-document`} markdown={plan.document} /></SectionContentRow>;
+    // A structured result reads as label/value rows (lab run-A_completed): fields by their human names, a list
+    // one row per item. Raw serialization is only ever behind Copy.
+    const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
+        .map(([name, schema]) => [name, schema.title])) : undefined;
+    const rows = readWorkflowResultRows(value, titles);
+    return rows ? <>{rows.map(row =>
+        <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
+            rightElement={<Text selectable style={styles.value} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />)}</>
+        : <SectionContentRow><Text selectable style={styles.value} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>;
 }
 
 function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {
@@ -169,6 +194,7 @@ function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {
 
 /** Exact-result presentation. The caller owns drafts, Actions, authority and Plan admission. */
 export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactElement {
+    const paneHeaderScroll = usePaneHeaderScrollSink();
     const prefix = props.testIDPrefix ?? 'workflow-review';
     const { theme } = useUnistyles();
     // Reading a publication does not silently swap the value under the person's next decision.
@@ -176,8 +202,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const reading = props.reading ?? localReading;
     const setReading = props.onChangeReading ?? setLocalReading;
     const [openField, setOpenField] = React.useState<string | null>(null);
-    const [keptNewerRevision, setKeptNewerRevision] = React.useState<string | null>(null);
     const [fullValue, setFullValue] = React.useState<ReviewValueProps | null>(null);
+    const writeClipboard = useClipboardWrite();
     const closeFullValue = React.useCallback(() => setFullValue(null), []);
     const fullPlan = fullValue?.contract?.kind === 'json' ? readWorkflowPlanResult(fullValue.value) : null;
     useWorkflowCardModal({ open: fullValue !== null, component: WorkflowReviewFullValue, props: fullValue,
@@ -214,14 +240,14 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const plan = !props.waitForYou && props.contract?.kind === 'json' && shown !== undefined ? readWorkflowPlanResult(shown) : null;
     const planValue = plan !== null && valid ? shown : undefined;
     const issues = validation && !validation.ok ? validation.issues ?? [] : [];
+    // A held result needs no title: the state line says what this is, and the value is what it shows.
     const title = props.waitForYou ? props.waitIdentity ? props.waitIdentity.title : t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
-        : plan ? t('workflows.review.planTitle') : valid ? t('workflows.review.title') : t('workflows.review.noValue');
+        : plan ? t('workflows.review.planTitle') : !valid ? t('workflows.review.noValue') : held ? undefined : t('workflows.review.title');
     const updateText = (text: string) => props.onChangeDraft({ text, contentRevision: revision });
     const showNewer = () => {
         if (props.pending === true) return;
         setReading({ value: props.progress.result, revision: props.contentRevision });
         props.onChangeDraft(undefined);
-        setKeptNewerRevision(null);
     };
     const use = async () => {
         if (blocked || !held || (!valid && !noValueNeeded)) return;
@@ -273,8 +299,21 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             itemTrigger={{ title: t('workflows.input.result'), subtitle: valueError ?? undefined, itemProps: { disabled: blocked } }}
             items={decisionChoices.map((value) => ({ id: value, title: value }))}
             selectedId={typeof shown === 'string' ? shown : null} onSelect={selectDecision} />;
-    const primaryAction = held && !props.readOnly ? <SectionContentRow testID={`${prefix}-primary`} showDivider={false}>
-        <View style={styles.actions}>
+    // The label says what happens, so the choice needs no paragraph; its accessible hint keeps the detail.
+    const quietActions = !props.readOnly && held && !props.waitForYou ? <View testID={`${prefix}-quiet-actions`} style={styles.quietActions}>
+        {editing || shown === undefined ? null : <RoundButton testID={`${prefix}-edit`} size="small" display="inverted"
+            title={t('common.edit')} accessibilityLabel={t('workflows.review.editResult')} disabled={blocked} onPress={seedEdit} />}
+        {editing ? <RoundButton testID={`${prefix}-cancel`} size="small" display="inverted"
+            title={t('common.cancel')} disabled={blocked} onPress={() => { if (!blocked) props.onChangeDraft(undefined); }} /> : null}
+        {props.onDiscuss ? <RoundButton testID={`${prefix}-discuss`} size="small" display="inverted"
+            title={t('workflows.review.discuss')} accessibilityHint={t('workflows.review.discussBody')}
+            disabled={props.pending} onPress={props.onDiscuss} /> : null}
+        {props.canGenerate !== false && !generatePrimary ? <RoundButton testID={`${prefix}-generate`} size="small" display="inverted"
+            title={t('workflows.review.generate')} titleNumberOfLines="complete"
+            accessibilityHint={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')}
+            disabled={blocked} onPress={generate} /> : null}
+    </View> : null;
+    const primaryAction = held && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
             <RoundButton testID={`${prefix}-${generatePrimary ? 'generate' : 'use'}`} size="normal"
                 // Pending is busy, not unavailable: the primary keeps its look with the spinner in it.
                 disabled={props.pending !== true && (blocked || (!generatePrimary && !valid && !noValueNeeded))} loading={props.pending} titleNumberOfLines="complete"
@@ -285,18 +324,34 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 accessibilityRole={hasFieldError ? 'alert' : undefined}>{validationReadout}</Text> : null}
             {!noValueNeeded ? <Text style={[styles.secondary, styles.footnote]}>{generatePrimary ? props.parentPaused ? t('workflows.review.startsResume')
                 : t('workflows.review.generateBody') : plan ? t('workflows.review.usePlanBody') : t('workflows.review.useBody')}</Text> : null}
-            {editing && !props.waitForYou ? <RoundButton testID={`${prefix}-cancel`} size="small" display="inverted"
-                title={t('common.cancel')} disabled={blocked} onPress={() => { if (!blocked) props.onChangeDraft(undefined); }} /> : null}
-            {props.parentPaused ? <Text style={styles.secondary}>{t('workflows.review.acceptedPaused')}</Text> : null}
-        </View>
-    </SectionContentRow> : null;
-    // The hold card is one page section: its title and state line above, one sheet that carries the
-    // shared needs-you ring and tint while the hold waits (07 §3 "Status quiet, one tone owner").
-    const body = <ListPresentationProvider value="page"><ItemGroup title={title} description={props.waitForYou
+            {quietActions}
+    </View> : null;
+    // The state line says it needs the person; the sheet stays neutral so the result reads as content
+    // (lab round 1105 R1). Copy and the full reading sit on the value's own line.
+    const headerActions = shown === undefined || editing ? null : <View style={styles.headerActions}>
+        <IconButton testID={`${prefix}-copy`} variant="plain" iconName="copy" accessibilityLabel={t('common.copy')} tooltip={t('common.copy')}
+            onPress={() => { void writeClipboard(serializeWorkflowReviewValue(shown, props.contract)); }} />
+        <IconButton testID={`${prefix}-show-full`} variant="plain" iconName="arrows-out"
+            accessibilityLabel={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
+            tooltip={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
+            onPress={() => setFullValue({ value: shown, contract: props.contract, testIDPrefix: `${prefix}-full` })} />
+    </View>;
+    const heldReading = held && !props.waitForYou && !editing;
+    const stateLine = heldReading ? <View testID={`${prefix}-state`} style={styles.stateLine}>
+        <Icon name="hand" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
+        <Text variant="body" emphasis="semiBold" style={styles.stateWord}>{describeWorkflowInvocationLifecycle('waiting_for_review').label}</Text>
+        <Text variant="body" style={styles.secondary}>{t('workflows.review.heldConsequence')}</Text>
+    </View> : null;
+    const valueHead = heldReading ? <View style={styles.valueHead}>
+        <Text testID={`${prefix}-source`} variant="meta" numberOfLines={1} style={styles.valueSource}>{props.resultSourceLabel ?? ''}</Text>
+        {headerActions}
+    </View> : null;
+    // Contained: the sheet shares its edges with the state line and the decision above and below it.
+    const body = <ListPresentationProvider value="page" pageInsets="contained">{stateLine}{valueHead}<ItemGroup constrainToContentWidth={false} {...(title === undefined ? { header: 'none' as const } : { title })}
+            {...(heldReading ? {} : { action: headerActions })} description={props.waitForYou
             ? props.waitIdentity ? props.waitIdentity.title === undefined ? undefined
                 : [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
-            : editing ? t('workflows.review.editsBody') : held ? t('workflows.review.heldBody') : undefined}
-            containerStyle={held ? workStatusSurfaceStyle('attention') : undefined}>
+            : editing ? t('workflows.review.editsBody') : undefined}>
             {props.waitForYou && props.waitIdentity ? <SectionContentRow>
                 {/* The card's head, as the lab's hold header reads: what is asked first, then what waiting means. */}
                 <View style={styles.head}>
@@ -304,11 +359,14 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     <Text style={styles.secondary}>{t('workflows.review.waitBody')}</Text>
                 </View>
             </SectionContentRow> : null}
-            {changed && (!supplied || keptNewerRevision !== props.contentRevision) ? <SectionContentRow testID={`${prefix}-newer`}>
+            {changed ? <SectionContentRow testID={`${prefix}-newer`}>
                 <Text accessibilityLiveRegion="polite">{t('workflows.review.newer')}</Text>
                 <View style={styles.actions}>{supplied ? <>
                     <RoundButton testID={`${prefix}-keep-edits`} title={t('workflows.review.keepMyEdits')} size="small"
-                        display="secondary" disabled={props.pending === true} onPress={() => { if (props.pending !== true) setKeptNewerRevision(props.contentRevision); }} />
+                        display="secondary" disabled={props.pending === true} onPress={() => {
+                            // Keep explicitly acknowledges this publication without replacing the person's bytes.
+                            if (props.pending !== true && props.draft) props.onChangeDraft({ ...props.draft, contentRevision: props.contentRevision });
+                        }} />
                     <RoundButton testID={`${prefix}-use-newer`} title={t('workflows.review.useNewer')} size="small"
                         display="inverted" disabled={props.pending === true} onPress={showNewer} />
                 </> : <RoundButton testID={`${prefix}-show-newer`} title={t('workflows.review.showNewer')} size="small"
@@ -364,7 +422,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     error={valueError} editable={!blocked} multiline monospace={props.contract !== undefined && props.contract.kind !== 'text'} />} />)
                 : shown !== undefined ? <>
                     <View testID={`${prefix}-preview`} style={styles.preview}>
-                        <ScrollView testID={`${prefix}-preview-scroll`} style={styles.previewScroll} nestedScrollEnabled
+                        <ScrollView testID={`${prefix}-preview-scroll`} style={props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll} nestedScrollEnabled
                             keyboardShouldPersistTaps="handled" onLayout={previewFades.onViewportLayout}
                             onContentSizeChange={previewFades.onContentSizeChange} onScroll={previewFades.onScroll} scrollEventThrottle={16}>
                             <WorkflowReviewValue value={shown} contract={props.contract} testIDPrefix={prefix} />
@@ -372,11 +430,10 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                         <ScrollEdgeFades color={held ? theme.colors.state.warning.background : theme.colors.surface.base}
                             edges={previewFades.visibility} />
                     </View>
-                    <Item testID={`${prefix}-show-full`} title={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
-                        onPress={() => setFullValue({ value: shown, contract: props.contract, testIDPrefix: `${prefix}-full` })} />
                 </> : null}
-            {shown !== undefined && !editing ? <Item testID={`${prefix}-copy`} title={t('common.copy')}
-                subtitle={props.resultSourceLabel} copy={serializeWorkflowReviewValue(shown, props.contract)} showChevron={false} /> : null}
+            {shown !== undefined && !editing && !heldReading && props.resultSourceLabel ? <SectionContentRow testID={`${prefix}-source`}>
+                <Text style={styles.secondary}>{props.resultSourceLabel}</Text>
+            </SectionContentRow> : null}
             {plan?.proposal !== undefined && props.planProposalPreview ? <SectionContentRow>
                 <Text>{t('workflows.review.proposal')}</Text>{props.planProposalPreview}
             </SectionContentRow> : null}
@@ -392,17 +449,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 <Text testID={`${prefix}-action-error`} style={styles.error}
                     {...resolveHappierStateAnnouncement(props.problem.accessibilitySemantics)}>{props.problem.message}</Text>
             </SectionContentRow> : null}
-            {props.primaryActionPlacement !== 'footer' ? primaryAction : null}
-            {!props.readOnly && held && !editing && !props.waitForYou ? <Item title={t('workflows.review.editResult')} showChevron={false}
-                rightElement={<RoundButton testID={`${prefix}-edit`} title={t('common.edit')} size="small" display="secondary" disabled={blocked} onPress={seedEdit} />} /> : null}
-            {!props.readOnly && held && !props.waitForYou && props.canGenerate !== false && !generatePrimary ? <Item title={t('workflows.review.generate')}
-                subtitle={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')} showChevron={false}
-                accessoryLayout="adaptive" rightElement={<RoundButton testID={`${prefix}-generate`} title={t('workflows.review.generate')}
-                    titleNumberOfLines="complete" size="small" display={!valid && !editing ? 'default' : 'secondary'} disabled={blocked} onPress={generate} />} /> : null}
-            {!props.readOnly && held && !props.waitForYou && props.onDiscuss ? <Item title={t('workflows.review.discuss')}
-                subtitle={t('workflows.review.discussBody')} showChevron={false}
-                rightElement={<RoundButton testID={`${prefix}-discuss`} title={t('workflows.review.discuss')} size="small" display="inverted"
-                    disabled={props.pending} onPress={props.onDiscuss} />} /> : null}
+            {props.primaryActionPlacement !== 'footer' && primaryAction !== null ? <SectionContentRow showDivider={false}>{primaryAction}</SectionContentRow> : null}
             {!props.readOnly && planValue !== undefined && props.onRunPlan && props.planProposalValid === true && !props.startedPlanRunId ? <Item
                 title={t(props.earlierPlanRunId ? 'workflows.review.runNewProposal' : 'workflows.review.runPlan')} subtitle={t('workflows.review.runPlanBody')} showChevron={false} accessoryLayout="adaptive"
                 rightElement={<RoundButton testID={`${prefix}-plan-run`} title={t(props.earlierPlanRunId ? 'workflows.review.runNewProposal' : 'workflows.review.runPlan')} titleNumberOfLines="complete" size="small" display="secondary" disabled={blocked}
@@ -412,10 +459,14 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 rightElement={<RoundButton testID={`${prefix}-plan-edit`} title={t('common.edit')} size="small" display="secondary" disabled={blocked}
                     onPress={async () => { if (!blocked) await props.onEditPlan?.(planValue, revision); }} />} /> : null}
         </ItemGroup></ListPresentationProvider>;
-    const filledFooter = props.primaryActionPlacement === 'footer' && !props.waitForYou;
-    return <View testID={prefix} style={[styles.root, filledFooter ? styles.filled : null]}>
-        {filledFooter ? <ScrollView testID={`${prefix}-scroll`} style={styles.filled}
-            keyboardShouldPersistTaps="handled">{body}</ScrollView> : body}
+    // A sheet sizes a Wait to its content and scrolls it as a whole; a pane pins every decision.
+    const pinned = props.primaryActionPlacement === 'footer' && (!props.waitForYou || props.fillHeight !== true);
+    const fill = props.fillHeight === true ? styles.filled : styles.fitted;
+    return <View testID={prefix} style={[styles.root, pinned ? fill : null]}>
+        {pinned ? <ScrollView testID={`${prefix}-scroll`} style={fill}
+            // The body under a pane's header: its scroll drives that header's shade.
+            onScroll={paneHeaderScroll ? (event) => paneHeaderScroll.reportTopDistance(event.nativeEvent.contentOffset.y) : undefined}
+            scrollEventThrottle={16} keyboardShouldPersistTaps="handled">{body}{props.belowResult}</ScrollView> : <>{body}{props.belowResult}</>}
         {props.primaryActionPlacement === 'footer' ? primaryAction : null}
     </View>;
 }

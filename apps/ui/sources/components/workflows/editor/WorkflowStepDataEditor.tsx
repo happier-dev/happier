@@ -1,20 +1,14 @@
+import { formatWorkflowResultFieldType, formatWorkflowValueReference, workflowResultFieldText } from '../presentation/workflowValuePresentation';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import type { JsonValue } from '@happier-dev/protocol';
-import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
-import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { WorkflowAuthoredResultReference, WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowAuthoredResultReference, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
-import {
-    projectWorkflowResultFields,
-    type WorkflowResultField,
-    type WorkflowResultFieldType,
-    type WorkflowResultListItemType,
-} from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
+import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -23,37 +17,13 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { focusFirstEntryWithin } from '@/keyboard/webOverlayFocusContainment';
-import {
-    listWorkflowProducerOptions,
-    resolveWorkflowReferenceScopeFacts,
-} from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
-import { en } from '@/text/translations/en';
 
 import { listWorkflowDeclaredResultFields } from '@/components/workflows/flow/workflowFlowProjection';
 import { workflowEditorStyles } from './workflowEditorStyles';
-
-type ItemReferenceField = Extract<WorkflowValueReference, { kind: 'item' }>['field'];
-type IterationReferenceField = Extract<WorkflowValueReference, { kind: 'iteration' }>['field'];
-
-/** The canonical field vocabulary of each loop-scoped reference kind, in the schema's order. */
-const ITEM_REFERENCE_FIELDS: readonly ItemReferenceField[] = ['value', 'index', 'position', 'count'];
-const ITERATION_REFERENCE_FIELDS: readonly IterationReferenceField[] = ['index', 'position', 'count', 'stopReason'];
-
-/** The same human field name reads an Action row, a child input and a reference. */
-export function formatWorkflowFieldLabel(name: string, title?: string): string {
-    if (Object.hasOwn(en.workflows.page.fields, name)) {
-        return t(`workflows.page.fields.${name as keyof typeof en.workflows.page.fields}`);
-    }
-    // An extension's declared title is presentation metadata; preserve it.
-    // Undeclared bindings still need a readable label while staying repairable.
-    const label = (title ?? name).replace(/\s*\((?:json|string|number|boolean|object|array)\)\s*$/iu, '').trim()
-        .replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ');
-    return label.length === 0 ? t('workflows.input.label') : label[0]!.toLocaleUpperCase() + label.slice(1);
-}
+import { WorkflowReferenceRawPathInput, WorkflowValuePicker } from './WorkflowValuePicker';
 
 function literalText(value: JsonValue): string {
     return typeof value === 'string' ? value : JSON.stringify(value);
@@ -61,12 +31,6 @@ function literalText(value: JsonValue): string {
 
 function parseLiteral(value: string): JsonValue {
     try { return JSON.parse(value) as JsonValue; } catch { return value; }
-}
-
-/** One field-path parser for input and result bindings, including the workflow's final result. */
-function parseWorkflowFieldPath(value: string): (string | number)[] {
-    return value.trim().length === 0 ? []
-        : value.split('.').filter(Boolean).map(part => /^(0|[1-9][0-9]*)$/u.test(part) ? Number(part) : part);
 }
 
 const WHOLE_RESULT = 'whole';
@@ -116,137 +80,6 @@ export function WorkflowResultFieldPathInput(props: Readonly<{
     </>;
 }
 
-function WorkflowReferenceRawPathInput<Reference extends Extract<WorkflowValueReference, { kind: 'result' | 'input' }>>(props: Readonly<{
-    reference: Reference;
-    onChange: (reference: Reference) => void;
-    testID: string;
-    style?: React.ComponentProps<typeof TextInput>['style'];
-}>): React.ReactElement {
-    const sourceIdentity = props.reference.kind === 'result' ? props.reference.producer : props.reference.name;
-    const source = JSON.stringify([sourceIdentity, props.reference.path ?? []]);
-    const pathText = (props.reference.path ?? []).join('.');
-    const [buffer, setBuffer] = React.useState({ source, value: pathText });
-    React.useEffect(() => {
-        setBuffer(current => current.source === source ? current : { source, value: pathText });
-    }, [source, pathText]);
-    return <TextInput
-        testID={props.testID}
-        style={props.style ?? workflowEditorStyles.inlineValue}
-        value={buffer.value}
-        autoCapitalize="none" autoCorrect={false}
-        accessibilityLabel={t('workflows.finalOutput.fieldPath')}
-        placeholder={t('workflows.finalOutput.fieldPath')}
-        onChangeText={(value) => {
-            const path = parseWorkflowFieldPath(value);
-            setBuffer({ source: JSON.stringify([sourceIdentity, path]), value });
-            props.onChange({ ...props.reference, path });
-        }}
-    />;
-}
-
-function scopeKey(scope: WorkflowReferenceScope): string {
-    if (scope.kind === 'outer') return `outer-${scope.levels}`;
-    if (scope.kind === 'previous_iteration') return `previous-${scope.loopBlockId}`;
-    return 'current';
-}
-
-function scopeLabel(scope: WorkflowReferenceScope): string {
-    if (scope.kind === 'outer') return t('workflows.input.scopeOuter', { levels: scope.levels });
-    if (scope.kind === 'previous_iteration') return t('workflows.input.scopePreviousIteration');
-    return t('workflows.input.scopeCurrent');
-}
-
-function referenceKindLabel(kind: WorkflowValueReference['kind']): string {
-    if (kind === 'literal') return t('workflows.condition.valuePlaceholder');
-    if (kind === 'input') return t('workflows.input.label');
-    // A step's result is not the workflow's Final output; only the one root
-    // binding is, so the reference kind carries its own name.
-    if (kind === 'result') return t('workflows.input.result');
-    if (kind === 'workspace') return t('workflows.workspace.title');
-    if (kind === 'item') return t('workflows.input.currentItem');
-    return t('workflows.input.iteration');
-}
-
-/**
- * A reference read as words ("Workflow input files", "Check the build result ·
- * verdict", "Item value"): the one reading Step options sentences, container
- * headings and condition summaries share, so a reference is never worded two
- * ways.
- */
-export function formatWorkflowValueReference(draft: WorkflowEditorDraft, reference: WorkflowValueReference, fieldName?: string): string {
-    const blockLabel = (blockId: string) => {
-        const block = findWorkflowBlock(draft, blockId);
-        return block === null ? t('workflows.contentUnavailable') : workflowBlockReferenceLabel(block);
-    };
-    const withPath = (label: string, path: readonly (string | number)[] | undefined) => (
-        path === undefined || path.length === 0 ? label : `${label} · ${path.map(part => typeof part === 'number' ? String(part) : formatWorkflowFieldLabel(part)).join(' · ')}`
-    );
-    // A step's name already names one step, so a result read from an enclosing list reads as that
-    // step ("Gather changes · Issues", lab E1); only the previous round is another value of it. The
-    // producer select still says each scope (its option subtitles), where the choice is made.
-    const producerLabel = (producer: Readonly<{ blockId: string; scope: WorkflowReferenceScope }>) => (
-        producer.scope.kind === 'previous_iteration' ? `${blockLabel(producer.blockId)} · ${scopeLabel(producer.scope)}` : blockLabel(producer.blockId)
-    );
-    switch (reference.kind) {
-        case 'literal':
-            // Only a declared Action field gives a literal execution meaning.
-            // An arbitrary authored string or object must keep its own value.
-            if (fieldName === 'target' && reference.value !== null && typeof reference.value === 'object'
-                && !Array.isArray(reference.value) && Object.keys(reference.value).length === 1
-                && Reflect.get(reference.value, 'kind') === 'detached') return t('workflows.page.sections.aBackgroundRun');
-            if (fieldName === 'permissionMode' && typeof reference.value === 'string') {
-                const mode = parsePermissionIntentAlias(reference.value);
-                if (mode === 'read-only') return t('executionRuns.newRun.permissionModes.readOnly');
-                if (mode === 'default') return t('executionRuns.newRun.permissionModes.default');
-            }
-            return formatWorkflowLiteralValue(reference.value);
-        case 'input':
-            return withPath(t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) }), reference.path);
-        case 'result':
-            // A field reads as its step and field ("Check the fix · Fixed", lab E1); the whole result keeps its noun.
-            return reference.path.length === 0
-                ? t('workflows.input.previousResult', { block: producerLabel(reference.producer) })
-                : withPath(producerLabel(reference.producer), reference.path);
-        case 'loop_trailing_count':
-            return t('workflows.input.trailingCount', {
-                source: withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path),
-                value: formatWorkflowLiteralValue(reference.equals),
-            });
-        case 'workspace':
-            return `${t('workflows.workspace.title')} · ${producerLabel(reference.producer)} · ${t(reference.field === 'directory' ? 'workflows.workspace.projectCheckout' : 'workflows.input.checkoutRoot')}`;
-        case 'item':
-            return withPath(t(`workflows.input.itemField.${reference.field}`), reference.path);
-        case 'iteration':
-            return t(`workflows.input.iterationField.${reference.field}`);
-        case 'session_context':
-            return t('workflows.input.sessionContext', { turns: reference.recentTurns });
-        case 'session_context_field':
-            return reference.field === 'usage.tokensUsed' ? t('workflows.input.tokensUsed') : t('workflows.input.goalTokenBudget');
-        default:
-            return t('workflows.input.unavailableValue');
-    }
-}
-
-/** Literal data is readable too; typed loop outcomes never leak their wire objects. */
-function formatWorkflowLiteralValue(value: JsonValue): string {
-    const outcome = WorkflowLoopOutcomeV1Schema.safeParse(value);
-    if (outcome.success) {
-        switch (outcome.data.kind) {
-            case 'stop_condition': return outcome.data.arm === undefined ? t('workflows.input.stopCondition')
-                : t('workflows.input.stopConditionArm', { arm: outcome.data.arm + 1 });
-            case 'exhausted': return t('workflows.input.roundLimit', { rounds: outcome.data.rounds });
-            case 'decision': return `${t('workflows.input.decision')} · ${outcome.data.value}${outcome.data.reason ? ` · ${outcome.data.reason}` : ''}`;
-        }
-    }
-    if (typeof value === 'string') return `“${value}”`;
-    if (typeof value === 'boolean') return t(value ? 'common.yes' : 'common.no');
-    if (value === null) return t('workflows.page.inspector.none');
-    if (typeof value === 'number') return String(value);
-    if (Array.isArray(value)) return value.length === 0 ? t('workflows.page.inspector.none') : value.map(formatWorkflowLiteralValue).join(', ');
-    const entries = Object.entries(value);
-    return entries.length === 0 ? t('workflows.page.inspector.none')
-        : entries.map(([name, nested]) => `${formatWorkflowFieldLabel(name)}: ${formatWorkflowLiteralValue(nested)}`).join('; ');
-}
 
 /**
  * The document's reference token, including in a loop/condition sentence. A literal is the value
@@ -448,34 +281,6 @@ function formatWorkflowResultFieldWord(name: string): string {
     return /^[a-z][A-Za-z\d_\-.]*$/u.test(name) ? words.toLocaleLowerCase() : words;
 }
 
-export const WORKFLOW_RESULT_FIELD_TYPE_LABEL_KEY = {
-  boolean: 'typeBoolean',
-  text: 'typeText',
-  number: 'typeNumber',
-  choice: 'typeChoice',
-  list: 'typeList',
-} as const satisfies Record<WorkflowResultFieldType, string>;
-const ITEMS_LABEL_KEY = {
-  text: 'itemsText',
-  number: 'itemsNumber',
-  boolean: 'itemsBoolean',
-} as const satisfies Record<WorkflowResultListItemType, string>;
-
-export function workflowResultFieldText(key: string, params?: Record<string, string | number>): string {
-  // The key is chosen at runtime from one known group; `t`'s per-key parameter typing cannot follow it.
-  const translate = t as unknown as (key: string, params?: Record<string, string | number>) => string;
-  return translate(`workflows.page.inspector.resultFields.${key}`, params);
-}
-
-/** "Yes/No", "Choice", "List of text": the type a field returns, in words. */
-export function formatWorkflowResultFieldType(
-  field: WorkflowResultField,
-): string {
-  return field.type === 'list'
-    ? workflowResultFieldText('listOf', { items: workflowResultFieldText(ITEMS_LABEL_KEY[field.itemType ?? 'text']) })
-    : workflowResultFieldText(WORKFLOW_RESULT_FIELD_TYPE_LABEL_KEY[field.type]);
-}
-
 /** The Result row's one line: "Named fields · fixed Yes/No, notes Text". */
 export function formatWorkflowNamedResultSummary(
   result: WorkflowResultContract | undefined,
@@ -570,60 +375,23 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const rowId = `${props.testIDPrefix}-input-${props.index}`;
-    const consumer = props.continuation === true ? { continuation: true } : {};
-    const producers = listWorkflowProducerOptions(props.draft, props.stepId, consumer);
     const reference = props.reference;
-    const inputName = reference.kind === 'input' ? reference.name : undefined;
-    const producerReference = reference.kind === 'result' || reference.kind === 'workspace'
-        ? reference
-        : undefined;
-    const resultReference = reference.kind === 'result' ? reference : undefined;
-    const workspaceReference = reference.kind === 'workspace' ? reference : undefined;
-    const itemReference = reference.kind === 'item' ? reference : undefined;
-    const iterationReference = reference.kind === 'iteration' ? reference : undefined;
-    // Loop-scoped kinds are offered only where the canonical validator accepts
-    // them; a reference already authored there stays visible for repair.
-    const scopeFacts = resolveWorkflowReferenceScopeFacts(props.draft, props.stepId, consumer);
-    const kinds = props.literalOnly === true ? ['literal'] as const : [
-        'literal',
-        'input',
-        'result',
-        'workspace',
-        ...(scopeFacts.insideItemsLoop || itemReference !== undefined ? ['item' as const] : []),
-        ...(scopeFacts.insideLoop || iterationReference !== undefined ? ['iteration' as const] : []),
-    ] as const satisfies readonly WorkflowValueReference['kind'][];
-    const setKind = (kind: (typeof kinds)[number]): void => {
-        if (kind === 'literal') props.onChange({ kind, value: '' });
-        else if (kind === 'input') props.onChange({ kind, name: props.draft.inputs[0]?.name ?? 'input' });
-        else if (kind === 'result') props.onChange({
-            kind,
-            producer: producers[0] === undefined
-                ? { blockId: props.stepId, scope: { kind: 'current' } }
-                : { blockId: producers[0].blockId, scope: producers[0].scope },
-            path: [],
-        });
-        else if (kind === 'workspace') props.onChange({
-            kind,
-            producer: producers[0] === undefined
-                ? { blockId: props.stepId, scope: { kind: 'current' } }
-                : { blockId: producers[0].blockId, scope: producers[0].scope },
-            field: 'directory',
-        });
-        else if (kind === 'item') props.onChange({ kind, field: 'value' });
-        else props.onChange({ kind, field: 'index' });
-    };
     return (
         <View style={workflowEditorStyles.inlineControl}>
-            {props.literalOnly !== true || reference.kind !== 'literal' ? <WorkflowFieldSelect
-                testID={`${rowId}-kind`}
+            {props.literalOnly === true && reference.kind === 'literal' ? null : <WorkflowValuePicker
+                draft={props.draft}
+                consumerBlockId={props.stepId}
+                {...(props.continuation === true ? { continuation: true } : {})}
+                {...(props.literalOnly === true ? { fixedOnly: true } : {})}
+                reference={reference}
                 label={t('workflows.input.valueKindGroup')}
-                items={kinds.map((kind) => ({ id: kind, testID: `${rowId}-kind-${kind}`, title: referenceKindLabel(kind) }))}
-                selectedId={reference.kind}
-                onSelect={(id) => {
-                    const kind = kinds.find((candidate) => candidate === id);
-                    if (kind !== undefined) setKind(kind);
-                }}
-            /> : null}
+                // Moving between inputs keeps the path into them; every other choice names its own.
+                onChange={(next) => props.onChange(next.kind === 'input' && reference.kind === 'input' && next.path === undefined && reference.path !== undefined
+                    ? { ...next, path: reference.path } : next)}
+                onChooseFixedValue={() => props.onChange({ kind: 'literal', value: '' })}
+                testID={`${rowId}-value`}
+                pathTestID={`${rowId}-path`}
+            />}
             {reference.kind === 'literal' && props.renderLiteral !== undefined
                 // The consumer's own field sits on the binding's line, like the plain value entry.
                 ? <View style={workflowEditorStyles.inlineLiteral}>{props.renderLiteral(reference.value, (next) => props.onChange({
@@ -642,93 +410,6 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                     onChangeText={(value) => props.onChange({ kind: 'literal', value: parseLiteral(value) })}
                 />
             ) : null}
-            {inputName === undefined ? null : (
-                <WorkflowFieldSelect
-                    testID={`${rowId}-input-name`}
-                    label={t('workflows.input.inputNameGroup')}
-                    items={props.draft.inputs.map((input) => ({ id: input.name, testID: `${rowId}-input-name-${input.name}`, title: formatWorkflowFieldLabel(input.name) }))}
-                    selectedId={inputName}
-                    onSelect={(name) => props.onChange({ ...reference, kind: 'input', name })}
-                />
-            )}
-            {reference.kind === 'input' ? <WorkflowReferenceRawPathInput
-                testID={`${rowId}-path`}
-                style={[workflowEditorStyles.inlineValue, workflowEditorStyles.pathValue]}
-                reference={reference}
-                onChange={props.onChange}
-            /> : null}
-            {producerReference === undefined ? null : (
-                <WorkflowFieldSelect
-                    testID={`${rowId}-producer`}
-                    label={t('workflows.input.producerGroup')}
-                    items={producers.map((producer) => ({
-                        id: `${producer.blockId}:${scopeKey(producer.scope)}`,
-                        testID: `${rowId}-producer-${producer.blockId}-${scopeKey(producer.scope)}`,
-                        title: producer.label,
-                        subtitle: scopeLabel(producer.scope),
-                    }))}
-                    selectedId={`${producerReference.producer.blockId}:${scopeKey(producerReference.producer.scope)}`}
-                    onSelect={(id) => {
-                        const producer = producers.find((candidate) => `${candidate.blockId}:${scopeKey(candidate.scope)}` === id);
-                        if (producer !== undefined) props.onChange({
-                            ...producerReference,
-                            producer: { blockId: producer.blockId, scope: producer.scope },
-                        });
-                    }}
-                />
-            )}
-            {resultReference === undefined ? null : (
-                <WorkflowResultFieldPathInput
-                    draft={props.draft}
-                    testID={`${rowId}-path`}
-                    style={[workflowEditorStyles.inlineValue, workflowEditorStyles.pathValue]}
-                    reference={resultReference}
-                    onChange={props.onChange}
-                />
-            )}
-            {workspaceReference === undefined ? null : (
-                <WorkflowFieldSelect
-                    testID={`${rowId}-workspace-field`}
-                    label={t('workflows.input.workspaceFieldGroup')}
-                    items={(['directory', 'checkoutRootPath'] as const).map((field) => ({
-                        id: field,
-                        testID: `${rowId}-workspace-field-${field}`,
-                        title: field === 'directory' ? t('workflows.workspace.title') : t('workflows.workspace.projectCheckout'),
-                    }))}
-                    selectedId={workspaceReference.field}
-                    onSelect={(id) => {
-                        if (id === 'directory' || id === 'checkoutRootPath') props.onChange({ ...workspaceReference, field: id });
-                    }}
-                />
-            )}
-            {itemReference === undefined ? null : (
-                <WorkflowFieldSelect
-                    testID={`${rowId}-item-field`}
-                    label={t('workflows.input.itemFieldGroup')}
-                    items={ITEM_REFERENCE_FIELDS.map((field) => ({
-                        id: field, testID: `${rowId}-item-field-${field}`, title: t(`workflows.input.itemField.${field}`),
-                    }))}
-                    selectedId={itemReference.field}
-                    onSelect={(id) => {
-                        const field = ITEM_REFERENCE_FIELDS.find((candidate) => candidate === id);
-                        if (field !== undefined) props.onChange({ kind: 'item', field });
-                    }}
-                />
-            )}
-            {iterationReference === undefined ? null : (
-                <WorkflowFieldSelect
-                    testID={`${rowId}-iteration-field`}
-                    label={t('workflows.input.iterationFieldGroup')}
-                    items={ITERATION_REFERENCE_FIELDS.map((field) => ({
-                        id: field, testID: `${rowId}-iteration-field-${field}`, title: t(`workflows.input.iterationField.${field}`),
-                    }))}
-                    selectedId={iterationReference.field}
-                    onSelect={(id) => {
-                        const field = ITERATION_REFERENCE_FIELDS.find((candidate) => candidate === id);
-                        if (field !== undefined) props.onChange({ kind: 'iteration', field });
-                    }}
-                />
-            )}
             {props.onRemove === undefined ? null : (
                 <HappierPressable
                     accessibilityRole="button"

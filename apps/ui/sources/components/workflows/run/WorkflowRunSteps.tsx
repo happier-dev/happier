@@ -10,6 +10,7 @@ import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/pre
 import {
     WORKFLOW_ATTENTION_LIFECYCLES,
     describeWorkflowInvocationAttempt,
+    workflowLifecycleAwaitsDecision,
     type WorkflowInvocationLifecycleContext,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { isTerminalWorkflowInvocationLifecycle } from '@/components/work/status/resolveWorkStatusTone';
@@ -158,7 +159,8 @@ export function WorkflowRunSteps(props: Readonly<{
                 settled: displayedOccurrence !== null && isTerminalWorkflowInvocationLifecycle(displayedOccurrence.lifecycle),
                 state: displayedOccurrence === null ? null : <>
                     {elapsed === null ? null : <Text style={styles.provenance}>{elapsed}</Text>}
-                    <WorkflowLifecycleStatus lifecycle={displayedOccurrence.lifecycle} blockKind={block?.kind ?? null} context={props.invocationStatusContext} />
+                    <WorkflowLifecycleStatus lifecycle={displayedOccurrence.lifecycle} blockKind={block?.kind ?? null} context={props.invocationStatusContext}
+                        markerOnly={workflowLifecycleAwaitsDecision(displayedOccurrence.lifecycle)} />
                 </>,
                 occurrenceSelector: occurrences.length > 1 ? <WorkflowRunOccurrenceSelector
                     invocations={occurrences} selectedInvocationId={props.selectedInvocationId}

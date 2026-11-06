@@ -42,7 +42,7 @@ import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workfl
 import { formatWorkflowContinuitySummary, useWorkflowContinuedSessionLabel, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
 import { WorkflowInputsEditor } from './WorkflowInputsEditor';
-import { formatWorkflowFieldLabel } from './WorkflowStepDataEditor';
+import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 import { WorkflowRolesEditor } from './WorkflowRolesEditor';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from './WorkflowProjectTargetControl';
 import { WorkflowBlockOptions } from './WorkflowBlockOptions';

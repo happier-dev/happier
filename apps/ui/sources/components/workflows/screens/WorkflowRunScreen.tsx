@@ -2041,6 +2041,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                         definition={visibleDefinition}
                         progress={selectedReviewProgress} contentRevision={selectedInvocationContentRevision} buffers={reviewBuffers}
                         readState={selectedReadState}
+                        belowResult={placement?.belowResult}
                         active={activelyViewed} confirmed={selectedEvidenceConfirmed} compact={placement?.compact === true}
                         accountLifetime={accountLifetime}
                         stepTitle={placement?.title} stepSubtitle={placement?.subtitle}

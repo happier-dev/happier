@@ -89,7 +89,7 @@ export function countWorkflowStepsV1(blocks: readonly WorkflowBlock[]): number {
     block.kind === 'step' || block.kind === 'action' || block.kind === 'workflow' || block.kind === 'wait').length;
 }
 
-export function findWorkflowBlock(draft: WorkflowDefinitionDraftV1, blockId: string): WorkflowBlock | null {
+export function findWorkflowBlock(draft: Pick<WorkflowDefinitionDraftV1, 'blocks'>, blockId: string): WorkflowBlock | null {
   for (const block of walkWorkflowBlocks(draft.blocks)) {
     if (block.id === blockId) return block;
   }

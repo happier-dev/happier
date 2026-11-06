@@ -1410,20 +1410,22 @@ describe('workflow block list editor', () => {
         const rootScreen = await renderList(harness, { draft: withInput, selectedBlockId: 'root-step' });
         const screen = await renderList(harness, { draft: withInput, selectedBlockId: inside, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
-        // The source select offers exactly the kinds valid where the step sits.
+        // The picker offers exactly the values valid where the step sits.
         const fieldSelect = (root: typeof screen, testID: string) => {
             const select = root.findAll((node) => node.props?.testID === testID && typeof node.props?.onSelect === 'function')[0];
             if (select === undefined) throw new Error(`No field select ${testID}`);
-            return select as unknown as { props: { items: ReadonlyArray<{ id: string }>; selectedId: string | null; onSelect: (id: string) => void } };
+            return select as unknown as { props: { items: ReadonlyArray<{ id: string; category?: string }>; selectedId: string | null; onSelect: (id: string) => void } };
         };
-        const sourceKinds = (root: typeof screen, stepId: string) => fieldSelect(root, `workflow-editor-step-${stepId}-input-0-kind`);
+        const picker = (root: typeof screen, stepId: string) => fieldSelect(root, `workflow-editor-step-${stepId}-input-0-value`);
+        const categories = (root: typeof screen, stepId: string) => picker(root, stepId).props.items.map((item) => item.category);
         // The root step is outside every loop: no item or round facts.
-        expect(sourceKinds(rootScreen, 'root-step').props.items.map((item) => item.id)).not.toContain('item');
-        expect(sourceKinds(rootScreen, 'root-step').props.items.map((item) => item.id)).not.toContain('iteration');
+        expect(categories(rootScreen, 'root-step')).not.toContain('workflows.condition.thisItem');
+        expect(categories(rootScreen, 'root-step')).not.toContain('workflows.condition.thisRound');
         await rootScreen.unmount();
         // The body step of a for-each loop can author both.
-        expect(sourceKinds(screen, inside).props.items.map((item) => item.id)).toEqual(expect.arrayContaining(['item', 'iteration']));
-        await act(async () => { sourceKinds(screen, inside).props.onSelect('item'); });
+        expect(categories(screen, inside)).toEqual(expect.arrayContaining(['workflows.condition.thisItem', 'workflows.condition.thisRound']));
+        const itemValue = picker(screen, inside).props.items.find((item) => item.id === JSON.stringify({ kind: 'item', field: 'value' }))!;
+        await act(async () => { picker(screen, inside).props.onSelect(itemValue.id); });
         const readInput = () => harness.findWorkflowBlock(changes.at(-1)!, inside) as { input: unknown[] };
         expect(readInput().input[0]).toEqual({ kind: 'item', field: 'value' });
 
@@ -1433,11 +1435,12 @@ describe('workflow block list editor', () => {
             block.kind === 'step' ? { ...block, input: [{ kind: 'iteration', field: 'index' }] } : block
         ));
         const fields = await renderList(harness, { draft: authored, selectedBlockId: inside, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
-        // Which round fact is one field select, like the binding's other parts (07 control table).
-        const roundField = fieldSelect(fields, `workflow-editor-step-${inside}-input-0-iteration-field`);
-        expect(roundField.props.items.map((item) => item.id)).toEqual(['index', 'position', 'count', 'stopReason']);
-        expect(roundField.props.selectedId).toBe('index');
-        await act(async () => { roundField.props.onSelect('stopReason'); });
+        // Each round fact is one value in the same list.
+        const roundField = picker(fields, inside);
+        const rounds = roundField.props.items.filter((item) => item.category === 'workflows.condition.thisRound').map((item) => JSON.parse(item.id).field);
+        expect(rounds).toEqual(['index', 'position', 'count', 'stopReason']);
+        expect(roundField.props.selectedId).toBe(JSON.stringify({ kind: 'iteration', field: 'index' }));
+        await act(async () => { roundField.props.onSelect(JSON.stringify({ kind: 'iteration', field: 'stopReason' })); });
         expect(readInput().input[0]).toEqual({ kind: 'iteration', field: 'stopReason' });
         expect(harness.validateWorkflowEditorDraft(changes.at(-1)!).valid).toBe(true);
     });
@@ -1449,9 +1452,11 @@ describe('workflow block list editor', () => {
         ]);
         // Selected, its editor shows the authored choice even where the validator rejects it.
         const screen = await renderList(harness, { draft, selectedBlockId: 'root-step' });
-        const itemField = screen.findAll((node) => node.props?.testID === 'workflow-editor-step-root-step-input-0-item-field'
+        const itemField = screen.findAll((node) => node.props?.testID === 'workflow-editor-step-root-step-input-0-value'
             && typeof node.props?.onSelect === 'function')[0] as unknown as { props: { selectedId: string | null } } | undefined;
-        expect(itemField?.props.selectedId).toBe('count');
+        expect(itemField?.props.selectedId).toBe(JSON.stringify({ kind: 'item', field: 'count' }));
+        // It isn't offered here, so the trigger is what keeps it readable for repair.
+        expect(screen.findHostByTestId('workflow-editor-step-root-step-input-0-value-trigger')?.props.accessibilityLabel).toContain('workflows.input.itemField.count');
         await screen.unmount();
         // At rest it stays on the page as its token, with the validator's issue beside it.
         const resting = await renderList(harness, { draft });
@@ -1484,8 +1489,8 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining(encodeURIComponent('builtin:review-and-converge')));
         // An unset input is "+ Set" (or its default), never an empty literal editor with a source select.
         expect(screen.findByTestId('workflow-editor-workflow-review-input-engines-set')).not.toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-engines-input-0-kind-trigger')).toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-maxRounds-input-0-kind-trigger')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-engines-input-0-value-trigger')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-maxRounds-input-0-value-trigger')).toBeNull();
         // A declared default reads as the value the child will use, named by the built-in's own label.
         const rounds = screen.findByTestId('workflow-editor-workflow-review-input-maxRounds');
         expect(JSON.stringify(rounds?.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children))).toContain('3');
@@ -1769,14 +1774,14 @@ describe('document anatomy (DESIGN-4)', () => {
         const selections: (string | null)[] = [];
         const resting = await renderList(harness, { draft, onSelect: (id) => selections.push(id) });
         // At rest the step reads like the document it is: its input is a token on the footer line, no form controls.
-        expect(resting.findHostByTestId('workflow-editor-step-write-input-0-kind-trigger')).toBeNull();
+        expect(resting.findHostByTestId('workflow-editor-step-write-input-0-value-trigger')).toBeNull();
         expect(resting.findHostByTestId('workflow-editor-step-write-input-0')).not.toBeNull();
         // Pressing the inputs selects the step, as pressing a typed card's value does.
         await resting.pressByTestIdAsync('workflow-editor-step-write-inputs-edit');
         expect(selections).toContain('write');
         await resting.unmount();
         const selected = await renderList(harness, { draft, selectedBlockId: 'write' });
-        expect(selected.findHostByTestId('workflow-editor-step-write-input-0-kind-trigger')).not.toBeNull();
+        expect(selected.findHostByTestId('workflow-editor-step-write-input-0-value-trigger')).not.toBeNull();
         await selected.unmount();
     });
 
@@ -1797,7 +1802,7 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(selections).toContain('notify');
         await screen.unmount();
         const selected = await renderList(harness, { draft, selectedBlockId: 'notify' });
-        expect(selected.findHostByTestId('workflow-editor-action-notify-field-message-input-0-kind-trigger')).not.toBeNull();
+        expect(selected.findHostByTestId('workflow-editor-action-notify-field-message-input-0-value-trigger')).not.toBeNull();
         await selected.unmount();
         // An empty value well says what goes in it, never a blank grey box (DESIGN-7 N5).
         const nested = buildDraft(harness, [{ kind: 'workflow', id: 'review', name: 'Review', workflowRef: 'builtin:review-and-converge',

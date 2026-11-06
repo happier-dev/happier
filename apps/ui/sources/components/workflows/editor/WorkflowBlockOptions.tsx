@@ -47,7 +47,8 @@ import { SessionAuthoringControls } from '@/components/sessions/authoring/contro
 
 import type { WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
-import { formatWorkflowConditionSentence, WorkflowConditionEditor } from './WorkflowConditionEditor';
+import { formatWorkflowConditionSentence } from '../presentation/workflowConditionPresentation';
+import { WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { formatWorkflowContinuitySummary, useWorkflowContinuedSessionLabel, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { formatWorkflowGroupSentence, WorkflowGroupOptions } from './WorkflowGroupEditor';
 import type { WorkflowInspectorProps } from './WorkflowInspector';
@@ -155,7 +156,7 @@ function blockTitle(block: WorkflowBlock): string {
 
 function subPageTitle(page: OptionsPage, block: WorkflowBlock): string | null {
     if (page === 'result') return t('workflows.page.inspector.resultTitle');
-    if (page === 'condition' && block.kind !== 'if') return t('workflows.condition.onlyWhen');
+    if (page === 'condition') return t('workflows.condition.whenTitle');
     return null;
 }
 
@@ -188,7 +189,7 @@ export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ 
                 ) : null}
                 {/* A sub-page leads with what it edits; the block it belongs to becomes its location, under the title (lab I1). */}
                 <View style={styles.subjectText}>
-                    <Text style={styles.subjectTitle} numberOfLines={1}>{subPageTitle(page, block) ?? blockTitle(block)}</Text>
+                    <Text style={styles.subjectTitle} numberOfLines={1}>{subPageTitle(page, block) ?? (block.kind === 'if' ? t('workflows.condition.whenTitle') : blockTitle(block))}</Text>
                     {subPageTitle(page, block) !== null ? (
                         <Text style={styles.subjectLocation} numberOfLines={1}>{blockTitle(block)}</Text>
                     ) : block.kind === 'step' ? (

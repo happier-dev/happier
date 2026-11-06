@@ -1877,6 +1877,110 @@ describe('WorkflowRunContent', () => {
     expect(discuss).toBeUndefined();
   });
 
+  describe('a held step, said once and reviewed in one scroller', () => {
+    const sessionProgress = (sessionId: string): NonNullable<ContentProps['selectedInvocationProgress']> => ({
+      kind: 'happier.workflow-progress.v1',
+      blockKind: 'step',
+      invocationPath: { blockId: 'analyze', scope: [] },
+      attempt: '0',
+      logicalInvocationRecordId: 'inv-1',
+      execution: { kind: 'session', sessionId, localInputId: 'input-1' },
+    });
+    const withSession = async (level: 'owner' | 'view', run: () => Promise<void>) => {
+      const store = getStorage();
+      const prior = store.getState().sessions;
+      const session = createSessionFixture({ id: 'review-session', access: createSessionAccessFixture(level) });
+      store.setState({ sessions: { ...prior, [session.id]: session } });
+      try {
+        await run();
+      } finally {
+        await act(async () => store.setState({ sessions: prior }));
+      }
+    };
+
+    it('gives a wide review the whole pane, with the conversation behind Discuss and back again', async () => {
+      await withSession('owner', async () => {
+        let discuss: (() => void) | undefined;
+        const screen = await renderContent({
+          selectedInvocationId: 'inv-1',
+          invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1' })],
+          selectedInvocationProgress: sessionProgress('review-session'),
+          renderReviewCard: (onDiscuss) => {
+            discuss = onDiscuss;
+            return React.createElement('ReviewSlot');
+          },
+        });
+        expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(1);
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
+
+        await act(async () => discuss?.());
+        expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(0);
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeTruthy();
+
+        // The page is inactive here so no live transcript mounts, which also disables the control; its handler is what returns.
+        const reopen = screen.findAll((node) => node.props.testID === 'workflow-run-open-review' && typeof node.props.onPress === 'function')[0];
+        await act(async () => reopen?.props.onPress());
+        expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(1);
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
+      });
+    });
+
+    it('still reaches the conversation when the person may read it but not reply', async () => {
+      await withSession('view', async () => {
+        const screen = await renderContent({
+          selectedInvocationId: 'inv-1',
+          invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1' })],
+          selectedInvocationProgress: sessionProgress('review-session'),
+          renderReviewCard: () => React.createElement('ReviewSlot'),
+        });
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
+
+        await screen.pressByTestIdAsync('workflow-run-show-conversation');
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeTruthy();
+      });
+    });
+
+    it('states the hold in Needs you alone: no outcome sentence and no word on its row', async () => {
+      const screen = await renderContent({
+        run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
+        invocations: [
+          createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', lifecycle: 'waiting_for_review' }),
+        ],
+        invocationProgressById: openedLeafProgress('held'),
+        selectedInvocationId: null,
+      });
+      expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
+      expect(screen.findByTestId('workflow-run-outcome')).toBeNull();
+      expect(screen.findByTestId('workflow-run-invocations-word-held')).toBeNull();
+    });
+
+    it('keeps the outcome when it says something the hold does not, as a Run that is stopping does', async () => {
+      const screen = await renderContent({
+        run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
+        cancelRequested: true,
+        invocations: [
+          createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', lifecycle: 'waiting_for_review' }),
+        ],
+        invocationProgressById: openedLeafProgress('held'),
+        selectedInvocationId: null,
+      });
+      expect(screen.findByTestId('workflow-run-outcome')).toBeTruthy();
+    });
+
+    it('lists Activity in the order the work ran, though the window puts held rows first', async () => {
+      const row = (id: string, sequence: string) => createWorkflowInvocationIndexFixture({ id, sequence, parentRecordId: 'root' });
+      const screen = await renderContent({
+        view: 'activity',
+        invocations: [row('held-c', '30'), row('first-a', '9'), row('second-b', '10')],
+      });
+      const prefix = 'workflow-run-invocations-time-';
+      const order = screen.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith(prefix))
+        .map((node) => String(node.props.testID).slice(prefix.length));
+      // The list mounts its window from the top, so the earliest work must lead it.
+      expect([...new Set(order)].slice(0, 2)).toEqual(['first-a', 'second-b']);
+    });
+  });
+
   it('leads with the outcome and the Run origin', async () => {
     const screen = await renderContent();
 
@@ -1956,20 +2060,15 @@ describe('WorkflowRunContent', () => {
         }),
       ],
     });
-    // No separate status pill: the status is said in the outcome line only.
+    // No status pill and no outcome line: Needs you states this hold.
     expect(screen.findByTestId('workflow-run-state')).toBeNull();
-    const outcome = String(
-      screen.findByTestId('workflow-run-outcome')?.props.children,
-    );
-    expect(outcome).toContain('workflows.run.outcomeLine');
-    expect(outcome).toContain('"word":"workflows.review.waitTitle"');
-    expect(outcome).toContain('"sentence":"workflows.review.waitBody"');
-    expect(outcome).not.toContain('workflows.run.attentionWaitSentence');
+    expect(screen.findByTestId('workflow-run-outcome')).toBeNull();
     // A Wait-for-you step never borrows the review hold's word.
     const text = screen.getTextContent();
-    // The outcome states the consequence; the attention card carries the request.
     expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
-    expect(text).toContain('workflows.run.attentionWaitRow');
+    // A Wait that keeps its default name says it once ("Wait for you"), never "Wait for you is waiting for you".
+    expect(text).not.toContain('workflows.run.attentionWaitRow');
+    expect(text).toContain('workflows.page.blocks.waitTitle');
     expect(text).not.toContain('workflows.runState.waiting_for_review');
     expect(text).not.toContain('workflows.invocationState.waiting_for_review');
     expect(text.indexOf('workflows.tabs.map')).toBeGreaterThan(-1);
@@ -1981,9 +2080,8 @@ describe('WorkflowRunContent', () => {
     );
   });
 
-  it.each(['waiting_for_review', 'running'] as const)(
-    'keeps the %s state and ordinary-review consequence together in the live outcome',
-    async (state) => {
+  it('keeps a running Run\'s state and its ordinary-review consequence together in the live outcome',
+    async () => {
       const definition = createWorkflowDefinitionFixture({
         blocks: [
           {
@@ -2002,7 +2100,7 @@ describe('WorkflowRunContent', () => {
       });
       const screen = await renderContent({
         definition,
-        run: createWorkflowRunSummaryFixture({ id: 'run-1', state }),
+        run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
         invocations: [
           createWorkflowInvocationIndexFixture({
             id: 'root',
@@ -2023,15 +2121,8 @@ describe('WorkflowRunContent', () => {
         screen.findByTestId('workflow-run-outcome')?.props.children,
       );
       expect(outcome).toContain('workflows.run.outcomeLine');
-      expect(outcome).toContain(
-        `"word":"${state === 'running' ? 'workflows.runState.running' : 'workflows.runState.waiting_for_review'}"`,
-      );
-      // A parked Run's word already says it waits, so its sentence names the step only; a running one says what waits.
-      expect(outcome).toContain(
-        state === 'running'
-          ? 'workflows.run.attentionReviewSentence'
-          : 'workflows.run.attentionParkedSentence',
-      );
+      expect(outcome).toContain('"word":"workflows.runState.running"');
+      expect(outcome).toContain('workflows.run.attentionReviewSentence');
       expect(outcome).toContain('Check the release');
     },
   );
@@ -2117,7 +2208,6 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
     expect(screen.findByTestId('workflow-run-needs-you-inv-2')).toBeTruthy();
     expect(screen.getTextContent()).toContain('workflows.editor.addStep');
-    expect(screen.getTextContent()).not.toContain('Analyze changes');
     expect(screen.getTextContent()).not.toContain('inv-2');
     expect(screen.findAllByTestId('workflow-run-needs-you-inv-1')).toHaveLength(
       0,
@@ -2159,7 +2249,6 @@ describe('WorkflowRunContent', () => {
     });
 
     expect(screen.getTextContent()).toContain('workflows.editor.addStep');
-    expect(screen.getTextContent()).not.toContain('Analyze changes');
     expect(screen.getTextContent()).not.toContain('invocation-private-id');
     await openTechnicalDetails(screen);
     expect(screen.getTextContent()).toContain('invocation-private-id');
@@ -2578,11 +2667,9 @@ describe('WorkflowRunContent', () => {
     ];
     const screen = await renderContent({ invocations });
 
+    // A log row says what ran on its own: an unnamed step reads as its prompt, never "Agent step" on every row (owner 09.17.14).
     const row = screen.findByTestId('workflow-run-invocations-row-analyze-row');
-    expect(row?.props.accessibilityLabel).toContain('workflows.editor.addStep');
-    expect(row?.props.accessibilityLabel).not.toContain(
-      'Analyze the repository',
-    );
+    expect(row?.props.accessibilityLabel).toContain('Analyze the repository');
     expect(row?.props.accessibilityLabel).not.toContain(
       'workflows.contentUnavailable',
     );
@@ -4345,12 +4432,17 @@ describe('WorkflowRunContent', () => {
       screen.findByTestId('workflow-run-flow-node-analyze-state')?.props
         .accessibilityLabel,
     ).toBe('workflows.invocationState.completed');
+    // A hold is said once, in Needs you: here its mark carries it as the spoken name.
+    expect(
+      screen.findByTestId('workflow-run-flow-node-implement-state')?.props
+        .accessibilityLabel,
+    ).toBeTruthy();
     expect(
       screen.findByTestId(
         'workflow-run-flow-node-implement-state:variant:attention',
       ),
-    ).toBeTruthy();
-    // Icon plus label: colour is never the only carrier of the state.
+    ).toBeNull();
+    // Colour is never the only carrier of the state.
     expect(
       screen.findByTestId('workflow-run-flow-node-analyze-state-marker'),
     ).toBeTruthy();
@@ -4594,20 +4686,31 @@ describe('WorkflowRunContent', () => {
       ],
     });
 
-    expect(
-      screen.findByTestId(
-        'workflow-run-invocations-state-inv-1:variant:attention',
-      ),
-    ).toBeTruthy();
+    expect(screen.findByTestId('workflow-run-invocations-word-inv-1')).toBeTruthy();
     expect(
       screen.findByTestId('workflow-run-invocations-state-inv-1-marker'),
     ).toBeTruthy();
   });
 
+  it('keeps finished Activity rows quiet: the state is the glyph, and only unfinished work gets a word (owner 09.17.14)', async () => {
+    const screen = await renderContent({
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'done', parentRecordId: 'run-root', lifecycle: 'completed' }),
+        createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'run-root', lifecycle: 'waiting_for_review', sequence: '2' }),
+      ],
+    });
+    expect(screen.findByTestId('workflow-run-invocations-state-done-marker')).toBeTruthy();
+    expect(screen.findByTestId('workflow-run-invocations-word-done')).toBeNull();
+    expect(screen.findByTestId('workflow-run-invocations-state-held-marker')).toBeTruthy();
+    // Needs you says a hold in words; its row keeps the glyph, with the word as its spoken name.
+    expect(screen.findByTestId('workflow-run-invocations-word-held')).toBeNull();
+  });
+
   it('distinguishes repeated Activity steps by their exact occurrence and recorded time', async () => {
+    const items = ['first', 'second'];
     const definition = createWorkflowDefinitionFixture({ blocks: [{
       kind: 'loop', id: 'files', repetition: {
-        kind: 'items', items: { kind: 'literal', value: ['first', 'second'] },
+        kind: 'items', items: { kind: 'literal', value: items },
         execution: 'parallel', failurePolicy: 'collect_outcomes',
       }, body: [{ kind: 'action', id: 'inspect', name: 'Inspect files',
         actionId: 'notifications.notify_me', input: {} }],
@@ -4624,9 +4727,11 @@ describe('WorkflowRunContent', () => {
     const screen = await renderContent({ definition, invocations, invocationProgressById });
     for (const [index, row] of invocations.entries()) {
       const time = formatAsOfTime(Date.parse(row.createdAt));
-      expect(screen.findByTestId(`workflow-run-invocations-time-${row.id}`)?.props.children).toBe(time);
+      // The day is said once, above the day's first row; each row says its time of day.
+      expect(screen.findByTestId(`workflow-run-invocations-time-${row.id}`)?.props.children)
+        .toBe(formatAsOfTime(Date.parse(row.createdAt), Date.parse(row.createdAt)));
       const occurrence = screen.findByTestId(`workflow-run-invocations-occurrence-${row.id}`);
-      const occurrenceLabel = `workflows.run.occurrenceItem:{"number":"${index + 1}"}`;
+      const occurrenceLabel = items[index];
       expect(occurrence?.props.children).toBe(occurrenceLabel);
       const accessibleName = screen.findByTestId(`workflow-run-invocations-row-${row.id}`)?.props.accessibilityLabel;
       expect(accessibleName).toContain(JSON.stringify(occurrenceLabel).slice(1, -1));

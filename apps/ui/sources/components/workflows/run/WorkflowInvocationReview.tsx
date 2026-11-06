@@ -54,6 +54,8 @@ export function WorkflowInvocationReview(props: Readonly<{
     onOpenRun: (runId: string) => void;
     onDiscuss?: () => void;
     readState?: React.ReactNode;
+    /** The step's other facts, scrolled with the value above the pinned decision. */
+    belowResult?: React.ReactNode;
     machineName?: string | null;
     machineReachable?: boolean;
     acknowledgeUncertainPriorEffects?: Readonly<{ recordId: string; contentRevision: string }>;
@@ -232,7 +234,7 @@ export function WorkflowInvocationReview(props: Readonly<{
                 completeReview: invocation.lifecycle !== 'completed',
                 ...(props.run.origin.originSessionId ? { originSessionId: props.run.origin.originSessionId } : {}) } });
     };
-    return <View style={props.compact && progress.blockKind !== 'wait' ? { flex: 1, minHeight: 0 } : undefined}>
+    return <View style={!props.compact ? { flexGrow: 0, flexShrink: 1, minHeight: 0 } : progress.blockKind === 'wait' ? undefined : { flex: 1, minHeight: 0 }}>
         <WorkflowReviewCard progress={progress} contract={contract} waitForYou={progress.blockKind === 'wait'}
             waitIdentity={waitIdentity}
             contentRevision={props.contentRevision} lifecycle={invocation.lifecycle} isCurrent={invocation.lifecycle !== 'superseded'}
@@ -242,7 +244,7 @@ export function WorkflowInvocationReview(props: Readonly<{
             onOpenPlanRun={props.onOpenRun} planProposalValid={proposal !== null}
             resultSourceLabel={resultSourceLabel}
             planProposalPreview={proposalMap ? <WorkflowFlowView projection={proposalMap} selectedNodeId={null} density="compact" /> : undefined}
-            canGenerate={canGenerate} primaryActionPlacement={props.compact ? 'footer' : 'inline'}
+            canGenerate={canGenerate} primaryActionPlacement="footer" fillHeight={props.compact} belowResult={props.belowResult}
             pending={pending} problem={error} disabled={!props.confirmed || !props.active || !props.current()}
             readOnly={!props.callerAccess.canEdit || invocation.lifecycle === 'superseded'
                 || (progress.resultContract !== undefined && !contractResult.success)}

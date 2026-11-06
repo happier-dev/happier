@@ -25,6 +25,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.input.text,
     paddingVertical: FIELD_PADDING_Y,
   },
+  /** A reading outside any field: its host row already gives the text its room. */
+  outsideField: {
+    paddingVertical: 0,
+  },
   placeholder: {
     color: theme.colors.composer.chipTint,
   },
@@ -51,7 +55,7 @@ export function AgentInputDocumentPreviewText(
   }
   const fill = referenceChipFill(theme.colors.input.text);
   return (
-    <Text testID="agent-input-document-preview-text" style={styles.text}>
+    <Text testID="agent-input-document-preview-text" style={[styles.text, props.fieldInset === false ? styles.outsideField : null]}>
       {splitAgentInputDocumentPreviewText(props.value, props.references).map(
         (segment) =>
           segment.kind === 'text' ? (

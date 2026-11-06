@@ -31,7 +31,8 @@ import {
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
-import { formatWorkflowBindingLiteral, formatWorkflowFieldLabel, WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
+import { formatWorkflowBindingLiteral, WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 /** "Open ›": the child workflow's own page (its definition, built-in or saved). */
 function WorkflowNestedOpenAction(props: Readonly<{ workflowRef: string; workflowName: string; testID: string }>): React.ReactElement {

@@ -3,7 +3,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { Typography } from '@/constants/Typography';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HAPPIER_SEGMENTED_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TITLE_EDGE_PX } from '../editor/workflowEditorStyles';
 
 /**
  * Text-labelled controls draw at the WCAG 2.2 pointer floor under every pointer; a finger reaches its
@@ -22,6 +23,29 @@ const MINIMUM_TARGET_SIZE = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
 export const workflowRunStyles = StyleSheet.create((theme) => ({
     scroll: {
         flex: 1,
+    },
+    /** A step's facts above its conversation: sized to its content, never more than half the pane. */
+    inspectorAboveConversation: {
+        flexGrow: 0,
+        flexShrink: 1,
+        maxHeight: '50%',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.default,
+    },
+    /** A held step's region: the value and facts scroll, the decision stays under them, all inside the half. */
+    reviewRegion: {
+        paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s8,
+        paddingBottom: theme.space.s12,
+    },
+    /** The way back to a review once its conversation is showing: on the pane header's text edge. */
+    reopenReview: {
+        paddingHorizontal: theme.space.s16,
+    },
+    /** The same content in the phone's sheet: inset like the sheet's header, clear of its bottom edge. */
+    reviewSheet: {
+        paddingHorizontal: theme.space.s16,
+        paddingBottom: theme.space.s24,
     },
     /**
      * The outline and, on wide layouts, its neighbouring inspector. The grid
@@ -76,6 +100,29 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: theme.space.s8,
+        paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+        paddingVertical: HAPPIER_PAGE_METRICS.pageTabsGapPx,
+    },
+    /** The tabs size to themselves, so the view's own actions close the same row. */
+    viewTabs: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    /** Wide: the selected plate bleeds its padding, so the first tab's word sits on the title's edge. */
+    viewSwitchOnTitle: {
+        paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX - HAPPIER_SEGMENTED_METRICS.plain.paddingHorizontalPx,
+    },
+    /** Wide: this section's words start on the title's edge (lab round 1105 P1). */
+    onTitleEdge: {
+        paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX,
+    },
+    /** Wide: a list whose marks hang in the gutter under the header's mark and whose names sit on the title's edge. */
+    documentInset: {
+        paddingLeft: WORKFLOW_DOCUMENT_INSET_PX,
+        paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    },
+    /** A phone's list rows sit on the page's text inset. */
+    documentInsetPhone: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
     // A phone gives the view switch the full width (lab phone-P1); the view's own actions sit under it.

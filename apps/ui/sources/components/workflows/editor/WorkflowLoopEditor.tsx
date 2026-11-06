@@ -25,12 +25,14 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline, WorkflowConditionEditor } from './WorkflowConditionEditor';
+import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
+import { WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl } from './WorkflowContainerBody';
 import { failurePolicyLabel, WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 

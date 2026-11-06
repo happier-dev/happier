@@ -387,7 +387,7 @@ function retainNewerInvocationFacts(
  * — otherwise a newly reported attempt would read as the newest work when it
  * belongs beside the step it retried.
  */
-function compareInvocationOrder(
+export function compareInvocationOrder(
     left: WorkflowRunInvocationIndexV1,
     right: WorkflowRunInvocationIndexV1,
 ): number {

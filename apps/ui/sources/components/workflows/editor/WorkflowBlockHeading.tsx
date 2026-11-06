@@ -169,7 +169,9 @@ export function WorkflowBlockHeading(props: Readonly<{
                             accessibilityLabel: props.accessibilityLabel ?? props.nameEditor.accessibilityLabel }}
                             placeholderTone={inkPlaceholder ? 'ink' : 'quiet'}
                             style={[workflowEditorStyles.headingNameInput,
-                                compound ? { flexGrow: 0, width: nameWidth ?? undefined, maxWidth: '100%' } : { flex: 1 }]} />
+                                // No name yet: the sentence starts on the name column, with no empty field before it.
+                                sentenceTitle && props.nameEditor.value.length === 0 ? workflowEditorStyles.headingNameCollapsed
+                                    : compound ? { flexGrow: 0, width: nameWidth ?? undefined, maxWidth: '100%' } : { flex: 1 }]} />
                         {source}
                         {meta}
                     </View>
@@ -187,7 +189,7 @@ export function WorkflowBlockHeading(props: Readonly<{
                     </Text>
                 </View>
             ) : null}
-            <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.headingActions]}>
+            <View testID={`${props.testID}-heading-actions`} style={[workflowEditorStyles.headingLine, workflowEditorStyles.headingActions]}>
                 {props.accessory ?? null}
                 <WorkflowBlockActionsMenu
                     blockLabel={props.displayName}

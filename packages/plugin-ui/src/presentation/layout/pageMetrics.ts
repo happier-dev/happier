@@ -120,6 +120,7 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   pageHeaderColumnGapPx: 14,
   /** A page header's leading mark → its title block: close enough that mark, title and purpose read as one unit. */
   pageHeaderMarkGapPx: 10,
+  /** A page header's leading mark → its title block: close enough that mark, title and purpose read as one unit. */
   /**
    * A page header's leading mark: a square slot with one stable footprint for the thing the page is
    * about, and the glyph drawn inside it. Core's identity header and a plugin's own header both use it,
@@ -129,6 +130,7 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   pageHeaderMarkGlyphPx: 28,
   /** Above and below a page's tab bar: it belongs to neither the header above it nor the content below it. */
   pageTabsGapPx: 12,
+  /** Above and below a page's tab bar: it belongs to neither the header above it nor the content below it. */
   sectionGapPx: 28,
   sectionHeaderGapPx: 10,
   /** Sheets are cards: the `xl` step of the one radius base. */

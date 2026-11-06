@@ -51,7 +51,7 @@ import {
   formatWorkflowResultFieldType,
   WORKFLOW_RESULT_FIELD_TYPE_LABEL_KEY,
   workflowResultFieldText as rf,
-} from './WorkflowStepDataEditor';
+} from '../presentation/workflowValuePresentation';
 
 /**
  * Result → Named fields (04 §6.1, lab `editor-S5`): authors a step's or Wait's

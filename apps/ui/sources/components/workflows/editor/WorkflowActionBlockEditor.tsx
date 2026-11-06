@@ -29,7 +29,8 @@ import { formatWorkflowBlockOptionsSummary, WorkflowStepOptionsFootChip } from '
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
-import { formatWorkflowFieldLabel, WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
+import { WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 /** The literal a newly set field starts from: an empty selection for a multi-select, empty text otherwise. */
 function initialActionFieldLiteral(hint: EffectiveActionInputField | null): WorkflowActionFieldBindingV1 {

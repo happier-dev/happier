@@ -5,7 +5,7 @@ import { resolveWorkflowIssueBlockId } from '@/sync/domains/workflows/workflowAu
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { formatWorkflowFieldLabel } from './WorkflowStepDataEditor';
+import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 
 /**
  * One validation issue as a person reads it: the thing to fix, named (DESIGN-4 P3). An empty

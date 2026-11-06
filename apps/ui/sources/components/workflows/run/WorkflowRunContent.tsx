@@ -59,6 +59,7 @@ import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/f
 import type { CustomModalInjectedProps } from '@/modal';
 import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { compareInvocationOrder } from '@/sync/store/domains/workflowRuns';
 import type { PaneMainColumnDescriptor } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
@@ -79,6 +80,9 @@ import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationR
 import { useWorkflowCardModal } from './useWorkflowCardModal';
 import { WorkflowInvocationList } from './WorkflowInvocationList';
 import { WorkflowRunSteps } from './WorkflowRunSteps';
+import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows/workflowStepLabel';
+import { resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import {
     compareWorkflowOccurrences,
     projectWorkflowFlowRunStates,
@@ -93,6 +97,7 @@ import {
     formatWorkflowRunOriginLabel,
     formatWorkflowRunOutcomeLabel,
     formatWorkflowRunOutcomeLine,
+    workflowRunOutcomeIsAttention,
     formatWorkflowRunOutcomeSentence,
     formatWorkflowRunConsequenceSentence,
     formatWorkflowWorkspaceSourceLabel,
@@ -140,7 +145,7 @@ export type WorkflowRunContentProps = Readonly<{
     selectedSessionId?: string | null;
     /** Phone's exact invocation route, pushed by the route owner. */
     invocationPage?: boolean;
-    renderReviewCard?: (onDiscuss?: () => void, placement?: Readonly<{ compact: boolean; title: string; subtitle: string | null }>) => React.ReactNode;
+    renderReviewCard?: (onDiscuss?: () => void, placement?: Readonly<{ compact: boolean; title: string; subtitle: string | null; belowResult?: React.ReactNode }>) => React.ReactNode;
     run: WorkflowRunSummaryV1;
     /** Frozen Account-private title; null means explicitly unavailable. */
     title?: string | null;
@@ -335,7 +340,7 @@ function WorkflowReviewCardModal(props: Readonly<{ card: React.ReactNode; conten
         setChrome?.({ kind: 'card', scrollHost: props.contentSized ? 'overlay' : 'body', bodyScroll: props.contentSized ? 'auto' : 'none' });
         return () => setChrome?.(null);
     }, [props.contentSized, setChrome]);
-    return <View style={{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }}>{props.card}</View>;
+    return <View style={[{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }, styles.reviewSheet]}>{props.card}</View>;
 }
 
 /** The selected leaf's own Session grants decide Discuss; Run write access never grants chat. */
@@ -373,8 +378,11 @@ function WorkflowSelectedDetail(props: Readonly<{
         setFocusRequested(true);
     }, []);
     const card = props.renderReviewCard?.(props.sessionId !== null && interaction.canSendMessages ? discuss : undefined,
-        { compact: props.phone, title: props.title, subtitle: props.subtitle }) ?? null;
-    const reviewOpen = props.phone && active && !reviewDismissed && card !== null;
+        { compact: props.phone, title: props.title, subtitle: props.subtitle,
+            // In a pane the facts scroll with the value, so the decision stays pinned under them.
+            ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...props.detail} resultShownAbove /> }) }) ?? null;
+    const reviewShown = card !== null && !reviewDismissed;
+    const reviewOpen = props.phone && active && reviewShown;
     const paneHeaderScroll = usePaneHeaderScrollSink();
     const reportInspectorScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         paneHeaderScroll?.reportTopDistance(event.nativeEvent.contentOffset.y);
@@ -392,10 +400,10 @@ function WorkflowSelectedDetail(props: Readonly<{
         executeCommand('composer.focus');
         setFocusRequested(false);
     }, [executeCommand, focusRequested, active, reviewOpen]);
-    const reopenReview = props.phone && reviewDismissed && card !== null ? <HappierPressable
+    const reopenReview = reviewDismissed && card !== null ? <HappierPressable
         testID={`${props.detail.testIDPrefix}-open-review`} accessibilityRole="button"
         disabled={!active}
-        onPress={() => setReviewDismissed(false)} style={styles.actionTarget}>
+        onPress={() => setReviewDismissed(false)} style={[styles.actionTarget, styles.reopenReview]}>
         <Text style={styles.action}>{t('workflows.run.openReview')}</Text>
     </HappierPressable> : null;
     // A hold with no conversation belongs over the Run, not an empty step page.
@@ -408,16 +416,28 @@ function WorkflowSelectedDetail(props: Readonly<{
             testID={`${props.detail.testIDPrefix}-selected-header`} title={props.title}
             leading={BackControl ? <BackControl style={null} /> : undefined}
             meta={props.subtitle ? [{ key: 'invocation', text: props.subtitle }] : undefined} /> : null}
-        {!props.phone ? card : null}
         {reopenReview}
-        {props.sessionId === null ? null : <SessionInPane sessionId={props.sessionId}
-            serverId={props.serverId} active={active && !reviewOpen} composer composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
-        <ScrollView testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
+        {/* A review is the whole pane: one scroller, the decision under it. Its conversation is one step
+            away (Discuss, or the link for someone who may only read it), since a transcript cannot nest in
+            that scroller. Otherwise what the step did leads and its conversation follows, with the composer
+            pinned at the pane's foot (lab run-A_running / _completed). */}
+        {!props.phone && reviewShown ? <View testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
+            style={[styles.scroll, styles.reviewRegion]}>
+            {card}
+            {props.sessionId === null || interaction.canSendMessages ? null : <HappierPressable
+                testID={`${props.detail.testIDPrefix}-show-conversation`} accessibilityRole="button"
+                onPress={() => setReviewDismissed(true)} style={styles.actionTarget}>
+                <Text style={styles.quietAction}>{t('workflows.run.openConversation')}</Text>
+            </HappierPressable>}
+        </View> : <ScrollView testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
             // The inspector is the body under the step's header: its scroll drives that header's shade.
             onScroll={paneHeaderScroll ? reportInspectorScroll : undefined} scrollEventThrottle={16}
-            style={styles.scroll} contentContainerStyle={styles.inspectorContent}>
+            style={props.sessionId === null ? styles.scroll : styles.inspectorAboveConversation}
+            contentContainerStyle={styles.inspectorContent}>
             <WorkflowInvocationDetail {...props.detail} />
-        </ScrollView>
+        </ScrollView>}
+        {props.sessionId === null || (!props.phone && reviewShown) ? null : <SessionInPane sessionId={props.sessionId}
+            serverId={props.serverId} active={active && !reviewOpen} composer composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
     </View>;
 }
 
@@ -610,8 +630,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * Activity lists the work inside the Run. The Run's own root row repeats what the header and
      * outcome already say, and Map and Steps never show it either.
      */
+    const invocationElapsedLabel = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => (
+        formatWorkflowInvocationElapsedLabel(structureProgressById?.get(invocation.id)?.timing)
+    ), [structureProgressById]);
     const activityInvocations = React.useMemo(
-        () => props.invocations.filter((invocation) => derivedStructure.get(invocation.id)?.blockId !== '$root'),
+        // The visible window leads with held rows for Needs you; a log reads in the order the work ran.
+        () => props.invocations.filter((invocation) => derivedStructure.get(invocation.id)?.blockId !== '$root').sort(compareInvocationOrder),
         [derivedStructure, props.invocations],
     );
     const coverage = React.useMemo(() => summarizeWorkflowInvocationCoverage(props.invocations, {
@@ -637,6 +661,20 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         }
         return entry.blockId === '$root' ? t('workflows.run.untitled') : null;
     }, [derivedStructure, flowProjection]);
+
+    /**
+     * In a log every row has to say what ran on its own: an unnamed step reads as its prompt and an
+     * unnamed If as its sentence, never "Agent step" eight times.
+     */
+    const activityInvocationLabel = React.useCallback((invocation: WorkflowRunInvocationIndexV1): string | null => {
+        const blockId = derivedStructure.get(invocation.id)?.blockId;
+        const block = blockId == null || blockId === '$root' || props.definition === null ? null : findWorkflowBlock(props.definition, blockId);
+        if (block !== null && !block.name?.trim()) {
+            if (block.kind === 'step') return workflowStepPromptLabel(block) ?? invocationLabel(invocation);
+            if (block.kind === 'if') return t('workflows.page.inspector.ifSentence', { condition: resolveWorkflowConditionHeadline(props.definition!, block.when).sentence });
+        }
+        return invocationLabel(invocation);
+    }, [derivedStructure, invocationLabel, props.definition]);
 
     /**
      * Where one occurrence sits, in words: lane, nested workflow, item or round. The Map already
@@ -847,6 +885,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         machineReachable: props.machineReachable,
     }), [derivedStructure, props.definition, props.frozenChildren, props.invocationHistoryComplete, props.invocations,
         props.invocationsLoaded, props.machineReachable, props.run]);
+    // Needs you states a hold, with the way to act on it; an outcome line would only repeat it.
+    const outcomeRepeatsNeedsYou = attentionRows.length > 0 && workflowRunOutcomeIsAttention({
+        state: props.run.state,
+        workflowCustodyState: props.run.workflowCustodyState,
+        cancelRequested: props.cancelRequested,
+        inAttentionWindow: true,
+    });
     const outcomeFailed = describeWorkflowRunState(props.run.state).variant === 'danger'
         || (props.run.state === 'succeeded' && coverage.knownFailure);
     const outcomeLine = formatWorkflowRunOutcomeLine({
@@ -1139,12 +1184,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             )}
             <View
                 testID={`${testIDPrefix}-outcome-region`}
-                style={[styles.outcome, props.completionEmphasis === true ? styles.outcomeCompleted : null]}
+                style={[styles.outcome, phone ? null : styles.onTitleEdge, props.completionEmphasis === true ? styles.outcomeCompleted : null]}
                 accessibilityRole="summary"
             >
                 {props.completionEmphasis === true ? <View testID={`${testIDPrefix}-outcome-emphasis`} /> : null}
                 {/* The headline names the state; the attention card explains its concrete request. */}
-                <View style={styles.outcomeLine}>
+                {outcomeRepeatsNeedsYou ? null : <View style={styles.outcomeLine}>
                     <WorkflowRunStateMark
                         state={props.run.state}
                         context={{ workflowCustodyState: props.run.workflowCustodyState,
@@ -1161,7 +1206,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                             {outcomeLine.slice(outcomeWord.length)}
                         </> : outcomeLine}
                     </Text>
-                </View>
+                </View>}
                 {/* The quiet second line: what keeps going and what waits on it (lab run-A). */}
                 {consequence === null ? null : <Text testID={`${testIDPrefix}-consequence`} style={[styles.provenance, styles.outcomeDetail]}>
                     {consequence}
@@ -1257,7 +1302,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {attentionRows.length === 0 || phoneDock ? null : (
                 <View
                     testID={`${testIDPrefix}-needs-you`}
-                    style={[styles.section, styles.pageSection]}
+                    style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge]}
                     // A still-paged window cannot promise a total: the loaded
                     // rows are stated as loaded so a reader never mistakes them
                     // for every intervention that remains.
@@ -1325,7 +1370,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
-            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : null]}>
+            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnTitle]}>
+                <View style={phone ? null : styles.viewTabs}>
                 <SegmentedTabBar
                     testIDPrefix={`${testIDPrefix}-view`}
                     accessibilityLabel={t('workflows.tabsAccessibility.runViews')}
@@ -1338,6 +1384,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     activeTabId={props.view}
                     onSelectTab={props.onChangeView}
                 />
+                </View>
                 {/* A phone folds the source action into ⋯, so a settled Run's phone page has no row here to reserve. */}
                 {sourceFolded && isTerminalWorkflowRunState(props.run.state) ? null : <View style={[styles.viewActions, phone ? styles.viewActionsPhone : styles.viewActionsTrailing]}>
                     {/* A quiet way back to what is happening now; the source action stays the bordered one (lab run-A). */}
@@ -1399,7 +1446,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         const lifecycle = selectedInvocation?.lifecycle;
         const parts = [identity, entry === undefined ? undefined : formatOccurrence(entry.occurrence),
             attempt === undefined ? undefined : describeWorkflowInvocationAttempt(attempt).label,
-            lifecycle === undefined ? undefined
+            // A held result's card says its state on its own line; the header doesn't say it again.
+            lifecycle === undefined || (lifecycle === 'waiting_for_review' && block?.kind !== 'wait' && props.renderReviewCard !== undefined) ? undefined
                 : selectedInvocation !== null && attentionWaitsForYou(selectedInvocation) ? t('workflows.review.waitTitle')
                     : describeWorkflowInvocationLifecycle(lifecycle, { blockKind: props.selectedInvocationProgress?.blockKind ?? block?.kind }).label,
             formatWorkflowInvocationElapsedLabel(props.selectedInvocationProgress?.timing) ?? undefined];
@@ -1600,7 +1648,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <ScrollView testID={`${testIDPrefix}-steps`} style={styles.scroll}
             contentContainerStyle={[styles.root, props.contentContainerStyle]}>
             {header}
-            <View style={styles.pageSection}><WorkflowRunSteps runId={props.run.id} machineId={props.run.machineId} serverId={props.serverId}
+            <View style={[styles.pageSection, phone ? null : styles.documentInset]}><WorkflowRunSteps runId={props.run.id} machineId={props.run.machineId} serverId={props.serverId}
                 invocationStatusContext={invocationStatusContext}
                 definition={props.definition} invocations={props.invocations} structure={derivedStructure}
                 progressById={structureProgressById}
@@ -1626,9 +1674,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             loaded={props.invocationsLoaded}
             selectedInvocationId={props.selectedInvocationId}
             onSelectInvocation={selectInvocation}
-            resolveInvocationLabel={invocationLabel}
+            resolveInvocationLabel={activityInvocationLabel}
             resolveInvocationOccurrenceLabel={invocationOccurrenceLabel}
             resolveInvocationBlockKind={invocationBlockKind}
+            resolveInvocationElapsedLabel={invocationElapsedLabel}
+            rowInsetStyle={phone ? styles.documentInsetPhone : styles.documentInset}
+            compact={phone}
             ListHeaderComponent={header}
             ListFooterComponent={footer}
             contentContainerStyle={props.contentContainerStyle}

@@ -86,6 +86,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
     /** Why this row is waiting or was skipped, when its canonical facts say so. */
     cause?: string | null;
     contentUnavailable?: boolean;
+    /** The review card above these facts already shows this step's result. */
+    resultShownAbove?: boolean;
     /** Undefined retains older callers' notice; null means Review already presents this state. */
     contentReadState?: React.ReactNode;
     onOpenSession?: (sessionId: string) => void;
@@ -801,7 +803,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     {t('workflows.recovery.waitingForStop')}
                 </Text>
             )}
-            {visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed')) ? (
+            {props.resultShownAbove !== true && (visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed'))) ? (
                 // The answer reads as the card it was typed in: the Wait's question heads it and the value
                 // sits in the review card's own rows (DESIGN-16 D4, D5). Any other step's own result heads
                 // "Result"; "Final output" is the Run's, and only one step carries it.
@@ -833,7 +835,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             ) : null}
             {props.progress?.input === undefined ? null : (
                 // What the step was given reads in the same card anatomy as what it returned.
-                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page">
+                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
                     <ItemGroup title={t('workflows.input.label')}>
                         <WorkflowReviewValue value={props.progress.input} contract={undefined}
                             testIDPrefix={`${testIDPrefix}-invocation-input`} />
@@ -846,7 +848,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
               */}
             {usageLabel === null && !workspaceInformative && sessionLink === null && executionLink === null
                 && technicalLines.length === 0 ? null : (
-                <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page">
+                <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
                     <ItemGroup header="none">
                         {usageLabel === null ? null : (
                             <Item

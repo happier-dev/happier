@@ -9,10 +9,12 @@ import type { WorkflowCondition, WorkflowReferenceScope, WorkflowValueReference 
 import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 // Load the real owner during collection, not against the first interaction's timeout.
-import { formatWorkflowValueReference, WorkflowBindingRow, WorkflowStepDataEditor, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
-import { formatWorkflowConditionSentence, WorkflowConditionEditor } from './WorkflowConditionEditor';
+import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { WorkflowBindingRow, WorkflowStepDataEditor, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowConditionSentence } from '../presentation/workflowConditionPresentation';
+import { WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { formatWorkflowLoopSentence } from './WorkflowLoopEditor';
-import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 
 /**
@@ -76,6 +78,13 @@ function fieldSelect(root: ReactTestInstance, testID: string): FieldSelect {
     return match as unknown as FieldSelect;
 }
 
+function chooseValue(root: ReactTestInstance, testID: string, title: string): void {
+    const select = fieldSelect(root, testID);
+    const item = select.props.items.find((candidate) => candidate.title === title);
+    if (item === undefined) throw new Error(`No value "${title}" in ${select.props.items.map((candidate) => candidate.title).join(', ')}`);
+    select.props.onSelect(item.id);
+}
+
 function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstance {
     const match = root.findAll((node) => typeof node.type === 'string' && node.props?.testID === `${testID}-trigger`)[0];
     if (match === undefined) throw new Error(`No trigger for ${testID}`);
@@ -101,7 +110,7 @@ describe('WorkflowStepDataEditor field selects', () => {
         expect(screen.findByTestId('input-path-input-0-path')?.props.value).toBe('sessionId');
         await act(async () => { screen.changeTextByTestId('input-path-input-0-path', 'targets.0.sessionId'); });
         expect(current).toEqual({ kind: 'input', name: 'reviewSession', path: ['targets', 0, 'sessionId'] });
-        await act(async () => { fieldSelect(screen.root, 'input-path-input-0-input-name').props.onSelect('otherSession'); });
+        await act(async () => { chooseValue(screen.root, 'input-path-input-0-value', 'Other Session'); });
         expect(current).toEqual({ kind: 'input', name: 'otherSession', path: ['targets', 0, 'sessionId'] });
     });
     it('preserves a named result operand when changing between existence, comparison and negation', async () => {
@@ -116,18 +125,16 @@ describe('WorkflowStepDataEditor field selects', () => {
                 onChange={setCondition} testIDPrefix="condition" required />;
         }
         const screen = await renderScreen(<Editor />);
-        const changeKind = async (kind: string) => {
-            await act(async () => fieldSelect(screen.root, 'condition-kind').props.onSelect(kind));
+        const changeTest = async (test: string) => {
+            await act(async () => fieldSelect(screen.root, 'condition-test').props.onSelect(test));
         };
-        await changeKind('compare');
-        expect(current).toEqual({ kind: 'compare', operator: 'eq', left: reference, right: { kind: 'literal', value: true } });
-        await act(async () => fieldSelect(screen.root, 'condition-operator').props.onSelect('neq'));
-        expect(current).toMatchObject({ operator: 'neq', left: reference });
-        await changeKind('not');
-        expect(current).toMatchObject({ kind: 'not', condition: { kind: 'compare', operator: 'neq', left: reference } });
-        await changeKind('compare');
+        await changeTest('eq');
+        expect(current).toMatchObject({ kind: 'compare', operator: 'eq', left: reference });
+        await changeTest('neq');
         expect(current).toMatchObject({ kind: 'compare', operator: 'neq', left: reference });
-        await changeKind('exists');
+        await changeTest('not_exists');
+        expect(current).toEqual({ kind: 'not', condition: { kind: 'exists', value: reference } });
+        await changeTest('exists');
         expect(current).toEqual({ kind: 'exists', value: reference });
     });
     it('reads human input and result field names without leaking wire keys or clipped prompt titles', () => {
@@ -192,9 +199,21 @@ describe('WorkflowStepDataEditor field selects', () => {
         expect(formatWorkflowValueReference(draft, { kind: 'iteration', field: 'position' })).toBe('workflows.input.iterationField.position');
         expect(formatWorkflowValueReference(draft, { kind: 'session_context', recentTurns: 1 })).toContain('workflows.input.sessionContext');
     });
-    it('offers where a value comes from as one labelled select with the current kind selected', async () => {
+    it('offers one value picker, never the reference\'s kind, step and field as separate selects (owner 11-05)', async () => {
+        const producer = stepBlock('producer-a', []);
+        const step = stepBlock('step-a', [{ kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: [] }]);
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] });
+        const screen = await renderEditor(draft, step);
+        expect(fieldSelect(screen.root, 'editor-step-step-a-input-0-value').props.selectedId).not.toBeNull();
+        for (const old of ['kind', 'producer', 'input-name', 'workspace-field', 'item-field', 'iteration-field']) {
+            expect(screen.findByTestId(`editor-step-step-a-input-0-${old}`)).toBeNull();
+        }
+    });
+
+    it('moves a typed value to a chosen one and back, through the same picker', async () => {
         const step = stepBlock('step-a', [{ kind: 'literal', value: '' }]);
-        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] });
+        const draft = setWorkflowInputs(createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] }),
+            [{ name: 'topic', valueType: 'string', required: false }]);
         const changes: unknown[] = [];
         const screen = await renderScreen(
             <WorkflowStepDataEditor
@@ -204,51 +223,67 @@ describe('WorkflowStepDataEditor field selects', () => {
                 testIDPrefix="editor"
             />,
         );
-
-        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-kind');
-        expect(select.props.selectedId).toBe('literal');
-        expect(select.props.items.map((item) => item.id)).toEqual(['literal', 'input', 'result', 'workspace']);
-        expect(selectTrigger(screen.root, 'editor-step-step-a-input-0-kind').props.accessibilityLabel)
-            .toBe('workflows.input.valueKindGroup: workflows.condition.valuePlaceholder');
-        await act(async () => { select.props.onSelect('input'); });
-        expect(changes.at(-1)).toEqual([{ kind: 'input', name: 'input' }]);
+        expect(screen.findByTestId('editor-step-step-a-input-0-literal')).not.toBeNull();
+        expect(selectTrigger(screen.root, 'editor-step-step-a-input-0-value').props.accessibilityLabel)
+            .toBe('workflows.input.valueKindGroup: workflows.condition.fixedValue');
+        await act(async () => { chooseValue(screen.root, 'editor-step-step-a-input-0-value', 'Topic'); });
+        expect(changes.at(-1)).toEqual([{ kind: 'input', name: 'topic' }]);
+        await act(async () => { chooseValue(screen.root, 'editor-step-step-a-input-0-value', 'workflows.condition.fixedValue'); });
+        expect(changes.at(-1)).toEqual([{ kind: 'literal', value: '' }]);
     });
 
-    it('offers which workflow input it reads as one select with the current input selected', async () => {
+    it('names each value by where it comes from, with the current one selected', async () => {
+        const producer = stepBlock('producer-a', []);
         const step = stepBlock('step-a', [{ kind: 'input', name: 'tone' }]);
         const draft = setWorkflowInputs(
-            createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] }),
+            createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] }),
             [
                 { name: 'topic', valueType: 'string', required: false },
                 { name: 'tone', valueType: 'string', required: false },
             ],
         );
-
         const screen = await renderEditor(draft, step);
-
-        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-input-name');
-        expect(select.props.items.map((item) => item.id)).toEqual(['topic', 'tone']);
-        expect(select.props.selectedId).toBe('tone');
+        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-value');
+        const items = select.props.items as ReadonlyArray<Readonly<{ id: string; title: string; category?: string }>>;
+        expect(items.filter((item) => item.category === 'workflows.condition.fromRun').map((item) => item.title)).toEqual(['Topic', 'Tone']);
+        expect(items.filter((item) => item.category === 'workflows.condition.whereItWorks').length).toBeGreaterThan(0);
+        expect(select.props.selectedId).toBe(items.find((item) => item.title === 'Tone')!.id);
     });
 
-    it('offers which step produces it as one select naming each step and its scope', async () => {
-        const producer = stepBlock('producer-a', []);
-        const step = stepBlock('step-a', [
-            { kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: [] },
-        ]);
-        const draft = createWorkflowEditorDraft({
-            draftId: 'draft-1',
-            name: 'Review',
-            blocks: [producer, step],
-        });
+    it('keeps the whole result and a path into it reachable beside a step\'s named fields', async () => {
+        const producer = { ...stepBlock('producer-a', []), result: { kind: 'json' as const, schema: { type: 'object' as const, properties: { verdict: { type: 'string' as const } } } } };
+        const initial: WorkflowValueReference = { kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: ['verdict'] };
+        const step = stepBlock('step-a', [initial]);
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] });
+        let current: WorkflowValueReference = initial;
+        function Editor() {
+            const [reference, setReference] = React.useState(current);
+            current = reference;
+            return <WorkflowValueReferenceEditor reference={reference} index={0} draft={draft} stepId="step-a" onChange={setReference} testIDPrefix="row" />;
+        }
+        const screen = await renderScreen(<Editor />);
+        expect(screen.findByTestId('row-input-0-path')).toBeNull();
+        await act(async () => { chooseValue(screen.root, 'row-input-0-value', 'workflows.condition.wholeResult'); });
+        expect(current).toEqual({ kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: [] });
+        expect(screen.findByTestId('row-input-0-path')).toBeNull();
+        await act(async () => { chooseValue(screen.root, 'row-input-0-value', 'workflows.page.inspector.resultFields.otherPath'); });
+        await act(async () => { screen.changeTextByTestId('row-input-0-path', 'nested.value'); });
+        expect(current).toMatchObject({ kind: 'result', path: ['nested', 'value'] });
+    });
 
+    it('tells two unnamed steps apart by the number the document shows them under (live, 1105)', async () => {
+        const first = stepBlock('first', []);
+        const second = stepBlock('second', []);
+        const step = stepBlock('step-a', [{ kind: 'literal', value: '' }]);
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [first, second, step] });
         const screen = await renderEditor(draft, step);
-
-        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-producer');
-        expect(select.props.items).toEqual([
-            expect.objectContaining({ id: 'producer-a:current', title: 'workflows.editor.addStep', subtitle: 'workflows.input.scopeCurrent' }),
-        ]);
-        expect(select.props.selectedId).toBe('producer-a:current');
+        const items = fieldSelect(screen.root, 'editor-step-step-a-input-0-value').props.items as ReadonlyArray<Readonly<{ title: string; category?: string }>>;
+        const results = items.filter((item) => item.title === 'workflows.condition.wholeResult').map((item) => item.category);
+        expect(new Set(results).size).toBe(2);
+        expect(results[0]).toContain('1');
+        expect(results[1]).toContain('2');
+        const folders = items.filter((item) => item.category === 'workflows.condition.whereItWorks').map((item) => item.title);
+        expect(new Set(folders).size).toBe(folders.length);
     });
 });
 

@@ -18,6 +18,11 @@ export type AgentInputDocumentPreviewTextProps = Readonly<{
   references: readonly AgentInputDocumentPreviewReference[];
   placeholder: string;
   /**
+   * The field's own vertical inset, so the picture and the live editor share every pixel. A reading
+   * outside any field (a row that already gives the text its room) passes `false`.
+   */
+  fieldInset?: boolean;
+  /**
    * Receives where in the text a pointer went down, so the live composer that replaces the picture
    * opens with its caret there. `null` when the point maps to no text position.
    */

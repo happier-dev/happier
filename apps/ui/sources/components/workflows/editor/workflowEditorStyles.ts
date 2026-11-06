@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { resolveAgentInputPanelLayoutStyle } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
-import type { ThemeStyleScales } from '@/theme/themeStyleScales';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The document draws at its lab rhythm under every pointer; text-labelled authoring controls are
@@ -35,13 +35,22 @@ const LANE_LINE = Number(Typography.variant('meta').lineHeight);
  * left edge, the column after it. A nested list starts on its parent's edge, so its ordinals hang
  * from that edge and its rail runs through the parent's mark.
  */
-const ordinalColumn = (gap: number) => ORDINAL_SIZE + gap;
+/** A Workflow page's title edge from its column: the text inset, the header's mark and the gap after it. */
+export const WORKFLOW_PAGE_TITLE_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
+    + HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx + HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
 
 /**
- * The document's gutter: from a list's edge to its name column (the ordinal and the gap after it).
- * A page that lines its steps' names up under its title subtracts this from the title's edge.
+ * Ordinal → name. Derived so that with names on the title's edge, an ordinal is centred under the
+ * header's mark: one axis for the page's marks and one edge for its words (lab round 1105 P1).
  */
-export const resolveWorkflowDocumentGutterPx = (theme: Pick<ThemeStyleScales, 'space'>): number => ordinalColumn(theme.space.s12);
+export const WORKFLOW_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx / 2
+    + HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx - ORDINAL_SIZE / 2;
+
+/** The document's gutter: from a list's edge to its name column (the ordinal and the gap after it). */
+export const WORKFLOW_DOCUMENT_GUTTER_PX = ORDINAL_SIZE + WORKFLOW_ORDINAL_GAP_PX;
+
+/** Where a list hangs so its names land on the title's edge and its ordinals under the mark. */
+export const WORKFLOW_DOCUMENT_INSET_PX = WORKFLOW_PAGE_TITLE_EDGE_PX - WORKFLOW_DOCUMENT_GUTTER_PX;
 
 /**
  * Shared editor rhythm.
@@ -73,11 +82,12 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     /** A reading document's note above its first block, on the name column its blocks' words share. */
     listNote: {
         marginBottom: theme.space.s16,
-        paddingLeft: ordinalColumn(theme.space.s12),
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /** The root's end row (Add · Start from an example), one gap below the last block. */
     listEnd: {
         paddingTop: theme.space.s20,
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /**
      * The one gap between two blocks (lab `editor-P1`, `editor-E1`): a fixed row on the name column
@@ -90,7 +100,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
         height: theme.space.s20 + theme.space.s8,
-        paddingLeft: ordinalColumn(theme.space.s12),
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /** A non-default run-when ("If it fails", "Either way"): a quiet word on the name column, as the lab's lane captions read. */
     blockGapCaption: {
@@ -117,7 +127,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     },
     containerRail: {
         position: 'absolute',
-        left: -(ordinalColumn(theme.space.s12) - ORDINAL_SIZE / 2),
+        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2),
         top: 0,
         bottom: theme.space.s8,
         borderLeftWidth: 1,
@@ -141,8 +151,8 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     laneTick: {
         position: 'absolute',
         top: theme.space.s8 + LANE_LINE / 2,
-        left: -(ordinalColumn(theme.space.s12) - ORDINAL_SIZE / 2),
-        width: ordinalColumn(theme.space.s12) - ORDINAL_SIZE / 2 - theme.space.s4,
+        left: -(WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2),
+        width: WORKFLOW_DOCUMENT_GUTTER_PX - ORDINAL_SIZE / 2 - theme.space.s4,
         borderTopWidth: 1,
         borderColor: theme.colors.border.default,
     },
@@ -207,7 +217,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         gap: theme.space.s4,
-        paddingLeft: ordinalColumn(theme.space.s12),
+        paddingLeft: WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     blockBody: {
         flex: 1,
@@ -221,9 +231,9 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     heading: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: theme.space.s12,
+        gap: WORKFLOW_ORDINAL_GAP_PX,
         // The ordinal hangs in the gutter, so the name starts on the column the card and its lines share.
-        marginLeft: -ordinalColumn(theme.space.s12),
+        marginLeft: -WORKFLOW_DOCUMENT_GUTTER_PX,
     },
     /** The ordinal and `⋯` columns, centred on the heading's first line. */
     headingLine: {
@@ -320,6 +330,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexGrow: 1,
     },
     /** The editable name's box is its text; its line is `headingButton`. */
+    /** An unnamed block's name field while a sentence is its title: reachable from the keyboard, taking no room. */
+    headingNameCollapsed: {
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        opacity: 0,
+    },
     headingNameInput: {
         ...Typography.variant('heading'),
         color: theme.colors.text.primary,
@@ -540,6 +557,60 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
      * One binding's controls. They wrap at the pane edge rather than running past it
      * (the width contract, 07 §3): the source select, then its value.
      */
+    /** One condition rule, read as a sentence; it wraps between its words, never inside one. */
+    conditionRule: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: theme.space.s6,
+        minHeight: HAPPIER_PAGE_METRICS.controlHeightPx,
+        minWidth: 0,
+    },
+    conditionGroup: {
+        gap: theme.space.s8,
+        alignItems: 'flex-start',
+    },
+    /** A nested group hangs from a rail, as the document's containers do. */
+    conditionNested: {
+        borderLeftWidth: 1,
+        borderColor: theme.colors.border.default,
+        paddingLeft: theme.space.s12,
+    },
+    conditionLead: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
+    },
+    /** A chosen value, as the reference token the sentence will show. */
+    valuePicker: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s6,
+        minHeight: HAPPIER_PAGE_METRICS.controlHeightPx,
+        paddingHorizontal: theme.space.s8,
+        borderRadius: theme.borderRadius.md,
+        maxWidth: '100%',
+    },
+    valuePickerUnset: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.strong,
+    },
+    valuePickerLabel: {
+        ...Typography.variant('body', 'medium'),
+        flexShrink: 1,
+    },
+    /** Sized like its neighbours, so a rule stays one line where the width allows. */
+    conditionLiteral: {
+        flexGrow: 0,
+        flexBasis: 'auto',
+        width: 104,
+    },
+    conditionHint: {
+        marginTop: theme.space.s8,
+    },
+    /** Remove sits at the rule's end, never between its words. */
+    conditionRemove: {
+        marginLeft: 'auto',
+    },
     inlineControl: {
         flexDirection: 'row',
         alignItems: 'center',

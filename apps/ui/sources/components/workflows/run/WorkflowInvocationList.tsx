@@ -1,5 +1,5 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import {
     View,
@@ -10,19 +10,22 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol';
+import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
 
+import { WORKFLOW_ORDINAL_GAP_PX } from '@/components/workflows/editor/workflowEditorStyles';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import {
     describeWorkflowInvocationAttempt,
     describeWorkflowInvocationLifecycle,
+    workflowLifecycleAwaitsDecision,
     type WorkflowInvocationLifecycleContext,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
@@ -50,7 +53,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
     },
     list: {
-        gap: theme.space.s4,
+        gap: 0,
     },
     listHeader: {
         marginBottom: theme.space.s16,
@@ -58,29 +61,49 @@ const styles = StyleSheet.create((theme) => ({
     listFooter: {
         marginTop: theme.space.s16,
     },
+    /** Row rhythm carries the structure; the reserved border keeps the focus ring from moving layout. */
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s8,
-        paddingVertical: theme.space.s8,
+        gap: theme.space.s12,
+        paddingVertical: theme.space.s6,
         minHeight: MINIMUM_TARGET_SIZE,
         borderWidth: 1,
         borderColor: 'transparent',
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: theme.colors.border.default,
+        borderRadius: theme.borderRadius.md,
     },
     rowSelected: {
         backgroundColor: theme.colors.surface.selected,
     },
-    rail: {
-        width: StyleSheet.hairlineWidth,
-        alignSelf: 'stretch',
-        backgroundColor: theme.colors.border.default,
+    /** The state glyph, in the page's ordinal column, so the name lands where a step's does. */
+    marker: {
+        width: ICON_SIZE.lg,
+        marginRight: WORKFLOW_ORDINAL_GAP_PX - theme.space.s12,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     label: {
-        ...Typography.variant('label', 'regular'),
+        ...Typography.variant('label', 'medium'),
         color: theme.colors.text.primary,
         flexShrink: 1,
+    },
+    /** Finished work steps back, so what is still happening leads the list. */
+    labelFinished: {
+        ...Typography.default('regular'),
+        color: theme.colors.text.secondary,
+    },
+    word: {
+        ...Typography.variant('meta'),
+        flexShrink: 1,
+    },
+    wordSpeaking: {
+        ...Typography.default('semiBold'),
+    },
+    day: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        paddingTop: theme.space.s16,
+        paddingBottom: theme.space.s4,
     },
     identity: {
         flex: 1,
@@ -94,7 +117,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
     },
     ordinal: {
-        ...Typography.variant('micro'),
+        ...Typography.variant('meta'),
         ...Typography.tabular(),
         color: theme.colors.text.tertiary,
     },
@@ -133,6 +156,16 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+function sameDay(a: number, b: number): boolean {
+    return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+/** The label over the first row of each day, so each row can say just its time. */
+function formatDayLabel(at: number): string {
+    if (sameDay(at, Date.now())) return t('sessionHistory.today');
+    return new Date(at).toLocaleDateString(getPreferredLanguage(), { month: 'short', day: 'numeric' });
+}
+
 export type WorkflowInvocationListProps = Readonly<{
     invocationStatusContext?: WorkflowInvocationLifecycleContext;
     invocations: readonly WorkflowRunInvocationIndexV1[];
@@ -154,6 +187,12 @@ export type WorkflowInvocationListProps = Readonly<{
     resolveInvocationOccurrenceLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
     /** The authored block kind for a row, so a held Wait-for-you step reads its own word. */
     resolveInvocationBlockKind?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
+    /** How long a finished attempt took, when its timing has been read; otherwise the row keeps its time alone. */
+    resolveInvocationElapsedLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
+    /** Places the glyph on the page's gutter and the name on its text column. */
+    rowInsetStyle?: HappierStyleProp;
+    /** A phone: the state word moves under the name, which keeps the line. */
+    compact?: boolean;
     ListHeaderComponent?: React.ReactElement | null;
     ListFooterComponent?: React.ReactElement | null;
     contentContainerStyle?: StyleProp<ViewStyle>;
@@ -171,17 +210,35 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         resolveInvocationLabel: props.resolveInvocationLabel,
         resolveInvocationBlockKind: props.resolveInvocationBlockKind,
         resolveInvocationOccurrenceLabel: props.resolveInvocationOccurrenceLabel,
+        resolveInvocationElapsedLabel: props.resolveInvocationElapsedLabel,
+        invocations: props.invocations,
     }), [props.selectedInvocationId, props.invocationStatusContext, props.resolveInvocationLabel,
-        props.resolveInvocationBlockKind, props.resolveInvocationOccurrenceLabel]);
-    const renderInvocation = React.useCallback(({ item: invocation }: { item: WorkflowRunInvocationIndexV1 }) => {
+        props.resolveInvocationBlockKind, props.resolveInvocationOccurrenceLabel, props.resolveInvocationElapsedLabel, props.invocations]);
+    const renderInvocation = React.useCallback(({ item: invocation, index }: { item: WorkflowRunInvocationIndexV1; index: number }) => {
         const selected = props.selectedInvocationId === invocation.id;
         const blockKind = props.resolveInvocationBlockKind?.(invocation) ?? null;
-        const stateLabel = describeWorkflowInvocationLifecycle(invocation.lifecycle, { ...props.invocationStatusContext, blockKind }).label;
+        const presentation = describeWorkflowInvocationLifecycle(invocation.lifecycle, { ...props.invocationStatusContext, blockKind });
+        const stateLabel = presentation.label;
+        // Finished work is said by its glyph alone; only work that is not finished takes a word.
+        const finished = invocation.lifecycle === 'completed';
+        const speaks = presentation.variant !== 'neutral';
         const attempt = describeWorkflowInvocationAttempt(invocation.attempt);
         const displayLabel = props.resolveInvocationLabel?.(invocation) ?? t('workflows.contentUnavailable');
         const occurrenceLabel = props.resolveInvocationOccurrenceLabel?.(invocation) ?? null;
-        const recordedTime = formatAsOfTime(Date.parse(invocation.createdAt));
+        const recordedAt = Date.parse(invocation.createdAt);
+        const recordedTime = formatAsOfTime(recordedAt);
+        const elapsed = props.resolveInvocationElapsedLabel?.(invocation) ?? null;
+        const previous = index > 0 ? props.invocations[index - 1] : undefined;
+        const day = previous !== undefined && sameDay(Date.parse(previous.createdAt), recordedAt) ? null : formatDayLabel(recordedAt);
+        const word = finished || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
+            <Text testID={`${testIDPrefix}-word-${invocation.id}`} numberOfLines={1} style={[styles.word, speaks ? styles.wordSpeaking : null,
+                { color: speaks ? theme.colors.state[presentation.variant].foreground : theme.colors.text.secondary }]}>
+                {stateLabel}
+            </Text>
+        );
         return (
+            <>
+            {day === null ? null : <Text testID={`${testIDPrefix}-day-${invocation.id}`} style={[styles.day, props.rowInsetStyle as object]}>{day}</Text>}
             <HappierPressable
                 testID={`${testIDPrefix}-row-${invocation.id}`}
                 accessibilityRole="button"
@@ -192,15 +249,19 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                     state: stateLabel,
                 })}
                 onPress={(event) => props.onSelectInvocation(invocation.id, event)}
-                style={(state) => [styles.row, selected ? styles.rowSelected : null, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                style={(state) => [styles.row, props.rowInsetStyle, selected ? styles.rowSelected : null, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
             >
-                <View
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    style={styles.rail}
-                />
+                <View style={styles.marker}>
+                    <WorkflowLifecycleStatus
+                        testID={`${testIDPrefix}-state-${invocation.id}`}
+                        lifecycle={invocation.lifecycle}
+                        blockKind={blockKind}
+                        context={props.invocationStatusContext}
+                        markerOnly
+                    />
+                </View>
                 <View style={styles.identity}>
-                    <Text style={[styles.label, selected ? styles.labelSelected : null]} numberOfLines={1}>
+                    <Text style={[styles.label, finished ? styles.labelFinished : null, selected ? styles.labelSelected : null]} numberOfLines={1}>
                         {displayLabel}
                     </Text>
                     {occurrenceLabel === null ? null : (
@@ -208,27 +269,27 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                             {occurrenceLabel}
                         </Text>
                     )}
+                    {props.compact === true ? word : null}
                 </View>
+                {props.compact === true ? null : word}
                 <View style={styles.trailing}>
-                    <Text testID={`${testIDPrefix}-time-${invocation.id}`} style={styles.ordinal}>
-                        {recordedTime}
-                    </Text>
                     {attempt.retried ? (
                         <Text testID={`${testIDPrefix}-attempt-${invocation.id}`} style={styles.ordinal}>
                             {attempt.label}
                         </Text>
                     ) : null}
-                    <WorkflowLifecycleStatus
-                        testID={`${testIDPrefix}-state-${invocation.id}`}
-                        lifecycle={invocation.lifecycle}
-                        blockKind={blockKind}
-                        context={props.invocationStatusContext}
-                    />
+                    {elapsed === null ? null : (
+                        <Text testID={`${testIDPrefix}-elapsed-${invocation.id}`} style={styles.ordinal}>{elapsed}</Text>
+                    )}
+                    <Text testID={`${testIDPrefix}-time-${invocation.id}`} style={styles.ordinal}>
+                        {formatAsOfTime(recordedAt, recordedAt)}
+                    </Text>
                 </View>
             </HappierPressable>
+            </>
         );
-    }, [props.invocationStatusContext, props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationLabel,
-        props.resolveInvocationOccurrenceLabel, props.selectedInvocationId, testIDPrefix, theme.colors.border.focus]);
+    }, [props.invocationStatusContext, props.invocations, props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationElapsedLabel,
+        props.compact, props.resolveInvocationLabel, props.resolveInvocationOccurrenceLabel, props.rowInsetStyle, props.selectedInvocationId, testIDPrefix, theme]);
 
     const pagingFooter = props.onLoadMore === undefined ? null : (
         <View style={styles.footer}>
@@ -278,7 +339,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                 keyExtractor={keyExtractor}
                 renderItem={renderInvocation}
                 extraData={extraData}
-                contentContainerStyle={[styles.list, props.contentContainerStyle]}
+                contentContainerStyle={[props.contentContainerStyle, styles.list]}
                 onScroll={props.onScroll}
                 scrollEventThrottle={32}
                 ListHeaderComponent={props.ListHeaderComponent === null || props.ListHeaderComponent === undefined

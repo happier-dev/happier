@@ -21,7 +21,6 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList/Selection
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
-import { PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -113,7 +112,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { formatWorkflowIssueText } from '../editor/workflowIssueText';
-import { resolveWorkflowDocumentGutterPx } from '../editor/workflowEditorStyles';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TITLE_EDGE_PX } from '../editor/workflowEditorStyles';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -146,9 +145,12 @@ const PHONE_BAR_SHEET = Object.freeze({});
 /** The Agent & model chips the header shows; every field is in Workflow settings. */
 const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
 
-/** The page title's left edge from the column's (its text inset, the leading mark, the header's gap). */
-const WORKFLOW_PAGE_TITLE_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
-    + PAGE_HEADER_MARK_SLOT_SIZE_PX.page + HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
+/** Starting from an example replaces nothing only while there is nothing to replace. */
+function documentIsUntouched(draft: WorkflowEditorDraft): boolean {
+    const [only, ...rest] = draft.blocks;
+    if (only === undefined) return true;
+    return rest.length === 0 && only.kind === 'step' && (only.name?.trim() ?? '') === '' && only.document.text.trim().length === 0;
+}
 
 const styles = StyleSheet.create((theme) => ({
     /**
@@ -195,9 +197,7 @@ const styles = StyleSheet.create((theme) => ({
         // left edge, while the header's mark and the steps' ordinals hang in the gutter beside it.
         paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX,
         paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx,
-        paddingBottom: theme.space.s12,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: theme.colors.border.default,
+        paddingBottom: HAPPIER_PAGE_METRICS.pageTabsGapPx,
     },
     whereChip: {
         flexShrink: 0,
@@ -208,20 +208,18 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     /**
-     * The steps (lab `editor-E1`, `.uwe-doc`): the page's reading column, not the header's width.
-     * Steps hang from the page's text inset and stop at the reading measure, so a card never
-     * stretches across a wide window; the header and its chips keep the page column above it.
+     * The steps share the header's column (lab round 1105 P1), so a card ends where the header's actions
+     * do. The column itself is capped by the layout width, so a card never stretches across a wide window.
      */
     document: {
         width: '100%',
-        maxWidth: PAGE_COLUMN_MAX_WIDTH_PX.reading,
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
         paddingTop: theme.space.s16,
         gap: theme.space.s16,
     },
     /** Wide: the root list's name column on the title's edge, so its ordinals hang under the mark's gutter. */
     documentUnderTitle: {
-        paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX - resolveWorkflowDocumentGutterPx(theme),
+        paddingLeft: WORKFLOW_DOCUMENT_INSET_PX,
     },
     undoRow: {
         flexDirection: 'row',
@@ -330,6 +328,8 @@ const WORKFLOW_EDITOR_MAIN_MIN_WIDTH_PX = DEFAULT_MAIN_MIN_PX;
 
 /** Step options popover: the lab `E1o` card's width, capped by the space beside the anchor. */
 const STEP_OPTIONS_MAX_WIDTH_PX = 420;
+/** An If's options are its one rule: wide enough to read as a sentence on one line (lab round 1105 C1). */
+const IF_OPTIONS_MAX_WIDTH_PX = 520;
 const STEP_OPTIONS_MAX_HEIGHT_PX = 640;
 
 export type WorkflowEditorView = 'steps' | 'flow';
@@ -991,6 +991,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </View>
     );
 
+    const stepOptionsWidth = stepOptionsPopoverBlockId !== null && findWorkflowBlock(draft, stepOptionsPopoverBlockId)?.kind === 'if'
+        ? IF_OPTIONS_MAX_WIDTH_PX : STEP_OPTIONS_MAX_WIDTH_PX;
     const stepOptionsPopoverNode = stepOptionsPopover === null || stepOptionsPopoverBlockId === null ? null : (
         <Popover
             open
@@ -1006,7 +1008,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             accessibilityLabel={t('workflows.page.inspector.stepOptions')}
             edgePadding={{ horizontal: 12, vertical: 12 }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
-            maxWidthCap={STEP_OPTIONS_MAX_WIDTH_PX}
+            maxWidthCap={stepOptionsWidth}
             maxHeightCap={STEP_OPTIONS_MAX_HEIGHT_PX}
             onRequestClose={closeStepOptions}
         >
@@ -1017,7 +1019,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     // The options own their scroll below a pinned header (Back / title / Done).
                     scrollEnabled={false}
                     scrollViewStyle={{ flexShrink: 1, minHeight: 0 }}
-                    containerStyle={{ width: Math.min(maxWidth, STEP_OPTIONS_MAX_WIDTH_PX) }}
+                    containerStyle={{ width: Math.min(maxWidth, stepOptionsWidth) }}
                 >
                     <WorkflowInspector
                         {...buildStepOptionsProps(stepOptionsPopoverBlockId)}
@@ -1044,7 +1046,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             onSelect={props.onSelectBlock}
             onCustomize={openInspector}
             onCommitChange={props.onCommitChange}
-            onUseExample={useExample}
+            {...(documentIsUntouched(draft) ? { onUseExample: useExample } : {})}
             rootAddRow={!compactLayout}
             registerPromptRef={registerPromptRef}
             requestPromptFocus={requestPromptFocus}

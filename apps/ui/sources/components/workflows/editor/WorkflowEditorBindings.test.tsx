@@ -96,8 +96,9 @@ describe('workflow editor declared bindings', () => {
         const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
             ordinal={1} total={1} actions={[]} onSelect={() => {}} selected
             onChangeBlock={changed} testIDPrefix="editor" />);
-        expect(screen.findByTestId('editor-action-command-field-command-input-0-kind')).toBeNull();
-        expect(screen.findByTestId('editor-action-command-field-env-input-0-kind')).not.toBeNull();
+        // A field that only takes a typed value offers nothing to pick; one that can bind offers the picker.
+        expect(screen.findByTestId('editor-action-command-field-command-input-0-value')).toBeNull();
+        expect(screen.findByTestId('editor-action-command-field-env-input-0-value')).not.toBeNull();
         await act(async () => screen.changeTextByTestId('editor-action-command-field-command-literal', 'echo "$MESSAGE"'));
         expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: { ...block.input,
             command: { kind: 'literal', value: 'echo "$MESSAGE"' },
@@ -121,8 +122,9 @@ describe('workflow editor declared bindings', () => {
         const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
             ordinal={1} total={1} actions={[]} onSelect={() => {}} selected
             onChangeBlock={changed} testIDPrefix="editor" />);
-        const source = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `editor-action-bound-field-${field}-input-0-kind`)!;
-        await act(async () => source.props.onSelect('input'));
+        const source = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `editor-action-bound-field-${field}-input-0-value`)!;
+        const payload = (source.props.items as ReadonlyArray<Readonly<{ id: string; title: string }>>).find((item) => item.title === 'Payload')!;
+        await act(async () => source.props.onSelect(payload.id));
         expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: { ...block.input,
             [field]: { kind: 'input', name: 'payload' },
         } });

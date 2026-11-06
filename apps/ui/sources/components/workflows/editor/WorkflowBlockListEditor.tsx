@@ -45,7 +45,7 @@ import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { listWorkflowBlockOrdinalsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import type { WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
-import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from './WorkflowConditionEditor';
+import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl } from './WorkflowContainerBody';
 import { WorkflowReferenceSentence } from './WorkflowStepDataEditor';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -734,13 +734,14 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(row: Rea
                                             sentence={t('workflows.page.inspector.ifSentence', { condition: ifHeadline.sentence })}
                                             references={ifHeadline.references} />
                                     </Text>}
-                                    trailing={<WorkflowContainerOptionsControl
+                                    // A bare chevron has no words to wrap with: it stays beside the row's menu, whatever the sentence does.
+                                    accessory={<>{slots?.state}<WorkflowContainerOptionsControl
                                         optionsLabel={t('workflows.page.inspector.options')}
                                         {...(editable ? {
                                             onOpenOptions: (anchorRef: React.RefObject<View | null>) => customizeBlock(block, anchorRef),
                                         } : {})}
                                         testID={`${testIDPrefix}-if-${block.id}-summary`}
-                                    />}
+                                    /></>}
                                     actions={editable && block.otherwise.length === 0 ? [
                                         ...actions.filter((action) => action.id !== 'remove'),
                                         { id: 'addOtherwise', label: t('workflows.editor.addOtherwise'), onSelect: () => {
@@ -751,7 +752,6 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(row: Rea
                                         } },
                                         ...actions.filter((action) => action.id === 'remove'),
                                     ] : actions}
-                                    accessory={slots?.state}
                                     onSelect={() => onSelect(block.id)}
                                     testID={`${testIDPrefix}-if-${block.id}-label`}
                                     actionsTestID={`${testIDPrefix}-if-${block.id}-actions`}

@@ -161,6 +161,14 @@ export function resolveWorkflowInvocationWorkStatus(
     return resolveWorkStatusTone({ kind: 'workflow_step', facts: { ...context, lifecycle, word: label, inAttentionWindow: attention } });
 }
 
+/**
+ * A step held for the person's decision. Needs you says so with the way to act on it, so the Run's own
+ * rows carry the mark alone and keep the word as its spoken name.
+ */
+export function workflowLifecycleAwaitsDecision(lifecycle: WorkflowInvocationLifecycleV1): boolean {
+    return lifecycle === 'waiting_for_review' || lifecycle === 'waiting_for_approval';
+}
+
 export function describeWorkflowInvocationLifecycle(
     lifecycle: WorkflowInvocationLifecycleV1,
     context?: WorkflowInvocationLifecycleContext,

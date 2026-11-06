@@ -80,8 +80,8 @@ export function AgentInputDocumentPreviewText(
       uiFontScale,
       textStyle: FIELD_TEXT_STYLE,
       placeholderInk,
-      paddingTop: FIELD_PADDING_Y,
-      paddingBottom: FIELD_PADDING_Y,
+      paddingTop: props.fieldInset === false ? 0 : FIELD_PADDING_Y,
+      paddingBottom: props.fieldInset === false ? 0 : FIELD_PADDING_Y,
       maxHeight,
     }),
     // The picture sits inside its activating button, whose own alignment must not reach the text.

@@ -9,7 +9,8 @@ import { listWorkflowFinalOutputOptions } from '@/sync/domains/workflows/workflo
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { formatWorkflowValueReference, WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
+import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
 
 export function WorkflowFinalOutputEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
