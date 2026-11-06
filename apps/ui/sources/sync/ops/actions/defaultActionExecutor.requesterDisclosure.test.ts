@@ -327,7 +327,7 @@ describe('requester credential disclosure at the human Action front door', () =>
                     fullSignIn: true, selectedPurposeRuntimeAuth: true, hostCanInspectLocalProcess: true,
                 },
             } });
-            const { readApprovalPreviewSummary } = await import('@/components/approvals/ApprovalPreviewCard');
+            const { readApprovalPreviewSummary } = await import('@/components/approvals/actionApprovalPresentation');
             const { t } = await import('@/text');
             // Both the Approval detail and transcript prompt consume this
             // existing summary presenter; safe facts alone are not disclosure.

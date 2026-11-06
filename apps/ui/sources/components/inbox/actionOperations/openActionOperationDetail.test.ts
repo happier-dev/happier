@@ -45,13 +45,15 @@ describe('openActionOperationDetail', () => {
             cancellation: 'unsupported', result: { destination: serverId === 'home-a' ? 'Alpha destination' : 'Beta destination' },
         }] });
         const screen = await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));
-        await act(async () => openActionOperationDetail({ serverId: 'home-a', operationId: 'operation-1' }));
+        await act(async () => {
+            expect(openActionOperationDetail({ serverId: 'home-a', operationId: 'operation-1' })).toBeUndefined();
+                await vi.dynamicImportSettled();
+        });
 
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
             type: 'custom',
             visible: true,
-            component: ActionOperationDetailModal,
             props: { serverId: 'home-a', operationId: 'operation-1' },
             closeOnBackdrop: true,
             accessibilityLabel: 'inbox.actionOperations.detailAccessibilityLabel',

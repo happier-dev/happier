@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ProseDiffViewer } from '@/components/ui/code/diff/prose/ProseDiffViewer';
 
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
-import { act, renderHook } from '@/dev/testkit';
+import { act, renderHook, renderScreen } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
 
@@ -83,7 +83,7 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
         });
     });
 
-    it('draws a prose before/after with the same prose diff viewer core uses for its own proposals', () => {
+    it('draws a prose before/after with the same prose diff viewer core uses for its own proposals', async () => {
         const host = createPluginUiPrivatePresentationHost(undefined);
         const rendered = host.renderDiffViewer({
             before: 'Two rows.',
@@ -93,12 +93,15 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
             testID: 'proposal.diff',
         });
 
-        expect(rendered.type).toBe(ProseDiffViewer);
-        expect(rendered.props).toMatchObject({
-            testID: 'proposal.diff',
-            oldText: 'Two rows.',
-            newText: 'One row.',
-            prose: { oldLabel: 'Before', newLabel: 'After' },
-        });
+        const screen = await renderScreen(<>{rendered}</>);
+        try {
+            await act(async () => { await vi.dynamicImportSettled(); });
+            expect(screen.findByType(ProseDiffViewer).props).toMatchObject({
+                testID: 'proposal.diff',
+                oldText: 'Two rows.',
+                newText: 'One row.',
+                prose: { oldLabel: 'Before', newLabel: 'After' },
+            });
+        } finally { await screen.unmount(); }
     });
 });

@@ -272,10 +272,11 @@ test('web clipboard controls do not load native Action approval or execution', (
         'native controls retain the mounted Account and approval owner');
 });
 
-test('collection presentation loads rich content only when its presenter is used', () => {
-    const { graph, required } = collectUiWebGraph([
-        'apps/ui/sources/components/ui/lists/collection/CoreCollectionScope.tsx',
-    ]);
+for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? 'collection presentation' : 'private presentation owner'} loads rich content only when its presenter is used (${platform})`, () => {
+    const entry = platform === 'web'
+        ? 'apps/ui/sources/components/ui/lists/collection/CoreCollectionScope.tsx'
+        : 'apps/ui/sources/components/plugins/surfaces/pluginUiPrivateContent.tsx';
+    const { graph, required } = collectUiWebGraph([entry], platform);
     const content = [
         '/plugins/surfaces/PluginUiMarkdown.tsx',
         '/ui/code/blocks/CodeBlockView.tsx',
@@ -283,14 +284,36 @@ test('collection presentation loads rich content only when its presenter is used
         '/ui/code/diff/prose/ProseDiffViewer.tsx',
         '/plugins/surfaces/PluginVoicePresence.tsx',
         '/plugins/surfaces/PluginDictationButton.tsx',
-        '/ui/media/stage/MediaStage.tsx',
     ];
-    const matchesContent = (file, suffix) => file.replace(/\.web(?=\.[^.]+$)/, '').endsWith(suffix);
+    if (platform === 'web') content.push('/ui/media/stage/MediaStage.tsx');
+    const matchesContent = (file, suffix) => file.replace(/\.(?:web|ios|android|native)(?=\.[^.]+$)/, '').endsWith(suffix);
     const eager = [...required].filter(file => content.some(suffix => matchesContent(file, suffix)));
-    console.log(JSON.stringify({ feature: 'collection presentation', staticUiModules: required.size,
+    console.log(JSON.stringify({ feature: 'collection presentation', platform, entry, staticUiModules: required.size,
         staticUiSourceBytes: [...required].reduce((sum, file) => sum + statSync(file).size, 0),
         eagerPresenters: eager.map(file => relative(repoRoot, file)) }));
     assert.deepEqual(eager, [], 'a collection scope must not download unopened rich-content presenters');
     for (const suffix of content) assert.ok([...graph.keys()].some(file => matchesContent(file, suffix)),
         `real presentation demand must retain ${suffix}`);
+});
+
+
+test('mounted native Action approval summaries do not import their preview Card', () => {
+    const entry = 'apps/ui/sources/components/approvals/useActionApprovalContinuation.ts';
+    const { graph } = collectUiWebGraph([entry], 'ios');
+    const cards = graph.get(join(repoRoot, entry)).filter(edge => !edge.dynamic
+        && edge.file.endsWith('/approvals/ApprovalPreviewCard.tsx'));
+    console.log(JSON.stringify({ feature: 'native approval summary read', eagerPreviewCardEdges: cards.length }));
+    assert.deepEqual(cards, [], 'summary reads use the presentation owner without acquiring the preview UI');
+});
+
+
+test('native receipt opener does not import unopened detail UI or Action executors', () => {
+    const { graph, required } = collectUiWebGraph([
+        'apps/ui/sources/components/inbox/actionOperations/openActionOperationDetail.ts',
+    ], 'ios');
+    const detail = file => file.endsWith('/actionOperations/ActionOperationDetailModal.tsx');
+    assert.ok([...graph.keys()].some(detail), 'opening a receipt retains its real detail body');
+    const eagerBodies = [...required].filter(file => detail(file) || file.endsWith('/sync/ops/actions/defaultActionExecutor.ts'));
+    console.log(JSON.stringify({ feature: 'native receipt opener', staticUiModules: required.size, eagerBodies: eagerBodies.length }));
+    assert.deepEqual(eagerBodies, [], 'mounting native controls must not acquire unopened receipt detail UI');
 });

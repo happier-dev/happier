@@ -2,7 +2,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it } from 'vitest';
 
 import { describeApprovalActionFields, projectApprovalStructuredAnswers } from './approvalFieldValues';
-import { readApprovalPreviewSummary } from './ApprovalPreviewCard';
+import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 it('reads the declared request effect instead of a stored generic Action description', () => {

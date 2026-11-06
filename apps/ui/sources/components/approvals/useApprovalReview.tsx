@@ -46,7 +46,8 @@ import { readApprovalArtifactTitleInput, useApprovalRequestTitle } from './appro
 import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from './approvalStatusLabel';
 import { WorkspaceSyncConflictDetailsView } from '@/components/workspaces/sync/WorkspaceSyncConflictDetailsView';
 import { describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from './approvalFieldValues';
-import { ApprovalPreviewCard, readApprovalPreviewSummary } from './ApprovalPreviewCard';
+import { ApprovalPreviewCard } from './ApprovalPreviewCard';
+import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { ApprovalVisualPreview } from './ApprovalVisualPreview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
 import { ComputerActionApprovalCard } from './ComputerActionApprovalCard';

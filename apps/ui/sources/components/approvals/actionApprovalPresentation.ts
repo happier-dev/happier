@@ -7,7 +7,7 @@ import { t } from '@/text';
 import { getPreferredLanguage } from '@/text/i18n';
 import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
-import { readWidgetApprovalPresentationV1 } from '@happier-dev/protocol/widgets';
+import { WidgetLayoutFragmentActionIdV1Schema, readWidgetApprovalPresentationV1 } from '@happier-dev/protocol/widgets';
 import { presentLocalServiceControlApproval, readLocalServiceControlSubject } from './localServiceControlApprovalPresentation';
 
 export type ActionApprovalPresentationInput = Readonly<{
@@ -21,6 +21,33 @@ export type ActionApprovalPresentationInput = Readonly<{
     /** The target Machine's readable path form (home-relative), when the presenting app knows its home. */
     formatPath?: ((path: string) => string) | null;
 }>;
+
+export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown }>;
+
+/** A supplied request summary reads through its domain owner; absent previews remain absent. */
+export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput): string | null {
+    if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
+    const storedSummary = typeof (preview as { summary?: unknown }).summary === 'string'
+        ? (preview as { summary: string }).summary.trim()
+        : '';
+    if (!storedSummary) return null;
+    const actionId = request ? ActionIdSchema.safeParse(request.actionId) : null;
+    if (actionId?.success) {
+        // The library owner captured this name before the mutation. Raw delete
+        // operands contain only an id and cannot re-derive that description.
+        if (WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
+            && 'widgetLibraryName' in preview && typeof preview.widgetLibraryName === 'string' && preview.widgetLibraryName.trim()) return storedSummary;
+        const spec = getActionSpec(actionId.data);
+        if (readWidgetApprovalPresentationV1(preview)) return presentActionApproval({ actionId: actionId.data,
+            actionArgs: request?.actionArgs, preview }).summary;
+        const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
+            || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
+            ? spec.approvalPresentation?.summary(request?.actionArgs) : null;
+        return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
+            authoredSummary: summary || storedSummary }).summary;
+    }
+    return storedSummary;
+}
 
 /** Only the Account override Actions name an Account catalog Role. */
 export function readActionApprovalRoleId(input: ActionApprovalPresentationInput): string | null {

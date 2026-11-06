@@ -8,8 +8,7 @@ import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { presentActionApproval, readActionApprovalSubject } from './actionApprovalPresentation';
-import { readApprovalPreviewSummary } from './ApprovalPreviewCard';
+import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readPluginInstallSourceName } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 

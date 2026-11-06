@@ -3,7 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { createActionApprovalContinuationObserver, type ActionApprovalRegistration } from './actionApprovalContinuation';
 import { useApprovalArtifact } from './useApprovalArtifact';
-import { readApprovalPreviewSummary } from './ApprovalPreviewCard';
+import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { buildApprovalHref } from './approvalNavigation';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
