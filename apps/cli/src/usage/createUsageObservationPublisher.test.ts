@@ -8,7 +8,64 @@ import { buildAcpUsageUpdateObservation } from '@/agent/acp/usage/buildAcpUsageO
 import type { UsageReportV1 } from './legacy/legacyUsageTransport';
 
 
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+
 describe('createUsageObservationPublisher', () => {
+    it.each(['slow', 'cancelled'] as const)('keeps a %s capability probe with its caller instead of downgrading or acknowledging capture', async kind => {
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        let requestSignal: Pick<AbortSignal, 'aborted'> | null | undefined;
+        let finish!: (response: Response) => void;
+        const postJson = vi.fn(async () => ({ ok: true as const }));
+        const emitLegacyUsageReport = vi.fn();
+        const publisher = createUsageObservationPublisher({
+            token: 'token', apiServerUrl: 'https://slow-capabilities.test', postJson, emitLegacyUsageReport,
+            fetchServerFeaturesSnapshot: params => fetchServerFeaturesSnapshot({ ...params,
+                // Only the external HTTP is held; capability parsing and cancellation remain real.
+                fetchImpl: async (_url, init) => {
+                    requestSignal = init?.signal;
+                    return await new Promise<Response>((resolve, reject) => {
+                        finish = resolve;
+                        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+                    });
+                },
+            }),
+        });
+        const observation = { provider: 'codex', source: 'codex-native', scope: 'turn_delta' as const,
+            key: 'session-1', modelId: null, tokens: { total: 12, input: 12, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+            cost: null, contextUsedTokens: null, contextWindowTokens: null };
+        const pending = publisher.publish({ sessionId: 'session-1', signal: controller.signal, observation,
+            ...(kind === 'cancelled' ? { subject: { kind: 'native' as const, machineId: 'machine-1',
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root', nativeSessionKey: 'native' },
+                externalKey: 'inference' } : {}),
+        });
+        const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
+            version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+            legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
+        } } } });
+        try {
+            await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+            if (kind === 'slow') {
+                await vi.advanceTimersByTimeAsync(1_501);
+                expect(emitLegacyUsageReport).not.toHaveBeenCalled();
+                expect(postJson).not.toHaveBeenCalled();
+                finish(Response.json(features));
+                expect(await pending).toEqual({ status: 'sent', transport: 'v2' });
+                expect(postJson).toHaveBeenCalledOnce();
+            } else {
+                controller.abort();
+                expect(requestSignal?.aborted).toBe(true);
+                expect(await pending).toEqual({ status: 'failed' });
+                expect(postJson).not.toHaveBeenCalled();
+            }
+            expect(emitLegacyUsageReport).not.toHaveBeenCalled();
+        } finally {
+            finish?.(Response.json(features));
+            await pending;
+            vi.useRealTimers();
+        }
+    });
+
     it.each([
         { mode: 'unadvertised', withContext: true },
         { mode: 'unadvertised', withContext: false },

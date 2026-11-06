@@ -81,7 +81,7 @@ export function createUsageObservationPublisher(params: Readonly<{
         return { status: 'failed' };
     }
 
-    async function resolveModeForPublish(native: boolean): Promise<Readonly<{ mode: UsageObservationPublisherMode; path: string | null }>> {
+    async function resolveModeForPublish(native: boolean, signal?: AbortSignal): Promise<Readonly<{ mode: UsageObservationPublisherMode; path: string | null }>> {
         if (mode === 'v2' && ingestPath) {
             return { mode, path: ingestPath };
         }
@@ -91,7 +91,7 @@ export function createUsageObservationPublisher(params: Readonly<{
 
         const snapshot = await (params.fetchServerFeaturesSnapshot ?? fetchServerFeaturesSnapshot)({
             serverUrl: params.apiServerUrl,
-            timeoutMs: 1_500,
+            signal,
         });
         if (snapshot.status === 'ready') {
             const supportedPath = resolveUsageAnalyticsIngestPath(snapshot);
@@ -164,7 +164,7 @@ export function createUsageObservationPublisher(params: Readonly<{
             if (input.signal?.aborted) return { status: 'failed' };
             let publishMode: Awaited<ReturnType<typeof resolveModeForPublish>>;
             try {
-                publishMode = await resolveModeForPublish(Boolean(input.subject));
+                publishMode = await resolveModeForPublish(Boolean(input.subject), input.signal);
             } catch (error) {
                 return publishFailure(error);
             }
