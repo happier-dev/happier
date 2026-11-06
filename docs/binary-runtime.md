@@ -216,6 +216,22 @@ background service through the CLI service owner. It retains the existing Machin
 registration without another pairing request. Native-process guests instead
 retry their retained boot configuration without reinstalling or pairing.
 
+Managed Start and Resume also restore an enrolled native-process guest through
+the shared bootstrap owner once the native observation says running. They reuse
+the installed CLI and existing enrollment identity; they do not install or pair
+again. A daemon-start failure preserves the confirmed native power result and
+reports the guest startup failure separately. Dedicated-user background services
+retain their service owner's reboot behavior. This recovery applies to product
+Start/Resume; it does not add a boot service for an out-of-product reboot.
+
+The shared payload installer publishes preparation, archive creation, transfer
+and promotion through the existing installation operation. Native archive delivery
+reports confirmed bytes at its existing chunk boundaries. Remote self-download
+reports preparation and transfer because download and promotion share one remote
+command. Command failures retain a typed code, phase and exit facts without
+including native stdout or stderr. These changes are development-only and require
+the current controller source to be loaded.
+
 The shared remote Home enrollment recipe recognizes the ordinary `auth request`
 JSON emitted by `cli-v0.2.16`, and its status-1 `Unknown auth subcommand: enroll-remote`
 response with auth help, returning `remote_cli_update_required` before approval.

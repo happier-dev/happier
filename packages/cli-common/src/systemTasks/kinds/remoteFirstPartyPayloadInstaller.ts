@@ -92,7 +92,8 @@ function assertRemotePayloadCommandSucceeded(result: RemoteFirstPartyCommandResu
   if (/No space left|\bENOSPC\b|\berrno\s*28\b/iu.test(result.stderr)) {
     throw new SystemTaskExecutionError('remote_storage_full', 'The remote machine does not have enough free disk space to install Happier.');
   }
-  throw new Error(`Remote payload ${phase} failed.`);
+  throw new SystemTaskExecutionError('remote_command_failed',
+    `Remote payload ${phase} failed (exit ${result.status}; stdout present ${result.stdout.length > 0}; stderr present ${result.stderr.length > 0}).`);
 }
 
 export type RemoteFirstPartyPayloadInstallDeps = Readonly<{
@@ -113,6 +114,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   signal?: AbortSignal;
+  onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, deps: RemoteFirstPartyInstallDeps): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
 
   return await installRemoteFirstPartyComponentPayload(params, {
@@ -134,6 +136,7 @@ export async function installRemoteFirstPartyComponentPayload(
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   signal?: AbortSignal;
+  onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, 'ssh' | 'knownHostsMode'>,
   deps: RemoteFirstPartyPayloadInstallDeps,
 ): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
@@ -156,6 +159,7 @@ export async function installRemoteFirstPartyComponentPayload(
     });
   };
   params.signal?.throwIfAborted();
+  params.onPhase?.('prepare');
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
@@ -168,12 +172,13 @@ export async function installRemoteFirstPartyComponentPayload(
       runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
       ...(params.remoteHomeDir ? { remoteHomeDir } : {}),
     });
+    params.onPhase?.('transfer');
     const installResult = await executeRemoteSelfDownloadFirstPartyInstallPlan({
       componentId: params.componentId, channel, remoteHomeDir, plan,
       runRemoteText: (remoteCommand) => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
     });
     if (installResult.status !== 0) {
-      throw new Error(installResult.stderr.trim() || 'Remote self-download install failed.');
+      assertRemotePayloadCommandSucceeded(installResult, 'promotion');
     }
     return {
       binaryPath: plan.binaryPath,
@@ -208,6 +213,7 @@ export async function installRemoteFirstPartyComponentPayload(
 
   try {
     params.signal?.throwIfAborted();
+    params.onPhase?.('archive');
     const scpReadyPayload = await createScpReadyPayloadArchive(prepared.payloadRoot).catch((error: unknown) => {
       params.signal?.throwIfAborted();
       if (localCliPayloadRoot) throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be prepared for delivery.');
@@ -222,6 +228,7 @@ export async function installRemoteFirstPartyComponentPayload(
         ...(params.signal ? { signal: params.signal } : {}),
       });
       assertRemotePayloadCommandSucceeded(stageResult, 'staging');
+      params.onPhase?.('transfer');
       await resolvedDeps.copyLocalDirectoryToRemote({
                 localPath: scpReadyPayload.archiveStageRoot,
         remotePath: stageParentForScp,
@@ -239,6 +246,7 @@ export async function installRemoteFirstPartyComponentPayload(
         remoteHomeDir,
       });
 
+      params.onPhase?.('promote');
       const promotionResult = await resolvedDeps.runRemoteText({
         remoteCommand: [
           'set -eu',

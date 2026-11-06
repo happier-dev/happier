@@ -10,6 +10,7 @@ import type { ManagedNativeBootstrapIO } from './enrollment';
  * can never become input to extraction, for any native provisioner plugin. */
 export async function deliverManagedNativeFile(input: Readonly<{
   localPath: string; guestPath: string; resource: JsonValue; signal?: AbortSignal;
+  onProgress?(progress: Readonly<{ transferredBytes: number; totalBytes: number }>): void;
 }>, native: ManagedNativeBootstrapIO): Promise<void> {
   const partial = `${input.guestPath}.partial`;
   const chunk = `${input.guestPath}.chunk`;
@@ -30,7 +31,10 @@ export async function deliverManagedNativeFile(input: Readonly<{
   const file = await open(input.localPath, 'r');
   try {
     await exec(`umask 077; : > ${safeBashSingleQuote(partial)}`);
-    const buffer = Buffer.allocUnsafe(Math.min(chunkBytes, (await file.stat()).size));
+    const totalBytes = (await file.stat()).size;
+    const buffer = Buffer.allocUnsafe(Math.min(chunkBytes, totalBytes));
+    let transferredBytes = 0;
+    input.onProgress?.({ transferredBytes, totalBytes });
     while (true) {
       input.signal?.throwIfAborted();
       const { bytesRead } = await file.read(buffer, 0, buffer.byteLength, null);
@@ -38,6 +42,8 @@ export async function deliverManagedNativeFile(input: Readonly<{
       if (bytesRead === 0) break;
       await native.putFile({ path: chunk, bytes: buffer.subarray(0, bytesRead), signal: input.signal });
       await exec(`cat -- ${safeBashSingleQuote(chunk)} >> ${safeBashSingleQuote(partial)} && rm -- ${safeBashSingleQuote(chunk)}`);
+      transferredBytes += bytesRead;
+      input.onProgress?.({ transferredBytes, totalBytes });
     }
     await exec(`mv -- ${safeBashSingleQuote(partial)} ${safeBashSingleQuote(input.guestPath)}`);
   } finally { await file.close(); }

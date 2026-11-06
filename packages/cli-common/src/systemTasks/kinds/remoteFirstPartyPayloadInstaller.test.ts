@@ -216,7 +216,7 @@ describe('installRemoteFirstPartyComponent', () => {
     { phase: 'staging', stderr: 'private-path: ENOSPC', code: 'remote_storage_full' },
     { phase: 'staging', stderr: 'private-path: [Errno 28]', code: 'remote_storage_full' },
     { phase: 'promotion', stderr: 'private-path: errno 28', code: 'remote_storage_full' },
-    { phase: 'staging', stderr: 'private-path: [Errno 128] permission denied', code: null },
+    { phase: 'staging', stderr: 'private-path: [Errno 128] permission denied', code: 'remote_command_failed' },
   ] as const)('classifies $phase failure ($stderr) without disclosing remote stderr', async ({ phase, stderr, code }) => {
     const fixture = await createPayloadRootFixture();
     let uploads = 0;
@@ -278,7 +278,8 @@ describe('installRemoteFirstPartyComponent', () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-native-home with spaces-'));
     const fixture = await createPayloadRootFixture();
     try {
-      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+      const phases: string[] = [];
+      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', onPhase: phase => phases.push(phase) }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => {
           const result = await execFileAsync('/bin/sh', ['-c', remoteCommand], { env: { ...process.env, HOME: home } });
@@ -290,6 +291,7 @@ describe('installRemoteFirstPartyComponent', () => {
         preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
       });
       expect(installed.binaryPath).toBe('$HOME/.happier/cli/current/happier');
+      expect(phases).toEqual(['prepare', 'archive', 'transfer', 'promote']);
       await expect(execFileAsync(join(home, '.happier', 'cli', 'current', 'happier'), [])).resolves.toMatchObject({ stdout: '' });
     } finally {
       await fixture.cleanup();

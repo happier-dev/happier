@@ -9,7 +9,7 @@ import { deliverManagedNativeFile } from './nativeFileDelivery';
 export async function installManagedNativePayload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
   const { channel, signal, dedicatedIdentity, home, os, arch, remoteHomeDir, resource, exec, putFile, bootstrapExec, cleanupExec } = input;
   return await installRemoteFirstPartyComponentPayload({
-    componentId: 'happier-cli', channel, signal,
+    componentId: 'happier-cli', channel, signal, onPhase: input.onPhase,
     ...(remoteHomeDir ? { remoteHomeDir } : {}),
   }, {
     resolveRemoteReleaseTarget: async () => ({ os, arch }),
@@ -38,7 +38,7 @@ export async function installManagedNativePayload(input: ManagedNativePayloadIns
         for (const entry of await readdir(localPath, { withFileTypes: true })) {
           if (!entry.isFile()) throw new SystemTaskExecutionError('invalid_payload', 'The binary payload archive was not a regular file.');
           await deliverManagedNativeFile({ localPath: join(localPath, entry.name), guestPath: `${archiveRoot}/${entry.name}`,
-            resource, signal: copySignal }, { exec, putFile: deliverFile });
+            resource, signal: copySignal, onProgress: input.onTransferProgress }, { exec, putFile: deliverFile });
         }
       } finally {
         // Retirement/cancellation must not prevent exact owned-temp cleanup.

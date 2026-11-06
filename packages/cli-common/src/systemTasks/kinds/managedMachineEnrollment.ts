@@ -40,6 +40,8 @@ export type ManagedNativePayloadInstallation = Readonly<{
   signal?: AbortSignal;
   exec: ManagedNativeBootstrapIO['exec']; putFile: ManagedNativeBootstrapIO['putFile'];
   bootstrapExec: ManagedNativeBootstrapIO['exec']; cleanupExec: ManagedNativeBootstrapIO['exec'];
+  onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
+  onTransferProgress?(progress: Readonly<{ transferredBytes: number; totalBytes: number }>): void;
 }>;
 
 export type ManagedMachineEnrollmentInput = Readonly<{
@@ -81,10 +83,12 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
 
 async function installNativeSelfDownload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
   input.signal?.throwIfAborted();
+  input.onPhase?.('prepare');
   const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
     os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,
     runRemoteText: command => input.exec({ command, signal: input.signal }) });
   input.signal?.throwIfAborted();
+  input.onPhase?.('transfer');
   const result = await executeRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
     remoteHomeDir: input.remoteHomeDir, plan, runRemoteText: async command => input.exec({ command, signal: input.signal }) });
   if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native binary installation failed.');
@@ -234,7 +238,16 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
         const installation = { channel: configuration.channel, signal, os: normalizeRemoteReleaseOs(os), arch: normalizeRemoteReleaseArch(arch), home,
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
-          cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request) };
+          cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),
+          onPhase: (phase: 'prepare' | 'archive' | 'transfer' | 'promote') => {
+            const message = { prepare: 'Preparing Happier for this machine', archive: 'Creating the Happier delivery archive',
+              transfer: 'Transferring Happier to this machine', promote: 'Installing the transferred Happier payload' }[phase];
+            context?.emit({ type: 'progress', stepId: `ssh.installCli.${phase}`, message });
+          },
+          onTransferProgress: ({ transferredBytes, totalBytes }: Readonly<{ transferredBytes: number; totalBytes: number }>) => {
+            context?.emit({ type: 'progress', stepId: 'ssh.installCli.transfer',
+              message: `Transferring Happier: ${transferredBytes} of ${totalBytes} bytes` });
+          } };
         const installed = deps.installNativePayload ? await deps.installNativePayload(installation) : await installNativeSelfDownload(installation);
         binaryPath = installed.binaryPath;
         return installed;

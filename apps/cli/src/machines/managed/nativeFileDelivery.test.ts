@@ -39,7 +39,10 @@ describe.skipIf(process.platform === 'win32')('atomic managed native file delive
       await writeFile(guestPath, 'previous complete file');
       let deliveredBytes = 0;
       let calls = 0;
-      await deliverManagedNativeFile({ localPath, guestPath, resource }, {
+      const progress: Array<{ transferredBytes: number; totalBytes: number }> = [];
+      await deliverManagedNativeFile({ localPath, guestPath, resource, onProgress: value => {
+        progress.push(value);
+      } }, {
         ...localNative,
         putFile: async request => {
           calls++;
@@ -59,6 +62,11 @@ describe.skipIf(process.platform === 'win32')('atomic managed native file delive
       expect((await stat(guestPath)).size).toBe(size);
       expect(deliveredBytes).toBe(size);
       expect(calls).toBe(2);
+      expect(progress[0]).toEqual({ transferredBytes: 0, totalBytes: size });
+      expect(progress.at(-1)).toEqual({ transferredBytes: size, totalBytes: size });
+      expect(progress).toHaveLength(calls + 1);
+      expect(progress[1]!.transferredBytes).toBeGreaterThan(0);
+      expect(progress[1]!.transferredBytes).toBeLessThan(size);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
