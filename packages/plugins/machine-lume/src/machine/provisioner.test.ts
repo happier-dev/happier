@@ -31,6 +31,11 @@ function setup(responses: Response[]) {
 }
 
 describe('Lume managed provisioner', () => {
+  it('binds the exact existing guest even while native provisioning is incomplete', async () => {
+    const { provider } = setup([Response.json({ ...details, status: 'provisioning' })]);
+    expect(await provider.reconcile(resource)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+  });
+
   it('admits a reviewed custom Linux Lume image only with its explicit native private carrier account', async () => {
     const selected = { ...launch, image: { kind: 'native-image', reference: 'registry.example/team/linux:prepared',
       privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'linux-owner' } } };

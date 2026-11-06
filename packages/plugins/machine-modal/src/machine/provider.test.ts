@@ -38,6 +38,17 @@ function vendorBoundary(exitCode: number | null = null) {
 }
 
 describe('Modal finite Sandbox native provider', () => {
+  it('does not bind a newly created Sandbox that already exited during boot', async () => {
+    const { provider } = vendorBoundary(1);
+    expect(await provider.acquire(launch)).toMatchObject({ ok: false, code: 'modal_acquisition_unknown' });
+  });
+
+  it('checks the selected existing App without creating a missing App', async () => {
+    const { provider, client } = vendorBoundary();
+    await provider.acquire(launch);
+    expect(client.apps.fromName).toHaveBeenCalledWith(launch.appReference, { createIfMissing: false });
+  });
+
   it('refuses an unqualified native SDK before lookup or allocation', async () => {
     const { provider, client } = vendorBoundary();
     vi.mocked(client.version).mockReturnValue('0.10.0');
@@ -108,7 +119,7 @@ describe('Modal finite Sandbox native provider', () => {
     const { provider, client } = vendorBoundary();
     expect(await provider.acquire(launch)).toMatchObject({ ok: true, resource });
     expect(client.sandboxes.create).toHaveBeenCalledWith(app, image, { cpu: 0.5, memoryMiB: 512, timeoutMs: launch.timeoutMs });
-    expect(client.apps.fromName).toHaveBeenCalledWith(launch.appReference);
+    expect(client.apps.fromName).toHaveBeenCalledWith(launch.appReference, { createIfMissing: false });
     expect(client.images.fromRegistry).toHaveBeenCalledWith(launch.imageReference);
   });
 

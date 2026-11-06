@@ -1,3 +1,4 @@
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { App, Image } from 'modal';
 import type { ModalNativeClient, ModalPrivateProcessHandle, ModalSandboxHandle } from './nativeClient.js';
 import { MODAL_MAX_TIMEOUT_MS, ModalCheckRequestV1Schema, ModalLaunchV1Schema, ModalResourceV1Schema, ModalNativeOperationV1Schema, type ModalResourceV1 } from './schemas.js';
@@ -10,11 +11,11 @@ type FailureCode = 'modal_resource_invalid' | 'modal_identity_mismatch' | 'modal
   | 'modal_file_invalid' | 'modal_file_permissions_failed' | 'modal_file_outcome_unknown'
   | 'modal_exec_invalid' | 'modal_exec_outcome_unknown' | 'modal_operation_cancelled'
   | 'modal_check_unavailable' | 'modal_check_invalid' | 'modal_app_unavailable' | 'modal_image_invalid' | 'modal_sdk_unsupported';
-type Failure = Readonly<{ ok: false; code: FailureCode }>;
+type Failure = Readonly<{ ok: false; code: FailureCode; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 type Observation =
   | Readonly<{ resource: ModalResourceV1; state: 'running' | 'absent' }>
   | Readonly<{ resource: ModalResourceV1; state: 'ended'; exitCode: number }>
-  | Readonly<{ resource: ModalResourceV1; state: 'unknown'; code: FailureCode }>;
+  | Readonly<{ resource: ModalResourceV1; state: 'unknown'; code: FailureCode; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 const privateOutput = { stdout: 'ignore', stderr: 'ignore', mode: 'binary' } as const;
 const failure = (code: FailureCode): Failure => ({ ok: false, code });
 const validArgv = (argv: readonly string[]) => argv.length > 0 && argv.every(arg => !arg.includes('\0'));
@@ -63,6 +64,15 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       return isNativeLookupAbsent(error) ? { resource, state: 'absent' }
         : { resource, state: 'unknown', code: 'modal_lookup_unavailable' };
     }
+  }
+
+  async function acquiredSandbox(appId: string, sandbox: ModalSandboxHandle): Promise<Readonly<{ ok: true; resource: ModalResourceV1 }> | Failure> {
+    const resource = { appId, sandboxId: sandbox.sandboxId };
+    const observed = await observe(resource, sandbox);
+    return observed.state === 'running' ? { ok: true, resource }
+      : { ok: false, code: 'modal_acquisition_unknown',
+        ...(observed.state === 'unknown' && observed.nativeCause ? { nativeCause: observed.nativeCause }
+          : observed.state === 'ended' || observed.state === 'absent' ? { nativeCause: { localCause: 'native_lease_ended' } as const } : {}) };
   }
 
   async function liveSandbox(resource: ModalResourceV1): Promise<ModalSandboxHandle | Failure> {
@@ -122,7 +132,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       const launch = { ...parsed.data, appReference: parsed.data.appReference.trim(), imageReference: parsed.data.imageReference.trim() };
       let app: App;
       try {
-        app = await client.apps.fromName(launch.appReference);
+        app = await client.apps.fromName(launch.appReference, { createIfMissing: false });
       } catch {
         return failure('modal_app_unavailable');
       }
@@ -131,7 +141,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       if (managedId !== undefined) {
         try {
           const existing = await taggedSandbox(app.appId, managedId);
-          if (existing) return { ok: true, resource: { appId: app.appId, sandboxId: existing.sandboxId } };
+          if (existing) return acquiredSandbox(app.appId, existing);
         } catch { return failure('modal_acquisition_unknown'); }
       }
       if (signal?.aborted) return failure('modal_operation_cancelled');
@@ -149,7 +159,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
         });
         // The native SDK has no per-create AbortSignal. A late cancellation must
         // not erase returned custody or secretly destroy/buy another resource.
-        return { ok: true, resource: { appId: app.appId, sandboxId: sandbox.sandboxId } };
+        return acquiredSandbox(app.appId, sandbox);
       } catch {
         // A dropped allocation response may already have created a paid Sandbox.
         // Native managed tags can recover that exact live resource. A missing
@@ -157,7 +167,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
         if (managedId !== undefined) {
           try {
             const existing = await taggedSandbox(app.appId, managedId);
-            if (existing) return { ok: true, resource: { appId: app.appId, sandboxId: existing.sandboxId } };
+            if (existing) return acquiredSandbox(app.appId, existing);
           } catch { /* Unavailable or ambiguous inventory retains unknown custody. */ }
         }
         return failure('modal_acquisition_unknown');

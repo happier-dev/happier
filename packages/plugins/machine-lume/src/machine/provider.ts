@@ -134,9 +134,8 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
       const parsed = LumeNativeOperationV1Schema.safeParse(rawOperation);
       if (!parsed.success) return { kind: 'rejected', code: 'invalid_request' };
       const observed = await native.inspect(nativeIdentity(parsed.data), signal);
-      // A provisioning marker need not have a usable disk. Unknown HTTP codes,
-      // partial native provisioning and lost observations retain the same ref.
-      return observed.kind === 'present' && ['running', 'stopped'].includes(observed.vendorStatus)
+      // Existence establishes custody even before provisioning finishes; power and disk readiness remain observations.
+      return observed.kind === 'present'
         ? { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: parsed.data } }
         : pending(parsed.data);
     },
