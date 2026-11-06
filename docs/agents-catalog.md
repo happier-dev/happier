@@ -352,6 +352,16 @@ the in-session `sessionModelsV1` publisher both read it, so the two pickers cann
 which models exist or which effort tiers they report. Its provider-owned cache identity is the
 normalized endpoint, credential kind, and full SHA-256 credential hash. A warm cache entry avoids a
 network request; a cold session start may fetch the catalog before publishing the resolved models.
+In development source, the same target resolver reads user-scoped Claude Code `apiKeyHelper`
+settings when the canonical launch settings-source policy includes `user`. Explicit auth tokens/API
+keys precede the helper; `CLAUDE_CODE_OAUTH_TOKEN` and saved login follow it. The existing
+`ANTHROPIC_OAUTH_TOKEN` bearer alias remains supported. A configured helper failure is terminal;
+it cannot substitute another account. Project helpers are not executed without Claude Code's
+workspace-trust decision. The helper receives the effective profile/session environment, and its
+credential kind and value remain part of the existing endpoint-scoped cache identity. Helper and
+HTTP phases share the caller's deadline, cancellation and owned-resource cleanup. Helper output
+uses both API-key and Bearer headers without the subscription OAuth beta header. Custom endpoint
+path prefixes are preserved, while saved subscription credentials remain restricted to Anthropic.
 For Claude, a successful account response is authoritative for membership and API capability/context
 facts; curated rows only enrich matching ids and serve as the fallback before the first success. A
 later failed refresh retains the bounded last successful account snapshot, serves it during the
