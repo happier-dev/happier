@@ -3,6 +3,9 @@ import axios from 'axios';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { activateInactiveUsageLimitResume } from '@/daemon/sessions/activateInactiveUsageLimitResume';
+import { normalizeUsageLimitRecoveryOperationResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import { createConnectedServiceContinuationMessageDispatcher } from '@/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher';
+import { ConnectedServiceTemporaryThrottleRetryScheduler } from '@/daemon/connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { bindInactiveSessionControlLaunchScope } from '@/daemon/spawn/inactiveSessionControlLaunchScope';
 import { createCodexNativeSessionControls } from '../../../../../packages/plugins/codex/src/agent/runtime/controls';
@@ -821,6 +824,60 @@ describe('native inactive Agent session controls', () => {
         expect(native.requests.some(request => request.method === 'account/rateLimits/read')).toBe(true);
       } finally { get.mockRestore(); post.mockRestore(); }
     });
+  });
+
+  it('does not author repeated continuation turns while the real Codex quota control remains exhausted', async () => {
+    let exhausted = true;
+    await withCodexNativeAttachFixture(async native => {
+      const fixture = runtimeRegistryFixture({
+        sessions: { ...createCodexNativeSessionControls(), async open() { throw new Error('Quota checks must not open a Session'); } },
+        createServices: async () => ({ ...createUnavailablePluginServices(), exec: native.exec }),
+      });
+      const adapter = createNativeInactiveUsageAdapter({ agentId: fixture.agentId,
+        native: { checkNow: true, consumeResetCredit: false }, dependencies: { acquireRuntimeRegistryLease: fixture.acquire } });
+      const rows = new Map<string, unknown>();
+      const prompts: string[] = [];
+      const dispatcher = createConnectedServiceContinuationMessageDispatcher({
+        credentials: { token: 'dummy-native-quota-continuation', encryption: null },
+        // Pending HTTP is the boundary; quota control, scheduler and prompt construction stay real.
+        sendMessage: async input => {
+          prompts.push(input.message);
+          return { ok: true, sessionId: input.idOrPrefix, localId: input.localId!, waited: false,
+            admissionResult: { status: 'accepted', localId: input.localId! } };
+        },
+      });
+      const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
+        nowMs: Date.now,
+        store: { read: key => rows.get(key) ?? null, write: (key, value) => { rows.set(key, value); } },
+        readUsageLimitReadiness: async () => {
+          const result = normalizeUsageLimitRecoveryOperationResult(await adapter.checkNow!({
+            ...commonRouteParams('native-limited-session'), cwd: native.directory, sessionMachineId: 'machine-local',
+          }), { sessionId: 'native-limited-session' });
+          if (!result.ok) return { status: 'unavailable', errorCode: result.errorCode };
+          return result.status === 'ready' ? { status: 'ready' } : { status: 'waiting', retryAfterMs: result.retryAfterMs };
+        },
+        resume: async intent => {
+          await dispatcher.enqueueInterruptedOriginContinuation({ sessionId: intent.sessionId,
+            attemptId: intent.issueFingerprint, interruptedOriginId: intent.continuation!.interruptedOriginId,
+            interruption: 'provider_failed_turn', resumePromptMode: 'standard', recoveryKind: 'usage_limit' });
+          return { status: 'continued' };
+        },
+      });
+      try {
+        for (let turn = 0; turn < 3; turn += 1) {
+          await scheduler.enable({ sessionId: 'native-limited-session', serviceId: 'openai-codex',
+            profileId: 'dummy-exhausted-account', groupId: null, issueFingerprint: 'usage-limit',
+            continuation: { interruptedOriginId: `failed-turn-${turn}`, resumePromptMode: 'standard',
+              customResumePrompt: null, recoveryKind: 'usage_limit' } });
+          await scheduler.wake({ sessionId: 'native-limited-session', reason: 'manual' });
+        }
+        expect(prompts).toHaveLength(0);
+        exhausted = false;
+        await scheduler.wake({ sessionId: 'native-limited-session', reason: 'manual' });
+        expect(prompts).toEqual(['Continue where you left off']);
+        expect(native.requests.filter(request => request.method === 'turn/start')).toHaveLength(0);
+      } finally { scheduler.dispose(); }
+    }, { rateLimitsRead: () => ({ rateLimits: { primary: { usedPercent: exhausted ? 100 : 20 } } }) });
   });
 
   it('retains native quota snapshot timing for an untimed interrupted turn', async () => {

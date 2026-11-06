@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { SessionContinuationResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/continuation/recoveryV1';
 import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
+import type { SessionUsageLimitRecoveryReadinessProbeResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
 import {
   DurableBackoffRecoveryScheduler,
   type DurableBackoffRecoveryStore,
@@ -52,6 +53,7 @@ type ConnectedServiceTemporaryThrottleRetrySchedulerDeps = Readonly<{
   random?: () => number;
   onStateChange?: (sessionId: string, intent: ConnectedServiceTemporaryThrottleRetryIntent | null, previous: ConnectedServiceTemporaryThrottleRetryIntent | null) => Promise<void> | void;
   store?: DurableBackoffRecoveryStore<ConnectedServiceTemporaryThrottleRetryIntent> | null;
+  readUsageLimitReadiness?: (intent: ConnectedServiceTemporaryThrottleRetryIntent) => Promise<SessionUsageLimitRecoveryReadinessProbeResult>;
   resume: (
     intent: ConnectedServiceTemporaryThrottleRetryIntent,
     context: Readonly<{ sessionId: string }>,
@@ -299,6 +301,19 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       recover: async (intent, context) => {
         const runWaiter = intent.scope?.kind === 'run' ? this.#runWaiters.get(context.sessionId) : null;
         if (intent.scope?.kind === 'run' && !runWaiter) return { status: 'superseded', reason: 'run_waiter_unavailable' };
+        if (!runWaiter && intent.continuation?.recoveryKind === 'usage_limit' && deps.readUsageLimitReadiness) {
+          const readiness = await deps.readUsageLimitReadiness(intent);
+          if (readiness.status !== 'ready') {
+            return { status: 'wait',
+              ...(readiness.status === 'waiting' && readiness.retryAfterMs !== undefined
+                ? { nextRetryAtMs: this.#nowMs() + readiness.retryAfterMs } : {}),
+              lastError: readiness.status === 'unavailable' ? readiness.errorCode : null,
+            };
+          }
+          const current = this.read(context.sessionId);
+          if (current?.status !== 'checking' || current.issueFingerprint !== intent.issueFingerprint
+            || current.armedAtMs !== intent.armedAtMs) return { status: 'superseded' };
+        }
         const result = await (runWaiter
           ? Promise.resolve({ status: 'continued' as const })
           : deps.resume(intent, { sessionId: context.sessionId })).catch((error: unknown) => {

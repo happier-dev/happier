@@ -714,6 +714,7 @@ import {
 } from '../connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from '../connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from '../connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
+import { readTemporaryThrottleUsageLimitReadiness } from '../connectedServices/runtimeAuth/readTemporaryThrottleUsageLimitReadiness';
 import { recoverConnectedServiceRuntimeFailure, readConnectedServiceRuntimeAuthFailureSourceBinding } from '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailure';
 import { connectedServiceRecoveryScopeKey } from '../connectedServices/runtimeRegistry/target';
 import {
@@ -4842,6 +4843,11 @@ daemonWorkSignal: AbortSignal;
   const temporaryThrottleScheduler =
     new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => Date.now(),
+      readUsageLimitReadiness: intent => withSessionAccountContext(intent.sessionId, accountContext =>
+        withSessionAccountHome(accountContext, () => readTemporaryThrottleUsageLimitReadiness({
+          sessionId: intent.sessionId, credentials: accountContext?.bootstrap.credentials ?? params.credentials,
+          currentMachineId: params.machineId,
+        }))),
       onStateChange: async (sessionId, intent, previous) => {
         if (intent?.scope?.kind === 'run' || previous?.scope?.kind === 'run') return;
         try {
