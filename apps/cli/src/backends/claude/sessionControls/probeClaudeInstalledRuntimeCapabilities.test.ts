@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { claudePreflightModelsProbeAdapter } from '@/backends/claude/preflight/claudePreflightModelsProbeAdapter';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { logger } from '@/ui/logger';
 import { withCatalogProbeLifecycle, type NativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -256,7 +257,7 @@ describe('resolveInstalledClaudeCliIdentity', () => {
 describe('installed runtime real-process lifecycle', () => {
   const fixtures: Array<{ directory: string; pids: () => number[] }> = [];
 
-  function fixture(mode: 'hang-effort' | 'delayed-help' | 'inherited-pipes') {
+  function fixture(mode: 'hang-help' | 'hang-effort' | 'delayed-help' | 'inherited-pipes') {
     const directory = mkdtempSync(join(tmpdir(), 'claude-runtime-lifecycle-'));
     const executable = join(directory, 'claude.cjs');
     const marker = join(directory, 'pids');
@@ -270,13 +271,14 @@ describe('installed runtime real-process lifecycle', () => {
           console.log('Unknown --effort value happier-ultracode-probe-invalid. Valid values: low, ultracode');
         } else console.log('--effort <level>');
       };
-      if (process.env.RUNTIME_FIXTURE_MODE === 'hang-effort' && args[0] === '--effort') {
+      if (process.env.RUNTIME_FIXTURE_MODE === 'hang-help' ||
+          (process.env.RUNTIME_FIXTURE_MODE === 'hang-effort' && args[0] === '--effort')) {
         record();
         process.on('SIGTERM', () => {});
         setInterval(() => {}, 1000);
       } else if (process.env.RUNTIME_FIXTURE_MODE === 'delayed-help') {
         record();
-        setTimeout(output, args[0] === '--help' ? 600 : 0);
+        setTimeout(output, args[0] === '--help' ? Number(process.env.RUNTIME_HELP_DELAY_MS || 600) : 0);
       } else if (process.env.RUNTIME_FIXTURE_MODE === 'inherited-pipes') {
         const child = spawn(process.execPath, ['-e',
           "require('node:fs').appendFileSync(process.env.RUNTIME_PID_MARKER, process.pid + String.fromCharCode(10)); setTimeout(() => {}, 10000)"
@@ -316,6 +318,44 @@ describe('installed runtime real-process lifecycle', () => {
         if (isAlive(pid)) await killProcessTree({ pid });
       }
       rmSync(item.directory, { recursive: true, force: true });
+    }
+  });
+
+  // Windows process enumeration uses its bundled executable, not PATH-resolved POSIX ps.
+  it.skipIf(process.platform === 'win32').each([false, true])('keeps cleanup failure observable with caller-owned lifecycle=%s', async (callerOwned) => {
+    const runtime = fixture('hang-help');
+    const originalPath = process.env.PATH;
+    logger.flushSync();
+    const before = existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8').length : 0;
+    const params = { cwd: runtime.directory, timeoutMs: 1_000, processEnv: runtime.processEnv,
+      ...(callerOwned ? { signal: new AbortController().signal } : {}) };
+    const settled = probeClaudeInstalledRuntimeCapabilities(params).then(
+      (value) => ({ status: 'fulfilled', value } as const),
+      (reason: unknown) => ({ status: 'rejected', reason } as const),
+    );
+    try {
+      await waitForPids(runtime.pids, 1);
+      // Exercise actual ps-list -> OS exec failure; the runtime retains its launch environment.
+      process.env.PATH = runtime.directory;
+      const result = await settled.finally(() => {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      });
+      if (callerOwned) {
+        expect(result).toMatchObject({ status: 'rejected', reason: { code: 'process_tree_termination_incomplete' } });
+      } else {
+        expect(result).toEqual({ status: 'fulfilled', value: { supportsEffort: false, supportsUltracode: false } });
+      }
+      expect(runtime.pids().map(isAlive)).toEqual([false]);
+      logger.flushSync();
+      const diagnostic = readFileSync(logger.getLogPath(), 'utf8').slice(before);
+      expect(diagnostic).toContain('process_tree_termination_incomplete');
+      if (!callerOwned) expect(diagnostic).toContain('[claude-runtime]');
+      expect(diagnostic).not.toContain(runtime.directory);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await settled;
     }
   });
 
@@ -367,31 +407,38 @@ describe('installed runtime real-process lifecycle', () => {
 
   it('shares a timeout-only adapter budget across real user helper, HTTP and runtime phases', async () => {
     const runtime = fixture('delayed-help');
+    const timeoutMs = 10_000;
+    const realNow = Date.now.bind(Date);
+    const startedAt = realNow();
+    let preparationMs = 0;
+    // Control the clock boundary instead of requiring OS helper startup and HTTP to fit 800ms.
+    // The response charges preparation time, leaving two seconds for a four-second runtime.
     const helper = join(runtime.directory, 'helper.cjs');
-    writeFileSync(helper, "setTimeout(() => console.log('fixture-helper-token'), 200)");
+    writeFileSync(helper, "console.log('fixture-helper-token')");
     writeFileSync(join(runtime.directory, 'settings.json'), JSON.stringify({
       apiKeyHelper: `${JSON.stringify(process.execPath)} ${JSON.stringify(helper)}`,
     }));
     const server = createServer((_request, response) => {
-      setTimeout(() => {
-        response.setHeader('content-type', 'application/json');
-        response.end(JSON.stringify({ data: [{ id: 'claude-sonnet-4-6', display_name: 'Sonnet 4.6' }], has_more: false }));
-      }, 200);
+      preparationMs = timeoutMs - (realNow() - startedAt) - 2_000;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ data: [{ id: 'claude-sonnet-4-6', display_name: 'Sonnet 4.6' }], has_more: false }));
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Expected loopback server');
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + preparationMs);
     try {
       await expect(claudePreflightModelsProbeAdapter.probeModelsRaw?.({
-        cwd: runtime.directory, timeoutMs: 800, backendTarget: undefined, accountSettings: null,
+        cwd: runtime.directory, timeoutMs, backendTarget: undefined, accountSettings: null,
         bypassCache: true,
-        processEnv: { ...runtime.processEnv, CLAUDE_CONFIG_DIR: runtime.directory,
+        processEnv: { ...runtime.processEnv, RUNTIME_HELP_DELAY_MS: '4000', CLAUDE_CONFIG_DIR: runtime.directory,
           ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}/prefix`,
           ANTHROPIC_API_KEY: undefined, ANTHROPIC_AUTH_TOKEN: undefined,
           ANTHROPIC_OAUTH_TOKEN: undefined, CLAUDE_CODE_OAUTH_TOKEN: undefined },
       })).rejects.toThrow();
       expect(runtime.pids().length).toBeGreaterThan(0);
     } finally {
+      clock.mockRestore();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

@@ -17,7 +17,7 @@ export type ClaudeApiKeyHelperCredential =
 
 /**
  * Read only the selected user settings: project helpers require Claude Code's workspace trust.
- * A configured but unusable helper is terminal, so callers cannot substitute a different account.
+ * A missing helper or ignored invalid settings allow fallback; configured helper failure is terminal.
  * The caller owns the deadline; helper execution and cleanup consume that same lifecycle.
  */
 export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifecycle & Readonly<{
@@ -55,7 +55,10 @@ export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifec
         }
         throw error;
       }
-      if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return { status: 'failed' };
+      if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        logger.warnFile('[claude-models] Invalid user settings root; apiKeyHelper settings skipped');
+        return { status: 'absent' };
+      }
       const command = (settings as Record<string, unknown>).apiKeyHelper;
       if (command === undefined || command === null || command === '') return { status: 'absent' };
       if (typeof command !== 'string' || command.trim().length === 0) return { status: 'failed' };

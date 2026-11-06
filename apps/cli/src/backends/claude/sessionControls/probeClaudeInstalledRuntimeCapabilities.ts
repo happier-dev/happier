@@ -13,6 +13,7 @@ import {
   resolveProviderCliLaunchSpec,
 } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { isBun } from '@/utils/runtime';
+import { logger } from '@/ui/logger';
 
 const ULTRACODE_PROBE_SENTINEL = 'happier-ultracode-probe-invalid';
 const MAX_PROBE_OUTPUT_BYTES = 256 * 1024;
@@ -83,6 +84,10 @@ function reportsUnknownEffortValue(output: string, value: string): boolean {
   return normalized.includes('unknown --effort value') && normalized.includes(value.toLowerCase());
 }
 
+/**
+ * Run one installed-parser command within its caller's lifecycle and output bound.
+ * Completion closes both output readers and awaits native cleanup before returning parser text.
+ */
 async function probeClaudeCli(params: RuntimeProbeParams & Readonly<{
   args: readonly string[];
 }>): Promise<string | null> {
@@ -318,7 +323,12 @@ export async function probeClaudeInstalledRuntimeCapabilities(
       // RPC retains one callback. Both parallel parser probes belong to this operation.
       const results = await Promise.allSettled([...cleanups].map((stop) => stop()));
       const failed = results.find((result) => result.status === 'rejected');
-      if (failed?.status === 'rejected') throw failed.reason;
+      if (failed?.status === 'rejected') {
+        if (callerOwnsLifecycle) throw failed.reason;
+        // Session startup may proceed with controls withheld. Keep that fallback observable
+        // without exposing native process errors, commands, environment, or output.
+        logger.warnFile('[claude-runtime] Installed capability probe cleanup failed; using fail-closed controls');
+      }
     })();
     params.onNativeCleanup?.(cleanup);
     const runAndCache = async (lifecycle: CatalogProbeLifecycle) => {

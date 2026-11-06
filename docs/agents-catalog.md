@@ -356,8 +356,8 @@ In development source, the same target resolver reads user-scoped Claude Code `a
 settings when the canonical launch settings-source policy includes `user`. Explicit auth tokens/API
 keys precede the helper; `CLAUDE_CODE_OAUTH_TOKEN` and saved login follow it. The existing
 `ANTHROPIC_OAUTH_TOKEN` bearer alias remains supported. A configured helper failure is terminal;
-it cannot substitute another account. Malformed user JSON is skipped, matching Claude Code's
-non-interactive settings loading. Project helpers are not executed without Claude Code's
+it cannot substitute another account. Malformed JSON and non-object user settings roots are skipped,
+matching Claude Code's non-interactive settings loading. Project helpers are not executed without Claude Code's
 workspace-trust decision. The helper receives the effective profile/session environment, and its
 credential kind and value remain part of the existing endpoint-scoped cache identity. Helper and
 HTTP and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource
