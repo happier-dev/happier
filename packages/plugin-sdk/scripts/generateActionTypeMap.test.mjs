@@ -43,7 +43,7 @@ test('filtered canonical Action families preserve their exact partition without 
   });
 });
 
-test('canonical Action families resolve named re-exports to their declaration owner', t => {
+test('canonical Action families resolve property-selected ids and named re-exports without executing source', t => {
   const root = mkdtempSync(resolve(tmpdir(), 'happier-action-reexport-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const actions = resolve(root, 'packages/protocol/src/actions');
@@ -51,7 +51,8 @@ test('canonical Action families resolve named re-exports to their declaration ow
   const owner = resolve(actions, 'codeIds.ts');
   writeFileSync(owner, `
     throw new Error('Catalog source must not execute');
-    export const IDS = ['code.hover.get', 'code.definition.get'] as const;
+    const IDS_BY_OPERATION = { hover: 'code.hover.get', definition: 'code.definition.get' } as const;
+    export const IDS = [IDS_BY_OPERATION.hover, IDS_BY_OPERATION.definition] as const;
   `);
   writeFileSync(resolve(actions, 'codeFamily.ts'), "export { IDS as CODE_IDS } from './codeIds.js';");
   writeFileSync(resolve(actions, 'actionIds.ts'), `
