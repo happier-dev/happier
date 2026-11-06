@@ -8,6 +8,7 @@ import { TriageActivityAgentTail, TriageDetailInstance, TriageDetailPanel, useTr
 import {
   TriageDetailSurfaceInputV1Schema, triagePagedPanelInitialState, triagePagedPanelReducer,
   describeTriageSourceFailureV1, type TriageDetailSurfaceInputV1, type TriageSourceFailureV1,
+  type TriagePagedPanelEventV1, type TriagePagedPanelStateV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
   LINEAR_ACTIONS, LINEAR_PLUGIN_ID, LINEAR_DETAIL_SECTIONS, LinearDetailResultSchema,
@@ -18,13 +19,18 @@ const action = { pluginId: LINEAR_PLUGIN_ID, localId: LINEAR_ACTIONS.detail };
 type Entry = ReturnType<typeof LinearDetailEntrySchema.parse>;
 type Section = LinearDetailInput['section'];
 
+const reduceDetailPanel = (
+  state: TriagePagedPanelStateV1<Entry, TriageSourceFailureV1>,
+  event: TriagePagedPanelEventV1<Entry, TriageSourceFailureV1>,
+) => triagePagedPanelReducer(state, event);
+
 function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; section: Section }): React.ReactElement {
   const text = usePluginTranslation();
   const request = useTriageDetailRequest(input);
   const readAuthority = React.useRef(request);
   const { active, activeSignal } = useTabPanelActivity();
   const { execute } = useExecutePluginAction(action);
-  const [state, dispatch] = React.useReducer(triagePagedPanelReducer<Entry, TriageSourceFailureV1>, undefined,
+  const [state, dispatch] = React.useReducer(reduceDetailPanel, undefined,
     () => triagePagedPanelInitialState<Entry, TriageSourceFailureV1>());
   const token = React.useRef(0);
   const load = React.useCallback((after?: string) => {
