@@ -338,7 +338,6 @@ async function ensureDevTargetSyncProjectUnlocked(
     targets,
     requiredTargets = targets,
     preserveExistingTargets = false,
-    excludedTargets = [],
     ownerId,
     allowIndependentBorrow,
     borrowOnly = false,
@@ -369,7 +368,7 @@ async function ensureDevTargetSyncProjectUnlocked(
   // Membership is authoritative only under this existing lifecycle lock.
   // A command's pre-bootstrap snapshot can precede another pin's admission.
   if (preserveExistingTargets) targets = resolveMutagenProjectTargets(existingProject, {
-    sourceDir, targets, excludedTargets, config, ownerId,
+    sourceDir, targets, config, ownerId,
   });
   const requiredNames = new Set(requiredTargets.map(target => target.name));
   const retainedTargets = targets.filter(target => !requiredNames.has(target.name));

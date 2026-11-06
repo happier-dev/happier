@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
+import { parseDevTargetsConfig } from './config.mjs';
 import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
 import { DEV_TARGET_SYNC_EXECUTOR_REPO, renderMutagenProject, resolveMutagenSessionName } from './mutagen_project.mjs';
 import {
@@ -920,3 +921,89 @@ test('sibling command sync skips an unreachable worker and prepares the reachabl
     return true;
   });
 });
+
+async function reconnectFixture(t) {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sync-reconnect-' });
+  const sourceDir = fixture.path('source');
+  const stackBaseDir = fixture.path('stack');
+  const bin = fixture.path('bin');
+  await Promise.all([mkdir(sourceDir), mkdir(stackBaseDir), mkdir(bin)]);
+  await writeFile(join(sourceDir, 'package.json'), '{}');
+  const targets = ['offline', 'live', 'cold'].map(name => ({
+    name, platform: 'posix', ssh: `${name}-host`, repoDir: fixture.path(`mirror-${name}`),
+    cliHomeDir: fixture.path(`home-${name}`), remotePath: [bin, ...process.env.PATH.split(':')],
+    executorRepoDir: fileURLToPath(new URL('../../../../../', import.meta.url)),
+  }));
+  const config = parseDevTargetsConfig({ version: 3, targets,
+    commandExecution: { mode: 'auto', targets: targets.map(target => target.name), fallback: 'local' } });
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify(config));
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: fixture.root, PATH: `${bin}:${process.env.PATH}`,
+    DBUS_SESSION_BUS_ADDRESS: '', HSTACK_TEST_SESSIONS: fixture.path('sessions.json'),
+    HSTACK_TEST_CATALOG: fixture.path('catalog.json'), HSTACK_TEST_CALLS: fixture.path('calls.jsonl') };
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
+  env.HSTACK_TEST_PROJECT = runtime.projectFile;
+  await mkdir(dirname(runtime.projectFile), { recursive: true });
+  const project = renderMutagenProject({ sourceDir, targets: config.targets.slice(0, 2), config,
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
+  await writeFile(runtime.projectFile, project);
+  await writeFile(`${runtime.projectFile}.lock`, 'proj_current');
+  await writeFile(runtime.syncServiceStateFile, JSON.stringify({ version: 1, state: 'ready',
+    targets: Object.fromEntries(targets.slice(0, 2).map(target => [target.name, { state: 'ready' }])) }));
+  for (const target of targets.slice(0, 2)) {
+    await mkdir(target.repoDir);
+    await writeFile(join(target.repoDir, 'package.json'), '{}');
+  }
+  const sessions = targets.map(target => ({
+    identifier: `sync_${target.name}`, name: resolveMutagenSessionName(target.name, sourceDir),
+    labels: { 'io.mutagen.project': 'proj_current' }, mode: 'one-way-replica', paused: false,
+    status: target.name === 'live' ? 'watching' : 'connecting-beta', successfulCycles: 1,
+    alpha: { protocol: 'local', path: sourceDir, connected: true, scanned: true },
+    beta: { protocol: 'ssh', host: target.ssh, path: target.repoDir, connected: target.name === 'live', scanned: true },
+  }));
+  await writeFile(env.HSTACK_TEST_SESSIONS, JSON.stringify(sessions.slice(0, 2)));
+  await writeFile(env.HSTACK_TEST_CATALOG, JSON.stringify(sessions));
+  // Only external processes are replaced. Real preparation, admission,
+  // membership reconciliation and Mutagen public-model parsing stay composed.
+  await writeFile(join(bin, 'ssh'), '#!/bin/sh\nfor arg; do case "$arg" in offline-host|cold-host) exit 255;; esac; done\nfor command; do :; done\nexec /bin/sh -c "$command"\n');
+  await writeFile(fixture.path('mutagen.mjs'), [
+    'import fs from "node:fs";',
+    'const args = process.argv.slice(2); const [family, action] = args;',
+    'fs.appendFileSync(process.env.HSTACK_TEST_CALLS, JSON.stringify(args) + "\\n");',
+    'const state = process.env.HSTACK_TEST_SESSIONS;',
+    'let sessions = JSON.parse(fs.readFileSync(state, "utf8"));',
+    'if (family === "project" && action === "terminate") sessions = [];',
+    'if (family === "project" && action === "start") {',
+    '  const project = fs.readFileSync(process.env.HSTACK_TEST_PROJECT, "utf8");',
+    '  sessions = JSON.parse(fs.readFileSync(process.env.HSTACK_TEST_CATALOG, "utf8")).filter(s => project.includes("  " + s.name + ":\\n"));',
+    '}',
+    'fs.writeFileSync(state, JSON.stringify(sessions));',
+    'if (family === "sync" && action === "list") {',
+    '  const selected = args[2] === "--template" ? sessions : sessions.filter(s => s.name === args[2]);',
+    '  if (args[args.indexOf("--template") + 1] === "{{json .}}") console.log(JSON.stringify(selected));',
+    '  else for (const s of selected) console.log(`${s.name}|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|1|ok|0|0`);',
+    '}',
+  ].join('\n'));
+  await writeFile(join(bin, 'mutagen'), `#!/bin/sh\nexec '${process.execPath}' '${fixture.path('mutagen.mjs')}' "$@"\n`);
+  await Promise.all(['ssh', 'mutagen'].map(name => chmod(join(bin, name), 0o700)));
+  return { stackBaseDir, sourceDir, targets: config.targets, env, runtime, project };
+}
+
+for (const entry of ['service start', 'command preparation']) {
+  test(`${entry} keeps admitted disconnected sessions and excludes an unprepared new target`, { skip: process.platform === 'win32' }, async t => {
+    const input = await reconnectFixture(t);
+    if (entry === 'service start') {
+      const result = await startDevTargetSyncService({ ...input, detached: true });
+      assert.equal(result.statuses.find(status => status.target === 'offline').status.state, 'unhealthy');
+    } else {
+      const result = await prepareDevTargetCommandSync(input);
+      assert.deepEqual(result.excludedTargets, ['offline', 'cold']);
+    }
+    assert.equal(await readFile(input.runtime.projectFile, 'utf8'), input.project,
+      'an SSH preparation failure must not withdraw an unchanged admitted mirror');
+    const sessions = JSON.parse(await readFile(input.env.HSTACK_TEST_SESSIONS, 'utf8'));
+    assert.deepEqual(sessions.map(session => session.identifier), ['sync_offline', 'sync_live']);
+    const calls = (await readFile(input.env.HSTACK_TEST_CALLS, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(calls.filter(args => args[1] === 'terminate' || args[1] === 'start').length, 0,
+      'unchanged admitted endpoints must reconnect without project replacement');
+  });
+}

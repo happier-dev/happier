@@ -232,6 +232,7 @@ export async function startDevTargetSyncService(
     targets: preparedTargets,
     ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
     allowIndependentBorrow: false,
+    preserveExistingTargets: true,
     env,
   });
   const startedAt = new Date().toISOString();
@@ -359,9 +360,8 @@ export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, tar
       || !hasCurrentMutagenProjectTarget(desired, { sourceDir, target, config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER }),
     prepareExecutor,
   })));
-  // A worker whose replica root cannot be prepared (SSH refused, disk full)
-  // cannot be proven a safe one-way destination now. Omit it from this
-  // project and record it failed; a later dispatch re-adds it once reachable.
+  // Preparation failure excludes command placement, not an unchanged admitted
+  // mirror. Keep its session reconnecting; only new destinations need admission.
   const reachable = targets.filter((_, index) => roots[index].status === 'fulfilled');
   const excludedTargets = targets.filter((_, index) => roots[index].status === 'rejected').map(target => target.name);
   roots.forEach(result => {
@@ -374,14 +374,14 @@ export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, tar
     });
   }
   const projectTargets = resolveMutagenProjectTargets(desired, {
-    sourceDir, targets: reachable, excludedTargets, config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+    sourceDir, targets: reachable, config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   });
   const unchanged = desired && isEquivalentMutagenProject(desired, renderMutagenProject({ sourceDir, targets: projectTargets, config }));
   const unmaterialized = new Set(roots.flatMap(result => result.status === 'fulfilled' ? result.value : []));
   if (unchanged && reachable.length === targets.length && unmaterialized.size === 0
     && targets.every(target => state?.targets?.[target.name]?.state === 'ready')) return { excludedTargets };
   const project = await ensureDevTargetSyncProject({
-    stackBaseDir, sourceDir, targets: reachable, preserveExistingTargets: true, excludedTargets,
+    stackBaseDir, sourceDir, targets: reachable, preserveExistingTargets: true,
     ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
     allowIndependentBorrow: false, env,
   });
