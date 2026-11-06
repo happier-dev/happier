@@ -236,6 +236,71 @@ it('asks only the presented origin for packages and UI in a cold 20-Machine sour
     }
 });
 
+it('refreshes a restored source-not-ready origin when its surface is presented after a cold reload', async () => {
+    const { accountId, pluginId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet({ machineOnly: true });
+    let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        const serverId = home.homes.home!.id;
+        storage.getState().applyMachines(machines, true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, machines.map(machine => machine.id));
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshPluginAccountAvailability();
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const target = { machineId: machines[0]!.id, serverId, accountLifetime: lifetime };
+        const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/warmCacheEncryptionKey');
+        await prepareWarmCacheEncryptionKey();
+        // A prior process admitted this exact source. Only its presentation
+        // snapshot survives reload; live loader authority must be acquired again.
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: PLUGIN_UI_SECTIONS })).toMatchObject({ kind: 'ready' });
+        const { readPluginUiProjectionAdmissionSnapshot, pluginUiProjectionAdmissionTargetKey } = await import('@/sync/domains/plugins/ui/projectionWarmCache');
+        expect(readPluginUiProjectionAdmissionSnapshot({ scope: lifetime.scope, machineId: target.machineId,
+            targetKey: pluginUiProjectionAdmissionTargetKey(target) })?.installedPackagesById[pluginId]).toBeDefined();
+        clearDaemonMergedProjectionCacheForTests();
+        requestsByMachineId.clear();
+        manifestReadsByMachineId.clear();
+        let facts: ReturnType<typeof readCurrentAppShellPluginUiExecutionOriginCandidates> | undefined;
+        let current: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
+        function PublishedSource() {
+            const read = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId), []);
+            facts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, read, read);
+            current = useAppShellPluginUiProjection();
+            return null;
+        }
+        function Presented({ visible }: Readonly<{ visible: boolean }>) {
+            return <AppShellPluginUiProjectionProvider>
+                <PublishedSource />
+                <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} enabled={visible} />
+            </AppShellPluginUiProjectionProvider>;
+        }
+        tree = await renderWithAppProviders(<Presented visible={false} />);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(facts?.sourceCandidates).toHaveLength(1);
+            expect(facts?.sourceCandidates[0]).toMatchObject({
+                source: { origin: { sourceRef: { machineId: target.machineId, pluginId } } },
+                validation: { kind: 'rejected', reason: 'source_not_ready' },
+            });
+        });
+        expect(requestsByMachineId.size).toBe(0);
+        await tree.update(<Presented visible />);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(facts?.sourceCandidates[0]?.validation).toEqual({ kind: 'admitted' });
+            expect(readCachedDaemonMergedProjectionCacheEntry({ ...target, sections: [] })
+                ?.deferredProjection?.loadedSections).toContain('familiesById.pluginUi');
+            expect(readWidgetDescriptor(current?.pluginUiProjection, { pluginId, localId: 'inbox' }))
+                .not.toBeNull();
+        });
+        await flushHookEffects({ cycles: 3 });
+        expect([...requestsByMachineId.keys()]).toEqual([target.machineId]);
+        expect(manifestReadsByMachineId.get(target.machineId)).toBe(1);
+    } finally {
+        if (tree) await act(async () => tree.unmount());
+        await home.dispose();
+    }
+});
+
 it('keeps a closed comparison picker cold and discovers its current contributed picker when opened', async () => {
     const { accountId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet();
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;

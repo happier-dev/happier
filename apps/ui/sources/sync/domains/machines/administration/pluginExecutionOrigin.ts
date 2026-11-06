@@ -715,11 +715,11 @@ export function resolvePluginMachineProjectionTarget(params: Parameters<typeof r
         const target = targetOf(candidate);
         return params.automaticTarget?.serverIdentityId === target.serverIdentityId && params.automaticTarget.machineId === target.machineId;
     };
-    // Nonportable Account rows describe placement, not source custody. An
-    // establishing projection has the same read intent. Keep the incumbent
-    // in this ranking when its runtime answers with a visible refusal.
+    // Nonportable Account rows and establishing exact sources both describe
+    // placement before current execution admission. Keep the incumbent in
+    // this ranking when its runtime answers with a visible refusal.
     const descriptors = params.state.candidates.filter(candidate =>
-        (matchesTarget(candidate) || 'materialization' in candidate && !candidate.materialization.portableRelease
+        (matchesTarget(candidate) || ('source' in candidate || !candidate.materialization.portableRelease)
             && candidate.validation.kind === 'rejected'
             && (candidate.validation.reason === 'non_portable' || candidate.validation.reason === 'source_not_ready'))
         && (!params.renderedVersion || getPluginExecutionOriginCandidateVersion(candidate) === params.renderedVersion));
