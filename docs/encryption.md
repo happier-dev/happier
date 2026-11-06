@@ -18,6 +18,12 @@ consumers share that operation's acquired material. List, link and metadata
 inspection do not read the vault; a later operation observes rotation. There is
 no durable value cache or background refresh.
 
+Deployment service log masking retains the original delivered-secret lease in
+memory. In development, Agent/MCP `logs.read` refuses before native log I/O when
+that lease is absent or closed, with the `secret_redaction_redeploy_required`
+cause and `redeploy_environment` remedy in its Action result. Normal redeploy
+restores masking; retrying or reopening current grants cannot recover that lease.
+
 The bundled 1Password source is `happier.secret-source.onepassword/onepassword`.
 Its declaration supplies the editor's source choice; the personal Saved Secret
 stores the account and `op://` field reference. The executing Machine's native

@@ -1,5 +1,6 @@
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalScopeV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { MachineServiceControlResultV1 } from '@happier-dev/protocol';
 import type { MachineServiceExecResultV1 } from '@happier-dev/protocol';
 import type { EnvironmentProjectManagedServiceHandle, MachineManagedServiceHandle, createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -36,8 +37,11 @@ export async function withMachineServiceLogTarget<T>(input: MachineServiceTarget
   } catch (error) {
     // Preserve the native owner's typed refusal across Action/Resource dispatch;
     // generic thrown errors otherwise become action_failed at that boundary.
-    if (error instanceof Error && 'code' in error && error.code === 'secret_redaction_unavailable')
-      return { ok: false, errorCode: 'secret_redaction_unavailable', error: 'secret_redaction_unavailable' };
+    if (isPluginError(error) && error.code === 'secret_redaction_unavailable')
+      return { ok: false, errorCode: error.code, error: error.message,
+        ...(error.data.details === undefined ? {} : { details: error.data.details }),
+        ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
+      };
     throw error;
   }
 }

@@ -240,10 +240,18 @@ export async function readNativeComposeLogsForHost(input: Readonly<{
     run(args: readonly string[], signal?: AbortSignal): Promise<Readonly<{ exitCode: number | null; stdout: string; stderr?: string }>>;
 }>, options: ManagedServiceNativeLogReadForHost): Promise<ManagedServiceNativeLogResultV1> {
     const assertRedaction = () => {
-        const incomplete = Boolean(input.redactionComplete === false || input.environment && !input.redactionLease?.isActive()
-            || input.redactionLease && !input.redactionLease.isActive());
+        const missingOriginalMasking = Boolean((input.environment || input.redactionLease) && !input.redactionLease?.isActive());
+        const incomplete = input.redactionComplete === false || missingOriginalMasking;
         if (incomplete && !options.allowIncompleteSecretMasking) {
-            throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Service log secret masking is unavailable' });
+            throw new PluginError({ code: 'secret_redaction_unavailable',
+                message: missingOriginalMasking ? 'Redeploy the Environment to restore service log secret masking'
+                    : 'Service log secret masking is unavailable',
+                ...(missingOriginalMasking ? {
+                    details: { reason: 'secret_redaction_redeploy_required', remedy: 'redeploy_environment', retryable: false },
+                    failureCause: { phase: 'service.logs.redaction', errorClass: 'Error',
+                        errorCode: 'secret_redaction_redeploy_required', httpStatus: null },
+                } : {}),
+            });
         }
         return incomplete;
     };
