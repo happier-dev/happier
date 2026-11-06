@@ -157,6 +157,9 @@ export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoop
 // B8 closure note:
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
+export const SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1 = 'session.organization.pin.set' as const;
+export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as const;
+
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
   machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
@@ -188,7 +191,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   session_terminals: SESSION_TERMINAL_ACTION_IDS,
   session_agent_transition: SESSION_AGENT_TRANSITION_ACTION_IDS,
   workspace_layout: WORKSPACE_ACTION_IDS,
-  session_organization_move: ['session.organization.move', 'session.organization.pin.set'],
+  session_organization_move: ['session.organization.move', SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1],
   composer_ingress: ['composer.transaction.apply', 'composer.attachments.pick', 'repository.upload.pick'],
   list_reorder: ['session.pending.reorder', 'tasks.internal.reorder'],
   todo_session_link: ['tasks.internal.session.link'],
@@ -772,7 +775,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   account_api_tokens: [
     'account.apiTokens.create',
-    'account.apiTokens.list',
+    ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1,
     'account.apiTokens.update',
     'account.apiTokens.revoke',
     'account.apiTokens.revokeAll',

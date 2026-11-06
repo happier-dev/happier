@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from './actionSpecs.js';
+import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { z } from 'zod/mini';
 
 import { bindHomeDomainHttpRequestV1, readHomeDomainConfirmedRollbackV1 } from './homeDomainHttpBinding.js';
@@ -6,6 +8,15 @@ import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
 import { DeleteSessionOrganizationTagRequestSchema } from '../sessions/organization/mutations.js';
 
 describe('Home-domain HTTP binding', () => {
+  it.each([
+    [USAGE_PRICE_ACTION_IDS.get, 'GET', '/v1/account/usage/prices', undefined],
+    [USAGE_PRICE_ACTION_IDS.refresh, 'POST', '/v1/account/usage/prices/refresh', {}],
+  ] as const)('binds the declared native price request for %s', (actionId, method, path, body) => {
+    const spec = getActionSpec(actionId);
+    expect(spec.serverTransport).toBeDefined();
+    expect(bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!, inputSchema: spec.inputSchema, input: {} }))
+      .toEqual({ method, path, body });
+  });
   it('binds only the reviewed reclaim identity and notice through the closed Home Action', () => {
     const input = { accountId: 'person/one', username: 'held_name', reason: 'Impersonation', notice: 'Contact this Home operator.' };
     expect(bindHomeDomainActionHttpRequestV1('home.public_profiles.handle_reclaim', input)).toEqual({

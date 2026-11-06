@@ -1,6 +1,9 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+
 export const accountUsageRoutePaths = {
-    prices: '/v1/account/usage/prices',
-    pricesRefresh: '/v1/account/usage/prices/refresh',
+    prices: getActionSpec(USAGE_PRICE_ACTION_IDS.get).serverTransport!.path,
+    pricesRefresh: getActionSpec(USAGE_PRICE_ACTION_IDS.refresh).serverTransport!.path,
     legacyQuery: '/v1/usage/query',
     analyticsQuery: '/v2/usage/query',
     analyticsQueryBatch: '/v2/usage/query-batch',

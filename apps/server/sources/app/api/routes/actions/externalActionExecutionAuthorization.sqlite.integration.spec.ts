@@ -316,10 +316,14 @@ type TestAdmittedRequester = Readonly<{
 describe("external Action execution authorization", () => {
     let harness: LightSqliteHarness;
 
-    it.each(['usage.prices.get', 'usage.prices.refresh'] as const)('admits only the captured native price purpose: %s', async actionId => {
+    it.each([
+        ['usage.prices.get', false], ['usage.prices.refresh', false],
+        ['usage.prices.get', true], ['usage.prices.refresh', true],
+    ] as const)('admits only the captured native price purpose: %s (PAT: %s)', async (actionId, pat) => {
         const fixture = await createFixture({ qualifiedPat: false });
         const { app } = await createApp(fixture.team.id);
-        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const token = pat ? fixture.pat.token
+            : await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         try {
             const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
@@ -329,15 +333,19 @@ describe("external Action execution authorization", () => {
             const method = actionId === 'usage.prices.get' ? 'GET' : 'POST';
             const path = actionId === 'usage.prices.get' ? '/v1/account/usage/prices' : '/v1/account/usage/prices/refresh';
             const body = method === 'POST' ? {} : undefined;
-            const verify = (requestMethod: string, requestPath: string, requestBody: unknown, effectActionId = actionId) =>
+            const verify = (requestMethod: string, requestPath: string, requestBody: unknown, effectActionId = actionId,
+                routeInput?: unknown) =>
                 verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token, effectActionId,
                     encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
-                    method: requestMethod, path: requestPath, body: requestBody,
+                    method: requestMethod, path: requestPath, body: requestBody, routeInput,
                     machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId,
                         target: authorization.binding.target, installationId: fixture.machine.installationId!,
                         requestId: authorization.binding.requestId, method: requestMethod, path: requestPath,
                         body: requestBody, privateKey: fixture.keyPair.secretKey }) });
             expect(await verify(method, path, body)).toMatchObject({ effectActionId: actionId });
+            expect(await verify(method, path, body, actionId, {})).toMatchObject({ effectActionId: actionId });
+            expect(await verify(method, path, body, actionId, null)).toBeNull();
+            expect(await verify(method, path, body, actionId, { accountId: 'other' })).toBeNull();
             expect(await verify(method === 'GET' ? 'POST' : 'GET', path, body)).toBeNull();
             expect(await verify(method, `${path}?accountId=other`, body)).toBeNull();
             expect(await verify(method, path, { accountId: 'other' })).toBeNull();

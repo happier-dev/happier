@@ -1,6 +1,6 @@
 import { isManagedMachineCreator } from '@/app/machines/managed/managedRead';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
-import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { isUsagePriceActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { readExternalActionNativeCredentialSpawnChildInTx } from './externalActionNativeCredentialChild';
 import { readManagedCredentialDeliveryAuthorityInTx, readManagedCredentialDeliverySubmittedAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
@@ -28,7 +28,8 @@ import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizatio
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRpcRequestV1, verifyExternalActionMachineRequestV1, isExternalActionAuthorizationBoundToEnvelope, type ExternalActionMachineRpcEventV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { getActionSpec, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { ActionIdSchema, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_ATTENTION_SET_ACTION_ID } from '@happier-dev/protocol/sessions/organization/attentionActionIdsV1';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from "@happier-dev/protocol/actions/metadata";
 import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1,
@@ -1586,8 +1587,9 @@ function isAccountActionHttpOperation(actionId: string,
         return isSessionFollowActionHttpRequestV1(actionId, { method: proof.method, path: proof.path,
             body: proof.body, routeInput: proof.routeInput, sessionRouteSessionId: proof.sessionRouteTarget?.sessionId });
     }
-    if (!isHomeDomainActionIdV1(actionId) && !isDiscussionActionIdV1(actionId) && actionId !== 'session.organization.pin.set'
-        && actionId !== 'session.attention.set' && actionId !== 'account.apiTokens.list'
+    if (!isHomeDomainActionIdV1(actionId) && !isDiscussionActionIdV1(actionId) && !isUsagePriceActionIdV1(actionId)
+        && actionId !== SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1
+        && actionId !== SESSION_ATTENTION_SET_ACTION_ID && actionId !== ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1
         && !actionId.startsWith('session.delivery.mute.')
         && !proof.sessionRouteTarget) return false;
     const action = ActionIdSchema.safeParse(actionId);
@@ -1607,7 +1609,9 @@ function isAccountActionHttpOperation(actionId: string,
         const expectedMute = resolveSessionFollowActionRequest(actionId, parsedMute.data);
         return expectedMute.path === proof.path && sameManagedInput(expectedMute.body, proof.body);
     }
-    const input = proof.routeInput ?? proof.body;
+    const input = isUsagePriceActionIdV1(actionId)
+        ? (proof.routeInput === undefined ? proof.body ?? {} : proof.routeInput)
+        : proof.routeInput ?? proof.body;
     // GET binding omits the existing domain version marker from its query.
     // Restore only that marker; all values/defaults still pass the Action schema.
     // Discussion content has already been sealed by the installed host. The
@@ -1693,14 +1697,6 @@ function isDiscussionActionHttpPreparation(verified: VerifiedExternalActionExecu
 function isAccountActionHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const root = verified.binding.actionId;
-    if (root === USAGE_PRICE_ACTION_IDS.get || root === USAGE_PRICE_ACTION_IDS.refresh) {
-        const read = root === USAGE_PRICE_ACTION_IDS.get;
-        return verified.effectActionId === root
-            && proof.method.toUpperCase() === (read ? 'GET' : 'POST')
-            && proof.path === (read ? accountUsageRoutePaths.prices : accountUsageRoutePaths.pricesRefresh)
-            && (read ? proof.body === undefined : getActionSpec(root).inputSchema.safeParse(proof.body).success)
-            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, {}));
-    }
     if (root === 'usage.recap.compose' || root === 'usage.recap.export' || root === 'usage.recap.deliver') {
         // The installed executor signs this consumed safe-view read under its
         // unchanged recap root. No owner record or private Usage grant follows.

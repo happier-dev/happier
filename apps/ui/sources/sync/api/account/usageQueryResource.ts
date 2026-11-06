@@ -1,3 +1,6 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceStore, type PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
@@ -266,10 +269,11 @@ export async function readUiUsageModelPrices(context: UsageQueryAccountContext, 
     };
     if (refresh && scope) modelPriceReads.invalidate(scope);
     try {
-        const path = refresh ? '/v1/account/usage/prices/refresh' : '/v1/account/usage/prices';
-        const init = { method: refresh ? 'POST' : 'GET',
+        const spec = getActionSpec(refresh ? USAGE_PRICE_ACTION_IDS.refresh : USAGE_PRICE_ACTION_IDS.get);
+        const { path, method, body } = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!, inputSchema: spec.inputSchema, input: {} });
+        const init = { method,
             headers: { Authorization: `Bearer ${context.credentials.token}`, ...(refresh ? { 'Content-Type': 'application/json' } : {}) },
-            ...(refresh ? { body: '{}' } : {}) };
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
         const value = !refresh && transport && scope
             ? await modelPriceReads.run(JSON.stringify([bindingKey, path]), sharedSignal => transport.read(path, { ...init, signal: sharedSignal }, undefined, consume),
                 { scope, signal: cancellation.signal })
