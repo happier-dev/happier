@@ -702,6 +702,7 @@ function annotateMySqlPluginWebhookIngressFields(schemaBody: string): string {
 
 function annotateMySqlSessionOrganizationFields(schemaBody: string): string {
     return schemaBody
+        .replace(/^(\s*displayDbValue\s+String\??)(?![^\n]*@db\.)/gm, "$1 @db.LongText")
         .replace(
             /^model\s+SessionOrganizationFolder\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model

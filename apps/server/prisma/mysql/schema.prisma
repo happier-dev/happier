@@ -1770,7 +1770,7 @@ model SessionOrganizationFolder {
     parentKey      String?
     parentHash     String? @db.VarChar(71)
     sortKey        String?
-    displayDbValue String?
+    displayDbValue String? @db.LongText
     archivedAt     DateTime?
     createdAt      DateTime  @default(now())
     updatedAt      DateTime  @updatedAt
@@ -1788,7 +1788,7 @@ model SessionOrganizationTag {
     tagKey         String
     tagHash        String @db.VarChar(71)
     sortKey        String?
-    displayDbValue String?
+    displayDbValue String? @db.LongText
     archivedAt     DateTime?
     createdAt      DateTime  @default(now())
     updatedAt      DateTime  @updatedAt
@@ -1844,7 +1844,7 @@ model SessionOrganizationLabel {
     labelKind      String
     scopeKey       String
     scopeHash      String @db.VarChar(71)
-    displayDbValue String?
+    displayDbValue String? @db.LongText
     archivedAt     DateTime?
     createdAt      DateTime  @default(now())
     updatedAt      DateTime  @updatedAt
