@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { useAgentInstallJob } from '@/agents/machineAgents/installJobs/useAgentInstallJob';
 import { useAgentSignIn } from '@/agents/machineAgents/signIn/useAgentSignIn';
@@ -7,6 +8,9 @@ import { useMachineAgent } from '@/agents/machineAgents/useMachineAgents';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
@@ -99,7 +103,20 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
             if (props.onConnectService) props.onConnectService(serviceId);
             else {
                 props.onLeave?.();
-                router.push(`${SETTINGS_ROUTES.connectedServices}/${encodeURIComponent(serviceId)}` as never);
+                const serviceKey = resolveQualifiedConnectedAccountServiceKey(serviceId);
+                const service = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
+                if (service) {
+                    fireAndForget(presentConnectSheet({
+                        scope: execution.binding?.scope ?? null,
+                        service,
+                        initialMachineTarget: {
+                            serverIdentityId: captureServerProfileScopeResolver()(props.serverId),
+                            machineId: props.machineId,
+                        },
+                    }), { tag: 'AgentSetupForm.connectService' });
+                } else {
+                    router.push(`${SETTINGS_ROUTES.connectedServices}/${encodeURIComponent(serviceId)}` as never);
+                }
             }
         },
         onOpenNativeSignIn: () => {
@@ -113,7 +130,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         onCancelSignIn: () => { fireAndForget(signIn.cancel(), { tag: 'AgentSetupForm.cancelSignIn' }); },
         ...(props.onStartSession ? { onStartSession: () => { if (agentRef.current) props.onStartSession?.(agentRef.current); } } : {}),
         ...(props.onSetUpAnother ? { onSetUpAnother: props.onSetUpAnother } : {}),
-    }), [credentialFailure, install, installJob, openTerminal, props.onConnectService, props.onLeave, props.onSetUpAnother, props.onStartSession, router, selectCredential, signIn]);
+    }), [credentialFailure, execution.binding, install, installJob, openTerminal, props.machineId, props.onConnectService, props.onLeave, props.onSetUpAnother, props.onStartSession, props.serverId, router, selectCredential, signIn]);
 
     if (!agent) return null;
     return (
