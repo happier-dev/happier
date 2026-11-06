@@ -284,6 +284,13 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             expect(result.voice.presentation?.failureMessage).toContain(message.split('.')[0]);
             expect(JSON.stringify(result)).not.toMatch(/PRIVATE_TOKEN|\/home\/alice/);
             expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
+            if (reason === 'usage_limit') {
+                const navigate = vi.fn();
+                expect(await executeVoiceConversationAction('ui.voice_global.recover', {
+                    expectedAttempt: result.voice.attemptId,
+                }, { navigate })).toMatchObject({ status: 'completed' });
+                expect(navigate).toHaveBeenCalledWith('/settings/voice/conversations?setting=voiceConversations.connectedServices');
+            }
         } finally { await lifecycle.dispose(); }
     });
 

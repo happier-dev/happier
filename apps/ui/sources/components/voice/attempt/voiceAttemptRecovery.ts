@@ -104,6 +104,7 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
     expectedAttempt?: string | null;
     isCurrent?: () => boolean;
     recoveryAction: VoiceMachineRecoveryAction | null;
+    errorReason?: string | null;
     /**
      * A provider the user selected but has not finished connecting: the same
      * problem as a failed attempt, before it has had a chance to fail. Voice
@@ -158,6 +159,10 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
             return true;
         }
         if (recoveryAction === 'open_settings' || recoveryAction === 'open_settings_then_reconnect') {
+            if (params.errorReason === 'usage_limit') {
+                await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.connectedServices));
+                return true;
+            }
             if (Platform.OS === 'web') {
                 await navigate(SETTINGS_ROUTES.voice);
                 return true;

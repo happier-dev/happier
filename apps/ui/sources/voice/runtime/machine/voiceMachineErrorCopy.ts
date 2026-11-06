@@ -39,6 +39,7 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
  * raw reason code or transport text is never shown.
  */
 export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
+    usage_limit: 'session.usageLimitRecovery.banner.title',
     daemon_streaming_stt_runtime_unavailable: 'settingsVoice.local.daemonInference.states.runtimeUnavailable',
     voice_previous_session_stop_failed: 'settingsVoice.local.machineErrors.previous_session_stop_failed',
     voice_agent_selection_unavailable: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
@@ -64,7 +65,7 @@ export function resolveVoiceMachineErrorTranslationKey(
     // Capture retains the public error code; Send retains the safe message.
     const copyReason = reason?.toLowerCase();
     if ((kind === 'service_temporarily_unavailable' || kind === 'provider_setup_required'
-        || (kind === 'provider_error' && copyReason === 'daemon_streaming_stt_runtime_unavailable'))
+        || (kind === 'provider_error' && (copyReason === 'daemon_streaming_stt_runtime_unavailable' || copyReason === 'usage_limit')))
         && isVoiceMachineErrorReasonWithCopy(copyReason)) {
         return VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS[copyReason];
     }

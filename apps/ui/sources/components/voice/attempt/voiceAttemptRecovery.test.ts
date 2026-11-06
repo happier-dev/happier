@@ -175,6 +175,18 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(lifecycle.getSnapshot().status).toBe('disconnected');
   });
 
+  it.each(['web', 'ios'] as const)('reveals the Voice agent Account row for a usage limit on %s', async platform => {
+    state.platform = platform;
+    const navigate = vi.fn();
+    const { executeVoiceAttemptRecovery } = await import('./voiceAttemptRecovery');
+    expect(await executeVoiceAttemptRecovery({
+      recoveryAction: 'open_settings', errorReason: 'usage_limit',
+      setupIncomplete: false, context: context(), navigate,
+    })).toBe(true);
+    expect(navigate).toHaveBeenCalledWith('/settings/voice/conversations?setting=voiceConversations.connectedServices');
+    expect(state.openSettings).not.toHaveBeenCalled();
+  });
+
   it('forwards the canonical selected service and account route for Connect recovery', async () => {
     const navigate = vi.fn();
     const route = {

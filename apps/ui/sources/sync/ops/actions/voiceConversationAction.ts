@@ -54,6 +54,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     idleTarget: VoiceIdleTarget;
     context: VoiceAttemptRecoveryContext;
     recoveryAction: VoiceMachineRecoveryAction | null;
+    errorReason: string | null | undefined;
     setupIncomplete: boolean;
     capabilities: VoiceAdapterSurfaceCapabilities | null;
     navigation: Readonly<{ href: unknown }> | null;
@@ -164,7 +165,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const navigation = navigationBinding ? { href: navigationAddress
         ? buildScopedSessionRouteHref({ sessionId: navigationAddress.sessionId, serverId: navigationAddress.serverId })
         : SETTINGS_ROUTES.voiceHistory } : null;
-    return { ownsVoiceRuntime, voice, idleTarget, context, recoveryAction, setupIncomplete, capabilities, navigation };
+    return { ownsVoiceRuntime, voice, idleTarget, context, recoveryAction, errorReason: snapshot.errorMessage, setupIncomplete, capabilities, navigation };
 }
 
 export async function executeVoiceConversationAction(

@@ -64,6 +64,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
+import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
+import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 
 import {
@@ -628,19 +630,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         capturing,
     ]);
 
-    const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
-    const statusOverride = presentedEnded
-        ? t('voicePresence.ended')
-        // A muted conversation says so: its mode may still read "Listening", which would invite talking.
-        : control.muted && VOICE_CONVERSING_SURFACE_STATES.has(surfaceState)
-        ? t('voicePresence.muted')
-        : null;
-    const statusLabel = statusOverride ?? t(statusPresentation.labelKey);
-    const statusWord = presentedEnded ? t('voicePresence.ended') : (
-        control.statusCell === 'working' || control.statusCell === 'needs_you'
-            ? t(`workStatus.buckets.${control.statusCell}`)
-            : statusOverride ?? t(statusPresentation.wordKey ?? statusPresentation.labelKey)
-    );
     const canStop = control.canStop;
     const canStart = control.canStart;
     const canMute = control.canMute;
@@ -694,10 +683,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const recoverBeforeAttempt = React.useMemo(() => createVoiceAttemptRecoveryDispatch({
         expectedAttempt,
         recoveryAction,
+        errorReason: snap.errorMessage,
         setupIncomplete,
         context: recoveryContext,
         navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
-    }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete]);
+    }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete, snap.errorMessage]);
     const onRecover = React.useCallback(() => expectedAttempt
         ? executeControl('ui.voice_global.recover', { expectedAttempt }, 'VoiceAttemptControl.recover')
         : recoverBeforeAttempt(), [executeControl, expectedAttempt, recoverBeforeAttempt]);
@@ -730,6 +720,22 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         serviceTitle, agentTitle, agentMachineLabel,
     }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
+    const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
+    const statusOverride = presentedEnded
+        ? t('voicePresence.ended')
+        // A muted conversation says so: its mode may still read "Listening", which would invite talking.
+        : control.muted && VOICE_CONVERSING_SURFACE_STATES.has(surfaceState)
+        ? t('voicePresence.muted')
+        : null;
+    const failureStatusWord = surfaceState === 'error' && publicPresentation.failureKind
+        ? translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(publicPresentation.failureKind, snap.errorMessage ?? undefined), { service: serviceTitle })
+        : null;
+    const statusLabel = statusOverride ?? (surfaceState === 'error' ? publicPresentation.failureMessage : null) ?? t(statusPresentation.labelKey);
+    const statusWord = presentedEnded ? t('voicePresence.ended') : failureStatusWord ?? (
+        control.statusCell === 'working' || control.statusCell === 'needs_you'
+            ? t(`workStatus.buckets.${control.statusCell}`)
+            : statusOverride ?? t(statusPresentation.wordKey ?? statusPresentation.labelKey)
+    );
     const recoveryLabel = publicPresentation.recovery?.label ?? null;
     const recoveryIcon = publicPresentation.recovery?.icon ?? null;
     const micStateLabel = surfaceState === 'permission_required' ? statusLabel : t(
