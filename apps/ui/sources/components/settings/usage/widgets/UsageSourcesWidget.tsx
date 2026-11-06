@@ -16,13 +16,12 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
-  useActiveServerAccountScope,
-  useAllMachines,
+    useActiveServerAccountScope,
+    useActiveMachineFacts,
 } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -41,6 +40,8 @@ import type {
 } from './usageSourcesController';
 import { useUsageSourcesController, type UsageSourcesHookOptions } from './useUsageSources';
 import { OutsideBrowsePage, UsageExternalSessionCandidates } from './UsageExternalSessionCandidates';
+import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
+import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
@@ -58,14 +59,14 @@ export function UsageSourcesWidget(
     const captured = captureActiveServerAccountScopeLifetime();
     return captured?.scope.serverId === props.serverId ? captured : null;
   }, [viewer?.serverId, viewer?.accountId, props.serverId]);
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const reachabilityRevision = useMachineReachabilityRevision();
   const nowMs = useMachinePresenceNowMs(machines);
   const presentation = useWidgetPresentation();
   // Online machines first (they can answer now), then by name; offline ones wait quietly.
   const ordered = React.useMemo(() => projectUsageSourcesMachines(machines, nowMs, lifetime?.isCurrent() ? lifetime.scope : null), [machines, nowMs, lifetime, reachabilityRevision]);
   useWidgetFrameBodyCaption(t('usage.board.sources.foundCaption'));
-  const inventory = UsageSourceInventoryScopeSchema.safeParse(props.input);
+  const inventory = React.useMemo(() => UsageSourceInventoryScopeSchema.safeParse(props.input), [props.input]);
   if (!inventory.success) return <SurfaceStateCard testID={`${props.testID}.invalid`} kind="unavailable"
     layout="inline" size="line" title={t('usage.board.page.queryInvalidTitle')} reason={t('usage.board.page.queryInvalidReason')} />;
   if (!lifetime)
@@ -185,7 +186,10 @@ export function UsageSourcesMachines(
         {online.map((machine) => (
           <MachineSources
             key={machine.id}
-            machine={machine}
+            machineId={machine.id}
+            machineName={machine.name}
+            online={machine.online}
+            homeDir={machine.homeDir}
             lifetime={props.lifetime}
             serverId={props.serverId}
             executor={props.executor}
@@ -254,7 +258,6 @@ function HappierSessionsSource(props: Readonly<{ wide: boolean; testID: string }
   const { theme } = useUnistyles();
   const status = (
     <View style={[styles.stateLine, props.wide && styles.stateColumn]}>
-      <StatusDot color={theme.colors.state.success.foreground} />
       <Text style={styles.stateText} numberOfLines={1}>{t('usage.board.sources.happierLive')}</Text>
     </View>
   );
@@ -283,9 +286,12 @@ function ConsentDisclosure(props: Readonly<{ testID: string }>) {
   );
 }
 
-function MachineSources(
+const MachineSources = React.memo(function MachineSources(
   props: Readonly<{
-    machine: UsageSourcesMachine;
+    machineId: string;
+    machineName: string;
+    online: boolean;
+    homeDir?: string;
     lifetime: ServerAccountScopeLifetime;
     executor?: UsageSourcesHookOptions['executor'];
     serverId: string;
@@ -297,15 +303,19 @@ function MachineSources(
   }>,
 ) {
   const { theme } = useUnistyles();
+  const tracker = useOptionalPluginUiScrollActivityTracker();
+  const shellRef = React.useRef<View | null>(null);
+  const { near, measure } = useMeasuredNearViewport(tracker, shellRef, true, props.machineId);
+  const [bodyHeight, setBodyHeight] = React.useState(0);
   const { controller, snapshot } = useUsageSourcesController({
-    machineId: props.machine.id,
+    machineId: props.machineId,
     lifetime: props.lifetime,
     ...(props.executor ? { executor: props.executor } : {}),
   });
   // Mounting is visible demand (the area only mounts bodies near the viewport): read metadata once.
   React.useEffect(() => {
-    if (controller && props.machine.online) void controller.discover();
-  }, [controller, props.machine.online]);
+    if (controller && props.online) void controller.discover();
+  }, [controller, props.online]);
   const scoped = selectUsageSourceDiscoveryInventory(snapshot.sources).filter(source => matchesUsageSourceAccountingScope(source, props.accountingSources)
     && (!props.agentIds.length || props.agentIds.some(agentId =>
     agentId === buildQualifiedPluginContributionKey(source.agent)
@@ -330,36 +340,41 @@ function MachineSources(
   const consentable = state === 'content' && [...tracked, ...found].some(row => row.status.kind !== 'unsupported' && row.status.kind !== 'failed'
     || row.source.consent === 'enabled');
   const retry = React.useCallback(() => { void controller?.discover(); }, [controller]);
-  React.useEffect(() => { props.onState(props.machine.id, { state, consentable }, state === 'unreadable' ? retry : undefined); },
-    [props.onState, props.machine.id, state, consentable, retry]);
+  React.useEffect(() => { props.onState(props.machineId, { state, consentable }, state === 'unreadable' ? retry : undefined); },
+    [props.onState, props.machineId, state, consentable, retry]);
+  React.useEffect(() => { if (state === 'content') measure(); }, [state, measure]);
   if (state !== 'content') return null;
   const rowProps = (source: UsageSourceV1) => ({
-    source, snapshot, machineName: props.machine.name, lifetime: props.lifetime, online: props.machine.online,
-    homeDir: props.machine.homeDir, serverId: props.serverId, testID: `${props.testID}.source.${source.sourceId}`,
+    source, snapshot, machineName: props.machineName, lifetime: props.lifetime, online: props.online,
+    homeDir: props.homeDir, serverId: props.serverId, testID: `${props.testID}.source.${source.sourceId}`,
   });
   return (
-    <View testID={props.testID} style={[styles.machine, styles.machineDivided]}>
+    <View ref={shellRef} testID={props.testID} style={[styles.machine, styles.machineDivided]} onLayout={measure}>
       <View style={styles.machineHeader}>
         <Icon name="desktop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-        <Text style={styles.machineName} numberOfLines={1}>{props.machine.name}</Text>
+        <Text style={styles.machineName} numberOfLines={1}>{props.machineName}</Text>
         {counted > 0 ? (
           <Text style={styles.machineStatus} numberOfLines={1}>{t('usage.board.sources.machineCounted', { count: counted })}</Text>
         ) : null}
         {discovering ? <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} /> : null}
       </View>
-      {snapshot.approval ? <Text style={styles.note}>{t('usage.board.sources.approvalPending')}</Text> : null}
+      {snapshot.approval || (controller && listed.length + missing.length > 0) ? <View style={styles.machineBody}
+        onLayout={event => { if (near) { const height = event.nativeEvent.layout.height; setBodyHeight(previous => previous === height ? previous : height); } }}>
+      {!near ? <View style={{ height: bodyHeight }} /> : null}
+      {near && snapshot.approval ? <Text style={styles.note}>{t('usage.board.sources.approvalPending')}</Text> : null}
       {controller ? listed.map(row => row.status.kind === 'found' ? (
-        <FoundSourceRow key={row.source.sourceId} {...rowProps(row.source)} controller={controller} />
+        near ? <FoundSourceRow key={row.source.sourceId} {...rowProps(row.source)} controller={controller} /> : null
       ) : (
-        <TrackedSourceRow key={row.source.sourceId} {...rowProps(row.source)} status={row.status} controller={controller} wide={props.wide} />
+        <TrackedSourceRow key={row.source.sourceId} {...rowProps(row.source)} status={row.status} controller={controller} wide={props.wide} visible={near} />
       )) : null}
       {controller && missing.length > 0 ? (
-        <MissingSources sources={missing} controller={controller} machineName={props.machine.name} serverId={props.serverId}
-          busy={snapshot.pending} testID={`${props.testID}.missing`} />
+        <MissingSources sources={missing} controller={controller} machineName={props.machineName} serverId={props.serverId}
+          busy={snapshot.pending} testID={`${props.testID}.missing`} visible={near} />
       ) : null}
+      </View> : null}
     </View>
   );
-}
+});
 
 const usageSourceAgentKey = (source: UsageSourceV1) =>
   resolveBundledAgentIdFromContributionIdentity(source.agent) ?? buildQualifiedPluginContributionKey(source.agent);
@@ -409,7 +424,7 @@ function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder
 }
 
 /** A source the machine reads or has read: one status, the Counted switch (consent) and its options menu. */
-function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSourceRowStatus; wide: boolean }>) {
+function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSourceRowStatus; wide: boolean; visible: boolean }>) {
   const { theme } = useUnistyles();
   const { source, controller, status } = props;
   const { agentId, agent, busy, folder, changeFolder } = useSourceRow(props);
@@ -428,19 +443,17 @@ function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSource
       action={{ label: t('common.retry'), onPress: () => controller.refresh(source.sourceId) }} />
   ) : (
     <View style={[styles.stateLine, props.wide && styles.stateColumn]}>
-      {status.kind === 'reading' ? <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.link} />
-        : status.kind === 'counted' ? <StatusDot color={theme.colors.state.success.foreground} /> : null}
+      {status.kind === 'reading' ? <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.link} /> : null}
       <Text style={styles.stateText} numberOfLines={2}>{status.label}</Text>
     </View>
   );
   const inlineState = props.wide && status.kind !== 'failed';
-  return (
+  const renderRow = (outside: React.ReactNode) => props.visible ? (
     <View testID={props.testID} style={styles.source} accessibilityState={{ busy }}>
       <SourceIdentity agentId={agentId} agent={agent} folder={folder} serverId={props.serverId}>
         {inlineState ? null : stateLine}
         {deletion ? <Text style={styles.note}>{t('usage.board.sources.deleted', { count: deletion.deletedEventCount })}</Text> : null}
-        {source.externalSessionSource ? <UsageExternalSessionCandidates source={source} lifetime={props.lifetime}
-          online={props.online} testID={`${props.testID}.outside`} /> : null}
+        {outside}
       </SourceIdentity>
       {inlineState ? stateLine : null}
       <View style={styles.controls}>
@@ -450,7 +463,9 @@ function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSource
         <SourceOptions testID={props.testID} agent={agent} actions={actions} />
       </View>
     </View>
-  );
+  ) : null;
+  return source.externalSessionSource ? <UsageExternalSessionCandidates source={source} lifetime={props.lifetime}
+    online={props.online} testID={`${props.testID}.outside`} visible={props.visible}>{renderRow}</UsageExternalSessionCandidates> : renderRow(null);
 }
 
 /** A source found on the machine and not counted yet: what it is, where it is, Add; Not now waits in its menu. */
@@ -498,8 +513,10 @@ function MissingSources(props: Readonly<{
   serverId: string;
   busy: UsageSourcesSnapshot['pending'];
   testID: string;
+  visible: boolean;
 }>) {
   const [open, setOpen] = React.useState(false);
+  if (!props.visible) return null;
   const agents = [...new Set(props.sources.map(source => usageAgentTitle(usageSourceAgentKey(source))))];
   const line = t('usage.board.sources.notFoundAgents', { agents: agents.join(', ') });
   return (
@@ -557,6 +574,9 @@ const styles = StyleSheet.create((theme) => ({
   machineDivided: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.default,
+  },
+  machineBody: {
+    gap: theme.space.s12,
   },
   machineHeader: {
     flexDirection: 'row',

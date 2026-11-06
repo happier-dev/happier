@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -18,7 +18,7 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { UsageExternalSessionCandidates, UsageOutsideSessions } from './UsageExternalSessionCandidates';
+import { OutsideBrowsePage, UsageExternalSessionCandidates, UsageOutsideSessions } from './UsageExternalSessionCandidates';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
 const rpc = vi.hoisted(() => vi.fn());
@@ -201,6 +201,27 @@ describe('Usage shared outside-session candidates', () => {
         await screen.pressByTestIdAsync('outside.browse');
         await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
         expect(rpc.mock.calls.every(([call]) => !String(call.method).includes('consent'))).toBe(true);
+    });
+    it('retains page Browse intent for an offscreen Source without mounting its controls', async () => {
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
+            externalSessionSource: { kind: 'archive' }, root: { kind: 'default' as const, path: '/root' },
+            consent: 'disabled' as const, status: 'stopped' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
+        const page = (visible: boolean) => <OutsideBrowsePage testID="page">
+            <UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" visible={visible} />
+        </OutsideBrowsePage>;
+        const screen = await renderScreen(page(false));
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('page.browse')).toBeTruthy(); });
+        await screen.pressByTestIdAsync('page.browse');
+        await waitForHomeGovernance(async () => { await flushHookEffects();
+            expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toHaveLength(1); });
+        await flushHookEffects();
+        expect(screen.findByTestId('outside.continue.outside')).toBeNull();
+        await screen.update(page(true));
+        expect(screen.findByTestId('outside.continue.outside')).toBeTruthy();
+        expect(screen.findByTestId('page.browse')).toBeNull();
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toHaveLength(1);
     });
     it.each(['found', 'stopped'] as const)('keeps %s discovery metadata-only until explicit browsing, with qualified Agent and Account fencing', async status => {
         let current = true;

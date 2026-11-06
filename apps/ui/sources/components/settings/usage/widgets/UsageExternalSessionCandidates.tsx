@@ -15,7 +15,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { useAllMachines, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -37,6 +37,8 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     online: boolean;
     agentIds?: readonly string[];
     testID: string;
+    visible?: boolean;
+    children?: (candidates: React.ReactNode) => React.ReactNode;
 }>) {
     const presentationActive = useLayoutPresentationActive();
     const projected = useDaemonMergedProjectionInputs({ machineId: props.source.machineId,
@@ -80,17 +82,19 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     }, [browseScope, historyAllowed, presentationActive]);
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const router = useRouter();
-    if (!target || !props.lifetime.isCurrent()) return null;
-    if (!historyAllowed) return pageBrowse ? null : <View style={styles.action}><RoundButton size="small" display="inverted"
+    // The page's explicit Browse still reaches offscreen Sources; only their drawn controls defer.
+    const render = (candidates: React.ReactNode) => props.children ? props.children(candidates) : candidates;
+    if (props.visible === false || !target || !props.lifetime.isCurrent()) return render(null);
+    if (!historyAllowed) return render(pageBrowse ? null : <View style={styles.action}><RoundButton size="small" display="inverted"
         title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`} disabled={!props.online}
         onPress={() => {
             if (current.current.browseScope === browseScope && props.lifetime.isCurrent()) {
                 setBrowseIntent(browseScope);
             }
-        }} /></View>;
+        }} /></View>);
     const outside = listing.candidates.filter(candidate => !candidate.linkedSessionId);
-    if (!outside.length) return null;
-    return <View testID={props.testID}>
+    if (!outside.length) return render(null);
+    return render(<View testID={props.testID}>
         <Text accessibilityRole="header">{t('externalSessions.settingsTitle')}</Text>
         {outside.map(candidate => {
             const key = readExternalSessionBrowseCandidateKey(candidate);
@@ -113,7 +117,7 @@ export function UsageExternalSessionCandidates(props: Readonly<{
         })}
         {listing.nextCursor ? <View style={styles.action}><RoundButton size="small" display="inverted" title={t('common.next')}
             loading={listing.loadingMore} onPress={() => { void listing.loadMore(); }} /></View> : null}
-    </View>;
+    </View>);
 }
 
 function OutsideMachine(props: Readonly<{ machineId: string; online: boolean; lifetime: ServerAccountScopeLifetime;
@@ -132,7 +136,7 @@ export function UsageOutsideSessions(props: Readonly<{ serverId: string; query: 
         const captured = captureActiveServerAccountScopeLifetime();
         return captured?.scope.serverId === props.serverId ? captured : null;
     }, [scope?.serverId, scope?.accountId, props.serverId]);
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     useMachineReachabilityRevision();
     const nowMs = useMachinePresenceNowMs(machines);
     // These filters require accounting/session evidence candidates cannot establish; never broaden them.

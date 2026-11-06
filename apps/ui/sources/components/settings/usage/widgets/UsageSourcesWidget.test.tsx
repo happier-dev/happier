@@ -17,6 +17,8 @@ import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSource
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 it('retains source inventory but withdraws execution from machines with locked content', () => {
   const machines = [
     createMachineFixture({ id: 'locked', activeAt: Date.now(), availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }),
@@ -28,9 +30,19 @@ it('retains source inventory but withdraws execution from machines with locked c
 
 const confirm = vi.fn<(title: string, message?: string) => Promise<boolean>>();
 const prompt = vi.fn<() => Promise<string | null>>();
-vi.mock('react-native', async () =>
-  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
-);
+const machineHostRenders = vi.hoisted(() => new Map<string, number>());
+vi.mock('react-native', async () => {
+  const React = await import('react');
+  return (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    View: React.forwardRef((props: Record<string, unknown>, ref) => {
+      const id = props.testID;
+      if (typeof id === 'string' && /^sources\.machine\.[^.]+$/.test(id)) {
+        machineHostRenders.set(id, (machineHostRenders.get(id) ?? 0) + 1);
+      }
+      return React.createElement('View', { ...props, ref });
+    }),
+  });
+});
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
 );
@@ -75,7 +87,7 @@ const lifetime: ServerAccountScopeLifetime = {
 };
 
 /** The Machine RPC is the genuine boundary; Action admission, parsing and the controller stay real. */
-function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: readonly UsageSourceV1[]) {
+function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: readonly UsageSourceV1[], byMachine?: ReadonlyMap<string, readonly UsageSourceV1[]>) {
   const calls: string[] = [];
   let current = initial;
   let discovery = initialDiscovery;
@@ -114,7 +126,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
           current = { ...current, root: { kind: request.input.root === null ? 'default' : 'override', path: request.input.root ?? found.root.path }, consent: 'disabled', status: 'found' };
           return { source: current };
         }
-        return { sources: discovery ?? [current] };
+        return { sources: byMachine?.get(request.input.machineId) ?? discovery ?? [current] };
       },
       dismiss: async () => ({ status: 'dismissed' }),
     }),
@@ -158,6 +170,40 @@ afterEach(() => {
 });
 
 describe('Usage Sources body', () => {
+  it('discovers every Machine but mounts source controls only for visible Machine rows', async () => {
+    const machines = Array.from({ length: 8 }, (_, i) => ({ id: `machine-${i}`, name: `Machine ${i}`, online: true }));
+    const sources = new Map(machines.map(machine => [machine.id, [{ ...found, machineId: machine.id },
+      { ...found, machineId: machine.id, sourceId: 'missing', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        root: { kind: 'configured' as const, path: null }, status: 'unavailable' as const }]]));
+    const boundary = machineBoundary(found, undefined, sources);
+    let offset = 0;
+    type Done = (x: number, y: number, width: number, height: number) => void;
+    const contentNode = { measureInWindow: (done: Done) => done(0, -offset, 1000, 6000) };
+    const tracker = createNearViewportTracker({ quantum: 44, initialViewportHeight: 900, overscan: false,
+      readContentNode: () => contentNode });
+    const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
+      <UsageSourcesMachines lifetime={lifetime} serverId="home" executor={boundary.executor}
+        testID="sources" input={{ agents: [], machines: [], sources: [] }} machines={machines} />
+    </PluginUiScrollActivityProvider>, { createNodeMock: node => {
+      const id = node.props.testID;
+      if (typeof id !== 'string' || !/^sources\.machine\.machine-\d+(\.viewport)?$/.test(id)) return null;
+      const index = Number(id.match(/machine-(\d+)/)![1]);
+      return { measureInWindow: (done: Done) => done(0, 400 + index * 400 - offset, 1000, 300) };
+    } });
+    await vi.waitFor(() => expect(boundary.calls.filter(id => id === 'usage.sources.discover')).toHaveLength(8));
+    const visibleRows = () => machines.flatMap(machine => screen.findByTestId(`sources.machine.${machine.id}.source.claude-default.add`) ? [machine.id] : []);
+    await vi.waitFor(() => expect(visibleRows()).toEqual(['machine-0', 'machine-1']));
+    await screen.pressByTestIdAsync('sources.machine.machine-0.missing.toggle');
+    expect(screen.findByTestId('sources.machine.machine-0.missing.missing')).toBeTruthy();
+    await act(async () => {
+      offset = 2400;
+      tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } } as never);
+    });
+    await vi.waitFor(() => expect(visibleRows()).toEqual(['machine-5', 'machine-6', 'machine-7']));
+    await act(async () => { offset = 0; tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } } as never); });
+    await vi.waitFor(() => expect(visibleRows()).toEqual(['machine-0', 'machine-1']));
+    expect(screen.findByTestId('sources.machine.machine-0.missing.missing')).toBeTruthy();
+  });
   it('decides missing once per Agent and hides untouched Happier runtime homes without hiding captured history', async () => {
     const codex = { ...found, sourceId: 'codex-user', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
       root: { kind: 'default', path: '/Users/ada/.codex' } } satisfies UsageSourceV1;
