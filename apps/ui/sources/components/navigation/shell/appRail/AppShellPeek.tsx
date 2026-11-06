@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { motionTokens } from '@/components/ui/motion';
 import { resolveOverlayMotionPreset, useOverlayPanelMotion, useOverlayPresence } from '@/components/ui/overlays/motion/overlayMotion';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
+import { resolvePaneUnderlayAccessibilityProps } from '@/components/ui/panels/ModalPaneBoundary';
 import {
     createHoverPreviewScope,
     HoverPreviewScopeProvider,
@@ -128,11 +129,14 @@ export function AppShellPeekCovered(props: Readonly<{ children: React.ReactNode 
     const covered = context !== null && context.columnShown && context.peek !== null && context.peekReady;
     const contentRef = React.useRef<View>(null);
     const motion = useOverlayPanelMotion({ visible: !covered, preset: IN_PLACE_MOTION, elementRef: contentRef, appear: false });
-    const pointerEvents = resolveOverlayPointerEvents(covered ? 'none' : 'auto');
+    const underlayProps = resolvePaneUnderlayAccessibilityProps(covered, Platform.OS === 'web');
+    const pointerEvents = resolveOverlayPointerEvents(underlayProps.pointerEvents);
     return (
-        <Animated.View ref={contentRef} style={[stylesheet.covered, motion.style, pointerEvents.webStyle]}
-            pointerEvents={pointerEvents.nativePointerEvents} {...(covered ? { 'aria-hidden': true } : null)}>
-            {props.children}
+        <Animated.View {...underlayProps} ref={contentRef} style={[stylesheet.covered, motion.style, pointerEvents.webStyle]}
+            pointerEvents={pointerEvents.nativePointerEvents}>
+            <PluginSurfaceFocusEligibilityProvider active={!covered}>
+                {props.children}
+            </PluginSurfaceFocusEligibilityProvider>
         </Animated.View>
     );
 }
