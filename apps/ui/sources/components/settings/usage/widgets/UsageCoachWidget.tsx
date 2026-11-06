@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { HappierDataMetric, HappierPressable, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue, HappierDataMetric, HappierPressable, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import type {
   UsageCoachConceptEvaluation,
   UsageCoachDetectorId,
@@ -99,9 +99,22 @@ const EMPTY_SNAPSHOT: UsageCoachSnapshot = {
 /** The finding's own line names its leading measurements; every measurement stays listed under Why. */
 const COACH_LINE_MEASUREMENTS = 3;
 
+function formatExactCoachValue(value: number, unit: UsageCoachFinding['measurements'][number]['unit'], currency?: string): string {
+  return unit === 'currency' ? `${currency ?? 'USD'} ${formatHappierDataValue(value, getPreferredLanguage())}`
+    : unit === 'milliseconds' ? t('usage.board.howYouWork.durationSeconds', { seconds: formatHappierDataValue(value / 1000, getPreferredLanguage()) })
+      : unit === 'bytes' ? new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'byte', maximumSignificantDigits: 15 }).format(value)
+        : formatHappierDataValue(value, getPreferredLanguage());
+}
+
 function formatMeasurement(
   measurement: UsageCoachFinding['measurements'][number],
+  precision?: 'exact',
 ): string {
+  if (precision === 'exact') {
+    const value = measurement.metric === 'cache_hit_ratio' ? formatHappierDataExactShare(measurement.value, getPreferredLanguage())
+      : formatExactCoachValue(measurement.value, measurement.unit, measurement.currency);
+    return `${value} ${t(`usage.board.coach.metric_${measurement.metric}`)}`;
+  }
   const value =
     measurement.unit === 'currency'
       ? formatUsageCost(measurement.value, measurement.currency ?? 'USD')
@@ -116,6 +129,12 @@ function formatMeasurement(
               ? `${Math.round(measurement.value * 100)}%`
               : new Intl.NumberFormat().format(measurement.value);
   return `${value} ${t(`usage.board.coach.metric_${measurement.metric}`)}`;
+}
+
+function measurementHidesPrecision(measurement: UsageCoachFinding['measurements'][number]) {
+  const value = measurement.unit === 'milliseconds' ? measurement.value / 1000
+    : measurement.metric === 'cache_hit_ratio' ? measurement.value * 100 : measurement.value;
+  return !formatMeasurement(measurement).includes(formatHappierDataValue(value, getPreferredLanguage()));
 }
 
 /**
@@ -548,7 +567,7 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
   // The finding's line is what was measured (lab d2coach-A: kind, headline, one line, value, action). How it
   // was established (observation count, coverage, an older reading's time) is method, said under Why.
   const evidence = [
-    ...finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).map(formatMeasurement),
+    ...finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).map(measurement => formatMeasurement(measurement)),
     ...(finding.currentness === 'stale' && finding.asOfMs !== null
       ? [t('surfaceState.asOf', { time: formatAsOfTime(finding.asOfMs) })]
       : []),
@@ -568,6 +587,16 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
       ? formatUsageCost(estimate.value, estimate.currency ?? 'USD')
       : formatHappierDataBytes(estimate.value, { kind: 'storage' })
     : null;
+  const withEstimateDetail = (visual: React.ReactNode) => estimate && estimateValue
+    && !estimateValue.includes(formatHappierDataValue(estimate.value, getPreferredLanguage()))
+    ? <ChartDatum testID={`${props.testID}.estimate.detail`} datum={{ label: t(`usage.board.coach.estimate_${estimate.kind}`, { value: '' }),
+      value: formatExactCoachValue(estimate.value, estimate.unit, estimate.currency),
+      subtitle: [t(`usage.board.coach.method_${estimate.method}`), ...estimate.assumptions].join(' · ') }}>{visual}</ChartDatum> : visual;
+  const withModelDetail = (visual: React.ReactNode) => comparison && [comparison.modelCost, comparison.candidateCost].some(value =>
+    !formatUsageCost(value, comparison.currency).includes(formatHappierDataValue(value, getPreferredLanguage())))
+    ? <ChartDatum testID={`${props.testID}.model.detail`} datum={{ label: title,
+      value: `${comparison.modelId}: ${formatExactCoachValue(comparison.modelCost, 'currency', comparison.currency)} · ${comparison.candidateModelId}: ${formatExactCoachValue(comparison.candidateCost, 'currency', comparison.currency)}`,
+      subtitle: qualifiedModel ?? undefined }}>{visual}</ChartDatum> : visual;
   const canApply =
     finding.action !== null &&
     finding.remedy !== null &&
@@ -581,6 +610,7 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
     fontSize: metrics[size].fontSize,
     lineHeight: metrics[size].lineHeight,
   });
+  const evidenceInk = <Text style={[styles.evidence, text('subtitle')]} testID={`${props.testID}.meta`}>{evidence}</Text>;
   const action =
     canApply && controller ? (
       <RoundButton
@@ -646,8 +676,11 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
         <Text style={[styles.title, text('title')]} accessibilityRole="header">
           {title}
         </Text>
-        {qualifiedModel ? <Text style={[styles.evidence, text('subtitle')]}>{qualifiedModel}</Text> : null}
-        {evidence ? <Text style={[styles.evidence, text('subtitle')]} testID={`${props.testID}.meta`}>{evidence}</Text> : null}
+        {qualifiedModel ? withModelDetail(<Text style={[styles.evidence, text('subtitle')]}>{qualifiedModel}</Text>) : null}
+        {evidence ? finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).some(measurementHidesPrecision)
+          ? <ChartDatum testID={`${props.testID}.meta.detail`} datum={{ label: title,
+            value: finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).map(measurement => formatMeasurement(measurement, 'exact')).join(' · '),
+            subtitle: method }}>{evidenceInk}</ChartDatum> : evidenceInk : null}
         <UsagePlanDisclosure title={t('usage.board.coach.why')} testID={`${props.testID}.why`}>
         <View testID={`${props.testID}.evidence`} style={styles.why}>
           <Text style={[styles.whyHeading, text('subtitle')]}>{t('usage.board.coach.methodTitle')}</Text>
@@ -658,9 +691,12 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
           {estimate?.assumptions.map((assumption, index) => <Text key={index} style={[styles.quiet, text('subtitle')]}>{assumption}</Text>)}
           <Text style={[styles.whyHeading, text('subtitle')]}>{t('usage.board.coach.observationsTitle')}</Text>
           <View testID={`${props.testID}.evidence.measurements`}>
-            {finding.measurements.map((measurement, index) => <Text key={index} style={[styles.evidence, text('subtitle')]}>
-              {formatMeasurement(measurement)}
-            </Text>)}
+            {finding.measurements.map((measurement, index) => {
+              const visual = <Text style={[styles.evidence, text('subtitle')]}>{formatMeasurement(measurement)}</Text>;
+              return measurementHidesPrecision(measurement) ? <ChartDatum key={index} testID={`${props.testID}.measurement.${index}.detail`}
+                datum={{ label: t(`usage.board.coach.metric_${measurement.metric}`), value: formatMeasurement(measurement, 'exact') }}>{visual}</ChartDatum>
+                : <React.Fragment key={index}>{visual}</React.Fragment>;
+            })}
           </View>
           {ledEvidence.rows.map(reference => <Text key={`${reference.kind}:${reference.id}`}
             testID={`${props.testID}.evidence.${reference.id}`} selectable style={[styles.evidence, text('subtitle')]}>
@@ -688,14 +724,14 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
         </View>
         </UsagePlanDisclosure>
         {!wide && estimate && estimateValue ? (
-          <Text style={[styles.estimate, text('subtitle')]}>
+          withEstimateDetail(<Text style={[styles.estimate, text('subtitle')]}>
             {t(`usage.board.coach.estimate_${estimate.kind}`, {
               value: estimateValue,
             })}
             <Text
               style={styles.quiet}
             >{` · ${t(`usage.board.coach.method_${estimate.method}`)}`}</Text>
-          </Text>
+          </Text>)
         ) : null}
         {approval ? (
           <Text style={[styles.pendingNote, text('subtitle')]}>
@@ -719,7 +755,7 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
       {wide ? <UsageCoachFindingTrend finding={finding} testID={`${props.testID}.trend`} /> : null}
       {wide ? <View style={styles.impact}>
         {estimate && estimateValue ? <>
-          <Text style={[styles.impactValue, text('title')]}>{estimateValue}</Text>
+          {withEstimateDetail(<Text style={[styles.impactValue, text('title')]}>{estimateValue}</Text>)}
           <Text style={[styles.quiet, text('subtitle')]} numberOfLines={2}>{t(`usage.board.coach.method_${estimate.method}`)}</Text>
         </> : <Text style={[styles.quiet, text('subtitle')]}>—</Text>}
       </View> : null}

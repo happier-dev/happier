@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { UsageOutcomesBody, type UsageOutcomesModel } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, UsageOutcomesBody, type UsageOutcomesModel } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCountLong } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
@@ -49,7 +49,7 @@ export function UsageOutcomesWidget(props: UsageBodyProps) {
 function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
   const { theme: appTheme } = useUnistyles();
-  const { summary, format, cell, basisLabel, sessionLabel, openSession } = useUsageWork(
+  const { summary, format, cell, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
     props.slice,
     props.query,
     props.serverId,
@@ -186,14 +186,18 @@ function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
                   .join(' · '),
               };
             }),
+            rowDatums: group.rows.map(row => datum(usageWorkPullRequestTitle(row.outcome.pullRequest), row.amount, row.moneyBasis)),
+            renderIdentity: (ranked, visual) => {
+              const row = byKey.get(ranked.id)!;
+              return <HappierPressable accessibilityLabel={ranked.label} expanded={disclosures.isOpen(row.key)}
+                testID={`${props.testID}.pr.${row.key}.toggle`} onPress={() => disclosures.toggle(row.key)}>{visual}</HappierPressable>;
+            },
             renderRow: (ranked, visual) => {
               const row = byKey.get(ranked.id)!;
               const testID = `${props.testID}.pr.${row.key}`;
               return (
                 <UsageWorkDisclosure
                   expanded={disclosures.isOpen(row.key)}
-                  onToggle={() => disclosures.toggle(row.key)}
-                  label={ranked.label}
                   testID={testID}
                   detail={() => (
                     <UsageWorkSessionRows
@@ -201,6 +205,7 @@ function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
                       summary={summary}
                       format={format}
                       cell={cell}
+                      datum={datum}
                       sessionLabel={sessionLabel}
                       openSession={openSession}
                       serverId={props.serverId}

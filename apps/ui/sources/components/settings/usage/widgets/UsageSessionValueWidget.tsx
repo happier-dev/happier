@@ -50,7 +50,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
-  const { summary, format, basisLabel, sessionLabel, openSession } = useUsageWork(
+  const { summary, format, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
     props.slice,
     props.query,
     props.serverId,
@@ -228,7 +228,8 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
                   .filter((note): note is string => Boolean(note) && !shared.includes(note!))
                   .join(' · ') || undefined,
               }))}
-            renderRow={(row, visual) => (
+            rowDatums={lead.rows.map(row => datum(sessionLabel(row.sessionId), row.amount, group.moneyBasis))}
+            renderIdentity={(row, visual) => (
               <HappierPressable
                 accessibilityRole="button"
                 testID={`${props.testID}.open.${row.id}`}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierDataRows, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataRows, HappierPressable, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -140,8 +140,6 @@ export function UsageWorkSectionTitle(
 export function UsageWorkDisclosure(
   props: Readonly<{
     expanded: boolean;
-    onToggle: () => void;
-    label: string;
     testID: string;
     children: React.ReactNode;
     detail: () => React.ReactNode;
@@ -149,15 +147,7 @@ export function UsageWorkDisclosure(
 ) {
   return (
     <View>
-      <HappierPressable
-        accessibilityRole="button"
-        accessibilityLabel={props.label}
-        expanded={props.expanded}
-        testID={`${props.testID}.toggle`}
-        onPress={props.onToggle}
-      >
-        {props.children}
-      </HappierPressable>
+      {props.children}
       {props.expanded ? (
         <View testID={`${props.testID}.detail`} style={styles.detail}>
           {props.detail()}
@@ -193,6 +183,7 @@ export function UsageWorkSessionRows(
     summary: UsageWorkSummary;
     format: (value: number | null, moneyBasis?: UsageWorkMoneyBasis | null) => string;
     cell: (value: number | null, moneyBasis: UsageWorkMoneyBasis | null) => number | string;
+    datum: (label: string, value: number | null, moneyBasis: UsageWorkMoneyBasis | null) => HappierChartDatum | null;
     sessionLabel: (sessionId: string) => string;
     openSession: (sessionId: string) => void;
     serverId: string;
@@ -229,7 +220,8 @@ export function UsageWorkSessionRows(
         props.cell(part.amount, part.moneyBasis),
         usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
       ])}
-      renderRow={(_row, visual, index) => {
+      rowDatums={props.parts.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}
+      renderIdentity={(_row, visual, index) => {
         const part = props.parts[index]!;
         return (
           <HappierPressable

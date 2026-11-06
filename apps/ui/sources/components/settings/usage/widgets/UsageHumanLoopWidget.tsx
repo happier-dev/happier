@@ -4,16 +4,21 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   CompositionStrip,
+  ChartDatum,
+  type HappierChartDatum,
+  formatHappierDataValue,
   HappierDataMetric,
   RankedRows,
 } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
+  UsageBodyReadFailed,
+  isUsageReadFailed,
   UsageBodyReading,
   isUsageReadOutstanding,
   leadingUsageRows,
@@ -25,6 +30,7 @@ import {
 } from './usageBodyKit';
 import {
   formatUsageDuration,
+  isUsageDurationFullyVisible,
   readUsageAnsweringShares,
   type UsageAnsweringClient,
 } from './usageHowYouWorkPresentation';
@@ -46,6 +52,19 @@ const CLIENT_LABEL_KEYS: Readonly<
   ios: 'usage.board.howYouWork.clientIos',
   android: 'usage.board.howYouWork.clientAndroid',
 };
+
+/** Only precision the canonical duration formatter rounds away needs a second reading. */
+function durationDatum(value: number | null, label: string): HappierChartDatum | null {
+  if (value === null || isUsageDurationFullyVisible(value)) return null;
+  return { label, value: t('usage.board.howYouWork.durationSeconds', {
+    seconds: formatHappierDataValue(value / 1000, getPreferredLanguage()),
+  }) };
+}
+
+function DurationFigure(props: Readonly<{ value: number | null; label: string; testID: string; children: React.ReactNode }>) {
+  const datum = durationDatum(props.value, props.label);
+  return datum ? <ChartDatum testID={props.testID} datum={datum}>{props.children}</ChartDatum> : <>{props.children}</>;
+}
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
 export function UsageHumanLoopWidget(props: UsageBodyProps) {
@@ -95,6 +114,8 @@ function UsageHumanLoopWidgetOriginal(props: UsageBodyProps) {
   if (!permissions && !inputs) {
     if (isUsageReadOutstanding(props.slice, ['how_you_work']))
       return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['how_you_work'] }} />;
+    if (isUsageReadFailed(props.slice, ['how_you_work']))
+      return <UsageBodyReadFailed slice={props.slice} sources={['how_you_work']} testID={props.testID} onRetry={props.model.refresh} />;
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
@@ -114,6 +135,7 @@ function UsageHumanLoopWidgetOriginal(props: UsageBodyProps) {
     <View style={styles.body} testID={`${props.testID}.loop`}>
       <View style={styles.metrics}>
         {permissions ? (
+          <DurationFigure value={permissions.decisionLatencyMs} label={t('usage.board.howYouWork.agentsWaited')} testID={`${props.testID}.waited.detail`}>
           <HappierDataMetric
             theme={chartTheme}
             label={t('usage.board.howYouWork.agentsWaited')}
@@ -130,9 +152,10 @@ function UsageHumanLoopWidgetOriginal(props: UsageBodyProps) {
               label: t('usage.board.howYouWork.answeredApprovals'),
               meaning: 'neutral',
             }}
-          />
+          /></DurationFigure>
         ) : null}
         {permissions && permissions.decisionLatencyMs !== null && paired > 0 ? (
+          <DurationFigure value={permissions.decisionLatencyMs / paired} label={t('usage.board.howYouWork.averageWait')} testID={`${props.testID}.average.detail`}>
           <HappierDataMetric
             theme={chartTheme}
             label={t('usage.board.howYouWork.averageWait')}
@@ -140,7 +163,7 @@ function UsageHumanLoopWidgetOriginal(props: UsageBodyProps) {
             size="stat"
             showLabel
             value={formatUsageDuration(permissions.decisionLatencyMs / paired)}
-          />
+          /></DurationFigure>
         ) : null}
         {inputs ? (
           <HappierDataMetric
@@ -172,6 +195,7 @@ function UsageHumanLoopWidgetOriginal(props: UsageBodyProps) {
               rows={toolLead.rows}
               total={permissions?.decisionLatencyMs ?? null}
               valueFormatter={formatUsageDuration}
+              rowDatums={toolLead.rows.map(row => durationDatum(row.value, row.label))}
               unknownLabel={t('usage.board.howYouWork.notRecorded')}
               size={wide ? 'full' : 'tile'}
             />

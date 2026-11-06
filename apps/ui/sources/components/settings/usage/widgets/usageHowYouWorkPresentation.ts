@@ -32,6 +32,15 @@ export function formatUsageDuration(ms: number): string {
   return formatSharedUsageDuration(ms, durationLabels);
 }
 
+/** Ask the duration formatter which measured amount its visible units retain, without parsing localized text. */
+export function isUsageDurationFullyVisible(ms: number): boolean {
+  return formatSharedUsageDuration(ms, {
+    seconds: seconds => String(seconds * 1000),
+    minutes: minutes => String(minutes * MINUTE_MS),
+    hours: (hours, minutes) => String((hours * 60 + minutes) * MINUTE_MS),
+  }) === String(ms);
+}
+
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 

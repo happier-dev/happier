@@ -9,14 +9,18 @@ import {
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import {
   useAllMachines,
-  useSessionListRenderablesById,
+  useSessionListRowsByServerId,
 } from '@/sync/store/hooks';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import {
   UsageBodyInsufficient,
+  UsageBodyReadFailed,
+  isUsageReadFailed,
   UsageBodyReading,
   UsageCoverageLine,
   isUsageReadOutstanding,
@@ -46,6 +50,11 @@ function hourTicks(endMinutes: number): number[] {
 const PLOT_MIN_WIDTH_PX = 320;
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
+
+function selectMachineDisplayNames(machines: readonly Machine[]): Readonly<Record<string, string>> {
+  return Object.fromEntries(resolveMachineDisplayNames(machines));
+}
+
 export function UsageParallelWidget(props: UsageBodyProps) {
   const style = props.presentation?.style;
   // Lanes is the declared default at every size; Machine timeline is the retained original.
@@ -62,12 +71,14 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const width = useWidgetPresentation()?.geometry?.width;
-  const sessions = useSessionListRenderablesById();
-  const machines = useAllMachines();
-  const machineNames = React.useMemo(
-    () => resolveMachineDisplayNames(machines),
-    [machines],
-  );
+  const sessionHomes = React.useMemo(() => [props.serverId], [props.serverId]);
+  const sessionRows = useSessionListRowsByServerId(sessionHomes);
+  const sessions = sessionRows[props.serverId];
+  const isSessionVisible = useSessionRecordingVisibility();
+  // Lanes consume display names, never daemon runtime/presence: select the names so
+  // live resource publications cannot re-render the chart.
+  const selectedMachineNames = useAllMachines(selectMachineDisplayNames);
+  const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
   const howYouWork = props.slice.howYouWork ?? null;
   const today =
     howYouWork?.detailStatus === 'unknown'
@@ -80,9 +91,9 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
         ? groupUsageTodayLanes(lanes, today, {
             session: (workId) => {
               const sessionId = readUsageWorkSessionId(workId);
-              const renderable = sessionId ? sessions[sessionId] : undefined;
+              const renderable = sessionId && isSessionVisible({ sessionId, serverId: props.serverId }) ? sessions?.[sessionId] : undefined;
               return renderable
-                ? getSessionName(renderable)
+                ? getSessionName(renderable, props.serverId)
                 : t('usage.board.howYouWork.unnamedRun');
             },
             machine: (machineId) =>
@@ -93,7 +104,7 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
             waitColor: theme.colors.state.warning.foreground,
           })
         : [],
-    [today, lanes, sessions, machineNames, theme],
+    [today, lanes, sessions, machineNames, theme, props.serverId, isSessionVisible],
   );
   const intervals = React.useMemo(
     () => groups.flatMap((group) => group.intervals),
@@ -108,6 +119,8 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
     // Until today's read answers, the body is loading, never "aren't readable here".
     if (isUsageReadOutstanding(props.slice, ['how_you_work']))
       return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['how_you_work'] }} />;
+    if (isUsageReadFailed(props.slice, ['how_you_work']))
+      return <UsageBodyReadFailed slice={props.slice} sources={['how_you_work']} testID={props.testID} onRetry={props.model.refresh} />;
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}

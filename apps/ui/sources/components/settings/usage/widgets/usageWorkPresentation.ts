@@ -1,6 +1,6 @@
 import { addUsageCostForMode, aggregateUsageContributionCosts, createEmptyUsageCost } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
-import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol';
+import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import type {

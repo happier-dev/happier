@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { HappierDataRows, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HappierDataRows, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -56,7 +56,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const { theme: appTheme } = useUnistyles();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const { summary, format, cell, projectLabel, projectPlace, sessionLabel, openSession } = useUsageWork(
+  const { summary, format, cell, datum, projectLabel, projectPlace, sessionLabel, openSession } = useUsageWork(
     props.slice,
     props.query,
     props.serverId,
@@ -119,12 +119,30 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const anyLinked = summary.projects.some((row) => row.outcomes.length > 0);
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
+  const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
+    const details = values.filter(value => value !== null);
+    return details.length === 0 ? null : { label, value: details.map(value => `${value.label}: ${value.value}`).join(' · '),
+      subtitle: details.map(value => value.subtitle).filter(Boolean).join(' · ') };
+  };
+  const branchDatum = (row: UsageWorkBranchRow) => combineDatums(usageWorkBranchName(row.branch.branch.ref), [
+    datum(metricLabel, row.amount, row.moneyBasis),
+    row.sessions.length < 2 ? null : datum(t('usage.board.work.perSession', { amount: '' }), row.perSession, row.moneyBasis),
+  ]);
+  const conservationDatum = combineDatums(t('usage.board.work.allProjects'), [
+    datum(t('usage.board.work.allProjects'), summary.total),
+    ...(noneLinked ? [] : [datum(t('usage.board.work.linkedToPrs'), summary.allocated, summary.allocatedBasis),
+      datum(t('usage.board.work.notLinked'), summary.unallocated, summary.unallocatedBasis),
+      ...reasons.map(reason => datum(t(`usage.board.work.reason_${reason}`), summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason]))]),
+  ]);
+  const withConservationDetail = (visual: React.ReactNode) => conservationDatum
+    ? <ChartDatum datum={conservationDatum} testID={`${props.testID}.conservation.detail`}>{visual}</ChartDatum> : visual;
   const sessionRows = (parts: UsageWorkProjectRow['sessions'], testID: string) => (
     <UsageWorkSessionRows
       parts={parts}
       summary={summary}
       format={format}
       cell={cell}
+      datum={datum}
       sessionLabel={sessionLabel}
       openSession={openSession}
       serverId={props.serverId}
@@ -214,6 +232,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 state: usageWorkPullRequestState(outcome.outcome.pullRequest),
               }),
             ])}
+            rowDatums={row.outcomes.map(outcome => datum(usageWorkPullRequestTitle(outcome.outcome.pullRequest), outcome.amount, outcome.moneyBasis))}
           />
         </View>
       ) : null}
@@ -241,6 +260,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             ))}
             columns={branchColumns}
             rows={row.branches.map((branch) => branchCells(branch, false))}
+            rowDatums={row.branches.map(branchDatum)}
           />
         </View>
       ) : null}
@@ -295,6 +315,16 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               : '']
             : []),
         ])}
+        rowDatums={projects.map(row => combineDatums(projectWhere(row.projectKey), [
+          datum(metricLabel, row.amount, row.moneyBasis),
+          anyLinked ? datum(t('usage.board.work.notLinked'), row.unallocated, row.unallocatedBasis) : null,
+        ]))}
+        renderIdentity={(_cells, visual, index) => {
+          const row = projects[index]!;
+          const id = `project:${row.projectKey ?? ''}`;
+          return <HappierPressable accessibilityLabel={projectWhere(row.projectKey)} expanded={disclosures.isOpen(id)}
+            testID={`${props.testID}.project.${row.projectKey ?? 'none'}.toggle`} onPress={() => disclosures.toggle(id)}>{visual}</HappierPressable>;
+        }}
         renderRow={(_cells, visual, index) => {
           const row = projects[index]!;
           const id = `project:${row.projectKey ?? ''}`;
@@ -302,8 +332,6 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           return (
             <UsageWorkDisclosure
               expanded={disclosures.isOpen(id)}
-              onToggle={() => disclosures.toggle(id)}
-              label={projectWhere(row.projectKey)}
               testID={testID}
               detail={() => projectDetail(row, testID)}
             >
@@ -347,6 +375,13 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             ))}
             columns={branchColumns}
             rows={summary.branches.map((row) => branchCells(row, true))}
+            rowDatums={summary.branches.map(branchDatum)}
+            renderIdentity={(_cells, visual, index) => {
+              const row = summary.branches[index]!;
+              const id = `branch:${row.branch.key}`;
+              return <HappierPressable accessibilityLabel={usageWorkBranchName(row.branch.branch.ref)} expanded={disclosures.isOpen(id)}
+                testID={`${props.testID}.branch.${row.branch.key}.toggle`} onPress={() => disclosures.toggle(id)}>{visual}</HappierPressable>;
+            }}
             renderRow={(_cells, visual, index) => {
               const row = summary.branches[index]!;
               const id = `branch:${row.branch.key}`;
@@ -354,8 +389,6 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               return (
                 <UsageWorkDisclosure
                   expanded={disclosures.isOpen(id)}
-                  onToggle={() => disclosures.toggle(id)}
-                  label={usageWorkBranchName(row.branch.branch.ref)}
                   testID={testID}
                   detail={() => (
                     <>
@@ -390,7 +423,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         </View>
       ) : null}
       {/* Conservation: the total, then its two exact parts, then every reason the second is not linked. */}
-      <View
+      {withConservationDetail(<View
         style={styles.conservation}
         testID={`${props.testID}.conservation`}
         accessible
@@ -446,7 +479,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             ))}
           </>
         )}
-      </View>
+      </View>)}
       {summary.missingMoneyCount > 0 ? (
         <Text style={[styles.reasonLabel, caption]} testID={`${props.testID}.unpriced`}>
           {t('usage.board.page.factUnpriced')} · {summary.missingMoneyCount} ·{' '}

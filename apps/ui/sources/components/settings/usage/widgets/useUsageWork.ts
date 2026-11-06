@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { formatHappierDataValue, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { UsageAccountingMetricSchema, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionListRowsByServerId } from '@/sync/store/hooks';
 import { useAllMachines } from '@/sync/domains/state/storage';
@@ -9,7 +11,7 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import {
   summarizeUsageWork,
   type UsageWorkSummary,
@@ -78,12 +80,23 @@ export function useUsageWork(
     query.metric !== 'cost' || moneyBasis !== null && summary?.moneyBasis?.kind === moneyBasis.kind
       && summary.moneyBasis.currency === moneyBasis.currency ? value ?? format(null) : format(value, moneyBasis),
     [format, query.metric, summary?.moneyBasis]);
+  // A mixed whole has no numeric column formatter; retain each admitted row's own exact amount and basis.
+  const datum = React.useCallback((label: string, value: number | null, moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null): HappierChartDatum | null => {
+    if (value === null || query.metric === 'cost' && moneyBasis === null) return null;
+    const exact = formatHappierDataValue(value, getPreferredLanguage());
+    const visible = format(value, moneyBasis);
+    return visible.includes(exact) ? null : { label,
+      value: query.metric === 'cost' ? `${moneyBasis!.currency} ${exact}` : `${exact} ${t('usage.board.page.tokensUnit')}`,
+      subtitle: visible };
+  }, [format, query.metric, summary?.moneyBasis]);
   const basisLabel = React.useCallback((moneyBasis: UsageWorkMoneyBasis | null) => moneyBasis
     ? `${usageCostKindPhrase(moneyBasis.kind)} · ${moneyBasis.currency}` : undefined, []);
-  const machines = useAllMachines();
-  const machineNames = React.useMemo(() => resolveMachineDisplayNames([...machines,
+  // Rows consume display names, never daemon runtime/presence: select the names so
+  // live resource publications cannot re-render the Work list.
+  const selectedMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(resolveMachineDisplayNames([...machines,
     ...(summary?.projects ?? []).flatMap(row => row.machineIds).concat((summary?.sessions ?? []).flatMap(row => row.machineIds))
-      .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))]), [machines, summary]);
+      .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
+  const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
   const machineWords = React.useCallback((ids: readonly string[]) => ids.map(id => machineNames.get(id) ?? id).join(', '), [machineNames]);
   // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
   // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
@@ -98,8 +111,10 @@ export function useUsageWork(
   const sessionHomes = React.useMemo(() => [serverId], [serverId]);
   const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
   const renderables = renderablesByHome[serverId];
+  const isSessionVisible = useSessionRecordingVisibility();
   const displaySessionLabels = React.useMemo(() => {
     const base = (sessionId: string) => {
+      if (!isSessionVisible({ sessionId, serverId })) return t('session.untitled');
       const renderable = renderables?.[sessionId];
       return renderable ? getSessionName(renderable, serverId) : t('session.untitled');
     };
@@ -107,16 +122,17 @@ export function useUsageWork(
     const counts = countLabels(rows.map(row => base(row.sessionId)));
     return new Map(rows.map(row => {
       const label = base(row.sessionId);
-      if (counts.get(label)! < 2) return [row.sessionId, label] as const;
+      if (!isSessionVisible({ sessionId: row.sessionId, serverId }) || counts.get(label)! < 2) return [row.sessionId, label] as const;
       const when = row.lastObservedAtMs > 0 ? formatUsageCalendarDate(row.lastObservedAtMs, query.timeZoneOffsetMinutes ?? 0,
         { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       return [row.sessionId, [label, when, machineWords(row.machineIds)].filter(Boolean).join(' · ')] as const;
     }));
-  }, [summary, renderables, serverId, machineWords, query.timeZoneOffsetMinutes]);
+  }, [summary, renderables, serverId, machineWords, query.timeZoneOffsetMinutes, isSessionVisible]);
   const sessionLabel = React.useCallback(
-    (sessionId: string) => displaySessionLabels.get(sessionId)
-      ?? (renderables?.[sessionId] ? getSessionName(renderables[sessionId]!, serverId) : t('session.untitled')),
-    [displaySessionLabels, renderables, serverId],
+    (sessionId: string) => !isSessionVisible({ sessionId, serverId }) ? t('session.untitled')
+      : displaySessionLabels.get(sessionId)
+        ?? (renderables?.[sessionId] ? getSessionName(renderables[sessionId]!, serverId) : t('session.untitled')),
+    [displaySessionLabels, renderables, serverId, isSessionVisible],
   );
   const router = useRouter();
   const openSession = React.useCallback(
@@ -133,5 +149,5 @@ export function useUsageWork(
     },
     [router, serverId, query, metric],
   );
-  return { summary, format, cell, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession };
+  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession };
 }
