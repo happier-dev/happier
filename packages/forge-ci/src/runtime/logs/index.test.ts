@@ -4,6 +4,7 @@ import { ForgeCiJobV1Schema } from '@happier-dev/triage-protocol/ci/v1';
 import type { ForgeCiLogV1, ForgeCiStepV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { buildForgeCiLogIndexV1, decodeForgeCiLogBytesV1 } from './index.js';
 import { selectForgeCiLogLinesV1, selectLogLinesV1 } from './selection.js';
+import { mergeForgeCiLogPagesV1 } from './page.js';
 
 const job = { selection: { kind: 'run', run: { v: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'org/repo' }, runId: '42' } }, jobId: 'job' } as const;
 const state = { phase: 'completed', outcome: 'failure', outcomeBucket: 'failed', nativeLabel: 'failure' } as const;
@@ -137,6 +138,87 @@ describe('shared hosted log index', () => {
     expect(next.lines[1]?.tokens[0]?.style).toEqual({});
     expect(next.work.decodedLines).toBe(1);
     expect(selectForgeCiLogLinesV1(next, { kind: 'all' })).toMatchObject({ olderRemaining: true });
+  });
+
+  it.each([100, 1000])('indexes only appended lines after %i retained lines', count => {
+    const text = Array.from({ length: count }, (_, i) => `retained ${i}\n`).join('');
+    for (const fragmented of [false, true]) {
+      const original = fragmented
+        ? { kind: 'available' as const, job, logId: 'log', startLine: 1, startByte: 0, complete: true, continuation: null,
+          fragments: [{ text, startLine: 1, startByte: 0 }] }
+        : log(text);
+      const first = buildForgeCiLogIndexV1({ log: original });
+      let retainedReads = 0;
+      for (const line of first.lines.slice(0, -1)) {
+        for (const key of ['id', 'number', 'rawText', 'plainText', 'timestampMs'] as const) {
+          const value = line[key];
+          Object.defineProperty(line, key, { get: () => { retainedReads += 1; return value; } });
+        }
+      }
+      const appended = 'fragments' in original
+        ? { ...original, fragments: [...original.fragments, { text: 'arrived\n', startLine: count + 1, startByte: new TextEncoder().encode(text).length }] }
+        : log(text + 'arrived\n');
+      const next = buildForgeCiLogIndexV1({ log: appended, baseline: first });
+      expect(next.work).toEqual({ decodedLines: 1, tokenizedLines: 1, indexedLines: 1 });
+      expect(retainedReads).toBe(0);
+      expect(next.lines[0]).toBe(first.lines[0]);
+      expect(next.plainText).toBe(text + 'arrived');
+      expect(selectForgeCiLogLinesV1(next, { kind: 'tail', lines: 1 })).toMatchObject({ lines: [{ number: count + 1, plainText: 'arrived' }] });
+    }
+  });
+
+  it('continues partial ANSI/group lines and closes retained groups without changing earlier observations', () => {
+    const steps = [step('s2', Date.parse('2026-01-01T00:00:01Z'), Date.parse('2026-01-01T00:00:02Z'))];
+    const first = buildForgeCiLogIndexV1({ log: log('##[group]outer\n\u001b[31mred\n##[end'), steps });
+    const text = '##[group]outer\n\u001b[31mred\n##[endgroup]\n2026-01-01T00:00:01Z next';
+    const next = buildForgeCiLogIndexV1({ log: log(text), steps, baseline: first });
+    const fresh = buildForgeCiLogIndexV1({ log: log(text), steps });
+    expect(next.lines).toEqual(fresh.lines);
+    expect(next.groups).toEqual(fresh.groups);
+    expect(next.issues).toEqual([]);
+    expect(first.groups[0]?.closed).toBe(false);
+    expect(first.issues).toEqual(['unclosed_group:1']);
+    expect(next.work.indexedLines).toBe(2);
+    expect(next.lines[1]?.tokens).toBe(first.lines[1]?.tokens);
+    expect(next.lines.at(-1)?.attribution).toEqual({ kind: 'step', stepIds: ['s2'] });
+    const changedSteps = [{ ...steps[0]!, id: 's9' }];
+    const reattributed = buildForgeCiLogIndexV1({ log: log(text), steps: changedSteps, baseline: next });
+    expect(reattributed.work).toEqual({ decodedLines: 0, tokenizedLines: 0, indexedLines: 4 });
+    expect(reattributed.lines.at(-1)?.attribution).toEqual({ kind: 'step', stepIds: ['s9'] });
+    const followed = buildForgeCiLogIndexV1({ log: log(text + '\nmore'), steps: changedSteps, baseline: reattributed });
+    expect(followed.work).toEqual({ decodedLines: 1, tokenizedLines: 1, indexedLines: 2 });
+    expect(followed.lines).toEqual(buildForgeCiLogIndexV1({ log: log(text + '\nmore'), steps: changedSteps }).lines);
+  });
+
+  it('indexes only the new page when the page merger converts a text carrier to fragments', () => {
+    const text = Array.from({ length: 1000 }, (_, i) => `retained ${i}\n`).join('');
+    const source = { ...log(text), complete: false, continuation: 'next' };
+    const first = buildForgeCiLogIndexV1({ log: source });
+    const merged = mergeForgeCiLogPagesV1({ previous: source,
+      page: { ...log('arrived\n'), startLine: 1001, startByte: new TextEncoder().encode(text).length } });
+    if (merged.kind !== 'value' || merged.value.kind !== 'available') throw new Error('Expected an admitted page');
+    const next = buildForgeCiLogIndexV1({ log: merged.value, baseline: first });
+    expect(next.work).toEqual({ decodedLines: 1, tokenizedLines: 1, indexedLines: 1 });
+    expect(next.lines[0]).toBe(first.lines[0]);
+    expect(next.lines.at(-1)?.plainText).toBe('arrived');
+    expect(next.plainText).toBe(text + 'arrived');
+  });
+
+  it('matches a fresh index through repeated partial appends, forks, corrections and replacement', () => {
+    let index = buildForgeCiLogIndexV1({ log: log('') });
+    const observations = ['\ufeff##[group]out', '\ufeff##[group]outer\r\n\u001b[3',
+      '\ufeff##[group]outer\r\n\u001b[31mred\n##[group]inn',
+      '\ufeff##[group]outer\r\n\u001b[31mred\n##[group]inner\nbody\n##[endgroup]\n##[endgroup]\n',
+      'replacement\nlast', 'replacement\ncorrected', ''];
+    for (const text of observations) {
+      const next = buildForgeCiLogIndexV1({ log: log(text), baseline: index });
+      const fresh = buildForgeCiLogIndexV1({ log: log(text) });
+      expect({ ...next, work: null }).toEqual({ ...fresh, work: null });
+      const forkText = text + '\nindependent branch';
+      const fork = buildForgeCiLogIndexV1({ log: log(forkText), baseline: index });
+      expect(fork.lines).toEqual(buildForgeCiLogIndexV1({ log: log(forkText) }).lines);
+      index = next;
+    }
   });
 
   it('keeps one original line when a carrier splits it and qualifies group ids by exact job', () => {

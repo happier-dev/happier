@@ -70,6 +70,35 @@ function sameAnsi(left: AnsiTokenizerState, right: AnsiTokenizerState): boolean 
 const EMPTY_ANSI: AnsiTokenizerState = { style: {}, pending: '', offset: 0 };
 const encoder = new TextEncoder();
 const TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))[ \t]/u;
+type LogFragment = Readonly<{ text: string; startLine: number; startByte: number }>;
+// Parser continuation belongs to this in-process index, never to a consumer or a persisted carrier.
+const groupScans = new WeakMap<readonly ForgeCiLogLineV1[], Pick<ReturnType<typeof buildForgeCiLogGroupsV1>, 'state' | 'beforeLast'>>();
+
+function appendedFragments(log: LogContentV1, baseline: LogIndexV1): readonly LogFragment[] | null {
+  if (log.startLine !== baseline.log.startLine || log.startByte !== baseline.log.startByte) return null;
+  const last = baseline.lines.at(-1);
+  const end = { startLine: last ? last.number + (last.lineEnding === '' ? 0 : 1) : log.startLine,
+    startByte: last ? last.originalStartByte + encoder.encode(last.originalText).length : log.startByte };
+  if ('text' in log) {
+    if (!('text' in baseline.log) || !log.text.startsWith(baseline.log.text)) return null;
+    return [{ ...end, text: log.text.slice(baseline.log.text.length) }];
+  }
+  const previousFragments = 'text' in baseline.log
+    ? [{ text: baseline.log.text, startLine: baseline.log.startLine, startByte: baseline.log.startByte }]
+    : baseline.log.fragments;
+  if (log.fragments.length < previousFragments.length) return null;
+  let extension: LogFragment | undefined;
+  for (let i = 0; i < previousFragments.length; i += 1) {
+    const old = previousFragments[i]!;
+    const next = log.fragments[i]!;
+    if (old.startLine !== next.startLine || old.startByte !== next.startByte) return null;
+    if (old.text === next.text) continue;
+    if (i !== previousFragments.length - 1 || !next.text.startsWith(old.text) || !last) return null;
+    extension = { ...end, text: next.text.slice(old.text.length) };
+  }
+  const added = log.fragments.slice(previousFragments.length);
+  return extension ? [extension, ...added] : added;
+}
 
 export function buildForgeCiLogIndexV1(input: Readonly<{log:AvailableLog;steps?:readonly (ForgeCiStepV1 | ForgeCiLogStepWindowV1)[];baseline?:ForgeCiLogIndexV1}>): ForgeCiLogIndexV1 {
   const next = buildLogIndexV1({ ...input, sourceKey: forgeCiJobKeyV1(input.log.job), positionBasis: 'source' });
@@ -97,17 +126,29 @@ export function buildLogIndexV1<Content extends LogContentV1>(input: Readonly<{
     ...(step.startedAtMs === undefined ? {} : { startedAtMs: step.startedAtMs }),
     ...(step.completedAtMs === undefined ? {} : { completedAtMs: step.completedAtMs }),
     ...(step.timestampPrecision === undefined ? {} : { timestampPrecision: step.timestampPrecision }) }));
-  const previousLines = new Map(baseline?.lines.map(line => [line.id, line]));
-  const previousNativeLines = new Map(baseline?.lines.map(line => [line.number, line]));
+  const priorScan = baseline && groupScans.get(baseline.lines);
+  const appended = baseline && unchangedWindows && !unchangedContent && priorScan ? appendedFragments(log, baseline) : null;
+  const last = baseline?.lines.at(-1);
+  const firstAppend = appended?.[0];
+  const replacesTail = appended !== null && last?.lineEnding === '' && firstAppend !== undefined
+    && firstAppend.startByte === last.originalStartByte + encoder.encode(last.originalText).length && firstAppend.startLine === last.number;
+  const retainedCount = appended !== null ? baseline!.lines.length - (replacesTail ? 1 : 0) : 0;
+  const previousLines = appended === null ? new Map(baseline?.lines.map(line => [line.id, line])) : null;
+  const previousNativeLines = appended === null ? new Map(baseline?.lines.map(line => [line.number, line])) : null;
+  const previousLine = (id: string, number?: number) => appended !== null
+    ? last && (last.id === id || last.number === number) ? last : undefined
+    : previousLines!.get(id) ?? (number === undefined ? undefined : previousNativeLines!.get(number));
   const decoded: DecodedLine[] = [];
   let decodedLines = 0;
   let hasCompletePrefix = baseline?.hasCompletePrefix ?? false;
   if (unchangedContent) for (const line of baseline.lines) decoded.push(line);
   else {
-    const fragments = 'text' in log ? [{ text: log.text, startLine: log.startLine, startByte: log.startByte }] : log.fragments;
-    let expectedByte = 0;
-    let expectedLine = 1;
-    hasCompletePrefix = input.positionBasis === 'source';
+    const fragments = appended === null ? 'text' in log ? [{ text: log.text, startLine: log.startLine, startByte: log.startByte }] : log.fragments
+      : replacesTail ? [{ text: last!.originalText + firstAppend!.text, startLine: last!.number, startByte: last!.originalStartByte }, ...appended.slice(1)] : appended;
+    const retainedLast = retainedCount > 0 ? baseline!.lines[retainedCount - 1] : undefined;
+    let expectedByte = retainedLast ? retainedLast.originalStartByte + encoder.encode(retainedLast.originalText).length : appended !== null ? baseline!.log.startByte : 0;
+    let expectedLine = retainedLast ? retainedLast.number + (retainedLast.lineEnding === '' ? 0 : 1) : appended !== null ? baseline!.log.startLine : 1;
+    hasCompletePrefix = appended !== null ? baseline!.hasCompletePrefix : input.positionBasis === 'source';
     // Contiguous fragments of a carrier-split single line are one original line, not extra log lines.
     const ranges: Array<{ text: string; startLine: number; startByte: number; endByte: number }> = [];
     for (const fragment of fragments) {
@@ -122,8 +163,8 @@ export function buildLogIndexV1<Content extends LogContentV1>(input: Readonly<{
         previous.endByte = endByte;
       } else ranges.push({ ...fragment, endByte });
     }
-    let ansi = EMPTY_ANSI;
-    let previousEndByte: number | undefined;
+    let ansi = retainedLast?.ansiEnd ?? EMPTY_ANSI;
+    let previousEndByte = retainedLast ? retainedLast.originalStartByte + encoder.encode(retainedLast.originalText).length : undefined;
     for (const range of ranges) {
       if (range.startByte !== previousEndByte) ansi = EMPTY_ANSI;
       let offset = range.startByte;
@@ -136,7 +177,7 @@ export function buildLogIndexV1<Content extends LogContentV1>(input: Readonly<{
         let startByte = offset;
         if (offset === 0 && rawText.startsWith('\ufeff')) { rawText = rawText.slice(1); startByte += 3; }
         const id = `${input.sourceKey}:${encodeURIComponent(log.logId)}:${lineNumber}:${startByte}`;
-        const old = previousLines.get(id) ?? previousNativeLines.get(lineNumber);
+        const old = previousLine(id, lineNumber);
         if (old && old.rawText === rawText && sameAnsi(old.ansiStart, ansi)) {
           decoded.push(old.id === id && old.originalText === original && old.originalStartByte === offset ? old
             : { ...old, id, startByte, endByte: startByte + encoder.encode(rawText).length,
@@ -162,11 +203,14 @@ export function buildLogIndexV1<Content extends LogContentV1>(input: Readonly<{
       previousEndByte = offset;
     }
   }
-  const grouped = unchangedContent ? null : buildForgeCiLogGroupsV1(decoded, baseline?.groups);
+  const grouped = unchangedContent || appended !== null && decoded.length === 0 ? null : buildForgeCiLogGroupsV1(decoded, baseline?.groups,
+    appended !== null ? replacesTail ? priorScan!.beforeLast : priorScan!.state : undefined);
   const attributions = segmentForgeCiLogTimestampsV1(decoded.map(line => line.timestampMs), steps);
-  let plainOffset = 0;
+  const prefixText = appended === null || retainedCount === 0 ? '' : replacesTail
+    ? baseline!.plainText.slice(0, last!.plainOffset - 1) : baseline!.plainText;
+  let plainOffset = appended !== null && retainedCount > 0 ? prefixText.length + 1 : 0;
   const lines = decoded.map(line => {
-    const old = previousLines.get(line.id);
+    const old = previousLine(line.id);
     const groups = grouped?.lineGroups.get(line.id) ?? old?.groupIds ?? [];
     const groupIds = old && sameStrings(old.groupIds, groups) ? old.groupIds : groups;
     const nextAttribution = readForgeCiLogAttributionV1(line.timestampMs, attributions);
@@ -177,9 +221,14 @@ export function buildLogIndexV1<Content extends LogContentV1>(input: Readonly<{
     plainOffset += line.plainText.length + 1;
     return value;
   });
-  const retainedLines = baseline && lines.length === baseline.lines.length && lines.every((line, i) => line === baseline.lines[i]) ? baseline.lines : lines;
+  const combined = appended !== null ? [...baseline!.lines.slice(0, retainedCount), ...lines] : lines;
+  const retainedLines = appended === null && baseline && combined.length === baseline.lines.length && combined.every((line, i) => line === baseline.lines[i]) ? baseline.lines : combined;
+  if (grouped) groupScans.set(retainedLines, { state: grouped.state, beforeLast: grouped.beforeLast });
+  else if (priorScan) groupScans.set(retainedLines, priorScan);
   return { sourceKey: input.sourceKey, positionBasis: input.positionBasis, logId: log.logId, log, steps,
-    plainText: retainedLines === baseline?.lines ? baseline.plainText : retainedLines.map(line => line.plainText).join('\n'),
+    plainText: retainedLines === baseline?.lines ? baseline.plainText : appended !== null
+      ? prefixText + (retainedCount > 0 && lines.length > 0 ? '\n' : '') + lines.map(line => line.plainText).join('\n')
+      : retainedLines.map(line => line.plainText).join('\n'),
     lines: retainedLines, groups: grouped?.groups ?? baseline?.groups ?? [],
     issues: grouped?.issues ?? baseline?.issues ?? [], complete: log.complete && hasCompletePrefix, continuation: log.continuation, hasCompletePrefix,
     work: { decodedLines, tokenizedLines: decodedLines, indexedLines: decoded.length } };
