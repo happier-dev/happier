@@ -105,6 +105,13 @@ describe('admitted Machine setup snapshot lifetime', () => {
         removeItemKeys: [itemKey], removalPlans: removal.removalPlans ?? [] }, context: fixture.context('machines.setup.remove') }))
         .toMatchObject({ operationId: expect.any(String) });
       expect((await fixture.readInstalled()).installed).toBe(false);
+      const afterRemoval = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+        input: { homeId: 'srv_home', machineId: fixture.machine.id,
+          sources: [{ kind: 'direct', setup: {} }], mode: 'effects' },
+        context: fixture.context('machines.setup.plan'),
+      }));
+      expect(afterRemoval.removalOffers ?? []).not.toContainEqual(expect.objectContaining({ itemKey, status: 'eligible' }));
+      expect(afterRemoval.removalPlans ?? []).toEqual([]);
     }
   });
   it('checks and publishes OS updates through Plan without changing desired Software or loading recipes', async () => {

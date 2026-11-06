@@ -22,6 +22,31 @@ import { prepareDedicatedDaemonBootstrap, MachineEffectInternalRequestSchema } f
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 
+it('discloses vendor host-port exclusivity in the public Plan and pre-approval changes', async () => {
+  const f = await fixture('ubuntu', 'ready');
+  try {
+    f.grant();
+    f.groups.push(109);
+    const result = await f.executor.execute('machines.setup.plan', {
+      homeId: 'home', machineId: 'machine', mode: 'effects', sources: [{ kind: 'direct', setup: {
+        items: ['coolify', 'dokploy'].map(recipeId => ({ kind: 'softwareRecipe', selection: {
+          ref: { ...ref, recipeId }, inputs: {},
+        } })),
+      } }],
+    }, f.context);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.errorCode);
+    const plan = MachineSetupPlanResultV1Schema.parse(result.result);
+    const installers = plan.recipePlans?.flatMap(recipe => recipe.plan.steps.filter(step => step.id === 'install')) ?? [];
+    expect(installers).toHaveLength(2);
+    for (const install of installers) expect(install.review?.description).toEqual(expect.any(String));
+    const commands = groupMachineSetupChanges([{ homeId: 'home', machineId: 'machine',
+      desiredRevision: plan.desiredRevision, sources: plan.sources, recipePlans: plan.recipePlans ?? [] }])
+      .find(group => group.kind === 'commands')?.lines.map(line => line.operand).join('\n');
+    for (const install of installers) expect(commands).toContain(install.review!.description);
+  } finally { await f.runtime.dispose(); }
+});
+
 // Only native command execution is substituted. Admission, cold projection,
 // Action discovery/Plan, package selection and Apply's interpreter remain real.
 async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' | 'ready' | 'denied' = 'absent', refreshFails = false) {

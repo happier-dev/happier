@@ -6,6 +6,8 @@ import { browserBot } from './browserBot.js';
 import { BACKUP_RECEIVER_RECIPE } from './backupReceiver.js';
 import { JOURNAL_READER_RECIPE } from './journalReader.js';
 import { dockerEngine } from './dockerEngine.js';
+import { coolify } from './coolify.js';
+import { dokploy } from './dokploy.js';
 
 /** Cold recipe declarations; native support and effects remain host-owned. */
 export const MACHINE_RECIPES_PLUGIN = definePlugin({
@@ -15,6 +17,8 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
   description: 'Declarative software choices for machine setup.',
   machineRecipes: {
     'docker-engine': dockerEngine,
+    coolify,
+    dokploy,
     'binfmt-qemu': binfmtQemu,
     'backup-receiver': BACKUP_RECEIVER_RECIPE,
     'journal-reader': JOURNAL_READER_RECIPE,
