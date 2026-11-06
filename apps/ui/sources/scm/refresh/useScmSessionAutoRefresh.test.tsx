@@ -95,6 +95,42 @@ describe('useScmSessionAutoRefresh', () => {
         await vi.advanceTimersByTimeAsync(0);
     }
 
+    it('activates visible demand after its Home Machine hydrates and observes later external edits without remounting', async () => {
+        const sessionId = 'hydrating-session';
+        const serverId = 'hydrating-home';
+        seedRepository(sessionId, serverId);
+        const machine = storage.getState().machines[`${sessionId}-machine`]!;
+        const session = createSessionFixture({ id: sessionId, serverId, active: false,
+            metadata: { path: `/${sessionId}`, host: machine.metadata!.host } });
+        storage.setState({
+            sessions: { [sessionId]: session },
+            sessionListRowsByServerId: { [serverId]: { [sessionId]: session } },
+            machines: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: { [serverId]: 'loading' },
+        });
+        mounted.push([sessionId, serverId]);
+        const { useScmSessionAutoRefresh } = await import('./useScmSessionAutoRefresh');
+        await renderHook(() => useScmSessionAutoRefresh({ sessionId, serverId, intervalMs: 300_000 }));
+        await vi.advanceTimersByTimeAsync(600_000);
+        expect(snapshotRequests()).toHaveLength(0);
+
+        await act(async () => {
+            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] },
+                machineListStatusByServerId: { [serverId]: 'idle' } });
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(snapshotRequests()).toHaveLength(1);
+        const snapshot = storage.getState().getSessionProjectScmSnapshot(sessionId, serverId);
+        expect(snapshot?.branch.head).toBe('main');
+        expect(storage.getState().sessions[sessionId]).toBe(session);
+
+        machineRpc.mockResolvedValue({ success: true, snapshot: { ...snapshot!, branch: { ...snapshot!.branch, head: 'external-edit' } } });
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(snapshotRequests()).toHaveLength(2);
+        expect(storage.getState().getSessionProjectScmSnapshot(sessionId, serverId)?.branch.head).toBe('external-edit');
+    });
+
     it('shares one fallback request stream when another visible consumer arrives between polls', async () => {
         await mountAutoRefresh('cadence-session');
         expect(snapshotRequests()).toHaveLength(1);
