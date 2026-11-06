@@ -204,7 +204,11 @@ export async function summarizeWorkflowAutomationRuns(params: Readonly<{
 
 /** Shared read windows; starter membership belongs to SessionListFilterV1. */
 export const WORKFLOW_RUN_LIST_FILTERS = ['all', 'active', 'attention'] as const;
-export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number] | `automation:${string}` | `trigger:${string}` | `destination:${string}` | `under:${string}`;
+export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number] | `automation:${string}` | `trigger:${string}` | `destination:${string}` | `under:${string}` | `exact:${string}`;
+
+export function exactWorkflowRunWindowId(runIds: readonly string[]): `exact:${string}` {
+    return `exact:${JSON.stringify([...new Set(runIds)].sort())}`;
+}
 
 /**
  * Projects a filter chip onto the canonical request.
@@ -214,6 +218,7 @@ export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number]
  * Boundary-paused alone is deliberately not attention.
  */
 export function buildWorkflowRunListFilter(id: WorkflowRunListFilterId): WorkflowRunListFilter {
+    if (id.startsWith('exact:')) return { runIds: WorkflowRunListRequestV1Schema.shape.runIds.parse(JSON.parse(id.slice('exact:'.length))) };
     if (id.startsWith('automation:')) return { automationId: id.slice('automation:'.length) };
     if (id.startsWith('trigger:')) return { triggerId: id.slice('trigger:'.length) };
     if (id.startsWith('destination:')) return { targetSessionId: id.slice('destination:'.length), ...buildWorkflowRunListFilter('active') };

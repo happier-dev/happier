@@ -17,6 +17,7 @@ import { PluginProjectionV2Schema, WorkflowTriggerSetV1Schema } from '@happier-d
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 // Only Home HTTP/credentials and the native Machine RPC leave the real path.
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -242,6 +243,86 @@ it('windows expensive trigger History rows across appended pages without moving 
 });
 
 describe('Workflow library reads through real Account Actions and HTTP', () => {
+    it('Retry replaces a stuck Run read and late old data cannot replace the fresh rows', async () => {
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        const stale = await runPage([run('stale-run')]);
+        const fresh = await runPage([run('fresh-run', 'succeeded')]);
+        home.answer(serverId, route, { select: (_input, request) => {
+            signals.push(request.signal);
+            return signals.length === 1 ? { respondAfter: held.promise, body: stale } : { body: fresh };
+        } });
+        const hook = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(signals).toHaveLength(1));
+        await act(async () => hook.getCurrent().retry());
+        await waitLoaded(hook);
+        expect(signals).toHaveLength(2);
+        expect(signals[0]?.aborted).toBe(true);
+        expect(hook.getCurrent().runIds).toEqual(['fresh-run']);
+        await act(async () => held.resolve());
+        expect(hook.getCurrent().runIds).toEqual(['fresh-run']);
+        await hook.unmount();
+    });
+
+    it('cancels a pending non-exact Run window only when its last borrower leaves', async () => {
+        const held = createDeferred<void>();
+        let signal: AbortSignal | null | undefined;
+        home.answer(serverId, route, { select: (_input, request) => {
+            signal = request.signal;
+            return { respondAfter: held.promise, body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } };
+        } });
+        const first = await renderHook(() => useWorkflowRunWindow('all'));
+        const second = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(signal).toBeDefined());
+        expect(home.requestsFor(route)).toHaveLength(1);
+        await first.unmount();
+        expect(signal?.aborted).toBe(false);
+        await second.unmount();
+        expect(signal?.aborted).toBe(true);
+        await act(async () => held.resolve());
+    });
+
+    it('shares exact followed Run summaries and retains their outage state without hidden demand', async () => {
+        const initialRead = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]), respondAfter: initialRead.promise });
+        const first = await renderHook((props: { demanded: boolean }) => useWorkflowRunWindow('exact:["followed-run"]',
+            { demanded: props.demanded, readMode: 'complete' }), { initialProps: { demanded: true } });
+        const second = await renderHook(() => useWorkflowRunWindow('exact:["followed-run"]', { readMode: 'complete' }));
+        await act(async () => initialRead.resolve());
+        await waitLoaded(first);
+        await waitLoaded(second);
+        expect(first.getCurrent().rows).toEqual(second.getCurrent().rows);
+        expect(home.requestsFor(route).map(request => request.input)).toEqual([
+            expect.objectContaining({ operation: 'list', request: expect.objectContaining({ runIds: ['followed-run'] }) }),
+        ]);
+        const reads = home.requestsFor(route).length;
+        await act(async () => publishHomeAccountChange(serverId, ['workflow-run:unrelated'], { changeKinds: ['account'] }));
+        expect(home.requestsFor(route)).toHaveLength(reads);
+        home.answer(serverId, route, { status: 403, body: { error: 'forbidden' } });
+        await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('failed'));
+        expect(home.requestsFor(route)).toHaveLength(reads + 1);
+        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]) });
+        await act(async () => publishHomeAccountChange(serverId, ['source-artifact'], { changeKinds: ['artifact'] }));
+        await waitLoaded(first);
+        expect(home.requestsFor(route)).toHaveLength(reads + 2);
+        home.answer(serverId, route, { status: 503, body: { error: 'unavailable' } });
+        await act(async () => publishHomeAccountChange(serverId, ['workflow-run:followed-run'], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('failed'));
+        expect(first.getCurrent().runIds).toEqual(['followed-run']);
+        await second.unmount();
+        await first.rerender({ demanded: false });
+        expect(first.getCurrent().rows).toEqual([]);
+        const failedReads = home.requestsFor(route).length;
+        await act(async () => publishHomeAccountChange(serverId, ['workflow-run:followed-run'], { changeKinds: ['account'] }));
+        expect(home.requestsFor(route)).toHaveLength(failedReads);
+        expect(first.getCurrent().status).toBe('failed');
+        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]) });
+        await first.rerender({ demanded: true });
+        await waitLoaded(first);
+        await first.unmount();
+    });
+
     it('does not reload definition inventory for typed Session-only changes, but refreshes Artifact and unknown wakes', async () => {
         await saved();
         const hook = await renderHook(() => useWorkflowDefinitionLibrary());
@@ -626,6 +707,114 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
 describe('Workflow Run windows through real Account storage', () => {
     const membershipPage = (runs: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[], nextCursor?: string) => ({
         projection: 'membership', runs, acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, ...(nextCursor ? { nextCursor } : {}),
+    });
+
+    it('settles 1,000 complete Runs in one byte-bounded request and keeps a genuine arrival current', async () => {
+        const summaries = Array.from({ length: 1000 }, (_, index) => createWorkflowRunSummaryFixture({
+            ...run(`complete-${index}`), createdAt: new Date(1_000_000 - index).toISOString(),
+        }));
+        let fullPage = await runPage(summaries);
+        expect(Buffer.byteLength(JSON.stringify(fullPage), 'utf8')).toBeLessThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+        const pending = createDeferred<void>();
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' && 'request' in input ? input.request : undefined);
+            const offset = Number(request.cursor ?? 0);
+            const rows = fullPage.runs.slice(offset, request.limit === undefined ? undefined : offset + request.limit);
+            const next = offset + rows.length;
+            return { body: { ...fullPage, runs: rows,
+                ...(next < fullPage.runs.length ? { nextCursor: String(next) } : {}) }, respondAfter: pending.promise };
+        } });
+        const complete = await renderHook(() => useWorkflowRunWindow('all', { readMode: 'complete' }));
+        const visible = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
+        await act(async () => pending.resolve());
+        await waitLoaded(complete);
+        expect(complete.getCurrent().runIds).toHaveLength(1000);
+        expect(complete.getCurrent().hasMore).toBe(false);
+        expect(visible.getCurrent().runIds).toBe(complete.getCurrent().runIds);
+        expect(home.requestsFor(route)).toHaveLength(1);
+        expect(home.requestsFor(route)[0]?.input).toMatchObject({ request: {} });
+        expect(home.requestsFor(route)[0]?.input).not.toMatchObject({ request: { limit: expect.anything() } });
+        const changed = { ...summaries[0]!, state: 'succeeded' as const, revision: summaries[0]!.revision + 1 };
+        fullPage = await runPage([changed, ...summaries.slice(1)]);
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${changed.id}`]));
+        await waitForHomeGovernance(() => expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(changed.revision));
+        expect(complete.getCurrent().rows[0]?.summary?.state).toBe('succeeded');
+        expect(complete.getCurrent().runIds).toHaveLength(1000);
+        expect(home.requestsFor(route)).toHaveLength(2);
+    });
+
+    it('finishes a complete Run continuation before a queued wake and retains its answer after refresh failure', async () => {
+        const head = run('complete-head');
+        const tail = { ...run('complete-tail'), createdAt: new Date(1).toISOString() };
+        const changedTail = { ...tail, state: 'succeeded' as const, revision: tail.revision + 1 };
+        const pending = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage([head], 'complete-tail'), respondAfter: pending.promise });
+        const hook = await renderHook(() => useWorkflowRunWindow('all', { readMode: 'complete' }));
+        await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
+        const tailPage = await runPage([changedTail]);
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' && 'request' in input ? input.request : undefined);
+            return request.cursor === 'complete-tail' ? { body: tailPage }
+                : { status: 503, body: { error: 'storage_unavailable' } };
+        } });
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${tail.id}`]));
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('failed'));
+        expect(home.requestsFor(route).map(request => WorkflowRunListRequestV1Schema.parse(
+            request.input && typeof request.input === 'object' && 'request' in request.input ? request.input.request : undefined,
+        ).cursor ?? null)).toEqual([null, 'complete-tail', null]);
+        expect(hook.getCurrent().runIds).toEqual([head.id, tail.id]);
+        expect(hook.getCurrent().rows[1]?.summary?.revision).toBe(changedTail.revision);
+        expect(hook.getCurrent().hasMore).toBe(false);
+        expect(hook.getCurrent().knownAt).not.toBeNull();
+    });
+
+    it('joins pending visible Run demand and releases complete demand when disabled', async () => {
+        const head = run('joined-head');
+        const tail = { ...run('joined-tail'), createdAt: new Date(1).toISOString() };
+        const pending = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage([head], 'joined-tail'), respondAfter: pending.promise });
+        const visible = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
+        const complete = await renderHook((props: { enabled: boolean }) => useWorkflowRunWindow('all', { ...props, readMode: 'complete' }),
+            { initialProps: { enabled: true } });
+        expect(home.requestsFor(route)).toHaveLength(1);
+        home.answer(serverId, route, { body: await runPage([tail]) });
+        await act(async () => pending.resolve());
+        await waitLoaded(complete);
+        expect(complete.getCurrent().runIds).toEqual([head.id, tail.id]);
+        expect(visible.getCurrent().runIds).toBe(complete.getCurrent().runIds);
+        expect(home.requestsFor(route)).toHaveLength(2);
+        expect(home.requestsFor(route)[1]?.input).not.toMatchObject({ request: { limit: expect.anything() } });
+        await complete.rerender({ enabled: false });
+        const changedHead = { ...head, revision: head.revision + 1 };
+        home.answer(serverId, route, { body: await runPage([changedHead, tail]) });
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${head.id}`]));
+        await waitForHomeGovernance(() => expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(changedHead.revision));
+        expect(home.requestsFor(route)).toHaveLength(3);
+        expect(home.requestsFor(route)[2]?.input).toMatchObject({ request: { limit: expect.any(Number) } });
+    });
+
+    it('completes the same window when complete demand joins a visible continuation', async () => {
+        const summaries = ['shared-head', 'shared-middle', 'shared-tail'].map((id, index) => createWorkflowRunSummaryFixture({
+            ...run(id), createdAt: new Date(1_000 - index).toISOString(),
+        }));
+        home.answer(serverId, route, { body: await runPage(summaries.slice(0, 1), 'shared-middle') });
+        const visible = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitLoaded(visible);
+        const pending = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage(summaries.slice(1, 2), 'shared-tail'), respondAfter: pending.promise });
+        await act(async () => visible.getCurrent().loadMore());
+        await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(2));
+        const complete = await renderHook(() => useWorkflowRunWindow('all', { readMode: 'complete' }));
+        expect(home.requestsFor(route)).toHaveLength(2);
+        home.answer(serverId, route, { body: await runPage(summaries.slice(2)) });
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(complete.getCurrent().hasMore).toBe(false));
+        expect(complete.getCurrent().runIds).toEqual(summaries.map(summary => summary.id));
+        expect(visible.getCurrent().runIds).toBe(complete.getCurrent().runIds);
+        expect(home.requestsFor(route)).toHaveLength(3);
     });
 
     it('promotes completed membership through the same window, then returns to compact demand on a shell-only wake', async () => {

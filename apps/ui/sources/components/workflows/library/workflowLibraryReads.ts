@@ -450,8 +450,8 @@ type RunWindowStatuses = Readonly<Partial<Record<WorkflowRunListWindowStoreId, R
 const EMPTY_RUN_STATUSES: RunWindowStatuses = Object.freeze({});
 const runWindowStatusCell = createCell<RunWindowStatuses>(EMPTY_RUN_STATUSES);
 type RunProjection = 'membership' | undefined;
-type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; projection: RunProjection };
-type RunWindowReader = { lifetime: ActiveServerAccountScopeLifetime; fullReaders: number; membershipReaders: number;
+type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; projection: RunProjection; controller: AbortController };
+type RunWindowReader = { lifetime: ActiveServerAccountScopeLifetime; fullReaders: number; membershipReaders: number; completeReaders: number;
     read?: RunWindowRead; unsubscribe?: () => void };
 const runWindowReaders = new Map<WorkflowRunListWindowStoreId, RunWindowReader>();
 
@@ -459,7 +459,7 @@ function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServ
     const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const existing = runWindowReaders.get(storeId);
     if (existing?.lifetime === lifetime) return existing;
-    const reader = { lifetime, fullReaders: 0, membershipReaders: 0 };
+    const reader = { lifetime, fullReaders: 0, membershipReaders: 0, completeReaders: 0 };
     runWindowReaders.set(storeId, reader);
     return reader;
 }
@@ -479,6 +479,9 @@ function finishRunWindowRead(windowId: WorkflowRunListWindowId, lifetime: Server
     if ((read.refreshRequested || (read.projection === 'membership' && reader.fullReaders > 0))
         && isCurrent() && reader.lifetime.isCurrent()
         && reader.fullReaders + reader.membershipReaders > 0) void refreshRunWindow(windowId, false, lifetime);
+    else if (reader.completeReaders > 0 && isCurrent() && reader.lifetime.isCurrent()
+        && readRunWindowStatus(storeId).status === 'loaded' && !readRunWindowStatus(storeId).loadMoreFailed
+        && getStorage().getState().workflowRunListWindows[storeId]?.nextCursor) void loadMoreRunWindow(windowId, lifetime);
     else if (reader.fullReaders + reader.membershipReaders === 0) runWindowReaders.delete(storeId);
 }
 
@@ -496,18 +499,19 @@ type RunWindowPage = Omit<WorkflowRunListPage, 'nextCursor'> & Readonly<{
 }>;
 
 /** One page at the window owner, shared by initial reads and demand-driven continuation. */
-export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership', accountLifetime?: ServerAccountScopeLifetime): Promise<RunWindowPage> {
+export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership', readMode?: 'complete', signal?: AbortSignal, accountLifetime?: ServerAccountScopeLifetime): Promise<RunWindowPage> {
     if (windowId === 'automationAttention') {
-        const page = await listAutomationDefinitionRuns({ attention: 'required', cursor });
+        const page = await listAutomationDefinitionRuns({ attention: 'required', cursor, signal });
         return { runs: [], automationRuns: page.runs, metadataByRunId: {}, nextCursor: page.nextCursor };
     }
     // Full rows open accepted snapshots. Request at most one window-height of
     // the smallest list rows; this is a presentation preference, not a corpus
     // or byte cap. The same owner follows opaque cursors on actual page demand.
-    // Membership-only badges keep their existing public projection/frontier.
-    const limit = projection === undefined
+    // A complete relation uses the server's existing response-byte budget;
+    // membership-only badges keep their existing public projection/frontier.
+    const limit = projection === undefined && readMode !== 'complete'
         ? Math.max(1, Math.ceil(Dimensions.get('window').height / HAPPIER_COLLECTION_ROW_METRICS.height.compact)) : undefined;
-    const page = await listWorkflowRuns({ filter: buildWorkflowRunListFilter(windowId), cursor, projection, limit, accountLifetime });
+    const page = await listWorkflowRuns({ filter: buildWorkflowRunListFilter(windowId), cursor, projection, limit, signal, accountLifetime });
     return { ...page, automationRuns: [], nextCursor: page.nextCursor ?? null };
 }
 
@@ -518,12 +522,14 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     const reader = runWindowReader(windowId, lifetime);
+    const controller = new AbortController();
     const projection = demandedRunProjection(windowId, reader);
     const inFlight = reader.read;
-    if (inFlight) {
+    if (inFlight && !inFlight.controller.signal.aborted) {
         if (invalidate) inFlight.refreshRequested = true;
         return inFlight.promise;
     }
+    const retirement = lifetime.onRetire(() => controller.abort());
     const previous = readRunWindowStatus(storeId);
     const ownedBefore = previous.scopeKey === scopeKey && previous.status !== 'loading';
     const previousStore = getStorage().getState();
@@ -536,13 +542,14 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
         knownAt: ownedBefore ? previous.knownAt : null });
     else if (previous.loadingMore || previous.loadMoreFailed) setRunWindowStatus(storeId, { ...previous, loadingMore: false, loadMoreFailed: false });
     const readRunWindow = async (): Promise<void> => {
+        let continuing = false;
         try {
-            let page = await readRunWindowPage(windowId, undefined, projection, lifetime);
-            if (!lifetime.isCurrent()) return;
+            let page = await readRunWindowPage(windowId, undefined, projection, reader.completeReaders > 0 ? 'complete' : undefined, controller.signal, lifetime);
+            if (!lifetime.isCurrent() || controller.signal.aborted) return;
             // Restate everything the person already paged to: a page-one-only
             // refresh can skip a burst of new rows or retain an older filtered-out row.
             // Traverse to the existing immutable ordering frontier, not an invented cap.
-            if (loadedBoundary !== undefined) {
+            if (loadedBoundary !== undefined || reader.completeReaders > 0) {
                 const runs = [...page.runs];
                 const automationRuns = [...page.automationRuns];
                 const metadataByRunId = { ...page.metadataByRunId };
@@ -553,9 +560,14 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
                     const lastAutomation = page.automationRuns.at(-1);
                     const last = lastSummary ? workflowRunRowFromSummary(lastSummary)
                         : lastAutomation ? workflowRunRowFromAutomationRun(lastAutomation) : undefined;
-                    if (last && (last.id === loadedBoundary.id || isBeyondWorkflowRunListSpan(last, loadedBoundary))) break;
-                    page = await readRunWindowPage(windowId, page.nextCursor, projection, lifetime);
-                    if (!lifetime.isCurrent()) return;
+                    if (reader.completeReaders === 0 && (loadedBoundary === undefined
+                        || last && (last.id === loadedBoundary.id || isBeyondWorkflowRunListSpan(last, loadedBoundary)))) break;
+                    continuing = reader.completeReaders > 0;
+                    if (reader.completeReaders > 0 && !readRunWindowStatus(storeId).loadingMore) {
+                        setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: true });
+                    }
+                    page = await readRunWindowPage(windowId, page.nextCursor, projection, reader.completeReaders > 0 ? 'complete' : undefined, controller.signal, lifetime);
+                    if (!lifetime.isCurrent() || controller.signal.aborted) return;
                     runs.push(...page.runs);
                     automationRuns.push(...page.automationRuns);
                     Object.assign(metadataByRunId, page.metadataByRunId);
@@ -580,19 +592,22 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
             });
             setRunWindowStatus(storeId, { scopeKey, status: 'loaded', failure: null, loadingMore: false, loadMoreFailed: false, knownAt: Date.now() });
         } catch (error) {
-            if (!lifetime.isCurrent()) return;
+            if (!lifetime.isCurrent() || controller.signal.aborted) return;
             setRunWindowStatus(storeId, {
                 ...readRunWindowStatus(storeId),
                 scopeKey,
                 status: 'failed',
+                loadingMore: false,
+                loadMoreFailed: continuing,
                 failure: resolveWorkflowProblemPresentation(error),
             });
         } finally {
+            retirement.dispose();
             finishRunWindowRead(windowId, lifetime, promise, () => lifetime.isCurrent());
         }
     };
     const promise = readRunWindow();
-    reader.read = { promise, refreshRequested: false, projection };
+    reader.read = { promise, refreshRequested: false, projection, controller };
     return promise;
 }
 
@@ -602,6 +617,7 @@ export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId, accou
     const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     const reader = runWindowReader(windowId, lifetime);
+    const controller = new AbortController();
     if (reader.read) return;
     const projection = demandedRunProjection(windowId, reader);
     const status = readRunWindowStatus(storeId);
@@ -609,11 +625,12 @@ export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId, accou
     if (window?.projection !== projection) { await refreshRunWindow(windowId, false, lifetime); return; }
     const cursor = window?.nextCursor ?? null;
     if (status.scopeKey !== scopeKey || status.status !== 'loaded' || cursor === null || status.loadingMore) return;
+    const retirement = lifetime.onRetire(() => controller.abort());
     setRunWindowStatus(storeId, { ...status, loadingMore: true, loadMoreFailed: false });
     const readMore = async (): Promise<void> => {
         try {
-            const page = await readRunWindowPage(windowId, cursor, projection, lifetime);
-            if (!lifetime.isCurrent()) return;
+            const page = await readRunWindowPage(windowId, cursor, projection, reader.completeReaders > 0 ? 'complete' : undefined, controller.signal, lifetime);
+            if (!lifetime.isCurrent() || controller.signal.aborted) return;
             getStorage().getState().applyWorkflowRunListPage({
                 windowId: storeId,
                 scope: lifetime.scope,
@@ -628,13 +645,14 @@ export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId, accou
             });
             setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: false });
         } catch {
-            if (lifetime.isCurrent()) setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: false, loadMoreFailed: true });
+            if (lifetime.isCurrent() && !controller.signal.aborted) setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: false, loadMoreFailed: true });
         } finally {
+            retirement.dispose();
             finishRunWindowRead(windowId, lifetime, promise, () => lifetime.isCurrent());
         }
     };
     const promise = readMore();
-    reader.read = { promise, refreshRequested: false, projection };
+    reader.read = { promise, refreshRequested: false, projection, controller };
     await promise;
 }
 
@@ -661,11 +679,15 @@ export type WorkflowRunWindow = Readonly<{
 /**
  * One Run window (`all`, `active`, `attention`, `automationAttention`) while a surface shows it: its first
  * page on mount and on the Account's Run-change wake, and its rows from the shared Run store.
- * `enabled: false` holds no subscription and issues no read.
+ * Complete readers demand the whole relation through that owner's response-byte continuations.
+ * `enabled: false` holds no subscription and issues no read. `demanded: false`
+ * retains observation of known rows/status while releasing network demand.
  */
-export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null; enabled?: boolean; projection?: 'membership' }> = {}): WorkflowRunWindow {
+export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null; enabled?: boolean; demanded?: boolean; projection?: 'membership'; readMode?: 'complete' }> = {}): WorkflowRunWindow {
     const enabled = options.enabled !== false;
+    const demanded = enabled && options.demanded !== false;
     const membershipOnly = windowId === 'attention' && options.projection === 'membership';
+    const complete = options.readMode === 'complete';
     const active = useActiveServerAccountScopeLifetime();
     const addressed = useWorkflowAccountLifetime(options.accountLifetime);
     const lifetime = addressed === undefined ? active : addressed;
@@ -683,18 +705,20 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
     const storedProjection = getStorage()((state) => enabled ? state.workflowRunListWindows[storeId]?.projection : undefined);
     const hasNextCursor = getStorage()((state) => enabled && (state.workflowRunListWindows[storeId]?.nextCursor ?? null) !== null);
     const runIds = enabled && owned && status.knownAt !== null ? storedIds ?? EMPTY_RUN_IDS : EMPTY_RUN_IDS;
-    const rows = useWorkflowRunRows(membershipOnly ? EMPTY_RUN_IDS : runIds, scope);
+    const rows = useWorkflowRunRows(membershipOnly || !demanded ? EMPTY_RUN_IDS : runIds, scope);
     const needsPromotion = !membershipOnly && storedProjection === 'membership';
     const knownAt = owned && !needsPromotion ? status.knownAt : null;
 
     React.useEffect(() => {
-        if (!enabled || lifetime === null) return;
+        if (!demanded || lifetime === null) return;
         const reader = runWindowReader(windowId, lifetime);
         if (membershipOnly) reader.membershipReaders += 1;
         else reader.fullReaders += 1;
+        if (complete) reader.completeReaders += 1;
         void refreshRunWindow(windowId, false, lifetime);
         reader.unsubscribe ??= subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
+            ...(windowId !== 'automationAttention' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
             source: windowId === 'automationAttention' ? 'automation' : 'workflow',
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'
@@ -704,15 +728,21 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
         return () => {
             if (membershipOnly) reader.membershipReaders -= 1;
             else reader.fullReaders -= 1;
+            if (complete) reader.completeReaders -= 1;
             if (reader.fullReaders + reader.membershipReaders === 0) {
                 reader.unsubscribe?.();
                 delete reader.unsubscribe;
+                reader.read?.controller.abort();
                 if (!reader.read && runWindowReaders.get(storeId) === reader) runWindowReaders.delete(storeId);
             }
         };
-    }, [enabled, lifetime, membershipOnly, storeId, windowId]);
+    }, [complete, demanded, lifetime, membershipOnly, storeId, windowId]);
 
-    const retry = React.useCallback(() => { void refreshRunWindow(windowId, true, lifetime); }, [lifetime, windowId]);
+    const retry = React.useCallback(() => {
+        if (lifetime === null) return;
+        runWindowReaders.get(storeId)?.read?.controller.abort();
+        void refreshRunWindow(windowId, false, lifetime);
+    }, [lifetime, storeId, windowId]);
     const loadMore = React.useCallback(() => { void loadMoreRunWindow(windowId, lifetime); }, [lifetime, windowId]);
     return React.useMemo(() => ({
         accountLifetime: lifetime,
@@ -736,6 +766,6 @@ export function resetWorkflowLibraryReadsForTests(): void {
     activeDefinitionLibrary.reset();
     addressedDefinitionLibraries = new WeakMap();
     runWindowStatusCell.set({});
-    for (const reader of runWindowReaders.values()) reader.unsubscribe?.();
+    for (const reader of runWindowReaders.values()) { reader.read?.controller.abort(); reader.unsubscribe?.(); }
     runWindowReaders.clear();
 }
