@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
+import { StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
+import { Text } from '@/components/ui/text/Text';
 
 /**
  * A configuration collection's row states (lab `sfcols`, P8): what a row needs said about the thing it names.
@@ -45,7 +47,20 @@ const STATUS_DRAWING: Readonly<
 /** The status slot's glyph column (lab `clstatus`/`sfcols`): the same 14 px slot the work rows reserve. */
 const STATUS_SLOT_PX = 14;
 
-const styles = StyleSheet.create(() => ({
+const STATUS_WORD_VARIANT: Readonly<Record<Tone, StatusPillVariant>> = Object.freeze({
+  warning: 'attention',
+  danger: 'danger',
+  neutral: 'neutral',
+});
+
+/**
+ * Line 2's separator: the word joiner glues the dot to the word before it, so a wrapped line starts with the next
+ * fact and never with a stray "·" (the capability row's rule).
+ */
+const QUIET_DOT = ' \u2060· ';
+
+const styles = StyleSheet.create((theme) => ({
+  line: { color: theme.colors.text.secondary },
   slot: {
     width: STATUS_SLOT_PX,
     height: STATUS_SLOT_PX,
@@ -87,5 +102,30 @@ export const CollectionStatusGlyph = React.memo(function CollectionStatusGlyph(
         <Icon name={drawing.icon} size={STATUS_SLOT_PX} color={color} />
       </View>
     </Tooltip>
+  );
+});
+
+/**
+ * A catalog row's status in words (S10 X4, lab `y:list`): the state's word leads line 2 in its tone, then the row's
+ * own description, so the state is read on every width and never only through a glyph and its tooltip. Capability
+ * catalogs (Agents, Providers) use this in place of the glyph slot; healthy rows keep their plain description.
+ */
+export const CollectionStatusLine = React.memo(function CollectionStatusLine(
+  props: Readonly<{
+    status: CollectionRowStatus;
+    /** The state in words. */
+    label: string;
+    /** The row's description, after the word. */
+    description?: string | null;
+    numberOfLines?: number;
+    testID?: string;
+  }>,
+) {
+  const variant = STATUS_WORD_VARIANT[STATUS_DRAWING[props.status].tone];
+  return (
+    <Text variant="body" numberOfLines={props.numberOfLines ?? 1} style={styles.line}>
+      <StatusWord variant={variant} label={props.label} {...(props.testID === undefined ? {} : { testID: props.testID })} />
+      {props.description ? `${QUIET_DOT}${props.description}` : null}
+    </Text>
   );
 });
