@@ -142,31 +142,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'A.12-voice-cleanup',
     },
     {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
         method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_START,
         rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
         ownerPacket: 'A.12-voice-cleanup',
@@ -183,11 +158,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
     },
     {
         method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS,
         rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
         ownerPacket: 'A.12-voice-cleanup',
     },

@@ -202,7 +202,7 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
     }
   });
 
-  it('disposes abandoned TTS downloads and finalized STT uploads', async () => {
+  it('disposes finalized STT uploads', async () => {
     vi.useFakeTimers();
     const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-inference-lifecycle-'));
     const outputBytes = Buffer.from('tts-audio');
@@ -218,31 +218,15 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
       registrations.push(registration);
       expect(registration).toBeTruthy();
 
-      const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
-      const ttsChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK);
       const sttUploadInit = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT);
       const sttUploadChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK);
       const sttUploadFinalize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE);
       const sttTranscribe = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE);
       const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
       const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
-      if (!ttsSynthesize || !ttsChunk || !sttUploadInit || !sttUploadChunk || !sttUploadFinalize || !sttTranscribe || !sttStreamStart || !sttStreamStatus) {
+      if (!sttUploadInit || !sttUploadChunk || !sttUploadFinalize || !sttTranscribe || !sttStreamStart || !sttStreamStatus) {
         throw new Error('expected voice inference transfer handlers');
       }
-
-      const synth = await ttsSynthesize({
-        requestId: 'tts-lifecycle',
-        text: 'Hello',
-        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-        voiceId: 'af_heart',
-        speed: 1,
-        output: { codec: 'wav', mimeType: 'audio/wav' },
-      });
-      expect(synth).toMatchObject({ ok: true, downloadId: expect.any(String) });
-      const outputPath = join(resolveVoiceInferencePaths().tempDir,
-        readdirSync(resolveVoiceInferencePaths().tempDir).find((name) => name.endsWith('-tts.wav'))!);
-      expect(registration.voiceInferenceTransfers.downloadStore.getDownloadSession(synth.downloadId)).toBeTruthy();
-      await expect(access(outputPath)).resolves.toBeUndefined();
 
       const stream = await sttStreamStart({
         requestId: 'stt-stream-lifecycle',
@@ -283,15 +267,9 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
       await registration.dispose();
       await worker.stop();
 
-      expect(registration.voiceInferenceTransfers.downloadStore.getDownloadSession(synth.downloadId)).toBeNull();
       expect(registration.voiceInferenceTransfers.uploadStore.getUploadSession(upload.uploadId)).toBeNull();
-      await expectPathMissing(outputPath);
       await expectPathMissing(finalizedPath);
       expect(vi.getTimerCount()).toBe(0);
-      await expect(ttsChunk({ downloadId: synth.downloadId, index: 0 })).resolves.toEqual({
-        success: false,
-        error: 'Download session not found',
-      });
       await expect(sttTranscribe({
         requestId: 'stt-after-dispose',
         uploadId: upload.uploadId,

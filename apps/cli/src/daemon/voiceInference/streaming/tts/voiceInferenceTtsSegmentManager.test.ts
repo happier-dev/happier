@@ -219,7 +219,7 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     });
 
     await vi.advanceTimersByTimeAsync(150);
-    await expect(manager.status({ streamId: started.streamId, generation: started.generation })).resolves.toMatchObject({
+    await expect(manager.cancel({ streamId: started.streamId, generation: started.generation, reason: 'client_abort' })).resolves.toMatchObject({
       ok: false,
       errorCode: 'stream_not_found',
     });
@@ -260,7 +260,7 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     // per-segment ack deadline is ever created.
     await vi.advanceTimersByTimeAsync(150);
 
-    await expect(manager.status({ streamId: started.streamId, generation: started.generation })).resolves.toMatchObject({
+    await expect(manager.cancel({ streamId: started.streamId, generation: started.generation, reason: 'client_abort' })).resolves.toMatchObject({
       ok: false,
       errorCode: 'stream_not_found',
     });

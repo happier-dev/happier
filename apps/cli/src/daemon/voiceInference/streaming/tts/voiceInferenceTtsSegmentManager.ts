@@ -14,8 +14,6 @@ import type {
   DaemonVoiceInferenceTtsStreamNextResponse,
   DaemonVoiceInferenceTtsStreamStartRequest,
   DaemonVoiceInferenceTtsStreamStartResponse,
-  DaemonVoiceInferenceTtsStreamStatusRequest,
-  DaemonVoiceInferenceTtsStreamStatusResponse,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
@@ -56,7 +54,6 @@ export type VoiceInferenceTtsSegmentManager = Readonly<{
   next: (input: DaemonVoiceInferenceTtsStreamNextRequest) => Promise<DaemonVoiceInferenceTtsStreamNextResponse>;
   ack: (input: DaemonVoiceInferenceTtsStreamAckRequest) => Promise<DaemonVoiceInferenceTtsStreamAckResponse>;
   cancel: (input: DaemonVoiceInferenceTtsStreamCancelRequest) => Promise<DaemonVoiceInferenceTtsStreamCancelResponse>;
-  status: (input: DaemonVoiceInferenceTtsStreamStatusRequest) => Promise<DaemonVoiceInferenceTtsStreamStatusResponse>;
   dispose: () => Promise<void>;
 }>;
 
@@ -476,27 +473,6 @@ export function createVoiceInferenceTtsSegmentManager(
         ok: true,
         streamId: input.streamId,
         generation: input.generation,
-      };
-    },
-    status: async (input) => {
-      const session = getSession(input.streamId, input.generation);
-      if (!session) {
-        return streamError('stream_not_found', 'daemon_voice_inference_tts_stream_not_found');
-      }
-      const ackedSegmentCount = session.segments.filter((segment) => segment.status === 'acked').length;
-      const deliveredSegmentCount = session.segments.filter((segment) => segment.delivered).length;
-      const outstandingSegmentCount = session.segments.filter((segment) =>
-        segment.status === 'synthesizing' || segment.status === 'ready',
-      ).length;
-      return {
-        ok: true,
-        streamId: session.streamId,
-        generation: session.generation,
-        state: session.state,
-        segmentCount: session.segments.length,
-        deliveredSegmentCount,
-        ackedSegmentCount,
-        outstandingSegmentCount,
       };
     },
     dispose: async () => {

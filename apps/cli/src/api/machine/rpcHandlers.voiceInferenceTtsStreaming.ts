@@ -1,4 +1,4 @@
-import { DaemonVoiceInferenceTtsStreamAckRequestSchema, DaemonVoiceInferenceTtsStreamAckResponseSchema, DaemonVoiceInferenceTtsStreamCancelRequestSchema, DaemonVoiceInferenceTtsStreamCancelResponseSchema, DaemonVoiceInferenceTtsStreamNextRequestSchema, DaemonVoiceInferenceTtsStreamNextResponseSchema, DaemonVoiceInferenceTtsStreamStartRequestSchema, DaemonVoiceInferenceTtsStreamStartResponseSchema, DaemonVoiceInferenceTtsStreamStatusRequestSchema, DaemonVoiceInferenceTtsStreamStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { DaemonVoiceInferenceTtsStreamAckRequestSchema, DaemonVoiceInferenceTtsStreamAckResponseSchema, DaemonVoiceInferenceTtsStreamCancelRequestSchema, DaemonVoiceInferenceTtsStreamCancelResponseSchema, DaemonVoiceInferenceTtsStreamNextRequestSchema, DaemonVoiceInferenceTtsStreamNextResponseSchema, DaemonVoiceInferenceTtsStreamStartRequestSchema, DaemonVoiceInferenceTtsStreamStartResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -175,17 +175,6 @@ export function registerMachineVoiceInferenceTtsStreamingRpcHandlers(params: Rea
     return parseVoiceInferenceResponse(
       DaemonVoiceInferenceTtsStreamCancelResponseSchema,
       await manager.cancel(parsed.data),
-    );
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsStreamStatusRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return invalidParameters(DaemonVoiceInferenceTtsStreamStatusResponseSchema);
-    }
-    return parseVoiceInferenceResponse(
-      DaemonVoiceInferenceTtsStreamStatusResponseSchema,
-      await manager.status(parsed.data),
     );
   });
 

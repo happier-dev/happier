@@ -598,10 +598,7 @@ describe('protocol package root exports', () => {
 
     it('exports daemon voice inference schemas', () => {
         expect(typeof (protocol as any).DaemonVoiceInferenceStatusRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DaemonVoiceInferenceTtsSynthesizeRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceModelsWarmRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DaemonVoiceInferenceTtsChunkRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DaemonVoiceInferenceTtsFinalizeRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadInitRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadFinalizeResponseSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttTranscribeRequestSchema?.safeParse).toBe('function');

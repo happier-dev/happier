@@ -225,7 +225,7 @@ afterEach(async () => {
 });
 
 describe('registerMachineVoiceInferenceRpcHandlers', () => {
-  it('registers status, model management, TTS transfer, and STT upload/transcribe handlers', async () => {
+  it('registers status, model management, and STT upload/transcribe handlers', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-inference-rpc-'));
     const outputBytes = Buffer.from('tts-audio');
     const outputPath = join(workspace, 'tts.wav');
@@ -252,7 +252,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     const installModel = vi.spyOn(worker, 'installModel');
     const acceptModelPackLicense = vi.spyOn(worker, 'acceptModelPackLicense');
     const removeModel = vi.spyOn(worker, 'removeModel');
-    const cancelTts = vi.spyOn(worker, 'cancelTts');
     const cancelStt = vi.spyOn(worker, 'cancelStt');
     const uploadedWav = createWavPayload(Buffer.from('hello\0'));
 
@@ -268,10 +267,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     const modelsInstall = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL);
     const modelsLicenseAccept = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT);
     const modelsRemove = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE);
-    const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
-    const ttsChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK);
-    const ttsFinalize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE);
-    const ttsCancel = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL);
     const sttUploadInit = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT);
     const sttUploadChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK);
     const sttUploadFinalize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE);
@@ -289,10 +284,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     expect(modelsInstall).toBeDefined();
     expect(modelsLicenseAccept).toBeDefined();
     expect(modelsRemove).toBeDefined();
-    expect(ttsSynthesize).toBeDefined();
-    expect(ttsChunk).toBeDefined();
-    expect(ttsFinalize).toBeDefined();
-    expect(ttsCancel).toBeDefined();
     expect(sttUploadInit).toBeDefined();
     expect(sttUploadChunk).toBeDefined();
     expect(sttUploadFinalize).toBeDefined();
@@ -335,35 +326,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     await expect(modelsInstall?.({ packId: qualifiedPackId }, { signal: installRequest.signal }))
       .resolves.toMatchObject({ ok: true, model: { packId: qualifiedPackId, installState: 'installed' } });
     expect(installModel).toHaveBeenCalledWith({ packId: qualifiedPackId, signal: installRequest.signal });
-
-    const synthResp = await ttsSynthesize?.({
-      requestId: 'tts-1',
-      text: 'Hello from daemon',
-      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      voiceId: 'af_heart',
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    expect(synthResp).toEqual({
-      ok: true,
-      requestId: 'tts-1',
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-      downloadId: expect.any(String),
-      chunkSizeBytes: expect.any(Number),
-      sizeBytes: outputBytes.length,
-      name: 'tts.wav',
-    });
-
-    const chunkResp = await ttsChunk?.({ downloadId: synthResp.downloadId, index: 0 });
-    expect(chunkResp).toEqual({
-      success: true,
-      contentBase64: outputBytes.toString('base64'),
-      isLast: true,
-    });
-
-    await expect(ttsFinalize?.({ downloadId: synthResp.downloadId })).resolves.toEqual({ success: true });
-    await expect(ttsCancel?.({ requestId: 'tts-1' })).resolves.toEqual({ ok: true });
-    expect(cancelTts).toHaveBeenCalledWith('tts-1');
 
     const uploadInitResp = await sttUploadInit?.({
       requestId: 'stt-1',
@@ -610,56 +572,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     })).resolves.toMatchObject({ ok: true, text: 'ok' });
     expect(captureFile).toHaveBeenCalledTimes(1);
     expect(transcribeAudio.mock.invocationCallOrder[1]).toBeLessThan(captureFile.mock.invocationCallOrder[0]!);
-    await expect(controller.status()).resolves.toMatchObject({
-        health: {
-          captureFailure: false,
-          cleanup: { status: 'required', code: 'cleanup_failed', ownedEntryCount: 1 },
-        },
-    });
-    recoverRemoval();
-    await controller.deleteAll();
-    await expect(controller.status()).resolves.toMatchObject({
-      health: { captureFailure: false, cleanup: { status: 'healthy', code: null, ownedEntryCount: 0 } },
-    });
-    await registration.dispose();
-  });
-
-  it('keeps direct TTS usable while surfacing and recovering diagnostics retention failure', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-direct-tts-diagnostics-'));
-    diagnosticTestDirs.push(workspace);
-    const outputPath = join(workspace, 'tts.wav');
-    writeFileSync(outputPath, Buffer.from('tts-audio'));
-    const { controller, recoverRemoval } = await createDiagnosticsControllerWithRemovalFailure({
-      happyHomeDir: workspace,
-    });
-    const worker = await createWorker({ synthesizeTts: async ({ output }) => ({
-        bytes: readFileSync(outputPath), output, name: 'tts.wav',
-      }) });
-    const mgr = createRpcHandlerManager();
-    const registration = registerMachineVoiceInferenceRpcHandlers({
-      rpcHandlerManager: mgr,
-      voiceInferenceWorker: worker,
-      voiceDiagnostics: controller,
-    });
-    registrations.push(registration);
-    const synthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE)!;
-
-    await expect(synthesize({
-      requestId: 'direct-tts-retention-failure',
-      text: 'Still speak this',
-      packId: ttsPackId,
-      voiceId: null,
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-      diagnostics: {
-        sessionId: 'session-1', captureAllowed: true, durationMs: null,
-        authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637',
-      },
-    })).resolves.toMatchObject({
-      ok: true,
-      requestId: 'direct-tts-retention-failure',
-      downloadId: expect.any(String),
-    });
     await expect(controller.status()).resolves.toMatchObject({
         health: {
           captureFailure: false,
@@ -1018,7 +930,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     { code: 'runtime_unavailable', error: 'voice_inference_runtime_unavailable' },
     { code: 'internal_error', error: 'voice_inference_internal_error' },
   ])('redacts internal daemon/runtime details from RPC error payloads ($code)', async ({ code, error }) => {
-    const worker = await createWorker({ synthesizeTts: async () => {
+    const worker = await createWorker({ warmModel: async () => {
         throw Object.assign(new Error('voice_inference_daemon_decoder_spawn_failed:/Users/leeroy/private/input.m4a stderr=/tmp/runtime.log'), { code });
       } });
 
@@ -1028,16 +940,9 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       voiceInferenceWorker: worker,
     }));
 
-    const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
+    const warm = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM);
 
-    await expect(ttsSynthesize?.({
-      requestId: 'tts-redacted',
-      text: 'Hello from daemon',
-      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      voiceId: 'af_heart',
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    })).resolves.toEqual({
+    await expect(warm?.({ packIds: [ttsPackId] })).resolves.toEqual({
       ok: false,
       errorCode: code,
       error,
@@ -1069,143 +974,5 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       error: expect.any(String),
     });
     expect(corruptedTimestampObserved).toBe(true);
-  });
-
-  it('fails closed and cleans up synthesized temp files when opening the TTS transfer session fails', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-inference-rpc-invalid-'));
-    diagnosticTestDirs.push(workspace);
-
-    const synthesizeTts = vi.fn(async ({ output }: Parameters<VoiceInferenceRuntime['synthesizeTts']>[0]) => ({
-      bytes: Buffer.from('tts-audio'), output, name: 'tts.wav',
-    }));
-    const worker = await createWorker({ synthesizeTts });
-    // Opening the synthesized download is an OS boundary; its real worker
-    // output must be removed when that boundary refuses the read.
-    const downloadOpen = vi.mocked(fsPromises.open).mockRejectedValueOnce(
-      Object.assign(
-        new Error('voice_inference_daemon_decoder_spawn_failed:/Users/leeroy/private/input.m4a stderr=/tmp/runtime.log'),
-        { code: 'EACCES' },
-      ),
-    );
-    const mgr = createRpcHandlerManager();
-    registrations.push(registerMachineVoiceInferenceRpcHandlers({
-      rpcHandlerManager: mgr,
-      voiceInferenceWorker: worker,
-    }));
-
-    const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
-
-    await expect(ttsSynthesize?.({
-      requestId: 'tts-invalid',
-      text: 'Hello from daemon',
-      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      voiceId: 'af_heart',
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'internal_error',
-      error: 'voice_inference_internal_error',
-    });
-
-    expect(synthesizeTts).toHaveBeenCalled();
-    const outputPath = String(downloadOpen.mock.calls[0]?.[0]);
-    expect(outputPath.startsWith(resolveVoiceInferencePaths().tempDir)).toBe(true);
-    expect(existsSync(outputPath)).toBe(false);
-  });
-
-  it('expires abandoned TTS download sessions and deletes their temp files without later RPC traffic', async () => {
-    vi.useFakeTimers();
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-inference-rpc-expire-'));
-    let outputPath = join(workspace, 'tts.wav');
-    writeFileSync(outputPath, Buffer.from('tts-audio'));
-
-    const worker = await createWorker({ synthesizeTts: async ({ output }) => ({
-        bytes: readFileSync(outputPath), output, name: 'tts.wav',
-      }) });
-
-    const mgr = createRpcHandlerManager();
-    const registration = registerMachineVoiceInferenceRpcHandlers({
-      rpcHandlerManager: mgr,
-      voiceInferenceWorker: worker,
-    });
-    registrations.push(registration);
-
-    const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
-    const ttsChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK);
-
-    const synthResp = await ttsSynthesize?.({
-      requestId: 'tts-expire',
-      text: 'Hello from daemon',
-      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      voiceId: 'af_heart',
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    expect(synthResp).toEqual({
-      ok: true,
-      requestId: 'tts-expire',
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-      downloadId: expect.any(String),
-      chunkSizeBytes: expect.any(Number),
-      sizeBytes: 9,
-      name: 'tts.wav',
-    });
-    outputPath = registration.voiceInferenceTransfers.downloadStore.getDownloadSession(synthResp.downloadId)!.filePath;
-    expect(readFileSync(outputPath, 'utf8')).toBe('tts-audio');
-
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-    await vi.runOnlyPendingTimersAsync();
-    vi.useRealTimers();
-    let fileDeleted = false;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      try {
-        await access(outputPath);
-      } catch {
-        fileDeleted = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    expect(fileDeleted).toBe(true);
-    await expect(ttsChunk?.({ downloadId: synthResp.downloadId, index: 0 })).resolves.toEqual({
-      success: false,
-      error: 'Download session not found',
-    });
-
-    vi.useRealTimers();
-  });
-
-  it('rejects daemon TTS synthesize requests with undeclared fields before reaching the worker', async () => {
-    const synthesizeTts = vi.fn(async () => {
-      throw new Error('unused');
-    });
-
-    const worker = await createWorker({ synthesizeTts });
-
-    const mgr = createRpcHandlerManager();
-    registrations.push(registerMachineVoiceInferenceRpcHandlers({
-      rpcHandlerManager: mgr,
-      voiceInferenceWorker: worker,
-    }));
-
-    const ttsSynthesize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE);
-
-    await expect(ttsSynthesize?.({
-      requestId: 'tts-invalid-extra-field',
-      text: 'Hello from daemon',
-      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      voiceId: 'af_heart',
-      speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-      unexpectedField: 'should-be-rejected',
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'internal_error',
-      error: expect.any(String),
-    });
-
-    expect(synthesizeTts).not.toHaveBeenCalled();
   });
 });

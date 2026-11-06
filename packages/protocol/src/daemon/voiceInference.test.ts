@@ -22,11 +22,6 @@ import {
     DaemonVoiceInferenceSttUploadInitRequestSchema,
     DaemonVoiceInferenceSttUploadInitResponseSchema,
     DaemonVoiceInferenceStatusResponseSchema,
-    DaemonVoiceInferenceTtsAbortResponseSchema,
-    DaemonVoiceInferenceTtsChunkResponseSchema,
-    DaemonVoiceInferenceTtsFinalizeResponseSchema,
-    DaemonVoiceInferenceTtsSynthesizeRequestSchema,
-    DaemonVoiceInferenceTtsSynthesizeResponseSchema,
     DaemonVoiceInferenceTtsStreamAckRequestSchema,
     DaemonVoiceInferenceTtsStreamAckResponseSchema,
     DaemonVoiceInferenceTtsStreamCancelRequestSchema,
@@ -35,7 +30,6 @@ import {
     DaemonVoiceInferenceTtsStreamNextResponseSchema,
     DaemonVoiceInferenceTtsStreamStartRequestSchema,
     DaemonVoiceInferenceTtsStreamStartResponseSchema,
-    DaemonVoiceInferenceTtsStreamStatusResponseSchema,
     DaemonVoiceInferenceSttTranscribeRequestSchema,
     DaemonVoiceInferenceSttTranscribeResponseSchema,
     DaemonVoiceInferenceSttStreamCancelRequestSchema,
@@ -173,44 +167,6 @@ describe('daemonVoiceInference schemas', () => {
         }).success).toBe(false);
     });
 
-    it('parses and preserves the daemon WAV TTS synthesize contract', () => {
-        const request = DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({
-            requestId: 'tts-1',
-            text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
-            voiceId: 'af_heart',
-            speed: 1,
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        });
-        const response = DaemonVoiceInferenceTtsSynthesizeResponseSchema.parse({
-            ok: true,
-            requestId: 'tts-1',
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-            downloadId: 'download-1',
-            chunkSizeBytes: 1024,
-            sizeBytes: 2048,
-            name: 'tts.wav',
-        });
-
-        expect(request).toEqual({
-            requestId: 'tts-1',
-            text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
-            voiceId: 'af_heart',
-            speed: 1,
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        });
-        expect(response).toEqual({
-            ok: true,
-            requestId: 'tts-1',
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-            downloadId: 'download-1',
-            chunkSizeBytes: 1024,
-            sizeBytes: 2048,
-            name: 'tts.wav',
-        });
-    });
-
     it('publishes an over-ceiling direct TTS result as a typed error', () => {
         expect(DaemonVoiceInferenceErrorSchema.parse({
             ok: false,
@@ -220,7 +176,7 @@ describe('daemonVoiceInference schemas', () => {
     });
 
     it('threads diagnostics capture context only when a caller explicitly opts in', () => {
-        const request = DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({
+        const request = DaemonVoiceInferenceTtsStreamStartRequestSchema.parse({
             requestId: 'tts-diag-1',
             text: 'diagnose this',
             diagnostics: {
@@ -259,7 +215,7 @@ describe('daemonVoiceInference schemas', () => {
         expect(request.diagnostics).toMatchObject({ captureAllowed: true });
         expect(transcribe.diagnostics).toMatchObject({ captureAllowed: false, durationMs: 1_250 });
         expect(streaming.diagnostics).toMatchObject({ sessionId: 'session-private', captureAllowed: true });
-        expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({ requestId: 'tts-no-diag', text: 'hello' })).not.toHaveProperty('diagnostics');
+        expect(DaemonVoiceInferenceTtsStreamStartRequestSchema.parse({ requestId: 'tts-no-diag', text: 'hello' })).not.toHaveProperty('diagnostics');
         expect(DaemonVoiceInferenceSttStreamStartRequestSchema.parse({
             requestId: 'stt-stream-no-diag',
             streamingMode: 'runtime',
@@ -271,11 +227,6 @@ describe('daemonVoiceInference schemas', () => {
             { codec: 'mp3', mimeType: 'audio/wav' },
             { codec: 'opus', mimeType: 'audio/wav' },
         ]) {
-            expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
-                requestId: 'tts-unsupported',
-                text: 'hello daemon',
-                output,
-            }).success).toBe(false);
             expect(DaemonVoiceInferenceTtsStreamStartRequestSchema.safeParse({
                 requestId: 'tts-stream-unsupported',
                 text: 'hello daemon',
@@ -333,16 +284,6 @@ describe('daemonVoiceInference schemas', () => {
             ackedSegmentIndex: 0,
             complete: false,
         });
-        const status = DaemonVoiceInferenceTtsStreamStatusResponseSchema.parse({
-            ok: true,
-            streamId: 'tts-stream-id-1',
-            generation: 0,
-            state: 'open',
-            segmentCount: 2,
-            deliveredSegmentCount: 1,
-            ackedSegmentCount: 1,
-            outstandingSegmentCount: 1,
-        });
 
         expect(start.prefetchDepth).toBe(2);
         expect(started.segmentCount).toBe(2);
@@ -372,7 +313,6 @@ describe('daemonVoiceInference schemas', () => {
             reason: 'barge_in',
         });
         expect(ack.complete).toBe(false);
-        expect(status.outstandingSegmentCount).toBe(1);
     });
 
     it('additively carries the readiness runtimeState and declared loaded-artifact bytes when present', () => {
@@ -421,7 +361,7 @@ describe('daemonVoiceInference schemas', () => {
     });
 
     it('rejects daemon TTS output payloads with mismatched codec/mime pairs', () => {
-        const parsed = DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
+        const parsed = DaemonVoiceInferenceTtsStreamStartRequestSchema.safeParse({
             requestId: 'tts-1',
             text: 'hello daemon',
             packId: 'kokoro-tts-en-v1',
@@ -433,8 +373,8 @@ describe('daemonVoiceInference schemas', () => {
         expect(parsed.success).toBe(false);
     });
 
-    it('rejects undeclared daemon TTS synthesize request fields once the contract is finalized', () => {
-        const parsed = DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
+    it('rejects undeclared daemon TTS stream start request fields once the contract is finalized', () => {
+        const parsed = DaemonVoiceInferenceTtsStreamStartRequestSchema.safeParse({
             requestId: 'tts-1',
             text: 'hello daemon',
             packId: 'kokoro-tts-en-v1',
@@ -533,7 +473,7 @@ describe('daemonVoiceInference schemas', () => {
     it('rejects overlong daemon voice inference request ids across request-bearing contracts', () => {
         const overlongRequestId = 'r'.repeat(257);
 
-        expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
+        expect(DaemonVoiceInferenceTtsStreamStartRequestSchema.safeParse({
             requestId: overlongRequestId,
             text: 'hello daemon',
             packId: 'kokoro-tts-en-v1',
@@ -766,13 +706,6 @@ describe('daemonVoiceInference schemas', () => {
             streamId: 'stream-1',
             generation: 0,
         });
-        expect(status).toEqual({
-            ok: true,
-            streamId: 'stream-1',
-            generation: 0,
-            ackSeq: 0,
-            state: 'open',
-        });
     });
 
     it('rejects invalid daemon streaming STT format, ids, and sequence numbers', () => {
@@ -911,17 +844,6 @@ describe('daemonVoiceInference schemas', () => {
             },
         });
         const statusRequest = DaemonVoiceInferenceModelsStatusRequestSchema.parse({});
-        const ttsChunkError = DaemonVoiceInferenceTtsChunkResponseSchema.parse({
-            success: false,
-            error: 'chunk_failed',
-            errorCode: 'download_failed',
-        });
-        const ttsFinalize = DaemonVoiceInferenceTtsFinalizeResponseSchema.parse({
-            success: true,
-        });
-        const ttsAbort = DaemonVoiceInferenceTtsAbortResponseSchema.parse({
-            success: true,
-        });
         const sttUploadInit = DaemonVoiceInferenceSttUploadInitRequestSchema.parse({
             requestId: 'stt-upload-1',
             sizeBytes: 12,
@@ -977,13 +899,6 @@ describe('daemonVoiceInference schemas', () => {
             },
         });
         expect(statusRequest).toEqual({});
-        expect(ttsChunkError).toEqual({
-            success: false,
-            error: 'chunk_failed',
-            errorCode: 'download_failed',
-        });
-        expect(ttsFinalize).toEqual({ success: true });
-        expect(ttsAbort).toEqual({ success: true });
         expect(sttUploadInit).toEqual({
             requestId: 'stt-upload-1',
             sizeBytes: 12,

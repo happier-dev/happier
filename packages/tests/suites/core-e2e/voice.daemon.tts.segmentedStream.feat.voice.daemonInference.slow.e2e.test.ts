@@ -12,7 +12,6 @@ import {
     DaemonVoiceInferenceTtsStreamAckResponseSchema,
     DaemonVoiceInferenceTtsStreamNextResponseSchema,
     DaemonVoiceInferenceTtsStreamStartResponseSchema,
-    DaemonVoiceInferenceTtsStreamStatusResponseSchema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -252,24 +251,6 @@ describe('core e2e: daemon segmented TTS stream', () => {
             expect(first.event.isLastSegment).toBe(false);
             expect(Buffer.from(first.event.audio.contentBase64, 'base64').toString('utf8')).toBe('tts:First sentence.:af_heart:1');
 
-            const statusBeforeAck = DaemonVoiceInferenceTtsStreamStatusResponseSchema.parse(
-                unwrapDataKeyRpcResult(
-                    await machineRpc.call(
-                        `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS}`,
-                        { streamId: started.streamId, generation: started.generation },
-                        30_000,
-                    ),
-                    'daemon segmented TTS status before ack',
-                ),
-            );
-            expect(statusBeforeAck).toMatchObject({
-                ok: true,
-                state: 'open',
-                deliveredSegmentCount: 1,
-                ackedSegmentCount: 0,
-                outstandingSegmentCount: 1,
-            });
-
             const firstAck = DaemonVoiceInferenceTtsStreamAckResponseSchema.parse(
                 unwrapDataKeyRpcResult(
                     await machineRpc.call(
@@ -323,17 +304,17 @@ describe('core e2e: daemon segmented TTS stream', () => {
             );
             expect(finalAck).toMatchObject({ ok: true, ackedSegmentIndex: 1, complete: true });
 
-            const closedStatus = DaemonVoiceInferenceTtsStreamStatusResponseSchema.parse(
+            const afterComplete = DaemonVoiceInferenceTtsStreamNextResponseSchema.parse(
                 unwrapDataKeyRpcResult(
                     await machineRpc.call(
-                        `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS}`,
+                        `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT}`,
                         { streamId: started.streamId, generation: started.generation },
                         30_000,
                     ),
-                    'daemon segmented TTS closed status',
+                    'daemon segmented TTS next after completion',
                 ),
             );
-            expect(closedStatus).toMatchObject({ ok: false, errorCode: 'stream_not_found' });
+            expect(afterComplete).toMatchObject({ ok: false, errorCode: 'stream_not_found' });
         } finally {
             ui.close();
         }

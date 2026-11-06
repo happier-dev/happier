@@ -1,7 +1,6 @@
-import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 
-import { DaemonVoiceInferenceSttUploadAbortRequestSchema, DaemonVoiceInferenceSttUploadAbortResponseSchema, DaemonVoiceInferenceSttUploadChunkRequestSchema, DaemonVoiceInferenceSttUploadChunkResponseSchema, DaemonVoiceInferenceSttUploadFinalizeRequestSchema, DaemonVoiceInferenceSttUploadFinalizeResponseSchema, DaemonVoiceInferenceSttUploadInitRequestSchema, DaemonVoiceInferenceSttUploadInitResponseSchema, DaemonVoiceInferenceSttCancelRequestSchema, DaemonVoiceInferenceSttCancelResponseSchema, DaemonVoiceInferenceSttTranscribeRequestSchema, DaemonVoiceInferenceSttTranscribeResponseSchema, DaemonVoiceInferenceTtsAbortRequestSchema, DaemonVoiceInferenceTtsAbortResponseSchema, DaemonVoiceInferenceTtsCancelRequestSchema, DaemonVoiceInferenceTtsCancelResponseSchema, DaemonVoiceInferenceTtsChunkRequestSchema, DaemonVoiceInferenceTtsChunkResponseSchema, DaemonVoiceInferenceTtsFinalizeRequestSchema, DaemonVoiceInferenceTtsFinalizeResponseSchema, DaemonVoiceInferenceTtsSynthesizeRequestSchema, DaemonVoiceInferenceTtsSynthesizeResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { DaemonVoiceInferenceSttUploadAbortRequestSchema, DaemonVoiceInferenceSttUploadAbortResponseSchema, DaemonVoiceInferenceSttUploadChunkRequestSchema, DaemonVoiceInferenceSttUploadChunkResponseSchema, DaemonVoiceInferenceSttUploadFinalizeRequestSchema, DaemonVoiceInferenceSttUploadFinalizeResponseSchema, DaemonVoiceInferenceSttUploadInitRequestSchema, DaemonVoiceInferenceSttUploadInitResponseSchema, DaemonVoiceInferenceSttCancelRequestSchema, DaemonVoiceInferenceSttCancelResponseSchema, DaemonVoiceInferenceSttTranscribeRequestSchema, DaemonVoiceInferenceSttTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { configuration } from '@/configuration';
@@ -23,6 +22,7 @@ import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/contr
 import type { VoiceSpeechDiagnosticFormatV1 } from '@happier-dev/protocol';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
+import { createFinalizedUploadHold } from './finalizedUploadHold';
 import {
   parseVoiceInferenceResponse,
   toVoiceInferenceError,
@@ -54,7 +54,6 @@ function resolveDiagnosticFormat(inputMimeType: string): VoiceSpeechDiagnosticFo
 }
 
 export type MachineVoiceInferenceTransferRpcRegistration = Readonly<{
-  downloadStore: TransferSessionStore;
   uploadStore: TransferSessionStore;
   dispose: () => Promise<void>;
 }>;
@@ -69,10 +68,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
   const sessionTtlMs = Number.isFinite(configuration.filesTransferSessionTtlMs)
     ? Math.max(1_000, Math.trunc(configuration.filesTransferSessionTtlMs))
     : 60_000;
-  const downloadStore = new TransferSessionStore({
-    ttlMs: sessionTtlMs,
-    tempRoot: voiceInferenceTransfersRoot,
-  });
   const uploadStore = new TransferSessionStore({
     ttlMs: sessionTtlMs,
     tempRoot: voiceInferenceTransfersRoot,
@@ -82,23 +77,16 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
     // retires the entry, the descriptor and the temp file together.
     expiryTrigger: 'self',
   });
-  const transferLifecycle = createTransferSessionLifecycle({
-    store: downloadStore,
-    chunkSizeBytes: configuration.filesTransferChunkBytes,
-  });
   const uploadLifecycle = createTransferSessionLifecycle({
     store: uploadStore,
     chunkSizeBytes: configuration.filesTransferChunkBytes,
   });
-  const finalizedUploadsById = new Map<string, Readonly<{
+  const finalizedUploads = createFinalizedUploadHold<Readonly<{
     path: string;
     sizeBytes: number;
     sha256: string;
     inputMimeType: string;
-  }>>();
-  const finalizedUploadReleaseTimerById = new Map<string, ReturnType<typeof setTimeout>>();
-  const ttsDownloadReleaseTimerById = new Map<string, ReturnType<typeof setTimeout>>();
-  const ttsDownloadFilePathById = new Map<string, string>();
+  }>>(sessionTtlMs);
   let disposePromise: Promise<void> | null = null;
 
   function toPublicUploadTempPath(uploadId: string, absoluteUploadPath: string): string {
@@ -109,192 +97,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
     }
     return rel;
   }
-
-  async function clearFinalizedUpload(uploadId: string, options?: Readonly<{ deleteFile?: boolean }>): Promise<void> {
-    const timer = finalizedUploadReleaseTimerById.get(uploadId);
-    if (timer) {
-      clearTimeout(timer);
-      finalizedUploadReleaseTimerById.delete(uploadId);
-    }
-    const uploaded = finalizedUploadsById.get(uploadId);
-    finalizedUploadsById.delete(uploadId);
-    if (options?.deleteFile !== false && uploaded?.path) {
-      await rm(uploaded.path, { force: true }).catch(() => undefined);
-    }
-  }
-
-  function scheduleFinalizedUploadExpiry(uploadId: string): void {
-    const existingTimer = finalizedUploadReleaseTimerById.get(uploadId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-    const timer = setTimeout(() => {
-      void clearFinalizedUpload(uploadId);
-    }, sessionTtlMs);
-    finalizedUploadReleaseTimerById.set(uploadId, timer);
-  }
-
-  function clearTtsDownloadExpiry(downloadId: string): void {
-    const timer = ttsDownloadReleaseTimerById.get(downloadId);
-    if (!timer) {
-      return;
-    }
-    clearTimeout(timer);
-    ttsDownloadReleaseTimerById.delete(downloadId);
-  }
-
-  function scheduleTtsDownloadExpiry(downloadId: string): void {
-    clearTtsDownloadExpiry(downloadId);
-    const timer = setTimeout(() => {
-      void abortTtsDownloadTransfer(downloadId);
-    }, sessionTtlMs);
-    ttsDownloadReleaseTimerById.set(downloadId, timer);
-  }
-
-  async function abortTtsDownloadTransfer(downloadId: string): Promise<void> {
-    clearTtsDownloadExpiry(downloadId);
-    const filePath = ttsDownloadFilePathById.get(downloadId) ?? null;
-    ttsDownloadFilePathById.delete(downloadId);
-    await transferLifecycle.abortDownloadTransferSession({ downloadId }).catch(() => undefined);
-    if (filePath) {
-      await rm(filePath, { force: true }).catch(() => undefined);
-    }
-  }
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return toVoiceInferenceError(new Error('invalid_parameters'));
-    }
-    let synthesizedFilePath: string | null = null;
-    let downloadId: string | null = null;
-    try {
-      const synthesized = await params.voiceInferenceWorker.synthesizeTts({
-        requestId: parsed.data.requestId,
-        text: parsed.data.text,
-        packId: parsed.data.packId,
-        voiceId: parsed.data.voiceId,
-        speed: parsed.data.speed,
-        output: parsed.data.output,
-      });
-      synthesizedFilePath = synthesized.filePath;
-      if (parsed.data.diagnostics?.captureAllowed === true) {
-        await params.voiceDiagnostics?.captureFile({
-          direction: 'tts_output',
-          format: 'wav',
-          filePath: synthesized.filePath,
-          durationMs: parsed.data.diagnostics.durationMs,
-          sessionId: parsed.data.diagnostics.sessionId,
-          authorizationId: parsed.data.diagnostics.authorizationId,
-          providerId: parsed.data.packId ?? 'daemon-default',
-          attemptId: parsed.data.requestId,
-        });
-      }
-      const session = await transferLifecycle.openDownloadTransferSession({
-        source: {
-          filePath: synthesized.filePath,
-          deleteFileOnClose: true,
-          sizeBytes: synthesized.sizeBytes,
-          name: synthesized.name,
-        },
-      });
-      downloadId = session.downloadId;
-      ttsDownloadFilePathById.set(session.downloadId, synthesized.filePath);
-      const response = parseVoiceInferenceResponse(DaemonVoiceInferenceTtsSynthesizeResponseSchema, {
-        ok: true,
-        requestId: synthesized.requestId,
-        output: synthesized.output,
-        downloadId: session.downloadId,
-        chunkSizeBytes: session.chunkSizeBytes,
-        sizeBytes: synthesized.sizeBytes,
-        name: synthesized.name,
-      });
-      if (!response.ok) {
-        await abortTtsDownloadTransfer(session.downloadId);
-        downloadId = null;
-      } else {
-        scheduleTtsDownloadExpiry(session.downloadId);
-      }
-      return response;
-    } catch (error) {
-      if (downloadId) {
-        await abortTtsDownloadTransfer(downloadId);
-      }
-      if (synthesizedFilePath) {
-        await rm(synthesizedFilePath, { force: true }).catch(() => undefined);
-      }
-      return toVoiceInferenceError(error);
-    }
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsChunkRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsChunkResponseSchema, {
-        success: false,
-        error: 'invalid_parameters',
-        errorCode: 'invalid_parameters',
-      });
-    }
-    const response = await transferLifecycle.readDownloadTransferChunk(parsed.data);
-    if (response.success) {
-      scheduleTtsDownloadExpiry(parsed.data.downloadId);
-    }
-    return parseTransferLifecycleResponse(
-      DaemonVoiceInferenceTtsChunkResponseSchema,
-      response,
-    );
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsFinalizeRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsFinalizeResponseSchema, {
-        success: false,
-        error: 'invalid_parameters',
-        errorCode: 'invalid_parameters',
-      });
-    }
-    try {
-      await transferLifecycle.finalizeDownloadTransferSession(parsed.data);
-      clearTtsDownloadExpiry(parsed.data.downloadId);
-      ttsDownloadFilePathById.delete(parsed.data.downloadId);
-      return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsFinalizeResponseSchema, { success: true });
-    } catch (error) {
-      const shaped = toVoiceInferenceError(error);
-      return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsFinalizeResponseSchema, {
-        success: false,
-        error: shaped.error,
-        errorCode: shaped.errorCode,
-      });
-    }
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsAbortRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsAbortResponseSchema, {
-        success: false,
-        error: 'invalid_parameters',
-        errorCode: 'invalid_parameters',
-      });
-    }
-    await abortTtsDownloadTransfer(parsed.data.downloadId);
-    return parseTransferLifecycleResponse(DaemonVoiceInferenceTtsAbortResponseSchema, { success: true });
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceTtsCancelRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return toVoiceInferenceError(new Error('invalid_parameters'));
-    }
-    try {
-      await params.voiceInferenceWorker.cancelTts(parsed.data.requestId);
-      return parseVoiceInferenceResponse(DaemonVoiceInferenceTtsCancelResponseSchema, { ok: true });
-    } catch (error) {
-      return toVoiceInferenceError(error);
-    }
-  });
 
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT, async (raw: unknown) => {
     const parsed = DaemonVoiceInferenceSttUploadInitRequestSchema.safeParse(raw);
@@ -399,14 +201,12 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
       inputMimeType: string;
     }> | undefined;
     const uploadPath = result?.path ?? finalized.finalized.path;
-    await clearFinalizedUpload(parsed.data.uploadId, { deleteFile: false });
-    finalizedUploadsById.set(parsed.data.uploadId, {
+    finalizedUploads.hold(parsed.data.uploadId, {
       path: uploadPath,
       sizeBytes: result?.sizeBytes ?? finalized.finalized.sizeBytes,
       sha256: result?.sha256 ?? finalized.sha256,
       inputMimeType: result?.inputMimeType ?? 'application/octet-stream',
     });
-    scheduleFinalizedUploadExpiry(parsed.data.uploadId);
     return parseTransferLifecycleResponse(DaemonVoiceInferenceSttUploadFinalizeResponseSchema, {
       success: true,
       uploadId: parsed.data.uploadId,
@@ -426,7 +226,7 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
       });
     }
     await uploadLifecycle.abortUploadTransferSession(parsed.data);
-    await clearFinalizedUpload(parsed.data.uploadId);
+    await finalizedUploads.discard(parsed.data.uploadId);
     return parseTransferLifecycleResponse(DaemonVoiceInferenceSttUploadAbortResponseSchema, { success: true });
   });
 
@@ -435,11 +235,11 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
     if (!parsed.success) {
       return toVoiceInferenceError(new Error('invalid_parameters'));
     }
-    const uploaded = finalizedUploadsById.get(parsed.data.uploadId);
+    const uploaded = finalizedUploads.peek(parsed.data.uploadId);
     if (!uploaded) {
       return toVoiceInferenceError(Object.assign(new Error('voice_inference_upload_missing'), { code: 'invalid_audio_input' }));
     }
-    await clearFinalizedUpload(parsed.data.uploadId, { deleteFile: false });
+    finalizedUploads.take(parsed.data.uploadId);
     try {
       const diagnosticFormat = resolveDiagnosticFormat(uploaded.inputMimeType);
       const transcribed = await params.voiceInferenceWorker.transcribeAudio({
@@ -487,32 +287,12 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
   });
 
   return {
-    downloadStore,
     uploadStore,
     dispose: async () => {
-      if (disposePromise) {
-        return await disposePromise;
-      }
-
-      disposePromise = (async () => {
-        await Promise.all([
-          ...[...finalizedUploadsById.keys()].map(async (uploadId) => {
-            await clearFinalizedUpload(uploadId);
-          }),
-          ...[...ttsDownloadFilePathById.keys()].map(async (downloadId) => {
-            await abortTtsDownloadTransfer(downloadId);
-          }),
-        ]);
-        finalizedUploadsById.clear();
-        finalizedUploadReleaseTimerById.clear();
-        ttsDownloadReleaseTimerById.clear();
-        ttsDownloadFilePathById.clear();
-        await Promise.all([
-          downloadStore.dispose(),
-          uploadStore.dispose(),
-        ]);
+      disposePromise ??= (async () => {
+        await finalizedUploads.discardAll();
+        await uploadStore.dispose();
       })();
-
       return await disposePromise;
     },
   };
