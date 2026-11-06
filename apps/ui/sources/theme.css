@@ -28,6 +28,16 @@ html {
     }
 }
 
+/* Transcript first-paint placeholder pulse (see TranscriptFirstPaintPlaceholder). */
+@keyframes happierTranscriptFirstPaintPulse {
+    from {
+        opacity: 0.48;
+    }
+    to {
+        opacity: 0.86;
+    }
+}
+
 @keyframes happierActivitySpinnerSpin {
     from {
         transform: rotate(0deg);

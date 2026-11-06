@@ -10,6 +10,7 @@ import {
 import {
     deriveTranscriptNavigationRailLayout,
     type TranscriptNavigationRailPlatformOS,
+    resolveTranscriptNavigationRailMarkerWindow,
 } from './deriveTranscriptNavigationRailLayout';
 import { resolveTranscriptNavigationRailMarkerMotion } from './resolveTranscriptNavigationRailMotion';
 import {
@@ -222,10 +223,15 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
         });
     }, [onJumpToEntry]);
 
+    // Read through a render-synced handle so the press handler every marker holds keeps its
+    // identity while entries append or hydrate; otherwise each entries change re-rendered every
+    // mounted marker through its memo boundary.
+    const entriesRef = React.useRef(entries);
+    entriesRef.current = entries;
     const activateEntryAtIndex = React.useCallback((index: number) => {
-        const entry = entries[index];
+        const entry = entriesRef.current[index];
         if (entry) activateEntry(entry);
-    }, [activateEntry, entries]);
+    }, [activateEntry]);
 
     const reducedMotion = props.reducedMotion === true;
 
@@ -515,6 +521,35 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
 
     if (!railPresence.mounted) return null;
 
+    // Mount only the markers the rail viewport can reach, between where the scroller is (an
+    // outstanding move's last frame) and where it is headed. The active and focused markers stay
+    // mounted wherever they are: the roving tabstop references the active descendant by id.
+    const markerWindow = resolveTranscriptNavigationRailMarkerWindow({
+        entryCount: props.entries.length,
+        markerHeightPx: layout.markerHeightPx,
+        markerSpacingPx: layout.markerSpacingPx,
+        scrollTopPxs: [
+            layout.scrollTopPx,
+            scrollCommandRef.current?.positionPx ?? layout.scrollTopPx,
+            scrollCommandRef.current?.targetPx ?? layout.scrollTopPx,
+        ],
+        viewportHeightPx: layout.viewportMaxHeightPx,
+    });
+    const mountedMarkerIndexes: number[] = [];
+    for (let index = markerWindow.startIndex; index <= markerWindow.endIndex; index += 1) {
+        mountedMarkerIndexes.push(index);
+    }
+    for (const pinnedIndex of [activeIndex, focusedIndex, previewIndex]) {
+        if (
+            pinnedIndex === null
+            || pinnedIndex < 0
+            || pinnedIndex >= props.entries.length
+            || (pinnedIndex >= markerWindow.startIndex && pinnedIndex <= markerWindow.endIndex)
+            || mountedMarkerIndexes.includes(pinnedIndex)
+        ) continue;
+        mountedMarkerIndexes.push(pinnedIndex);
+    }
+
     // Roving tabstop: the rail keeps DOM focus while the active descendant
     // moves, so assistive technology follows the selection without the rail
     // stealing focus from the transcript or auto-scrolling itself.
@@ -579,7 +614,9 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                             },
                         ]}
                     >
-                        {props.entries.map((entry, index) => (
+                        {mountedMarkerIndexes.map((index) => {
+                            const entry = props.entries[index]!;
+                            return (
                             <TranscriptNavigationRailMarker
                                 key={entry.id}
                                 accessibilityLabel={resolveTranscriptNavigationEntryAccessibilityLabel(entry)}
@@ -602,7 +639,8 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                                 topPx={index * (layout.markerHeightPx + layout.markerSpacingPx)}
                                 visible={visibleAnchorIds.has(entry.id)}
                             />
-                        ))}
+                            );
+                        })}
                     </View>
                 </ScrollView>
                 {layout.showTopFade ? (

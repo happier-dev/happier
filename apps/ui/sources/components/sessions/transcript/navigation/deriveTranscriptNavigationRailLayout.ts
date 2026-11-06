@@ -115,3 +115,37 @@ export function deriveTranscriptNavigationRailLayout(
     }
     return { ...base, hiddenReason: null, visible: true };
 }
+
+export type TranscriptNavigationRailMarkerWindow = Readonly<{
+    /** First marker index to mount (inclusive). */
+    startIndex: number;
+    /** Last marker index to mount (inclusive); below `startIndex` when nothing is in reach. */
+    endIndex: number;
+}>;
+
+/**
+ * Which markers the rail mounts: those within half a rail viewport of the span the scroller can
+ * show between where it is and where it is headed. Every session switch remounts the rail, and
+ * mounting one marker per turn of loaded history made its cost grow with the transcript instead
+ * of with the rail's viewport (issue #864). The overscan keeps a reader's wheel or chevron page
+ * from exposing unmounted markers before the next scroll frame re-windows them.
+ */
+export function resolveTranscriptNavigationRailMarkerWindow(input: Readonly<{
+    entryCount: number;
+    markerHeightPx: number;
+    markerSpacingPx: number;
+    scrollTopPxs: readonly number[];
+    viewportHeightPx: number;
+}>): TranscriptNavigationRailMarkerWindow {
+    const entryCount = Number.isInteger(input.entryCount) ? Math.max(0, input.entryCount) : 0;
+    const pitchPx = input.markerHeightPx + input.markerSpacingPx;
+    if (entryCount === 0 || !(pitchPx > 0)) return { startIndex: 0, endIndex: entryCount - 1 };
+    const viewportHeightPx = Math.max(0, input.viewportHeightPx);
+    const overscanPx = viewportHeightPx / 2;
+    const positions = input.scrollTopPxs.filter((value) => Number.isFinite(value));
+    const fromPx = Math.min(...(positions.length > 0 ? positions : [0])) - overscanPx;
+    const toPx = Math.max(...(positions.length > 0 ? positions : [0])) + viewportHeightPx + overscanPx;
+    const startIndex = Math.max(0, Math.floor((fromPx - input.markerHeightPx) / pitchPx) + 1);
+    const endIndex = Math.min(entryCount - 1, Math.floor(toPx / pitchPx));
+    return { startIndex, endIndex };
+}

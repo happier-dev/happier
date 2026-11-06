@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Easing, View } from 'react-native';
+import { Animated, Easing, Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
@@ -73,6 +73,26 @@ export type TranscriptFirstPaintPlaceholderProps = Readonly<{
     reducedMotion: boolean;
 }>;
 
+type WebPulseStyle = ViewStyle & {
+    animationDirection?: 'alternate';
+    animationDuration?: string;
+    animationIterationCount?: string;
+    animationName?: string;
+    animationTimingFunction?: string;
+};
+
+// Web pulses through the compositor: react-native-web runs `Animated` on the JS driver, which
+// re-rendered this surface through React on every frame of the very load it covers (issue #864).
+// Keyframes `happierTranscriptFirstPaintPulse` live in `theme.css`, between the same two opacities.
+const webPulseStyle: WebPulseStyle = {
+    animationDirection: 'alternate',
+    animationDuration: `${PLACEHOLDER_PULSE_MS}ms`,
+    animationIterationCount: 'infinite',
+    animationName: 'happierTranscriptFirstPaintPulse',
+    // CSS equivalent of the native `Easing.inOut(Easing.cubic)`.
+    animationTimingFunction: 'cubic-bezier(0.65, 0, 0.35, 1)',
+};
+
 export function TranscriptFirstPaintPlaceholder(
     props: TranscriptFirstPaintPlaceholderProps,
 ): React.ReactElement {
@@ -81,6 +101,7 @@ export function TranscriptFirstPaintPlaceholder(
     const contentMaxWidth = useLayoutMaxWidth();
     const opacity = React.useRef(new Animated.Value(PLACEHOLDER_MIN_OPACITY)).current;
     React.useEffect(() => {
+        if (Platform.OS === 'web') return;
         if (props.reducedMotion) {
             opacity.setValue(PLACEHOLDER_MAX_OPACITY);
             return;
@@ -150,6 +171,13 @@ export function TranscriptFirstPaintPlaceholder(
                 <View
                     testID="transcript-first-paint-placeholder:static"
                     style={styles.staticSurface}
+                >
+                    {rows}
+                </View>
+            ) : Platform.OS === 'web' ? (
+                <View
+                    testID="transcript-first-paint-placeholder:active"
+                    style={[styles.activeSurface, webPulseStyle]}
                 >
                     {rows}
                 </View>
