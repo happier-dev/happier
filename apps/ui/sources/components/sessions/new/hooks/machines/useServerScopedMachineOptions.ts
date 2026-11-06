@@ -37,7 +37,7 @@ type UseServerScopedMachineOptionsParams = Readonly<{
     refreshToken?: string | number;
     /** Hidden retained composers keep their last inventory until presented again. */
     presented?: boolean;
-    inventoryPurpose?: 'full' | 'launch';
+    inventoryPurpose?: 'facts' | 'launch';
 }>;
 
 function normalizeServerIds(ids: ReadonlyArray<string>): string[] {
