@@ -36,9 +36,6 @@ export function setVoiceGlanceOpen(open: boolean): boolean {
     glance(open);
     return true;
 }
-export function hasVoiceTranscriptPresentation(): boolean {
-    return glance !== null || mounted.length > 0;
-}
 export function registerVoiceSetupPresentation(control: NonNullable<typeof setup>): () => void {
     setup = control;
     return () => { if (setup === control) setup = null; };

@@ -256,7 +256,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 // address must qualify a legacy tab before it is projected again.
                 if (workspaceDestinationNavigationIdentity(target, input.getCatalog()) !== null) {
                     if (!sameDestinationRef(retained, target)) input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target });
-                } else if (presentationPreview || (target.kind === 'session' && parseSessionPaneUrlState(target.params)?.details)) {
+                } else if (presentationPreview || (target.kind === 'session'
+                    && (target.params.mobileSurface !== undefined || parseSessionPaneUrlState(target.params)?.details))) {
                     const adopted = adoptSessionTarget(retained, target);
                     if (!sameDestinationRef(retained, adopted)) input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target: adopted });
                 } else if (target.kind === 'project') {

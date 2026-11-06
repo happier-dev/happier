@@ -209,7 +209,7 @@ const VOICE_CONVERSATION_ACTION_SUMMARIES = {
   'ui.voice_global.glance.open': 'Open the mounted Voice glance controls.',
   'ui.voice_global.glance.close': 'Close the mounted Voice glance controls.',
   'ui.voice_global.transcript.set_visible': 'Show or hide the current Voice transcript.',
-  'ui.voice_global.companion.reveal': 'Reveal the Voice section in the mounted Companion.',
+  'ui.voice_global.companion.reveal': 'Reveal the Voice section, opening the Session Companion when needed.',
   'ui.voice_global.position.set': 'Place the mounted Island or Orb within its measured bounds using normalized coordinates.',
   'ui.voice_global.setup.open': 'Expand the mounted Voice setup steps without starting audio.',
   'ui.voice_global.setup.close': 'Close the mounted Voice setup steps.',

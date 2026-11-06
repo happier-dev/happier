@@ -5073,6 +5073,16 @@ dismissal and reads are direct by default. The current attempt read
 reports captured destinations and actual availability, rather than promising
 that an unsupported host can start Voice. Brief delivery remains demand-mounted
 on the ready Home/Inbox surface; missing owners return typed unavailability.
+In 0.3 development, `ui.voice_global.companion.reveal` reveals the mounted Voice
+section or opens the focused Session's Companion through its ordinary route.
+Without a focused Session it uses the captured Voice target or conversation.
+`ui.voice_global.transcript.set_visible` expands the mounted transcript, opening
+Companion when needed; after End, showing it opens the same captured conversation
+destination as **Open the conversation**. Hiding the transcript settles even
+without a mounted panel. These presentation Actions never start audio. Missing
+at-rest Session destinations report `voice_presentation_unavailable`; unavailable
+captured post-End navigation reports `voice_conversation_navigation_unavailable`.
+Disabled live transcript presentation reports `voice_transcript_unavailable`.
 In 0.3 development, **Voice agent can approve requests** (`voice.canApproveRequests`)
 defaults on for Local Voice and realtime modes exposing host decision tools. The
 Voice agent may approve or deny any pending request on the person's behalf through

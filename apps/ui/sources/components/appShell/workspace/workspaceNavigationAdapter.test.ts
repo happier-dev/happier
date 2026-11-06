@@ -362,6 +362,16 @@ describe('workspace navigation adapter', () => {
     }
   });
 
+  it('applies an explicit Companion surface when opening a retained Session tab', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    expect(h.adapter.openHref('/session/A1?serverId=home-a&mobileSurface=companion', { mode: 'newTab', reuseExisting: true })).toBe(true);
+    expect(h.active().id).toBe('A');
+    expect(Object.keys(h.state().tabs)).toEqual(['A']);
+    expect(h.active().target.params.mobileSurface).toBe('companion');
+    expect(h.adapter.openHref('/session/A1?serverId=home-a&mobileSurface=chat', { reuseExisting: true })).toBe(true);
+    expect(h.active().target.params.mobileSurface).toBe('chat');
+  });
+
   it('keeps a phone Session in its retained tab when the cockpit URL selects a plugin surface', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });
     h.adapter.initialize('/session/A1?serverId=home-a&mobileSurface=chat');

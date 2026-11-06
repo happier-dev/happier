@@ -29,6 +29,7 @@ vi.mock('react-native-reanimated', async () =>
     (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock({ settleTimingCallbacks: true }));
 
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionRuntimeStateForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
@@ -294,6 +295,55 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await lifecycle.dispose(); }
     });
 
+    it.each(['idle', 'ended'] as const)('reveals Companion and transcript through public Actions with no mounted Voice panel (%s)', async phase => {
+        const { lifecycle, serverId, expectedAttempt, providerId } = await createHarness(phase === 'ended');
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const { getVoiceActivityFeedExpansionSnapshot } = await import('@/components/voice/surface/voiceActivityFeedExpansionStore');
+        const { resolveSessionRoutePathForSurface } = await import('@/components/workspaceCockpit/session/sessionCockpitState');
+        const previousFocus = getFocusedSessionAddress();
+        setFocusedSessionId('session-original', serverId);
+        storage.setState(state => ({ settings: { ...state.settings, voice: { ...state.settings.voice,
+            ui: { ...state.settings.voice.ui, activityFeedEnabled: true },
+        } } }));
+        const destinations: string[] = [];
+        const executor = createDefaultActionExecutor({ openRoute: href => { destinations.push(href); } });
+        const context = { surface: 'agent' as const, serverId, expectedAccountId: 'voice-action-account' };
+        try {
+            if (phase === 'ended') setVoiceSessionSnapshot(lifecycle.getSnapshot(), {
+                adapterId: providerId, controlSessionId: 'session-original', conversationSessionId: 'saved-conversation',
+                conversationSessionAddress: { serverId, sessionId: 'saved-conversation' },
+                targetSessionAddress: { serverId, sessionId: 'session-original' }, transcriptMode: 'synthetic', updatedAt: 1,
+            }, { accountScope: { serverId, accountId: 'voice-action-account' }, conversationScope: { kind: 'voice_home' } });
+            if (phase === 'ended') expect(await executor.execute('ui.voice_global.end', { expectedAttempt }, context))
+                .toMatchObject({ ok: true, result: { status: 'completed' } });
+            let transcriptDestination: string = resolveSessionRoutePathForSurface('session-original', 'companion', { serverId });
+            if (phase === 'ended') {
+                expect(await executor.execute('ui.voice_global.open_conversation', { expectedAttempt }, context))
+                    .toMatchObject({ ok: true, result: { status: 'completed' } });
+                transcriptDestination = destinations.at(-1)!;
+            }
+            const capture = vi.mocked(navigator.mediaDevices.getUserMedia);
+            capture.mockClear();
+            for (const [actionId, input] of [
+                ['ui.voice_global.companion.reveal', {}],
+                ['ui.voice_global.transcript.set_visible', { visible: true }],
+            ] as const) {
+                expect(await executor.execute(actionId, input, context))
+                    .toMatchObject({ ok: true, result: { status: 'completed' } });
+                expect(destinations.at(-1)).toBe(actionId === 'ui.voice_global.transcript.set_visible' ? transcriptDestination
+                    : resolveSessionRoutePathForSurface('session-original', 'companion', { serverId }));
+            }
+            expect(getVoiceActivityFeedExpansionSnapshot().expanded).toBe(true);
+            expect(await executor.execute('ui.voice_global.transcript.set_visible', { visible: false }, context))
+                .toMatchObject({ ok: true, result: { status: 'completed' } });
+            expect(getVoiceActivityFeedExpansionSnapshot().expanded).toBe(false);
+            expect(capture).not.toHaveBeenCalled();
+            expect(lifecycle.getSnapshot().status).toBe('disconnected');
+        } finally {
+            setFocusedSessionId(previousFocus?.sessionId ?? null, previousFocus?.serverId);
+            await lifecycle.dispose();
+        }
+    });
     it('cancels first Start during activation without opening the provider after it settles', async () => {
         const fixture = await createHarness(false, true, true);
         const starting = fixture.lifecycle.toggle({ serverId: fixture.serverId, sessionId: 'session-original' });
@@ -706,7 +756,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: quiescentMode }));
         } finally { setVoiceSessionLifecycleController(lifecycle); await lifecycle.dispose(); }
     });
-    it.each(['ended', 'history', 'recovery'] as const)('opens $0 through the real default Action and the mounted workspace', async scenario => {
+    it.each(['ended', 'history', 'recovery', 'companion'] as const)('opens $0 through the real default Action and the mounted workspace', async scenario => {
         const { lifecycle, serverId, providerId, rejectCredentials } = await createHarness();
         const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
         const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
@@ -728,6 +778,11 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         const navigation = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
             dispatch: action => { workspace = reduceWorkspaceState(workspace, action); }, transport: { commit() {} },
             createId: () => 'voice-opened-tab', onChange() {} });
+        const previousFocus = getFocusedSessionAddress();
+        if (scenario === 'companion') {
+            navigation.openHref(`/session/session-original?serverId=${serverId}`, { mode: 'newTab', reuseExisting: true });
+            setFocusedSessionId('session-original', serverId);
+        }
         const workspaceAction = createWorkspaceActionAdapter({ getState: () => workspace, navigation,
             readCanvas: () => null, createId: () => 'voice-opened-tab' });
         const unregister = registerMountedWorkspaceAction(async ({ actionId, input }) => workspaceAction(actionId, input));
@@ -755,19 +810,26 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             } else await lifecycle.stop('session-original');
             const expectedAttempt = getVoiceSessionPresentedAttemptId()!;
             useVoiceTargetStore.getState().setLastFocusedSessionAddress({ serverId: 'other-home', sessionId: 'visible-session' });
-            const actionId = scenario === 'recovery' ? 'ui.voice_global.recover' as const : 'ui.voice_global.open_conversation' as const;
+            const actionId = scenario === 'recovery' ? 'ui.voice_global.recover' as const
+                : scenario === 'companion' ? 'ui.voice_global.companion.reveal' as const : 'ui.voice_global.open_conversation' as const;
             const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: accountScope.accountId,
                 presentUserConfirmation: { actionId } };
-            const result = await createDefaultActionExecutor().execute(actionId, { expectedAttempt }, context);
+            const result = await createDefaultActionExecutor().execute(actionId, scenario === 'companion' ? {} : { expectedAttempt }, context);
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'completed' } });
             await screen.update(await createRealAppRouteElement(hosted, credentials));
             const destination = scenario === 'ended' ? `/session/saved-conversation?serverId=${serverId}`
-                : scenario === 'history' ? '/settings/voice/history' : '/settings/voice/conversations?focus=provider';
+                : scenario === 'history' ? '/settings/voice/history'
+                : scenario === 'companion' ? hrefForDestinationRef(catalog, { kind: 'session', params: { serverId, id: 'session-original', mobileSurface: 'companion' } }) : '/settings/voice/conversations?focus=provider';
             expect(screen.findByTestId('voice-action-hosted-destination')?.props.children).toBe(destination);
-            const stale = await createDefaultActionExecutor().execute(actionId, { expectedAttempt: 'previous-attempt' }, context);
-            expect(stale).toMatchObject({ ok: true, result: { status: 'unavailable', code: 'stale_voice_attempt' } });
+            if (scenario !== 'companion') {
+                const stale = await createDefaultActionExecutor().execute(actionId, { expectedAttempt: 'previous-attempt' }, context);
+                expect(stale).toMatchObject({ ok: true, result: { status: 'unavailable', code: 'stale_voice_attempt' } });
+            }
             expect(hrefForDestinationRef(catalog, workspace.tabs[workspace.groups[workspace.focusedGroupId].activeTabId].target)).toBe(destination);
-        } finally { await screen.unmount(); unregister(); await lifecycle.dispose(); }
+        } finally {
+            if (scenario === 'companion') setFocusedSessionId(previousFocus?.sessionId ?? null, previousFocus?.serverId);
+            await screen.unmount(); unregister(); await lifecycle.dispose();
+        }
     });
     it('admits safe mute but refuses microphone reopening when the captured Home disables Voice', async () => {
         const { lifecycle, expectedAttempt, serverId } = await createHarness(true, false);
@@ -785,7 +847,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await lifecycle.dispose(); }
     });
     it.each([
-        { lifetime: 'runtime_attempt' as const, target: null, destination: '/settings/voice-history' },
+        { lifetime: 'runtime_attempt' as const, target: null, destination: SETTINGS_ROUTES.voiceHistory },
         { lifetime: 'runtime_attempt' as const, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/coding-target?serverId=ended-home' },
         { lifetime: undefined, target: null, destination: '/session/saved-conversation?serverId=ended-home' },
     ])('opens the captured ended conversation destination $destination after focus changes', async ({ lifetime, target, destination }) => {
@@ -809,6 +871,10 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
                 navigate: href => { destinations.push(href); },
             })).toMatchObject({ status: 'completed' });
             expect(destinations).toEqual([destination]);
+            expect(await executeVoiceConversationAction('ui.voice_global.transcript.set_visible', { visible: true }, {
+                navigate: href => { destinations.push(href); },
+            })).toMatchObject({ status: 'completed' });
+            expect(destinations).toEqual([destination, destination]);
             expect(await executeVoiceConversationAction('ui.voice_global.open_conversation', { expectedAttempt: 'replaced-attempt' }, {
                 navigate: href => { destinations.push(href); },
             })).toMatchObject({ status: 'unavailable', code: 'stale_voice_attempt' });
@@ -816,7 +882,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             expect(await executeVoiceConversationAction('ui.voice_global.open_conversation', { expectedAttempt }, {
                 navigate: href => { destinations.push(href); },
             })).toMatchObject({ status: 'unavailable', code: 'voice_conversation_navigation_unavailable' });
-            expect(destinations).toHaveLength(1);
+            expect(destinations).toHaveLength(2);
         } finally { await lifecycle.dispose(); storage.setState({ profileScope: previousScope }); }
     });
     it.each(['action', 'native'] as const)('starts Talk from a Bot SessionAction at its captured Home and surfaces a running attempt refusal through %s', async surface => {

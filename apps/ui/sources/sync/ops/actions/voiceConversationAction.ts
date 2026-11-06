@@ -39,8 +39,9 @@ import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceCo
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { resolveVoiceConversationNavigationAddress } from '@/voice/binding/resolveVoiceConversationNavigationAddress';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { hasVoiceTranscriptPresentation, revealVoiceCompanionSection, setVoiceGlanceOpen, setVoiceSetupOpen, setVoicePresencePosition } from '@/components/voice/presence/voiceCompanionSectionReveal';
+import { revealVoiceCompanionSection, setVoiceGlanceOpen, setVoiceSetupOpen, setVoicePresencePosition } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { setVoiceActivityFeedExpanded } from '@/components/voice/surface/voiceActivityFeedExpansionStore';
 
 import { createUiSessionSpawnUserAttemptId } from '@/sync/domains/session/spawn/spawnSessionNonce';
@@ -204,20 +205,31 @@ export async function executeVoiceConversationAction(
         catch { return unavailable('voice_system_settings_unavailable'); }
         return { status: 'completed', voice: current.voice };
     }
+    const openCompanion = async () => {
+        const address = getFocusedSessionAddress() ?? current.voice.targetSessionAddress ?? current.voice.conversationSessionAddress;
+        if (!address) return false;
+        await deps.navigate(resolveSessionRoutePathForSurface(address.sessionId, 'companion', { serverId: address.serverId }));
+        return true;
+    };
     let presented: boolean | null = null;
     switch (actionId) {
         case 'ui.voice_global.glance.open': presented = setVoiceGlanceOpen(true); break;
         case 'ui.voice_global.glance.close': presented = setVoiceGlanceOpen(false); break;
-        case 'ui.voice_global.companion.reveal': presented = revealVoiceCompanionSection(); break;
+        case 'ui.voice_global.companion.reveal': presented = revealVoiceCompanionSection() || await openCompanion(); break;
         case 'ui.voice_global.setup.open': presented = setVoiceSetupOpen(true); break;
         case 'ui.voice_global.setup.close': presented = setVoiceSetupOpen(false); break;
         case 'ui.voice_global.position.set':
             presented = 'x' in value && 'y' in value && setVoicePresencePosition({ x: value.x, y: value.y }); break;
         case 'ui.voice_global.transcript.set_visible':
             if (!('visible' in value)) return unavailable('invalid_voice_action_input');
-            if (!hasVoiceTranscriptPresentation()) return unavailable('voice_presentation_unavailable');
-            if (value.visible && !voiceSettingsParse(storage.getState().settings.voice).ui.activityFeedEnabled) return unavailable('voice_transcript_unavailable');
-            presented = !value.visible || revealVoiceCompanionSection() || setVoiceGlanceOpen(true);
+            if (value.visible && current.voice.canDismissEnded) {
+                if (!current.navigation) return unavailable('voice_conversation_navigation_unavailable');
+                await deps.navigate(current.navigation.href);
+                presented = true;
+            } else {
+                if (value.visible && !voiceSettingsParse(storage.getState().settings.voice).ui.activityFeedEnabled) return unavailable('voice_transcript_unavailable');
+                presented = !value.visible || revealVoiceCompanionSection() || setVoiceGlanceOpen(true) || await openCompanion();
+            }
             if (presented) setVoiceActivityFeedExpanded(value.visible);
             break;
     }
