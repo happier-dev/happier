@@ -7669,6 +7669,7 @@ export const ru: TranslationStructure = {
     sectionsMenuTitle: "Разделы",
     newSectionEllipsis: "Новый раздел…",
     moveToProjectNamed: ({ project }: { project: string }) => `Вернуть в ${project}`,
+    sectionTitle: "Раздел",
     newSection: "Новый раздел",
     sectionNamePlaceholder: "Название раздела",
     sectionArchivePartialTitle: "Не все сессии архивированы",
@@ -9663,6 +9664,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       files: "Файлы",
       stop: "Остановить",
     },
+    runOn: "Запустить на…",
     noMachinesAvailable: "Нет машин",
 
     chipRail: {

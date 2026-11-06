@@ -8861,6 +8861,7 @@ export const zhHans: TranslationStructure = {
     sectionsMenuTitle: "分区",
     newSectionEllipsis: "新建分区…",
     moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
+    sectionTitle: "分区",
     newSection: "新建分区",
     sectionNamePlaceholder: "分区名称",
     sectionArchivePartialTitle: "部分会话未归档",
@@ -9464,6 +9465,7 @@ export const zhHans: TranslationStructure = {
     profile: {
       sectionTitle: '配置文件',
     },
+    runOn: "运行于…",
     noMachinesAvailable: "无设备",
 
     chipRail: {

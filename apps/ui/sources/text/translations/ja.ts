@@ -9495,6 +9495,7 @@ localTailscale: {
     sectionsMenuTitle: "セクション",
     newSectionEllipsis: "新しいセクション…",
     moveToProjectNamed: ({ project }: { project: string }) => `${project} に戻す`,
+    sectionTitle: "セクション",
     newSection: "新しいセクション",
     sectionNamePlaceholder: "セクション名",
     sectionArchivePartialTitle: "一部のセッションをアーカイブできませんでした",
@@ -10112,6 +10113,7 @@ localTailscale: {
       files: "ファイル",
       stop: "停止",
     },
+    runOn: "実行先…",
     noMachinesAvailable: "マシンなし",
 
     chipRail: {

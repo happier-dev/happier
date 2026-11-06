@@ -22,6 +22,8 @@ const ComposerChipPressable = Pressable as React.ComponentType<
 export type HappierComposerChipProps = Readonly<{
   children?: React.ReactNode;
   onPress: (event: HappierGestureResponderEvent) => void;
+  /** Web-only host attributes: the native tooltip and the `data-*` hooks a browser test reads. */
+  webAttributes?: Readonly<{ title?: string; dataSet?: Readonly<Record<string, string>> }>;
   disabled?: boolean;
   selected?: boolean;
   expressesSelection?: boolean;
@@ -70,6 +72,7 @@ export const HappierComposerChip = React.forwardRef<unknown, HappierComposerChip
         hitSlop={hitArea.hitSlop}
         onLayout={hitArea.onLayout}
         onPress={props.onPress}
+        {...props.webAttributes}
         style={({ pressed }) => props.style?.(pressed)}
       >
         {hitArea.frame}

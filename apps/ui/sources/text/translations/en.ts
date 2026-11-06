@@ -10853,6 +10853,7 @@ const enSessionsList = {
   sectionsMenuTitle: "Sections",
   newSectionEllipsis: "New section…",
   moveToProjectNamed: ({ project }: { project: string }) => `Back to ${project}`,
+  sectionTitle: "Section",
   newSection: "New section",
   sectionNamePlaceholder: "Section name",
   sectionArchivePartialTitle: "Some sessions weren’t archived",
@@ -11549,6 +11550,7 @@ const enAgentInput = {
   profile: {
     sectionTitle: 'Profile',
   },
+  runOn: "Run on…",
   noMachinesAvailable: 'No machines',
 };
 
