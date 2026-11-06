@@ -11,10 +11,7 @@ import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
 import type { LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { FindBar } from '@/components/ui/find/FindBar';
-import { Icon } from '@/components/ui/icons/Icon';
+import { NativeLogToolbar } from './NativeLogToolbar';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -206,93 +203,21 @@ export function MachineServiceLogs(
 
   const truncated = projection?.kind === 'index' && projection.truncated;
   const readAt = first.kind === 'read' ? first.readAt : null;
-  const findStatus = viewer.findSnapshot.status;
-  const findLabel =
-    viewer.findSnapshot.query && findStatus.kind === 'results'
-      ? `${viewer.findSnapshot.query} · ${findStatus.total}`
-      : t('machineServices.logs.findInLog');
   return (
     <View ref={root} style={styles.logs} testID="machine-service-logs">
-      <View style={styles.toolbar}>
-        {/* Find opens in the toolbar, in the place of its button. */}
-        {findOpen ? (
-          <View style={styles.find}>
-            <FindBar
-              query={viewer.find.query}
-              options={viewer.find.options}
-              status={viewer.find.status}
-              capabilities={viewer.find.capabilities}
-              surfaceLabel={t('machineServices.logs.findInLog')}
-              presentation="inline"
-              autoFocus
-              onInputFocus={() => {
-                inputFocused.current = true;
-              }}
-              onInputBlur={() => {
-                inputFocused.current = false;
-              }}
-              onQueryChange={viewer.find.setQuery}
-              onOptionsChange={viewer.find.setOptions}
-              onStep={viewer.find.step}
-              onStop={viewer.find.stop}
-              onClose={viewer.find.close}
-              testID="machine-service-logs-findbar"
-            />
-          </View>
-        ) : (
-          <ToolbarButton
-            testID="machine-service-logs-find"
-            label={findLabel}
-            icon={
-              <Icon
-                name="magnifying-glass"
-                size={14}
-                color={theme.colors.text.secondary}
-              />
-            }
-            disabled={!viewer.available}
-            onPress={() => viewer.find.open()}
-          />
-        )}
-        {findOpen ? null : <View style={styles.spacer} />}
-        <ToolbarButton
-          testID="machine-service-logs-follow"
-          label={
-            logs.follow
-              ? t('machineServices.logs.following')
-              : t('machineServices.logs.follow')
-          }
-          accessibilityLabel={
-            logs.follow
-              ? t('machineServices.logs.stopFollowing')
-              : t('machineServices.logs.follow')
-          }
-          active={logs.follow}
-          onPress={() => logs.setFollow((value) => !value)}
-        />
-        <IconButton
-          testID="machine-service-logs-copy"
-          variant="plain"
-          size={30}
-          iconSize={16}
-          iconName="copy"
-          accessibilityLabel={t('machineServices.logs.copyLog')}
-          onPress={() => {
-            void logs.copyLoaded();
-          }}
-        />
-        <IconButton
-          testID="machine-service-logs-save"
-          variant="plain"
-          size={30}
-          iconSize={16}
-          iconName="download"
-          accessibilityLabel={t('machineServices.logs.saveLog')}
-          onPress={() => {
-            void logs.exportLoaded();
-          }}
-        />
-      </View>
+      <NativeLogToolbar
+        findOpen={findOpen}
+        viewer={viewer}
+        partTestID={(part) => `machine-service-logs-${part}`}
+        inputFocused={inputFocused}
+        follow={{ on: logs.follow, toggle: () => logs.setFollow((value) => !value) }}
+        onCopy={() => {
+          void logs.copyLoaded();
+        }}
+        onSave={() => {
+          void logs.exportLoaded();
+        }}
+      />
       {projection?.kind === 'index' && projection.secretMasking ? (
         <Text variant="meta" testID="machine-service-logs-masking" style={{ color: theme.colors.state.warning.foreground }}>
           {t('machineServices.logs.maskingIncomplete')}
@@ -444,21 +369,6 @@ function UnavailableLogs(
 const styles = StyleSheet.create((theme) => ({
   logs: {
     gap: theme.space.s8,
-  },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s4,
-  },
-  spacer: {
-    flex: 1,
-  },
-  find: {
-    // The open field takes the toolbar's free span; the shared bar measures that span, sits at its end beside
-    // Follow, and draws its compact capsule on a phone instead of clipping.
-    flexGrow: 1,
-    flexBasis: 0,
-    minWidth: 0,
   },
   block: {
     paddingVertical: theme.space.s8,

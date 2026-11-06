@@ -134,3 +134,20 @@ export async function serveSavedSecretEditorHomes(params: Readonly<{
         },
     };
 }
+
+/**
+ * Seeds the Account's Saved Secret catalog through its one snapshot owner, as a finished catalog read would, so a
+ * screen that names secrets by reference can be tested without serving the catalog route.
+ */
+export async function seedSavedSecretCatalogForTest(
+    scope: Readonly<{ serverId: string; accountId: string }>,
+    secrets: ReadonlyArray<Readonly<{ ref: string; name: string; revision?: number }>>,
+): Promise<void> {
+    const { applySavedSecretCatalogPage } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+    applySavedSecretCatalogPage({ scope, observedAt: 1, entries: secrets.map((secret) => ({
+        ref: secret.ref, source: 'shared_resource' as const, relationship: 'owner' as const, name: secret.name,
+        kind: 'apiKey' as const, encryptionMode: null, owner: null, accessSources: [], audience: null, ownerAccountId: null,
+        revision: secret.revision ?? 1, materialStatus: 'ready' as const,
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+    })) });
+}
