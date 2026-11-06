@@ -28,6 +28,7 @@ import { buildVoiceConversationsPipeline, buildVoiceDictationPipeline } from '@/
 import { useVoiceSettingsReadinessInputs } from '@/voice/settings/useVoiceSettingsReadinessInputs';
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
 import { useVoiceSetupBlock } from '@/voice/settings/setup/VoiceSetupItem';
+import { useSetupDevice } from '@/components/hub/setup/useSetupDevice';
 import {
   resolveLegacyVoiceSettingsIntent,
   VOICE_SETTINGS_INTENTS,
@@ -66,7 +67,8 @@ export function VoiceSettingsIntentIndexScreen() {
   const [voice, setVoice] = useVoiceSettingsMutable();
   const executionMachine = useVoiceExecutionMachinePresentation();
   const presence = useVoicePresenceContainer();
-  const voiceSetup = useVoiceSetupBlock({ layout: 'row', span: 'row' });
+  // Lab SA: on a wide page the setup row reads in one line, its button at the end; a phone stacks it.
+  const voiceSetup = useVoiceSetupBlock({ layout: useSetupDevice().tileLayout === 'row' ? 'row' : 'wide', span: 'row' });
   const inputs = useVoiceSettingsReadinessInputs(voice, { purpose: 'conversation', probeMachine: false });
   const dictationInputs = useVoiceSettingsReadinessInputs(voice, { purpose: 'dictation', probeMachine: false });
   const conversations = useVoiceConversationsReadinessModel({

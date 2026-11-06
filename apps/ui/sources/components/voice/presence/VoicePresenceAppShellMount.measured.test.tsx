@@ -235,7 +235,7 @@ describe('phone Island shell clearance', () => {
             expect(scrollY).toBe(0);
             expect(scrollTo).toHaveBeenCalledWith({ y: 0, animated: false });
             expect(screen.findByTestId('voice-top-bar-label')?.props['aria-expanded']).toBe(false);
-            expect(screen.findByTestId('companion-scroll-voice-glance-mute')).not.toBeNull();
+            expect(screen.findByTestId('companion-scroll-voice-glance-transport-mute')).not.toBeNull();
         } finally { await screen.unmount(); }
     });
 

@@ -1095,7 +1095,7 @@ export function useVoiceConversationsReadinessModel(props: {
         status: shown.selected ? selectedServiceStatus : ready
           ? { tone: 'ready', text: shown.detail ?? t('settingsVoice.pages.conversations.serviceReady') }
           : {
-              tone: resolveVoiceReadinessTone(shown.readiness) ?? 'unknown',
+              tone: resolveVoiceReadinessTone(shown.readiness, { chosen: false }) ?? 'unknown',
               text: shown.short ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
               detail: shown.need ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
             },
@@ -1137,17 +1137,30 @@ export function useVoiceConversationsReadinessModel(props: {
 }
 
 /**
- * Whether the Voice agent may answer a pending request for the person (A-VI04-2). It applies to every
- * Voice service, so it is its own section at the end of the page rather than part of one service's
- * pipeline sections.
+ * What Voice does while you talk, for every Voice service: the waiting sound (once a service is on)
+ * and whether the Voice agent may answer a pending request for the person (A-VI04-2). Both follow the
+ * conversation rather than one service's pipeline, so they share one titled section at the end of the page.
  */
-export function VoiceAgentApprovalsSection(props: Readonly<{ voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }>) {
+export function VoiceDuringConversationSection(props: Readonly<{ voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }>) {
   const { voice } = props;
   return (
     <ItemGroup
-      title={t('settingsVoice.pages.conversations.approvalsTitle')}
-      description={t('settingsVoice.pages.conversations.approvalsDescription')}
+      title={t('settingsVoice.pages.conversations.duringConversationTitle')}
+      description={t('settingsVoice.pages.conversations.duringConversationDescription')}
     >
+      {voice.providerId === null ? null : (
+        <SettingRow
+          setting={VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue}
+          rightElement={(
+            <Switch
+              testID="settings.voice.audibleWaitingCue"
+              accessibilityLabel={t(VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue.titleKey)}
+              value={voice.audibleWaitingCue === true}
+              onValueChange={(audibleWaitingCue) => props.setVoice({ ...voice, audibleWaitingCue })}
+            />
+          )}
+        />
+      )}
       <SettingRow
         setting={VOICE_CONVERSATIONS_SETTINGS.settings.canApproveRequests}
         rightElement={(
@@ -1272,22 +1285,6 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
         />
       </ItemGroup>
       </SettingAnchor>
-      {/* Any service: the cue follows the conversation's own phases, so it sits with the service choice. */}
-      {isOff ? null : (
-        <ItemGroup>
-          <SettingRow
-            setting={VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue}
-            rightElement={(
-              <Switch
-                testID="settings.voice.audibleWaitingCue"
-                accessibilityLabel={t(VOICE_CONVERSATIONS_SETTINGS.settings.audibleWaitingCue.titleKey)}
-                value={voice.audibleWaitingCue === true}
-                onValueChange={(audibleWaitingCue) => props.setVoice({ ...voice, audibleWaitingCue })}
-              />
-            )}
-          />
-        </ItemGroup>
-      )}
       {serviceTiles.filter((tile) => !tile.selected).map((tile) => (
         searchPrerequisite({ settings: getVoiceContributedSettingRefs(declarations, tile.id), reason: t('settingsVoice.pages.search.select', { choice: tile.title, control: t('settingsVoice.providerSectionTitle') }), group: true })
       ))}

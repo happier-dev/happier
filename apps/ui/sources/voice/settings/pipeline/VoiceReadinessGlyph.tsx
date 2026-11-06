@@ -7,15 +7,17 @@ import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { VoiceStatusCell } from '@/components/voice/presence/VoiceStatusCell';
 
 /**
- * How a Voice pipeline (or one of its steps) stands. `ready` is Light, `waiting` is Shadow (waiting
- * on something outside: a computer offline, a server feature off), `working` is the 2×4 dot cell
+ * How a Voice pipeline (or one of its steps) stands. `ready` is Light, `working` is the 2×4 dot cell
  * (a real install or check), `needs_you` is the settings attention dot and `blocked` its danger tone.
+ * `waiting` (on something outside: a computer offline, a server feature off) and `needs_setup` (an
+ * option the person has not chosen) are the same dot in quiet ink: nothing there needs them now.
  * `unknown` (not checked yet) draws nothing: it is neither ready nor a problem.
  *
  * The planet is the presence mark's own art held still (no atmosphere, no clock); the cell is the
  * presence status cell, which steps only while its fact is true and holds still under reduced motion.
+ * At glyph size the Shadow planet read as a stray crescent, so a quiet fact is a dot like its peers.
  */
-export type VoiceReadinessTone = 'ready' | 'needs_you' | 'waiting' | 'working' | 'blocked' | 'unknown';
+export type VoiceReadinessTone = 'ready' | 'needs_you' | 'needs_setup' | 'waiting' | 'working' | 'blocked' | 'unknown';
 
 const GLYPH_PX = 14;
 
@@ -27,7 +29,8 @@ export const VoiceReadinessGlyph = React.memo(function VoiceReadinessGlyph(props
         case 'ready':
             return <View style={styles.box}><VoiceMarkArt pose="ready" size={GLYPH_PX} still /></View>;
         case 'waiting':
-            return <View style={styles.box}><VoiceMarkArt pose="shadow" size={GLYPH_PX} still /></View>;
+        case 'needs_setup':
+            return <View style={styles.dotBox}><StatusDot color={theme.colors.text.tertiary} size={6} /></View>;
         case 'working':
             return <View style={styles.box}><VoiceStatusCell kind="working" size={GLYPH_PX} /></View>;
         case 'blocked':

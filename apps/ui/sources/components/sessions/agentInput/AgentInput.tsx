@@ -1111,15 +1111,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
      * it stood taller was charged twice, above and below, as a dead band under
      * the input.
      *
-     * Single row — the accessory sits *before* the submit, reading left-to-right
-     * as "mode, then send". When the chips wrap to a second row the horizontal
-     * budget is already spent, so the cluster stacks instead: submit on top,
-     * accessory beneath it, against the taller column.
-     *
-     * `column-reverse` is what produces that stack from the same JSX order: the
-     * first child lands at the bottom, so the accessory ends up under the submit
-     * without reordering the tree. Reading order stays "accessory, then submit"
-     * in both layouts, which is also the order a screen reader announces.
+     * One row — the accessory sits *before* the submit, reading left-to-right
+     * as "mode, then send" (VE-02), also when the chips wrap to a second rail:
+     * the container aligns the cluster to the column's bottom edge, so it rides
+     * the last rail's line instead of stacking Voice under Send.
      */
     trailingAccessoryInline: {
         flexDirection: 'row',
@@ -1136,19 +1131,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         maxWidth: '85%',
         alignItems: 'center',
         gap: theme.space.s8,
-    },
-    trailingAccessoryStack: {
-        flexDirection: 'column-reverse',
-        flexShrink: 0,
-        alignItems: 'center',
-        // The visual rhythm remains 32pt. The Voice accessory's outer target can
-        // be larger, so keep the column centered instead of assuming equal
-        // control frames.
-        gap: Platform.OS === 'web' ? WEB_ACTION_BAR_ROW_GAP_Y : NATIVE_ACTION_BAR_SECTION_GAP_Y,
-    },
-    trailingAccessoryStackMobile: {
-        // Mirrors `actionButtonsColumnMobile`, which tightens that same rhythm.
-        ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_MOBILE_Y } : {}),
     },
     actionButtonsRowWithBelow: {
         // Match the vertical rhythm of wrapped chip rows on native.
@@ -4204,12 +4186,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 ]}</View>
                                 <View
                                     style={[
-                                        showSecondaryControlsRow
-                                            ? styles.trailingAccessoryStack
-                                            : styles.trailingAccessoryInline,
-                                        showSecondaryControlsRow && isMobileLayoutWidth(screenWidth)
-                                            ? styles.trailingAccessoryStackMobile
-                                            : null,
+                                        styles.trailingAccessoryInline,
                                     ]}
                                 >
                                     {trailingAccessory}
@@ -4383,12 +4360,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     ]}</View>
                                     <View
                                         style={[
-                                            showSecondaryControlsRow
-                                                ? styles.trailingAccessoryStack
-                                                : styles.trailingAccessoryInline,
-                                            showSecondaryControlsRow && isMobileLayoutWidth(screenWidth)
-                                                ? styles.trailingAccessoryStackMobile
-                                                : null,
+                                            styles.trailingAccessoryInline,
                                         ]}
                                     >
                                         {trailingAccessory}

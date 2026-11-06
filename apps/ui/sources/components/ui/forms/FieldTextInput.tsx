@@ -62,6 +62,8 @@ export type FieldTextInputProps = Readonly<{
     style?: StyleProp<ViewStyle>;
     /** Inline field actions (paste, reveal, clear), kept inside the shared field box. */
     trailing?: React.ReactNode;
+    /** Where the typed text sits in the field (a count against its unit sits right). */
+    textAlign?: 'left' | 'center' | 'right';
     /**
      * `document`: long prose edited in place (a role's instructions) as a soft filled card at reading
      * size that grows with its text. Default `field`: the bordered box of a row's control.
@@ -149,6 +151,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // prose ("Whole repository") and keeps the field's own face.
                         props.monospace && props.value ? styles.inputMono : null,
                         grows && contentHeight !== null ? { height: Math.max(contentHeight, 0) } : null,
+                        props.textAlign ? { textAlign: props.textAlign, fontVariant: ['tabular-nums'] } : null,
                         { color: colors.valueColor },
                         props.trailing ? styles.inputWithAction : null,
                     ]}

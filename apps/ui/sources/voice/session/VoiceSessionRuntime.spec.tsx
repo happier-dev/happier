@@ -742,7 +742,7 @@ describe('VoiceSessionRuntime', () => {
       expect(glance.findByTestId('permission-prompt-card')).not.toBeNull();
       expect(glance.getTextContent()).toContain(request.arguments.command);
     } else {
-      await glance.pressByTestIdAsync('voice-glance-end');
+      await glance.pressByTestIdAsync('voice-glance-transport-end');
       await waitForTestEvent(mounted.lifecycle.subscribe, () => mounted.lifecycle.getSnapshot(), snapshot => snapshot.status === 'disconnected');
       expect(mounted.lifecycle.getSnapshot().status).toBe('disconnected');
       expect(getVoiceSessionEndedAttempt()).toMatchObject({ targetSessionAddress: mounted.target,

@@ -145,7 +145,7 @@ export function VoiceServiceGallery(props: Readonly<{
         if (next === VOICE_SERVICE_OFF_ID) props.onSelectOff();
         else props.onSelect(next);
       }}
-      renderOptionFooter={({ option, selected }) => {
+      renderOptionFooter={({ option }) => {
         const status = statusById.get(option.id);
         if (!status) return null;
         return (
@@ -153,10 +153,11 @@ export function VoiceServiceGallery(props: Readonly<{
             {/* Ready stays quiet (words only); a dot marks only what still needs something. The words stay
                 quiet so a gallery of choices never reads as broken. The dot sits on the first line, so a
                 readiness that wraps (setup's narrow tiles) still reads as one fact. */}
-            {status.tone === 'needs_you' ? (
+            {status.tone === 'needs_you' || status.tone === 'needs_setup' ? (
               <View style={styles.footerDot}>
+                {/* The readiness owner decides whose it is: amber for the chosen service, quiet ink for the rest. */}
                 <StatusDot
-                  color={selected ? theme.colors.state.warning.foreground : theme.colors.text.tertiary}
+                  color={status.tone === 'needs_you' ? theme.colors.state.warning.foreground : theme.colors.text.tertiary}
                   size={6}
                 />
               </View>

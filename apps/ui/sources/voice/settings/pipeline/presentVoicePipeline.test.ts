@@ -5,7 +5,7 @@ import { projectVoiceSettingsPipeline } from '@/voice/settings/projectVoiceSetti
 
 import { t } from '@/text';
 
-import { presentVoicePipeline } from './presentVoicePipeline';
+import { presentVoicePipeline, resolveVoiceReadinessTone } from './presentVoicePipeline';
 
 const translate = (key: string) => key;
 
@@ -16,6 +16,18 @@ function readiness(status: VoiceRoleReadiness['status'], code: string, recoveryA
 const hear = { roles: ['hear'] as const, engine: { kind: 'speech' as const, title: 'Whisper' }, placement: { kind: 'machine' as const, machineName: 'devbox' } };
 const think = { roles: ['think'] as const, engine: { kind: 'agent' as const, title: 'Claude Code' }, placement: { kind: 'machine' as const, machineName: 'devbox' } };
 const speak = { roles: ['speak'] as const, engine: { kind: 'speech' as const, title: 'Kokoro' }, placement: { kind: 'machine' as const, machineName: 'devbox' } };
+
+describe('resolveVoiceReadinessTone', () => {
+    it('needs the person only for the option they chose; an unchosen option that needs setup stays quiet', () => {
+        const fact = readiness('needs_setup', 'settings_missing_required_setting', 'open_provider_settings');
+        expect(resolveVoiceReadinessTone(fact)).toBe('needs_you');
+        expect(resolveVoiceReadinessTone(fact, { chosen: true })).toBe('needs_you');
+        expect(resolveVoiceReadinessTone(fact, { chosen: false })).toBe('needs_setup');
+        // Facts that are not the person's to fix keep their own tone either way.
+        expect(resolveVoiceReadinessTone(readiness('unavailable', 'server_feature_disabled'), { chosen: false })).toBe('waiting');
+        expect(resolveVoiceReadinessTone(readiness('ready', 'ready'), { chosen: false })).toBe('ready');
+    });
+});
 
 describe('presentVoicePipeline', () => {
     it('uses the blocked tone for an incompatible or failed pack, including the aggregate', () => {

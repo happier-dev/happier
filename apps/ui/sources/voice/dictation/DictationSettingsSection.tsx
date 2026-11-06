@@ -331,8 +331,9 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
         {engineOptions.map((option) => {
           const selected = option.id === selectedId;
           const engineReadiness = readinessForEngine(option.id);
-          // The readiness owner decides the tone; the engine row says the condition in that tone.
-          const engineTone = resolveVoiceReadinessTone(engineReadiness);
+          // The readiness owner decides the tone (an engine you have not chosen reads quietly); the
+          // engine row says the condition in that tone.
+          const engineTone = resolveVoiceReadinessTone(engineReadiness, { chosen: selected });
           const needsYou = engineReadiness && engineTone && engineTone !== 'ready' && engineTone !== 'unknown'
             ? { readiness: engineReadiness, tone: engineTone } : null;
           return (

@@ -166,11 +166,11 @@ describe('VoiceGlance', () => {
         const model = surface(voice);
         screen = await renderScreen(<VoiceGlance model={model} presentation="companion" />);
 
-        screen.pressByTestId('voice-glance-mute');
+        screen.pressByTestId('voice-glance-transport-mute');
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
-        screen.pressByTestId('voice-glance-interrupt');
+        screen.pressByTestId('voice-glance-transport-interrupt');
         expect(model.onBargeIn).toHaveBeenCalledTimes(1);
-        screen.pressByTestId('voice-glance-end');
+        screen.pressByTestId('voice-glance-transport-end');
         expect(voice.onToggle).toHaveBeenCalledTimes(1);
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
     });
@@ -179,14 +179,14 @@ describe('VoiceGlance', () => {
         const voice = attempt();
         const mutedLabel = t('voicePresence.mute');
         const measure = (width: number) => act(async () => {
-            screen?.findByTestId('voice-glance-controls')?.props.onLayout({ nativeEvent: { layout: { width, height: 26 } } });
+            screen?.findByTestId('voice-glance-transport')?.props.onLayout({ nativeEvent: { layout: { width, height: 26 } } });
         });
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
         // The Companion assumes its narrow column before it has been measured.
         expect(screen.getTextContent()).not.toContain(mutedLabel);
-        expect(screen.findByTestId('voice-glance-mute')?.props.accessibilityLabel).toBeTruthy();
+        expect(screen.findByTestId('voice-glance-transport-mute')?.props.accessibilityLabel).toBeTruthy();
         expect(screen.getTextContent()).toContain(t('voicePresence.end'));
-        screen.pressByTestId('voice-glance-mute');
+        screen.pressByTestId('voice-glance-transport-mute');
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
         // The same row at phone width has room for the labelled pill; narrowed again, it steps back down.
         await measure(282);
@@ -205,23 +205,35 @@ describe('VoiceGlance', () => {
         const voice = attempt({ reconnecting: true });
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
 
-        expect(screen.findByTestId('voice-glance-mute')).toBeNull();
-        screen.pressByTestId('voice-glance-recover');
+        expect(screen.findByTestId('voice-glance-transport-mute')).toBeNull();
+        screen.pressByTestId('voice-glance-transport-recover');
         expect(voice.onRecover).toHaveBeenCalledTimes(1);
-        screen.pressByTestId('voice-glance-end');
+        screen.pressByTestId('voice-glance-transport-end');
         expect(voice.onToggle).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['popover', 'sheet'] as const)('offers a failed attempt its recovery and its dismissal in %s, as the transport does everywhere', async (presentation) => {
+        const failed = resolveVoiceAttemptControl({ surfaceState: 'error', tone: 'error', status: 'error',
+            sessionId: 'voice-1', canStop: false, muted: false, capturing: false, startAdmitted: true, hasRecovery: true });
+        const voice = { ...attempt(), ...failed, recoveryLabel: 'Retry', canDismissFailedAttempt: true, onDismissFailedAttempt: vi.fn() };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation={presentation} />);
+        expect(screen.findByTestId('voice-glance-transport-end')).toBeNull();
+        screen.pressByTestId('voice-glance-transport-recover');
+        expect(voice.onRecover).toHaveBeenCalledTimes(1);
+        screen.pressByTestId('voice-glance-transport-dismiss');
+        expect(voice.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
     });
 
     it.each(['companion', 'popover', 'sheet'] as const)('submits admitted buffered input separately from Mute and End in %s', async (presentation) => {
         const voice = { ...attempt(), canCommitInput: true, commitInputLabel: t('common.send'), onCommitInput: vi.fn(), muted: true };
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation={presentation} />);
-        screen.pressByTestId('voice-glance-send');
+        screen.pressByTestId('voice-glance-transport-send');
         expect(voice.onCommitInput).toHaveBeenCalledTimes(1);
         expect(voice.onToggleMute).not.toHaveBeenCalled();
         expect(voice.onToggle).not.toHaveBeenCalled();
         await screen.unmount();
         screen = await renderScreen(<VoiceGlance model={surface({ ...voice, canCommitInput: false }, { canBargeIn: false })} presentation={presentation} />);
-        expect(screen.findByTestId('voice-glance-send')).toBeNull();
+        expect(screen.findByTestId('voice-glance-transport-send')).toBeNull();
     });
 
     it('keeps delegated work on its own line rather than as the status caption', async () => {
@@ -254,7 +266,7 @@ describe('VoiceGlance', () => {
         };
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
 
-        expect(screen.findByTestId('voice-glance-end')).toBeNull();
+        expect(screen.findByTestId('voice-glance-transport-end')).toBeNull();
         expect(screen.getTextContent()).toContain('4:12');
         screen.pressByTestId('voice-glance-open-conversation');
         expect(voice.onOpenConversation).toHaveBeenCalledTimes(1);

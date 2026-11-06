@@ -13,7 +13,7 @@ import { LocalDirectSection } from '@/voice/settings/panels/LocalDirectSection';
 import { VoiceExecutionMachineSection } from '@/voice/settings/panels/VoiceExecutionMachineSection';
 import { VoiceConversationLanguageSection } from '@/voice/settings/panels/VoiceConversationLanguageSection';
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
-import { VoiceAgentApprovalsSection, VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
+import { VoiceDuringConversationSection, VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
 import {
   resolveVoiceSettingsRecoveryTarget,
   resolveVoiceSettingsRouteFocus,
@@ -122,7 +122,7 @@ export function VoiceConversationsSettingsScreen() {
               daemonRouteDiagnosticReason={daemonRouteDiagnosticReason}
             />
           </View>
-          <VoiceAgentApprovalsSection voice={voice} setVoice={setVoice} />
+          <VoiceDuringConversationSection voice={voice} setVoice={setVoice} />
         </ItemList>
       </DaemonVoiceModelCatalogProvider>
     </View>

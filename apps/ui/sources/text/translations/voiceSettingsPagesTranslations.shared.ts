@@ -173,8 +173,8 @@ export type VoiceSettingsPagesCopy = Readonly<{
       itMayReadOnlyDescription: string;
       itMayAsk: string;
       itMayAskDescription: string;
-      approvalsTitle: string;
-      approvalsDescription: string;
+      duringConversationTitle: string;
+      duringConversationDescription: string;
       canApproveRequestsTitle: string;
       audibleWaitingCueTitle: string;
       audibleWaitingCueDescription: string;
@@ -432,8 +432,8 @@ export const en: VoiceSettingsPagesCopy = {
       itMayReadOnlyDescription: 'It reads your sessions and files and changes nothing.',
       itMayAsk: 'Ask first',
       itMayAskDescription: "Every change asks you first.",
-      approvalsTitle: "Approvals",
-      approvalsDescription: "When a session asks for permission while you talk.",
+      duringConversationTitle: "During a conversation",
+      duringConversationDescription: "What Voice does while you talk.",
       canApproveRequestsTitle: "Voice agent can approve requests",
       audibleWaitingCueTitle: "Waiting sound",
       audibleWaitingCueDescription: "Play a quiet sound when Voice starts processing your words or preparing an answer.",

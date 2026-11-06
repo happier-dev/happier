@@ -46,12 +46,21 @@ function roleLabel(role: VoiceSettingsPipelineStep['roles'][number]): string {
 }
 
 /**
- * How one role's readiness reads on the card. Waiting on something outside the person's hands (a
- * computer offline, a feature its Home owner controls) is Shadow; a real install is the working
- * cell; anything the person can fix needs them. Unknown is not ready and not a failure: the step
- * says it has not been checked.
+ * How one role's readiness reads. Waiting on something outside the person's hands (a computer
+ * offline, a feature its Home owner controls) is `waiting`; a real install is the working cell;
+ * anything the person can fix needs them — but only for what they chose: an option they have not
+ * chosen (`chosen: false`, a gallery tile or an engine row) that still needs setup reads quietly,
+ * `needs_setup`, on every page. Unknown is not ready and not a failure: it has not been checked.
  */
-export function resolveVoiceReadinessTone(readiness: VoiceRoleReadiness | null): VoiceReadinessTone | null {
+export function resolveVoiceReadinessTone(
+    readiness: VoiceRoleReadiness | null,
+    options?: Readonly<{ chosen?: boolean }>,
+): VoiceReadinessTone | null {
+    const tone = resolveReadinessFactTone(readiness);
+    return tone === 'needs_you' && options?.chosen === false ? 'needs_setup' : tone;
+}
+
+function resolveReadinessFactTone(readiness: VoiceRoleReadiness | null): VoiceReadinessTone | null {
     if (!readiness) return null;
     switch (readiness.status) {
         case 'ready':

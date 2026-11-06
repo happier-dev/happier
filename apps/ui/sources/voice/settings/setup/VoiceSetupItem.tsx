@@ -51,7 +51,7 @@ import { isVoiceSetupFailed, readVoiceSetupLight, readVoiceSetupNextStep } from 
  * may refresh the selected service's machine facts. Null once Voice is set up (unless its panel is
  * open, so the person sees the done state) or when the person hid it.
  */
-export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; span?: SetupBlockItem['span'] }>): SetupBlockItem | null {
+export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row' | 'wide'; span?: SetupBlockItem['span'] }>): SetupBlockItem | null {
     const router = useRouter();
     const voiceEnabled = useFeatureEnabled('voice');
     const accountScope = useActiveServerAccountScope();
@@ -166,7 +166,7 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; spa
 
 /** The tile at rest: the planet at its current light, what is done, and what comes next. */
 export const VoiceSetupTile = React.memo(function VoiceSetupTile(props: Readonly<{
-    layout: 'card' | 'row';
+    layout: 'card' | 'row' | 'wide';
     facts: VoiceSetupFacts;
     onOpen: () => void;
     onDismiss: () => void;

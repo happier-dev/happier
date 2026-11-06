@@ -15469,11 +15469,11 @@ const enSettingsVoice = {
     exportFailed: 'Voice history could not be exported.',
     clearTitle: 'Clear voice history',
     clearSubtitle:
-      'Delete the entire standalone voice history for this account across devices.',
+      'Delete the entire voice history for this account across devices.',
     clearing: 'Clearing voice history…',
     clearConfirmTitle: 'Clear voice history?',
     clearConfirmBody:
-      'This permanently deletes the whole standalone voice history for this account. This cannot be undone.',
+      'This permanently deletes the whole voice history for this account. This cannot be undone.',
     clearConfirmAction: 'Clear history',
     clearSucceeded: 'Voice history was cleared.',
     clearFailed: 'Voice history could not be cleared.',

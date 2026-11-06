@@ -125,9 +125,9 @@ describe('Voice glance presentation', () => {
         expect(screen.findByTestId('popover-sheet.close')).toBeNull();
         expect(screen.findAll((node) => typeof node.type === 'string' && node.props?.children === t('voicePresence.title'))).toHaveLength(1);
 
-        await screen.pressByTestIdAsync('voice-glance-popover-mute');
+        await screen.pressByTestIdAsync('voice-glance-popover-transport-mute');
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
-        await screen.pressByTestIdAsync('voice-glance-popover-end');
+        await screen.pressByTestIdAsync('voice-glance-popover-transport-end');
         expect(voice.onToggle).toHaveBeenCalledTimes(1);
 
         await screen.pressByTestIdAsync('voice-glance-popover-collapse');

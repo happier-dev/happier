@@ -66,12 +66,12 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
             settings: {
                 provider: { storage: voiceSettingBinding('providerId') },
                 greeting: { storage: voiceGreetingBinding },
-                audibleWaitingCue: { storage: voiceSettingBinding('audibleWaitingCue') },
             },
         },
-        approvals: {
-            titleKey: 'settingsVoice.pages.conversations.approvalsTitle',
+        duringConversation: {
+            titleKey: 'settingsVoice.pages.conversations.duringConversationTitle',
             settings: {
+                audibleWaitingCue: { storage: voiceSettingBinding('audibleWaitingCue') },
                 canApproveRequests: { storage: voiceSettingBinding('canApproveRequests') },
             },
         },
