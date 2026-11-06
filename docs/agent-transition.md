@@ -26,6 +26,13 @@ Adjacent concepts with their own owners:
 
 ## Wire contract
 
+The cutover HTTP serializer keeps `legacy_v0` requests compatible with the moving
+0.2 server: it omits `usageTimingV1` from both the current view and divider, whose
+0.2 request objects reject unknown fields. Missing timing remains unknown to Usage.
+Envelope-layout requests retain timing through their existing owner patch and
+divider. This development compatibility path uses the existing layout discriminator;
+it adds no server feature bit or retry after a 400 response.
+
 `packages/protocol/src/sessions/agentTransition.ts` is the single owner. Methods are declared in
 `packages/protocol/src/rpc/methods.ts`: `session.agentTransition` and
 `session.continuation.inspect`.

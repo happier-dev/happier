@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { z } from 'zod';
+import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   projectLegacySessionAccessCapabilitiesV1,
+  SessionStoredMessageContentSchema,
 } from '@happier-dev/protocol';
 import {
   createSessionListResponseFixture,
@@ -208,6 +211,80 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
 });
 
 describe('sessionControl.sessionsHttp.applySessionAgentTransitionCutover', () => {
+  // Prospective 0.2 wire contract, inspected at 1321319f311da3d44931afd39eeac7252b6350a4:
+  // apps/server/sources/app/api/routes/session/registerSessionAgentTransitionRoute.ts:55-68.
+  const predecessorBodySchema = z.object({
+    v: z.literal(1),
+    currentView: z.object({
+      kind: z.literal('legacy_v0'),
+      expectedMetadataVersion: z.number().int().min(0),
+      metadataCiphertext: z.string().min(1),
+      expectedAgentStateVersion: z.number().int().min(0),
+      agentStateCiphertext: z.null(),
+    }).strict(),
+    divider: z.object({
+      localId: z.string().min(1),
+      content: SessionStoredMessageContentSchema,
+    }).strict(),
+  }).strict();
+  const timing = { v: 1, minMs: 200, maxMs: 200 } as const;
+  const sessionTiming = { v: 1, metadata: timing, agentState: null } as const;
+
+  it.each(['plain', 'e2ee'] as const)('sends one legacy cutover accepted by the strict 0.2 server (%s)', async mode => {
+    const currentView = {
+      kind: 'legacy_v0' as const,
+      expectedMetadataVersion: 1,
+      metadataCiphertext: 'sealed-metadata',
+      expectedAgentStateVersion: 1,
+      agentStateCiphertext: null,
+      usageTimingV1: sessionTiming,
+    };
+    const divider = {
+      localId: 'agent-transition:submitted-1',
+      usageTimingV1: timing,
+      content: sealSessionStoredContent({
+        payload: { role: 'agent', content: { type: 'event', id: 'agent-transition:submitted-1',
+          data: { type: 'message', message: 'Continuing with another Agent' } } },
+        idempotencyKey: 'agent-transition:submitted-1',
+        ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx: {
+          encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' as const,
+        } }),
+      }),
+    };
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) =>
+      predecessorBodySchema.safeParse(body).success
+        ? { status: 200, data: { success: true, dividerSeq: 7 } }
+        : { status: 400, data: { error: 'Invalid parameters' } });
+
+    await expect(applySessionAgentTransitionCutover({ token: 't', sessionId: 's1', currentView, divider }))
+      .resolves.toEqual({ ok: true, dividerSeq: 7 });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0]?.[1]).toEqual({ v: 1,
+      currentView: { kind: 'legacy_v0', expectedMetadataVersion: 1, metadataCiphertext: 'sealed-metadata',
+        expectedAgentStateVersion: 1, agentStateCiphertext: null },
+      divider: { localId: divider.localId, content: divider.content },
+    });
+    expect(currentView.usageTimingV1).toEqual(sessionTiming);
+    expect(divider).toHaveProperty('usageTimingV1');
+  });
+
+  it('retains timing in the existing envelope-layout cutover', async () => {
+    const ownerMetadata = { t: 'plain', v: { v: 1 } } as const;
+    const currentView = {
+      kind: 'envelope_tuple_v1' as const,
+      ownerPatch: { mode: 'owner_inactive_model_intent' as const, metadataLayoutVersion: 1 as const,
+        sessionExpectation: { kind: 'inactive_model_intent' as const },
+        expectedOwnerMetadata: ownerMetadata, ownerMetadata,
+        sharedMetadata: { ciphertext: 'shared-ciphertext', expectedVersion: 3 },
+        agentState: { ciphertext: null, expectedVersion: 5 }, usageTimingV1: sessionTiming },
+    };
+    const divider = { localId: 'agent-transition:submitted-1', content: { t: 'encrypted', c: 'divider' }, usageTimingV1: timing };
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true, dividerSeq: 7 } });
+    await expect(applySessionAgentTransitionCutover({ token: 't', sessionId: 's1', currentView, divider }))
+      .resolves.toEqual({ ok: true, dividerSeq: 7 });
+    expect(post.mock.calls[0]?.[1]).toEqual({ v: 1, currentView, divider });
+  });
+
   it('fails closed when a retired divider-verification field appears in a success body', async () => {
     vi.spyOn(axios, 'post').mockResolvedValueOnce({
       status: 200,

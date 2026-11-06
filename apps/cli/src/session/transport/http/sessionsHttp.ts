@@ -1103,10 +1103,19 @@ export async function applySessionAgentTransitionCutover(params: Readonly<{
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const path = `/v2/sessions/${encodedSessionId}/agent-transition/cutover`;
+  const currentView = { ...params.currentView };
+  const divider = { ...params.divider };
+  // The 0.2 cutover accepts only legacy_v0 and rejects unknown fields in both
+  // objects. Keep that wire shape until its support ends; envelope tuples use
+  // the current metadata owner patch, including its timing projection.
+  if (currentView.kind === 'legacy_v0') {
+    Reflect.deleteProperty(currentView, 'usageTimingV1');
+    Reflect.deleteProperty(divider, 'usageTimingV1');
+  }
   const body = {
     v: 1,
-    currentView: params.currentView,
-    divider: params.divider,
+    currentView,
+    divider,
     ...(params.teamCredentialBindings && params.teamCredentialBindings.length > 0
       ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
   };
