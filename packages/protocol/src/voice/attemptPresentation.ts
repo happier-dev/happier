@@ -28,6 +28,7 @@ export const VoiceAttemptPresentationSchema = lazyZodSchema(() => z.strictObject
   canStart: z.boolean(), canStop: z.boolean(), canMute: z.boolean(), canCommitInput: z.boolean(),
   canDismissFailedAttempt: z.boolean(), canDismissEnded: z.boolean(),
   failureKind: z.nullable(VoiceAttemptFailureKindSchema), failureMessage: z.nullable(z.string()),
+  failureTitle: z.optional(z.string()),
   recovery: z.nullable(z.strictObject({
     action: z.nullable(VoiceAttemptRecoveryActionSchema), label: z.string(),
     icon: z.enum(['microphone', 'gear', 'arrow-clockwise']),

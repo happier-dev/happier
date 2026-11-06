@@ -64,8 +64,6 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
-import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 
 import {
@@ -727,8 +725,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         : control.muted && VOICE_CONVERSING_SURFACE_STATES.has(surfaceState)
         ? t('voicePresence.muted')
         : null;
-    const failureStatusWord = surfaceState === 'error' && publicPresentation.failureKind
-        ? translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(publicPresentation.failureKind, snap.errorMessage ?? undefined), { service: serviceTitle })
+    const failureStatusWord = surfaceState === 'error'
+        ? publicPresentation.failureTitle ?? t(statusPresentation.wordKey ?? statusPresentation.labelKey)
         : null;
     const statusLabel = statusOverride ?? (surfaceState === 'error' ? publicPresentation.failureMessage : null) ?? t(statusPresentation.labelKey);
     const statusWord = presentedEnded ? t('voicePresence.ended') : failureStatusWord ?? (

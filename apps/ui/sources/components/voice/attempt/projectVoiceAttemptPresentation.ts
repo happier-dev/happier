@@ -48,6 +48,9 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
         canStart: control.canStart, canStop: control.canStop, canMute: control.canMute,
         canCommitInput: control.canCommitInput === true, canDismissFailedAttempt: control.canDismissFailedAttempt === true,
         canDismissEnded: input.ended, failureKind, failureMessage,
+        ...(failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
+            ? { failureTitle: translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle }) }
+            : {}),
         recovery: recoveryPresentation ? { ...recoveryPresentation, action: recoveryAction,
             runtimeTarget: recoveryContext.runtimeRecoveryTarget } : null,
     };

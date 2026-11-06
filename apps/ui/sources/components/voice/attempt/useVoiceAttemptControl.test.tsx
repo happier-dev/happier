@@ -1302,6 +1302,27 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
         await hook.unmount();
     });
 
+  it.each([false, true])('keeps a provider failure status word distinct from its explanatory caption (quota title: %s)', async (hasFailureTitle) => {
+    const hook = await renderControl({
+      adapterId: 'local_conversation',
+      sessionId: 'control-1',
+      status: 'error',
+      mode: 'idle',
+      canStop: false,
+      errorCode: 'provider_error',
+      errorPresentation: 'error',
+      errorRecoveryAction: 'retry',
+      ...(hasFailureTitle ? { errorMessage: 'usage_limit', errorProviderMessage: 'The provider has no usage remaining.' } : {}),
+    });
+    expect(hook.getCurrent()).toMatchObject({
+      surfaceState: 'error',
+      statusWord: hasFailureTitle ? t('session.usageLimitRecovery.banner.title') : t('voiceAssistant.connectionError'),
+      captionLabel: hasFailureTitle ? 'The provider has no usage remaining.' : t('settingsVoice.local.machineErrors.provider_error'),
+    });
+    expect(hook.getCurrent().statusWord).not.toBe(hook.getCurrent().captionLabel);
+    await hook.unmount();
+  });
+
     it('keeps speech unavailability visible with settings recovery and Dismiss', async () => {
         const hook = await renderControl({
             adapterId: 'local_direct', sessionId: 'control-1', status: 'error', mode: 'idle',

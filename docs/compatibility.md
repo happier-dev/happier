@@ -4348,6 +4348,13 @@ Neither projection revision nor this version identifies a loaded daemon build.
 
 ## SDK protocol evolution
 
+The unreleased 0.3 closed `VoiceAttemptPresentation` projection also carries an
+optional `failureTitle` for a short failure identity, separate from its explanatory
+`failureMessage`. Matching Protocol, Plugin SDK and host readers refresh together;
+older strict development readers reject the new field. Omission uses the existing
+error-state word. The existing Voice Action epoch is retained, with no persistence
+format or development-to-0.2 author-contract rollback adapter added.
+
 Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.
 This optional field is a closed executable-authority declaration, retained in
 the daemon and Account Action projections. Matching development Protocol, SDK
