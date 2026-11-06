@@ -1,4 +1,5 @@
-> Verdict: SEC-USAGE-1106 F1 reproduced RED → GREEN: real router 3/3 and daemon proof binding 4/4 pass. Exact Session readTranscript admission replaces all three optional-scope bypasses; decrypted requests are bound to that proof.
+> Current verdict, reload 119: target_start_failed comes from Claude native-auth preflight returning agent_signed_out. Coordination owns the earlier native-resume row; evidence is routed to Coordination / Providers ORCH. No transition patch or Account/stack mutation is justified.
+> SEC-USAGE-1106 F1 reproduced RED → GREEN: real router 3/3 and daemon proof binding 4/4 pass. Exact Session readTranscript admission replaces all three optional-scope bypasses; decrypted requests are bound to that proof.
 > Custodian-only is rejected: existing Machine admission supports requester-owned New Session/resume. Own and read-shared Sessions remain admitted; another person's unshared Session is refused.
 > Security committed: `2926f623143199e8e60b06cb43dd810b32cbd6f6`; canonical finalizer new=0, unowned=0. Foreign second-ACL guard removal excluded as directed. Refreshed router 3/3, daemon 4/4 and public protocol typecheck pass.
 > Target custody committed: `569b55145cd20b413ac4f834b2b263afbb0d1ffd`; RED → GREEN 53 checks, canonical finalizer new=0/unowned=0. Both source fixes are ready for orchestrator reload 118.
@@ -11,8 +12,7 @@
 ## Observed basis
 - Stack: agent-qa-usage-insights, server :3011, daemon on nl3; original diagnosis reload 116, follow-up reload 117.
 - Reload 117: server `f8b7cb372304e541`, daemon `d5f6e314bb58580d`, observed daemon PID 4107396.
-- Loaded shared stack-state source-bundle snapshots, rather than dist, were inspected through their source maps.
-- Evidence directory: `.project/tmp/usage-live-prereq-1106/`; original artifacts: `.project/tmp/qa-usage-journey-1106/`.
+- Loaded shared stack-state source-bundle maps, rather than dist, were inspected. Evidence: `.project/tmp/usage-live-prereq-1106/`; QA: `.project/tmp/qa-usage-journey-1106/`.
 - No stack lifecycle, dependency input, Account setting or Home configuration was changed.
 
 ## Security correction — exact Session read access
@@ -34,17 +34,14 @@
 
 ## Reload 117 transition refusal — requester custody
 - Observed: the LOADED coordinator shares catalog-target and provider preflight with inspection; its additional target-default admission catches `ConnectedServicesDefaultUnavailableError` as `target_unavailable`.
-- Observed: the lifecycle Action adapter drops `params.savedSecretOperationContext`; the coordinator cannot forward it to the existing spawn-default owner.
-- That owner creates an ambient context when none is supplied: currentness compares invocation bearer with `readStoredCredentials().token`.
+- Observed: the lifecycle adapter dropped `params.savedSecretOperationContext`; the spawn-default owner then compared an ambient invocation bearer with `readStoredCredentials().token`.
 - Observed, without printing credentials: QA CLI and daemon bearers differ for the SAME Account (`r117-credential-equality.json`). Derived: ambient bearer comparison retires admitted requester custody; this is a currentness split, not another catalog/provider decision.
 - Loaded daemon log clock is UTC+01:00. At 08:48:24.948–25.631 and 08:57:46.345–50.266 local, external dispatch is admitted/completed; requester settings phases complete.
 - The old catch logs no default-refusal reason. Exact earlier live branch attribution remains derived; QA selection fields were not retained.
 - Falsifier/control: loaded real default resolution succeeds for both targets with the daemon bearer; its present purpose catalog has no Claude/OpenCode default, so native authentication is valid.
 - Reproduced RED: current requester context plus a different ambient bearer returns exactly `rejected / target_unavailable / sourceEffect:none`.
-- Fix: forward the existing requester context through lifecycle Action → coordinator → canonical spawn-default owner; its existing currentness remains authoritative.
-- GREEN: current requester custody transitions successfully; expired custody still refuses before stop. Existing Team refusal/rebinding and native-default controls pass.
-- No new Account or Machine setup is justified by this refusal. Vendor authentication can still fail later at ordinary target launch.
-- Owner connected Claude/Codex accounts. QA's corrected Account A replay created an owned Codex Session and inspected Claude as available, then hit the distinct refusal below; no missing vendor setup is established.
+- Fix: forward existing requester custody through lifecycle Action → coordinator → spawn-default owner. GREEN: current custody transitions, expired custody refuses before stop; Team refusal/rebinding and native-default controls pass.
+- No setup was justified by the custody refusal. Owner connected Claude/Codex accounts; QA's corrected Account A replay spawned Codex and inspected Claude, then hit the distinct authority refusal below. Vendor auth remains a separate launch requirement.
 - Source copy check: `continueSessionWithArmedAgent.ts` maps `target_unavailable` to “{Agent} isn’t available on this machine. Nothing was sent.” (`en.ts:9778`). It supplies neither the underlying reason nor a setup recovery action.
 - Separate source finding: that UI send path still invokes `runSessionAgentTransitionOnMachine` using the raw transition RPC, while the daemon registers only read operations and mutates through Actions. Its presence in the QA browser bundle is unverified; this may independently explain no divider.
 - Evidence: `r117-diagnosis.json`, `r117-loaded-owners.json`, `r117-call-daemon-evidence.json`, `r117-rpc-completions.json`, `r117-owner-defaults-probe.json`.
@@ -59,12 +56,18 @@
 - Restored-source focused GREEN: 4/4, including both Account-controller cases (`r119-restored-green.log`). Sixteen broader failures reproduce without the fix: approval-context expectations, additional typed target-refusal fields, Environment envelope fixtures and plugin-availability HTTP fixtures. No complete adjacent-suite GREEN claimed.
 - Terminal finalizer: changed=3, roots=112, new=0/unowned=0, then a successful CLI recheck after HEAD moved (`r119-finalizer.log`). Only 3 owned files, 58 insertions/2 deletions committed. Shared-index synchronization retained both foreign staged deltas; initial temporary-index merges conflicted, so only the reviewed invocation hunks were applied to captured staging. Worktree and unrelated staging remained unchanged (`r119-commit.json`).
 
+## Reload 119 target startup — native authentication owner
+- Observed runtime: source 19:53:27Z, daemon `de8c897363f67d68`, server `c6d34f12f7a7ab4c`; QA transition returns partially_applied/target_start_failed at 20:43:55Z. Owned Session retained.
+- Actual nl3 root is `/home/happier/.happier/dev-targets/nl3/stack-state/agent-qa-usage-insights/cli/logs`; suggested stacks/logs roots are absent. Daemon log `2026-11-06-21-09-09-pid-2212914-daemon.log` uses UTC+01:00.
+- Observed: line 3285 at 20:43:54.743Z spawn RPC completes agent_signed_out; line 3286 at .745Z resume refuses with that cause. Line 3333 at 20:43:56.059Z Pending activation also refuses agent_signed_out and retains custody. Last phase is child_environment, before Claude Session runner start; source Session log has no entries in the requested window.
+- LOADED `daemonControl-ODCQPFHM.js.map` confirms `resolveSpawnChildEnvironment.ts:847–865`: qualified Connected Account request-auth bypasses unrelated native sign-in; otherwise logged_out returns agent_signed_out. Loaded coordinator maps failed resume to target_start_failed. PluginExec launches here are auth/preparation helpers.
+- Derived: this launch lacks an effective qualified Claude request-auth/Provider/Team route and its native sign-in is logged_out. Connecting an account alone does not establish that this launch selected its purpose binding. Configuration versus an authentication-binding defect remains with that owner; no missing-token or expired-credential claim.
+- Board checked: 14:20 ASK and 16:54 RESULT retain pre-reload runtime_start_failed with Coordination. Its artifact has no inner cause, so the failures are not asserted identical. Coordination / Providers ORCH must resolve the intended Claude binding or valid native sign-in; QA should resume the retained current target rather than repeat the already-applied transition. No product edit, credential probe, Account setting or lifecycle change.
+- Evidence: `r119-target-start-diagnosis.json`, `r119-target-start-cause.json`, `r119-loaded-target-owner.json`, `r119-target-start-events.json`; QA `r119-native-replay.json`. One RESULT routed to Coordination / Providers ORCH (heading count 1); production mechanism delta +0/−0; no tests run for this diagnosis-only follow-up.
+
 ## Second Home — routed outside Usage
-- Observed: Connect → Keep → recognized-same-Home Continue ends at the generic address error before a key form.
-- Observed: both public feature endpoints return 200 and the same advertised Home identity, with different canonical URLs.
-- Derived: the flow enters existing-Home canonical-address reconciliation rather than independently creating a new identity.
-- QA's later exception capture identifies `resolveHomeProfileAdoption` (`serverProfiles.ts:2222`) → `preflightHomeProfileAdoption` → `adoptHomeProfileWithCredentialsUnderAuthority`.
-- It throws `Home identity conflicts with URL` when canonical-URL lookup conflicts with the descriptor identity/profile; exact persisted operand remains unmeasured. The UI catch displays Operation failed.
+- Observed: recognized-same-Home Continue fails before key entry; both feature endpoints return 200 with the same Home identity/different canonical URLs. Derived: existing-Home canonical-address reconciliation.
+- QA's exception capture identifies `resolveHomeProfileAdoption` (`serverProfiles.ts:2222`) → preflight → adoption: `Home identity conflicts with URL`. Exact persisted operand remains unmeasured; UI displays Operation failed.
 - Exact diagnosis ASK posted once at 09:52 to Home/server-profile owner and Usage orchestrator. QA discarded the draft; repo-dev remains read-only; no Home source edited.
 - Evidence: `home-connect-exception.json`, `home-exception-owner.txt`, `home-connect-diagnosis.json`, `home-public-probes.json` and original `home-b-*` artifacts.
 
@@ -84,4 +87,4 @@
 - Terminal delta: host-private optional invocation field +1/−0, forwarding site +1/−0 and selector fallback +1/−0 preserve authenticated terminal cause. Checks/states/errors/timers/retries/new files +0/−0; three modified files; no added HTTP or idle work. Existing authority ceiling and MCP automation remain authoritative.
 - Self-review: live bearer equality falsified the ambient-custody assumption; positive and expired-custody controls exercise the real defaults owner. No inspection-side credential workaround was added.
 - Reload 118 RESULT contains security/custody SHAs; terminal repair's 19:49 UTC RESULT names reload 119, Opus recheck and QA R37/R38 (heading count 1). Invocation ASK was assigned and fixed here; Home ASK remains with its owner.
-- Residual risk: reload 119 is required before QA R37/R38 can establish accepted transition, divider and first target input. Public package checks remain not run while queued; Home exception and adjacent failures remain open. Neither stack was restarted or reconfigured.
+- Residual risk: reload 119 authority is verified, but native Claude auth/binding blocks target startup; resume the retained target after its owner resolves it. Earlier native-resume failure is not yet correlated. Public package checks, Home exception and adjacent failures remain open. No stack lifecycle or Account setting was changed.
