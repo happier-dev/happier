@@ -243,13 +243,19 @@ describe('Item mode prop', () => {
         uiItemDensitySetting = 'comfortable';
     });
 
-    it('turns a disclosure header chevron to show whether the row is open', async () => {
+    it('draws the one disclosure caret: pointing right while closed, turned down toward the body while open', async () => {
         const { Item } = await import('../Item');
-        const closed = await renderScreen(<Item title="Closed" onPress={() => {}} accessibilityState={{ expanded: false }} />);
-        expect(closed.findAllByProps({ name: 'caret-down' })).toHaveLength(1);
-        expect(closed.findAllByProps({ name: 'caret-right' })).toHaveLength(0);
-        const open = await renderScreen(<Item title="Open" onPress={() => {}} accessibilityState={{ expanded: true }} />);
-        expect(open.findAllByProps({ name: 'caret-up' })).toHaveLength(1);
+        for (const [expanded, rotate] of [[false, '0deg'], [true, '90deg']] as const) {
+            const screen = await renderScreen(<Item title="Details" onPress={() => {}} accessibilityState={{ expanded }} />);
+            // One glyph grammar for every disclosure row: the same caret turns, it is never swapped for up/down.
+            expect(screen.findAllByProps({ name: 'caret-up' })).toHaveLength(0);
+            expect(screen.findAllByProps({ name: 'caret-down' })).toHaveLength(0);
+            const carets = screen.findAllByProps({ name: 'caret-right' });
+            expect(carets).toHaveLength(1);
+            let turn = carets[0].parent;
+            while (turn && !flattenTestStyle(turn.props.style)?.transform) turn = turn.parent;
+            expect(flattenTestStyle(turn?.props.style)?.transform).toEqual([{ rotate }]);
+        }
     });
 
     it('suppresses the chevron when a rightElement is present (default)', async () => {

@@ -50,6 +50,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { MenuSectionRowsContext, useListPresentation, useWidgetBodyRowEdge } from './listPresentation';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
@@ -1337,17 +1338,23 @@ export const Item = React.memo<ItemProps>((props) => {
     ) : titleAccessory;
     const chevronAccessory = React.useMemo(() => {
         if (!showAccessory) return null;
-        // A disclosure header's chevron shows whether the row is open; a destination's points onward.
-        const name = accessibilityExpanded === undefined ? 'caret-right' : accessibilityExpanded ? 'caret-up' : 'caret-down';
+        // A disclosure header's caret turns to show whether the row is open; a destination's points onward.
+        if (accessibilityExpanded !== undefined) {
+            return (
+                <View style={{ marginLeft: theme.space.s4 }}>
+                    <DisclosureCaret expanded={accessibilityExpanded} size={chevronSize} />
+                </View>
+            );
+        }
         return normalizeNodeForView(
             <Icon
-                name={name}
+                name="caret-right"
                 size={chevronSize}
                 color={theme.colors.text.secondary}
                 style={{ marginLeft: theme.space.s4 }}
             />,
         );
-    }, [accessibilityExpanded, chevronSize, showAccessory, theme.colors.text.secondary]);
+    }, [accessibilityExpanded, chevronSize, showAccessory, theme.colors.text.secondary, theme.space.s4]);
 
     // A sheet row's hairline is the sheet's: its divider colour, from the row's text to the sheet's trailing edge
     // (`happierPageRowDividerInset`). A page row outside a sheet (a bare or columned section) draws the same
