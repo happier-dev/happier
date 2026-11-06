@@ -2178,9 +2178,7 @@ if [ -n "$heavyweight_admission_prefix" ]; then
     heavyweight_command_body="$heavyweight_command_body$remote_command_arguments;"
   fi
   remote_script="$remote_script$remote_setup_script$heavyweight_admission_prefix bash -c $(quote_remote "$heavyweight_command_body");"
-elif [ "$resource_governor_priority" = background ] && [ "$telemetry_platform" = linux ]; then
-  remote_script="$remote_script$remote_setup_script$remote_command_environment $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admitted-exec --$remote_command_arguments;"
-elif [ "$resource_governor_priority" = background ]; then
+elif [ "$resource_governor_priority" = background ] && [ "$telemetry_platform" != linux ]; then
   # `nice` is available on supported Linux and Darwin targets. Keep the fallback in the
   # remote shell so an unusual minimal guest still executes the command rather
   # than turning scheduler protection into a new command-availability failure.

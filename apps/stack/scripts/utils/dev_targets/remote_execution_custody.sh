@@ -11,10 +11,20 @@ lifetime_stdin=${HAPPIER_REMOTE_EXEC_LIFELINE-0}
 control_stdin=${HAPPIER_REMOTE_EXEC_CONTROL_STDIN-0}
 unset HAPPIER_REMOTE_EXEC_LIFELINE
 . "${BASH_SOURCE[0]%/*}/../proc/native_process_identity.sh"
+. "${BASH_SOURCE[0]%/*}/../proc/native_process_priority.sh" || exit 1
 mode=$1
 pid_file=$2
 execution_id=$3
 shift 3
+
+exec_worker_payload() {
+  # All Linux worker payloads share scheduling, including unclassified commands
+  # and controlled QA browsers. Nested admission inherits the existing slice.
+  case "$(uname -s)" in
+    Linux) exec_in_jobs_slice "$@" ;;
+    *) exec "$@" ;;
+  esac
+}
 
 collect_descendants() {
   for child in $(ps -eo pid=,ppid= | awk -v parent="$1" '$2 == parent {print $1}'); do
@@ -291,14 +301,14 @@ if [ "$lifetime_stdin" = 1 ]; then
     control_pipe="$pid_file.stdin"
     mkfifo -m 600 "$control_pipe" || exit 1
     exec 4<> "$control_pipe"
-    (exec 3<&- 4>&-; exec "$@" < "$control_pipe") &
+    (exec 3<&- 4>&-; exec_worker_payload "$@" < "$control_pipe") &
   else
     # The lifeline belongs only to the custody reader. A payload's descendant
     # tree must not inherit this private descriptor as it launches more work.
-    (exec 3<&-; exec "$@" </dev/null) &
+    (exec 3<&-; exec_worker_payload "$@" </dev/null) &
   fi
 else
-  "$@" <&0 &
+  exec_worker_payload "$@" <&0 &
 fi
 remote_child_pid=$!
 command_temp_group=$remote_child_pid

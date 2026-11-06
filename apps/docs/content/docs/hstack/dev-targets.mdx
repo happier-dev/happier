@@ -864,6 +864,9 @@ fails without a controller-local browser. Windows1 remains excluded while outer 
 health is unverified. Browser selection is only for that foreground
 lifetime and writes no persistent pin. Use the returned local CDP endpoint with agent-browser
 or Playwright on the controller, opening the returned browser-facing `url` with lane-owned ports.
+Memory ranking is a launch-time observation: running browsers stay on their selected host as
+their memory use changes. Use `HAPPIER_STACK_QA_BROWSER_TARGETS` to separate browser work from a
+database host when that workload needs isolation; scheduling priority alone does not provide it.
 Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
 
 In 0.3 development, sign an existing, signed-out QA browser into an Account with
@@ -1140,6 +1143,25 @@ sub-second cutoffs. This does not shorten cold Metro compilation or migration de
 When a Linux target has a ready systemd user manager and a loaded `happier-jobs.slice`, an admitted
 job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
 configure the slice; targets without that prepared boundary run the same admitted command directly.
+
+In current 0.3 development, Linux remote worker payloads, including ordinary commands and QA
+browsers, share the same scheduling owner as admitted validation jobs. When the systemd user manager
+is available and `happier-jobs.slice` is loaded, each payload enters that slice in a transient user
+scope. Descendants inherit it, so nested admission does not create another scope. This applies on
+the next job launch without restarting workers or moving existing processes.
+
+The Ubuntu provisioner's `resources` profile configures the slice with `CPUWeight=50`. With the CPU
+controller delegated, jobs receive a smaller CPU share than default-weight sibling groups during
+contention and can use idle CPU without a quota. Keep database services outside the jobs slice.
+Browser descendants also inherit the profile's existing `MemoryHigh=80%` reclaim/throttle threshold;
+this change adds no hard memory maximum. [Linux cgroup memory controls](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory)
+distinguish this threshold from a hard cap and from a database service's `MemoryLow` protection.
+Keep database protection under the database service owner. Neither CPU weighting nor the reclaim
+threshold guarantees database latency during host-wide memory exhaustion.
+The launcher does not configure slices or database services. If the prepared user slice is unavailable,
+jobs retain the existing nice-level floor of 10, preserving an inherited lower priority. Capacity
+admission, transaction deadlines, and retry policy are unchanged; niceness alone does not provide
+CPU group priority. macOS and Windows retain their existing execution paths.
 
 In current 0.3 development, Linux worker admission checks available bytes on the command's known
 write filesystems and refuses an already-exhausted filesystem. Cleanup tries stale
