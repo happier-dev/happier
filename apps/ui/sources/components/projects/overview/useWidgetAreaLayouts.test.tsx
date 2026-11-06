@@ -46,7 +46,7 @@ it('renews one mounted inventory read when the same Account lifetime retires', a
     } finally { retireActiveServerAccountScopeLifetime(); storage.setState(previous); await home.dispose(); }
 });
 
-it.each(['network_error', 'thrown_network_error', 'denied', 'permission_denied', 'thrown_permission_denied'])(
+it.each(['network_error', 'thrown_network_error', 'cancelled', 'abort', 'denied', 'permission_denied', 'thrown_permission_denied'])(
     'retains only authorized Account inventory across %s and a warm mount with an unanswered read', async errorCode => {
     const previous = storage.getState();
     const home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://layout-retention.test', accountId: 'account' }], route: () => undefined });
@@ -71,6 +71,7 @@ it.each(['network_error', 'thrown_network_error', 'denied', 'permission_denied',
     const execute: WidgetAreaLayoutsExecute = async (actionId, args) => {
         if (failure) {
             if (errorCode === 'thrown_network_error') throw new Error('Home transport unavailable');
+            if (errorCode === 'abort') throw new DOMException('Cancelled inventory read', 'AbortError');
             if (errorCode === 'thrown_permission_denied') throw Object.assign(new Error('Access denied'), { code: 'permission_denied' });
             return { ok: false, errorCode, error: errorCode };
         }
@@ -85,9 +86,14 @@ it.each(['network_error', 'thrown_network_error', 'denied', 'permission_denied',
         await vi.waitFor(() => expect(accountNames(cold.getCurrent().state.dashboards)).toEqual(['My usage']));
         failure = true;
         await act(async () => { await expect(cold.getCurrent().reload()).resolves.toBeNull(); });
-        const transient = errorCode === 'network_error' || errorCode === 'thrown_network_error';
+        const cancelled = errorCode === 'cancelled' || errorCode === 'abort';
+        const transient = errorCode === 'network_error' || errorCode === 'thrown_network_error' || cancelled;
         const expectedNames = transient ? ['My usage'] : [];
-        expect(cold.getCurrent().state.status).toBe('offline');
+        expect(cold.getCurrent().state).toMatchObject(cancelled ? { status: 'ready' } : { status: 'offline', readFailure: {
+            reasonCode: errorCode === 'thrown_network_error' ? 'widget_area_unavailable'
+                : errorCode === 'thrown_permission_denied' ? 'permission_denied' : errorCode,
+        } });
+        if (cancelled) expect(cold.getCurrent().state).not.toHaveProperty('readFailure');
         expect(accountNames(cold.getCurrent().state.dashboards)).toEqual(expectedNames);
         await cold.unmount();
         failure = false;

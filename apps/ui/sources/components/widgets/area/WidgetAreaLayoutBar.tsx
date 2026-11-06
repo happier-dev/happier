@@ -23,6 +23,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -117,6 +118,8 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
     onSelect: (layoutId: string) => void;
     onCreate: (() => void) | null;
     actions: WidgetAreaLayoutActions | null;
+    /** The inventory owner retains known choices and owns their recovery. */
+    readFailure?: Readonly<{ reasonCode: string; retry: () => Promise<unknown> }>;
     labels: WidgetAreaLayoutLabels;
     /**
      * What the bar heads: a whole page or pane (a Project's dashboards, Usage's views) speaks at the
@@ -130,6 +133,18 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
   const { theme } = useUnistyles();
   const tabsTheme = usePluginUiTheme(theme);
   const { testID, labels } = props;
+  const readFailureNotice = props.readFailure ? (
+    <SurfaceStateCard
+      testID={`${testID}.readFailed`}
+      kind="unavailable"
+      size="line"
+      layout="inline"
+      title={labels.list}
+      reason={t('common.unavailable')}
+      diagnosticCode={props.readFailure.reasonCode}
+      action={{ label: t('common.retry'), onPress: async () => { await props.readFailure?.retry(); }, testID: `${testID}.retry` }}
+    />
+  ) : null;
   const selected =
     props.layouts.find((layout) => layout.id === props.selectedId) ??
     props.layouts[0] ??
@@ -179,6 +194,7 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
   // list (Create), rather than a strip of one tab (lab p-overview HOMEp/FIT).
   if (fit.narrow || props.layouts.length < 2) {
     return (
+      <>
       <View testID={testID} style={styles.narrow} onLayout={fit.onBarLayout}>
         <LayoutCurrentNameMenu
           layouts={props.layouts}
@@ -196,11 +212,14 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
         {props.heading === 'section' && props.layouts.length < 2 ? null : create}
         {actionSlot}
       </View>
+      {readFailureNotice}
+      </>
     );
   }
+  // Until the first fit is known the strip is measured but not painted (its space is held), so the
+  // first frame the viewer sees is already the final form: never icons that then drop away.
   return (
-    // Until the first fit is known the strip is measured but not painted (its space is held), so the
-    // first frame the viewer sees is already the final form: never icons that then drop away.
+    <>
     <View
       testID={testID}
       style={[styles.bar, fit.ready ? null : styles.unfit]}
@@ -256,6 +275,8 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
         </HappierTabs>
       </CoreCollectionScope>
     </View>
+    {readFailureNotice}
+    </>
   );
 });
 

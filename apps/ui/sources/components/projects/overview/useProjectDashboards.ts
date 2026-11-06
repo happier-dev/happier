@@ -27,6 +27,7 @@ import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/
 export type ProjectDashboardsState = Readonly<{
   status: 'loading' | 'ready' | 'offline';
   dashboards: readonly WidgetAreaLayoutSummaryV1[];
+  readFailure?: Readonly<{ reasonCode: string }>;
 }>;
 
 export type ProjectDashboardMutation = Readonly<
@@ -49,7 +50,8 @@ function reconcileDashboardInventory(previous: ProjectDashboardsState, incoming:
   });
   const sameRows = dashboards.length === previous.dashboards.length
     && dashboards.every((row, index) => row === previous.dashboards[index]);
-  if (sameRows && previous.status === incoming.status) return previous;
+  if (sameRows && previous.status === incoming.status
+    && previous.readFailure?.reasonCode === incoming.readFailure?.reasonCode) return previous;
   return { ...incoming, dashboards: sameRows ? previous.dashboards : dashboards };
 }
 
@@ -185,6 +187,7 @@ export function useWidgetAreaLayouts(
       outcome = await run('widgets.area.layout.list', { surface });
     } catch (error) {
       if (!isCurrent() || current !== generation.current || interest.controller.signal.aborted) return null;
+      if (error instanceof Error && error.name === 'AbortError') return null;
       outcome = { ok: false, errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
         ? error.code : 'widget_area_unavailable', error: t('errors.operationFailed') };
     }
@@ -194,6 +197,7 @@ export function useWidgetAreaLayouts(
         ].safeParse(outcome.result)
       : null;
     if (!isCurrent() || current !== generation.current) return null;
+    if (!outcome.ok && outcome.errorCode === 'cancelled') return null;
     const authorityLost = !outcome.ok && isPluginUiResourceReadAuthorityLost({
       freshness: 'unknown', pending: 'idle', subscription: 'ended',
       error: { code: outcome.errorCode, message: outcome.error ?? outcome.errorCode ?? '' },
@@ -204,7 +208,8 @@ export function useWidgetAreaLayouts(
     setInventory(previous => {
       const baseline = previous.observation === observation ? previous.state : LOADING_INVENTORY;
       const state = reconcileDashboardInventory(baseline, ready
-        ?? { status: 'offline', dashboards: !authorityLost ? baseline.dashboards : [] });
+        ?? { status: 'offline', dashboards: !authorityLost ? baseline.dashboards : [],
+          readFailure: { reasonCode: outcome.ok ? 'invalid_action_output' : outcome.errorCode ?? 'widget_area_unavailable' } });
       return previous.observation === observation && previous.state === state ? previous : { observation, state };
     });
     return parsed?.success ? parsed.data.layouts : null;
@@ -267,10 +272,11 @@ export function useWidgetAreaLayouts(
   return React.useMemo(
     () => ({
       state,
+      readFailure: state.readFailure ? { ...state.readFailure, retry: load } : undefined,
       approvalId: approval.approvalId,
       approvalPending: approval.approvalPending,
       reload: load,
-      select: (dashboard: WidgetAreaLayoutSummaryV1) => run('widgets.area.layout.select', { surface: dashboard.surface }),
+      select: (dashboard: Pick<WidgetAreaLayoutSummaryV1, 'surface'>) => run('widgets.area.layout.select', { surface: dashboard.surface }),
       prepareToShare: (dashboard: WidgetAreaLayoutSummaryV1): Promise<ProjectDashboardMutation> =>
         dashboard.isPreset && dashboard.revision === null
           // The existing rename owner intentionally materializes a missing host preset through

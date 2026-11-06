@@ -15,7 +15,7 @@ import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSu
 
 type CorePageBinding = Pick<
   ReturnType<typeof useCorePageWidgetAreaBinding>,
-  'surface' | 'selectLayout' | 'executeLayoutAction'
+  'surface' | 'executeLayoutAction'
 >;
 
 type ListedLayout = WidgetAreaLayoutOption &
@@ -35,6 +35,9 @@ export function useCorePageWidgetAreaLayoutBar(
     presets: readonly Readonly<{ id: string; name: string }>[];
     /** Optional sentence under the New view prompt's title. */
     newLayoutBody?: string;
+    newLayoutConfirmText?: string;
+    /** Pages with published context commands route selection through that same command. */
+    selectLayout?: (layoutId: string) => Promise<unknown>;
   }>,
 ): Readonly<{
   layouts: readonly ListedLayout[];
@@ -42,11 +45,17 @@ export function useCorePageWidgetAreaLayoutBar(
   selectedName: string | null;
   onSelect: (layoutId: string) => void;
   onCreate: (() => void) | null;
+  /** The creation intent, for pages that retain Create while the area read settles. */
+  create: () => Promise<void>;
+  inventoryStatus: ReturnType<typeof useWidgetAreaLayouts>['state']['status'];
+  readFailure: ReturnType<typeof useWidgetAreaLayouts>['readFailure'];
   actions: WidgetAreaLayoutActions | null;
+  /** Personal-view menus leave presets to their existing Reset/Undo controls. */
+  personalActions: WidgetAreaLayoutActions | null;
 }> {
   const { binding, presets } = input;
   const ready = input.area.state.status === 'ready' ? input.area.state : null;
-  const owner = ready?.surface.owner ?? binding.surface?.owner ?? null;
+  const owner = binding.surface?.owner ?? ready?.surface.owner ?? null;
   const base = binding.surface;
   const areaSurface = React.useMemo(
     () =>
@@ -88,7 +97,8 @@ export function useCorePageWidgetAreaLayoutBar(
           : row.artifactId;
       return {
         id: layoutId,
-        name: row.isPreset ? (presetNames.get(layoutId) ?? row.name) : row.name,
+        // A null revision is the owner's untouched fallback. A materialized preset may have a personal name.
+        name: row.isPreset && row.revision === null ? (presetNames.get(layoutId) ?? row.name) : row.name,
         isPreset: row.isPreset,
         edited: row.isEdited,
         summary: row,
@@ -104,14 +114,22 @@ export function useCorePageWidgetAreaLayoutBar(
           summary: null,
         }));
   }, [defaultId, listed, presets]);
-  const selectLayout = binding.selectLayout;
+  const pageSelect = input.selectLayout;
+  // The page's published command already owns its outcome; other selections use the inventory owner.
+  const select = React.useCallback(async (layoutId: string) => {
+    if (pageSelect) return pageSelect(layoutId);
+    const surface = binding.surface;
+    if (!surface || surface.owner.kind !== 'corePage') return;
+    return layouts.select({ surface: { ...surface, owner: { ...surface.owner, layoutId } } });
+  }, [binding.surface, layouts.select, pageSelect]);
   const newLayoutBody = input.newLayoutBody;
+  const newLayoutConfirmText = input.newLayoutConfirmText ?? t('common.create');
+  const source = ready?.surface ?? binding.surface;
   const create = React.useCallback(async () => {
-    const source = ready?.surface;
     const name = (
       await Modal.prompt(t('usage.board.page.newViewTitle'), newLayoutBody, {
         placeholder: t('usage.board.page.newViewPlaceholder'),
-        confirmText: t('common.create'),
+        confirmText: newLayoutConfirmText,
       })
     )?.trim();
     if (!name || !source) return;
@@ -120,67 +138,73 @@ export function useCorePageWidgetAreaLayoutBar(
       created.ok && created.dashboard?.surface.owner.kind === 'corePage'
         ? created.dashboard.surface.owner.layoutId
         : undefined;
-    if (layoutId) await selectLayout(layoutId);
-  }, [layouts, newLayoutBody, ready?.surface, selectLayout]);
+    if (layoutId) await select(layoutId);
+  }, [layouts, newLayoutBody, newLayoutConfirmText, source, select]);
   const selected = options.find((option) => option.id === selectedId) ?? null;
-  const actions = React.useMemo((): WidgetAreaLayoutActions | null => {
-    const summary = selected?.summary;
-    if (!selected || !summary || !ready?.canEdit) return null;
-    const index = options.findIndex((option) => option.id === selected.id);
-    const before = options[index - 1];
-    const after = options[index + 1];
-    return {
-      rename: async () => {
-        const name = (
-          await Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
-            defaultValue: selected.name,
-            confirmText: t('common.save'),
-          })
-        )?.trim();
-        if (name && name !== selected.name) await layouts.rename(summary, name);
-      },
-      ...(before?.summary
-        ? {
-            moveBefore: {
-              name: before.name,
-              onPress: () => {
-                void layouts.reorder(summary, {
-                  anchorId: before.summary!.artifactId,
-                  placement: 'before',
-                });
+  const menus = React.useMemo(() => {
+    const buildActions = (neighbors: readonly ListedLayout[]): WidgetAreaLayoutActions | null => {
+      const summary = selected?.summary;
+      if (!selected || !summary) return null;
+      const index = neighbors.findIndex((option) => option.id === selected.id);
+      const before = neighbors[index - 1];
+      const after = neighbors[index + 1];
+      return {
+        rename: async () => {
+          const name = (
+            await Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
+              defaultValue: selected.name,
+              confirmText: t('common.save'),
+            })
+          )?.trim();
+          if (name && name !== selected.name) await layouts.rename(summary, name);
+        },
+        ...(before?.summary
+          ? {
+              moveBefore: {
+                name: before.name,
+                onPress: () => {
+                  void layouts.reorder(summary, {
+                    anchorId: before.summary!.artifactId,
+                    placement: 'before',
+                  });
+                },
+              },
+            }
+          : {}),
+        ...(after?.summary
+          ? {
+              moveAfter: {
+                name: after.name,
+                onPress: () => {
+                  void layouts.reorder(summary, {
+                    anchorId: after.summary!.artifactId,
+                    placement: 'after',
+                  });
+                },
+              },
+            }
+          : {}),
+        delete: summary.isPreset
+          ? { disabledReason: t('projects.dashboard.defaultProtected') }
+          : {
+              onPress: async () => {
+                const removed = await layouts.remove(summary);
+                if (removed.ok && !removed.approvalPending)
+                  await select(defaultId);
               },
             },
-          }
-        : {}),
-      ...(after?.summary
-        ? {
-            moveAfter: {
-              name: after.name,
-              onPress: () => {
-                void layouts.reorder(summary, {
-                  anchorId: after.summary!.artifactId,
-                  placement: 'after',
-                });
-              },
-            },
-          }
-        : {}),
-      delete: summary.isPreset
-        ? { disabledReason: t('projects.dashboard.defaultProtected') }
-        : {
-            onPress: async () => {
-              const removed = await layouts.remove(summary);
-              if (removed.ok && !removed.approvalPending)
-                await selectLayout(defaultId);
-            },
-          },
+      };
     };
-  }, [defaultId, layouts, options, ready?.canEdit, selected, selectLayout]);
+    return {
+      actions: ready?.canEdit ? buildActions(options) : null,
+      personalActions: selected?.isPreset ? null : buildActions(options.filter(option => !option.isPreset)),
+    };
+  }, [defaultId, layouts, options, ready?.canEdit, selected, select]);
   const onSelect = React.useCallback(
     (layoutId: string) => {
-      void selectLayout(layoutId);
+      void select(layoutId);
     },
-    [selectLayout],
+    [select],
   );
   const onCreate = React.useMemo(
     () =>
@@ -197,6 +221,9 @@ export function useCorePageWidgetAreaLayoutBar(
     selectedName: selected?.name ?? null,
     onSelect,
     onCreate,
-    actions,
+    create,
+    inventoryStatus: layouts.state.status,
+    readFailure: layouts.readFailure,
+    ...menus,
   };
 }
