@@ -124,6 +124,61 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it.each(['empty', 'command_failed'] as const)('finishes acquisition when pinned SSH trust initially reports %s', async resultClass => {
+        const run = boundary();
+        let attempts = 0;
+        let waits = 0;
+        const nativeCause = { localCause: 'ssh_keyscan_failed', resultClass } as const;
+        const result = await reconcileManagedMachine({ ...run.input,
+            createNative: (...args) => ({ ...run.input.createNative(...args), bootstrapCredentialKind: 'ssh' }),
+            bootstrap: { ...run.input.bootstrap, enroll: async enrollment => {
+                if (++attempts === 1) throw new ManagedMachineControllerError('native_ssh_host_key_unavailable', undefined,
+                    { kind: 'managedNative', nativeCause });
+                return run.input.bootstrap.enroll(enrollment);
+            } },
+            waitForObservation: async () => { waits++; },
+        });
+        expect(result).toMatchObject({ allocation: 'bound', enrolledMachineId: 'guest', observation: { availability: 'present' } });
+        expect(waits).toBe(1);
+        expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
+    });
+
+    it.each([false, true])('settles a failed provider during SSH readiness with a cause and no further wait (native cause: %s)', async providerCause => {
+        const run = boundary();
+        let waits = 0;
+        const scanCause = { localCause: 'ssh_keyscan_failed', resultClass: 'empty' } as const;
+        const nativeCause = providerCause ? { httpStatusClass: '5xx', code: 'service_error' } as const : scanCause;
+        const work = reconcileManagedMachine({ ...run.input,
+            createNative: (...args) => {
+                const native = run.input.createNative(...args);
+                return { ...native, bootstrapCredentialKind: 'ssh', invoke: async (role, body, io) => role === 'inspect'
+                    ? { observedAt: 1, availability: 'unavailable', reason: 'provider_unavailable',
+                        ...(providerCause ? { nativeCause } : {}) } : native.invoke(role, body, io) };
+            },
+            bootstrap: { ...run.input.bootstrap, enroll: async () => {
+                throw new ManagedMachineControllerError('native_ssh_host_key_unavailable', undefined, { kind: 'managedNative', nativeCause: scanCause });
+            } },
+            waitForObservation: async () => { waits++; },
+        });
+        await expect(work).rejects.toMatchObject({ code: 'native_resource_unavailable', details: { kind: 'managedNative', nativeCause } });
+        expect(run.read().observation).toMatchObject({ availability: 'unavailable', nativeCause });
+        expect(waits).toBe(0);
+    });
+
+    it.each(['invalid', 'spawn_failed'] as const)('does not wait for non-recoverable keyscan %s', async resultClass => {
+        const run = boundary();
+        const nativeCause = { localCause: 'ssh_keyscan_failed', resultClass } as const;
+        let waits = 0;
+        await expect(reconcileManagedMachine({ ...run.input,
+            createNative: (...args) => ({ ...run.input.createNative(...args), bootstrapCredentialKind: 'ssh' }),
+            bootstrap: { ...run.input.bootstrap, enroll: async () => {
+                throw new ManagedMachineControllerError('native_ssh_host_key_unavailable', undefined, { kind: 'managedNative', nativeCause });
+            } }, waitForObservation: async () => { waits++; },
+        })).rejects.toMatchObject({ code: 'native_ssh_host_key_unavailable', details: { kind: 'managedNative', nativeCause } });
+        expect(run.read().observation).toMatchObject({ reason: 'bootstrap.native_ssh_host_key_unavailable', nativeCause });
+        expect(waits).toBe(0);
+    });
+
     // Guest execution and Home transport are external to this portable owner.
     it.each(['remote_command_failed', 'native_boot_unconfirmed', 'background_service_failed',
         'approval_required', 'auth_request_expired', 'auth_enrollment_timeout', 'daemon_service_not_ready', 'github_rate_limited'])(

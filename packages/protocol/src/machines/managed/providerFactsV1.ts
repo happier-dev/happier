@@ -140,6 +140,7 @@ export const MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 = 10_000;
 const nativeRejectedFields = ['name', 'location', 'server_type', 'start_after_create', 'image', 'placement_group',
   'ssh_keys', 'volumes', 'networks', 'firewalls', 'user_data', 'labels', 'automount', 'public_net'] as const;
 export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.union([
+  z.strictObject({ localCause: z.literal('ssh_keyscan_failed'), resultClass: z.enum(['empty', 'invalid', 'command_failed', 'spawn_failed']) }),
   z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up']),
     exitCode: z.nullable(z.int()),
     stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),

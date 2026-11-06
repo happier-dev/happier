@@ -1589,10 +1589,15 @@ Managed SSH uses its generated keyfile; ordinary SSH setup retains password entr
 The SDK reports an unavailable or unusable host-key scan with
 `native_ssh_host_key_unavailable`. The managed reconciler keeps a visible
 “Waiting for SSH” phase while exact native inspection confirms the resource is
-present and running. It re-scans after 5 seconds, doubling the delay to at most
+present and running. This same loop includes the live enrollment trust scan for
+carriers with a provisioner-generated host-key pin, such as Hetzner. The live
+command boundary supplies a closed `ssh_keyscan_failed` native cause:
+`empty` and `command_failed` wait, while `invalid` and `spawn_failed` are terminal.
+No command output enters this diagnostic. It re-scans after 5 seconds, doubling the delay to at most
 60 seconds, without a boot deadline or another purchase. Cancellation interrupts
 the wait; absent, off, unknown or unavailable native observations settle with
-`native_resource_unavailable` and retain any closed native cause. Successful
+`native_resource_unavailable` and retain the provider's closed native cause, or
+the last keyscan cause when the provider supplies none. Successful
 evidence continues to the existing host trust comparison and approval prompt.
 The live SSH command boundary maps expired-password and host-key verification
 failures to `ssh_password_expired`, `ssh_host_key_changed` or

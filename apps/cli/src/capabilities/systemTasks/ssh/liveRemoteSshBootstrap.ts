@@ -6,6 +6,8 @@ import { basename, dirname, join } from 'node:path';
 import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedNativeBootstrapIO } from '@/machines/managed/enrollment';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 import * as relayHost from '@happier-dev/cli-common/relayHost';
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
@@ -648,16 +650,20 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
   const existingKnownHostsText = readKnownHostsText(knownHostsPath);
   const parsedTarget = resolveSshEndpoint({ ssh: params.ssh });
   let scanned: ReturnType<typeof systemTasks.extractFirstScannedSshKnownHostLine>;
+  const unavailable = (resultClass: Extract<MachineProvisionerNativeCauseV1, { localCause: 'ssh_keyscan_failed' }>['resultClass']) =>
+    new ManagedMachineControllerError('native_ssh_host_key_unavailable', undefined,
+      { kind: 'managedNative', nativeCause: { localCause: 'ssh_keyscan_failed', resultClass } });
+  const invocation = buildSshKeyscanInvocation({ host: parsedTarget.host, port: parsedTarget.port, timeoutSec: 5, keyType: 'ed25519' });
+  const result = spawnSync(invocation.command, [...invocation.args], { encoding: 'utf8', windowsHide: true });
+  params.signal?.throwIfAborted();
+  if (result.error) throw unavailable('spawn_failed');
+  if (result.status !== 0) throw unavailable('command_failed');
+  const keyscanOutput = String(result.stdout ?? '');
   try {
-    const keyscanOutput = runCommandSync({
-      ...buildSshKeyscanInvocation({ host: parsedTarget.host, port: parsedTarget.port, timeoutSec: 5, keyType: 'ed25519' }),
-      errorPrefix: 'ssh-keyscan failed',
-    });
-    params.signal?.throwIfAborted();
     scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
   } catch {
     params.signal?.throwIfAborted();
-    throw new systemTasks.SystemTaskExecutionError('native_ssh_host_key_unavailable', 'The SSH host key could not be observed.');
+    throw unavailable(keyscanOutput.trim() ? 'invalid' : 'empty');
   }
   const normalizedHost = formatKnownHostsHostToken(parsedTarget);
   const scannedHostKeyLine = normalizedHost ? `${normalizedHost} ${scanned.keyType} ${scanned.key}` : scanned.line;

@@ -220,66 +220,77 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                 ...(credential.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }),
             } : {}),
         };
+        let readinessCause: ProviderObservationV1['nativeCause'];
         const observeResourceRunning = async (acceptedStart = false) => {
             const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: bootstrapInput.resource }));
             if (observation.availability === 'present' && observation.power === 'running') return true;
             if (acceptedStart && observation.availability === 'present') return false;
+            const nativeCause = observation.nativeCause ?? readinessCause;
             machine = await input.home.row('report', { ...input.home.correlation(machine),
-                result: { kind: 'bound', resource: machine.resource }, observation });
+                result: { kind: 'bound', resource: machine.resource }, observation: {
+                    ...observation, ...(nativeCause ? { nativeCause } : {}),
+                } });
             throw new ManagedMachineControllerError('native_resource_unavailable', undefined,
-                observation.nativeCause ? { kind: 'managedNative', nativeCause: observation.nativeCause } : undefined);
+                nativeCause ? { kind: 'managedNative', nativeCause } : undefined);
         };
         let carrier: ManagedBootstrapCarrierV1;
         let waitingFor: 'native' | 'ssh' | undefined;
-        try {
-            for (;;) {
-                if (startPending) {
-                    input.signal?.throwIfAborted();
-                    if (!await observeResourceRunning(true)) {
-                        if (waitingFor !== 'native') {
-                            waitingFor = 'native';
-                            input.onProgress?.({ kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' });
+        for (;;) {
+            try {
+                try {
+                    if (startPending) {
+                        input.signal?.throwIfAborted();
+                        if (!await observeResourceRunning(true)) {
+                            if (waitingFor !== 'native') {
+                                waitingFor = 'native';
+                                input.onProgress?.({ kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' });
+                            }
+                            await input.waitForObservation();
+                            continue;
                         }
-                        await input.waitForObservation();
-                        continue;
+                        startPending = false;
                     }
-                    startPending = false;
+                    if (waitingFor === 'ssh') { input.signal?.throwIfAborted(); await observeResourceRunning(); }
+                    carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', bootstrapInput));
+                } catch (error) {
+                    if (input.signal?.aborted && (waitingFor || bootstrapCredentialKind === 'ssh'
+                        && !(error instanceof ManagedMachineNativeEffectGuardRefusal))) throw new ManagedMachineControllerError('cancelled');
+                    throw error;
                 }
-                if (waitingFor === 'ssh') { input.signal?.throwIfAborted(); await observeResourceRunning(); }
-                try { carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', bootstrapInput)); break; }
-                catch (error) {
-                    if (!(error instanceof ManagedMachineControllerError)) throw error;
-                    const stage = error.code === 'native_not_ready' ? 'native'
-                        : bootstrapCredentialKind === 'ssh' && error.code === 'native_ssh_host_key_unavailable' ? 'ssh' : undefined;
-                    if (!stage) throw error;
-                    if (waitingFor !== stage) {
-                        waitingFor = stage;
-                        if (stage === 'ssh') await observeResourceRunning();
-                        input.onProgress?.(stage === 'native'
-                            ? { kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' }
-                            : { kind: 'phase', phase: 'ssh.readiness.wait', label: 'Waiting for SSH' });
-                    }
+                if (machine.enrolledMachineId && carrier.kind !== 'native') return machine;
+                const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
+                if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
+                machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
+                    onInstalled: async () => {
+                        if (machine.bootstrapInstalled) return;
+                        machine = await input.home.row('report', { ...input.home.correlation(machine),
+                            result: { kind: 'bound', resource: correlation.resource }, bootstrapInstalled: true }, null);
+                    },
+                    ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
+                return await input.home.row('report', { ...input.home.correlation(machine),
+                    result: { kind: 'bound', resource: machine.resource },
+                    observation: { observedAt: Date.now(), availability: 'present' } }, null);
+            } catch (error) {
+                if (!(error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError)) throw error;
+                const nativeCause = error instanceof ManagedMachineControllerError && error.details?.kind === 'managedNative'
+                    ? error.details.nativeCause : undefined;
+                // Missing tools and malformed evidence cannot become ready by waiting.
+                if (nativeCause && 'localCause' in nativeCause && nativeCause.localCause === 'ssh_keyscan_failed'
+                    && nativeCause.resultClass !== 'empty' && nativeCause.resultClass !== 'command_failed') throw error;
+                const stage = error.code === 'native_not_ready' ? 'native'
+                    : bootstrapCredentialKind === 'ssh' && error.code === 'native_ssh_host_key_unavailable' ? 'ssh' : undefined;
+                if (!stage) throw error;
+                if (nativeCause) readinessCause = nativeCause;
+                if (waitingFor !== stage) {
+                    waitingFor = stage;
+                    if (stage === 'ssh') await observeResourceRunning();
+                    input.onProgress?.(stage === 'native'
+                        ? { kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' }
+                        : { kind: 'phase', phase: 'ssh.readiness.wait', label: 'Waiting for SSH' });
                 }
-                await input.waitForObservation();
             }
-        } catch (error) {
-            if (input.signal?.aborted && (waitingFor || bootstrapCredentialKind === 'ssh'
-                && !(error instanceof ManagedMachineNativeEffectGuardRefusal))) throw new ManagedMachineControllerError('cancelled');
-            throw error;
+            await input.waitForObservation();
         }
-        if (machine.enrolledMachineId && carrier.kind !== 'native') return machine;
-        const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
-        if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
-        machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
-            onInstalled: async () => {
-                if (machine.bootstrapInstalled) return;
-                machine = await input.home.row('report', { ...input.home.correlation(machine),
-                    result: { kind: 'bound', resource: correlation.resource }, bootstrapInstalled: true }, null);
-            },
-            ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
-        return await input.home.row('report', { ...input.home.correlation(machine),
-            result: { kind: 'bound', resource: machine.resource },
-            observation: { observedAt: Date.now(), availability: 'present' } }, null);
     } catch (error) {
         // The readiness owner already saved its exact native observation, including confirmed absence.
         if (error instanceof ManagedMachineControllerError && error.code === 'native_resource_unavailable') throw error;
