@@ -321,6 +321,23 @@ describe('installed runtime real-process lifecycle', () => {
     }
   });
 
+  it('uses the caller runtime override for a JavaScript Claude entrypoint', async () => {
+    const runtime = fixture('delayed-help');
+    const originalOverride = process.env.HAPPIER_JS_RUNTIME_PATH;
+    process.env.HAPPIER_JS_RUNTIME_PATH = join(runtime.directory, 'missing-ambient-runtime');
+    try {
+      await expect(probeClaudeInstalledRuntimeCapabilities({
+        cwd: runtime.directory,
+        timeoutMs: 5_000,
+        processEnv: { ...runtime.processEnv, HAPPIER_JS_RUNTIME_PATH: process.execPath, RUNTIME_HELP_DELAY_MS: '0' },
+      })).resolves.toEqual({ supportsEffort: true, supportsUltracode: true });
+      expect(runtime.pids().length).toBeGreaterThan(0);
+    } finally {
+      if (originalOverride === undefined) delete process.env.HAPPIER_JS_RUNTIME_PATH;
+      else process.env.HAPPIER_JS_RUNTIME_PATH = originalOverride;
+    }
+  });
+
   // Windows process enumeration uses its bundled executable, not PATH-resolved POSIX ps.
   it.skipIf(process.platform === 'win32').each([false, true])('keeps cleanup failure observable with caller-owned lifecycle=%s', async (callerOwned) => {
     const runtime = fixture('hang-help');

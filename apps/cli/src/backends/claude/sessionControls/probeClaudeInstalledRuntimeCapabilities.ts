@@ -117,6 +117,7 @@ async function probeClaudeCli(params: RuntimeProbeParams & Readonly<{
       if (isClaudeCliJavaScriptFile(launch.resolvedPath)) {
         const runtimeExecutable = await requireJavaScriptRuntimeExecutable({
           isBunRuntime: isBun(),
+          processEnv,
           targetLabel: 'Claude Code capability probe',
         });
         const invocation = resolveWindowsCommandInvocation({
