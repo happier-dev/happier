@@ -1,3 +1,4 @@
+import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -1916,7 +1917,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                     fallbackLabel: visibleAcceptedContext.machineId,
                     testID: 'workflow-start-where-chip', testIDPrefix: 'workflow-repeat-where' }),
                 ...(runAgainOverrideShown === null ? [] : [{ ...createExecutionRunStartContentChip({
-                key: 'workflow-run-another-agent', icon: 'users', title: t('workflows.start.agentForStep', { step: runAgainOverrideShown.step }),
+                ...getWorkflowContextChipDefinition('agentOverride'), pending: true, icon: 'users', title: t('workflows.start.agentForStep', { step: runAgainOverrideShown.step }),
                 label: t('workflows.start.agentForStep', { step: runAgainOverrideShown.step }),
                 testID: 'workflow-run-another-agent-chip',
                 revision: JSON.stringify([runAgainOverrideShown.engine, runAgainRetained !== null]),

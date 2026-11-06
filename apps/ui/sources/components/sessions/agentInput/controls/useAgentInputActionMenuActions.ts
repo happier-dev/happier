@@ -1,20 +1,15 @@
 import type { AgentInputFolderChipState } from '../definitions/AgentInputFolderChip';
 import * as React from 'react';
 
-import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
-
-import { buildAgentInputActionMenuActions } from '../actionMenuActions';
+import { buildAgentInputActionMenuActions, type AgentInputActionMenuAction } from '../actionMenuActions';
 import type { AgentInputExtraActionChip } from '../agentInputContracts';
 import { buildCollapsedExtraControlActions } from './buildCollapsedExtraControlActions';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
-import type { AgentInputControlId } from './agentInputControlTypes';
+import type { AgentInputResolvedControlLines } from './agentInputControlTypes';
 
 export function useAgentInputActionMenuActions(params: Readonly<{
-    actionBarIsCollapsed: boolean;
-    /** Collapsed layout: the controls the host keeps on its bar (see `resolveRenderedAgentInputControls`). */
-    barControlIds?: readonly AgentInputControlId[];
-    hasAnyActions: boolean;
+    resolvedControls: AgentInputResolvedControlLines;
     tint: string;
     agentId: string;
     agentIdentityIcon?: React.ReactNode;
@@ -39,18 +34,19 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     onProfileClick?: () => void;
     onEnvVarsClick?: () => void;
     onAgentClick?: () => void;
+    permissionLabel?: string | null;
+    onPermissionClick?: () => void;
     sessionModeLabel?: string | null;
     onSessionModeClick?: () => void;
     onMachineClick?: () => void;
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
-    canStop?: boolean;
-    onStop?: () => void;
-}>): ReadonlyArray<ActionListItem> {
-    return React.useMemo(() => {
+}>): () => ReadonlyArray<AgentInputActionMenuAction> {
+    return React.useCallback(() => {
+        const overflowIds = new Set(params.resolvedControls.collapsed);
         const extraControlActions = buildCollapsedExtraControlActions({
-            chips: params.extraActionChips,
+            chips: params.extraActionChips?.filter((chip) => chip.placement && overflowIds.has(chip.placement.id)),
             tint: params.tint,
             dismiss: params.dismissActionMenu,
             blurInput: params.blurInput,
@@ -60,8 +56,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
         });
 
         return buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: params.actionBarIsCollapsed,
-            hasAnyActions: params.hasAnyActions,
+            resolvedControls: params.resolvedControls,
             tint: params.tint,
             agentId: params.agentId,
             agentIdentityIcon: params.agentIdentityIcon,
@@ -72,45 +67,43 @@ export function useAgentInputActionMenuActions(params: Readonly<{
             engineLabel: params.engineLabel,
             machineName: params.machineName,
             currentPath: params.currentPath,
-        folderChipState: params.folderChipState,
-        onRemoveFolder: params.onRemoveFolder,
+            folderChipState: params.folderChipState,
+            onRemoveFolder: params.onRemoveFolder,
             resumeSessionId: params.resumeSessionId,
             sessionId: params.sessionId,
             onProfileClick: params.onProfileClick,
             onEnvVarsClick: params.onEnvVarsClick,
             onAgentClick: params.onAgentClick,
+            permissionLabel: params.permissionLabel,
+            onPermissionClick: params.onPermissionClick,
             sessionModeLabel: params.sessionModeLabel,
             onSessionModeClick: params.onSessionModeClick,
             onMachineClick: params.onMachineClick,
             onPathClick: params.onPathClick,
             onResumeClick: params.onResumeClick,
             onFileViewerPress: params.onFileViewerPress,
-            canStop: params.canStop,
-            onStop: params.onStop,
             extraControlActions,
-            ...(params.barControlIds ? { barControlIds: params.barControlIds } : {}),
             dismiss: params.dismissActionMenu,
             blurInput: params.blurInput,
         });
     }, [
-        params.actionBarIsCollapsed,
-        params.barControlIds,
+        params.resolvedControls,
         params.actionMenuAnchorRef,
         params.agentId,
         params.agentIdentityIcon,
         params.agentLabel,
         params.engineLabel,
         params.blurInput,
-        params.canStop,
         params.currentPath,
         params.folderChipState,
         params.onRemoveFolder,
         params.dismissActionMenu,
         params.envVarsCount,
         params.extraActionChips,
-        params.hasAnyActions,
         params.machineName,
         params.onAgentClick,
+        params.permissionLabel,
+        params.onPermissionClick,
         params.onEnvVarsClick,
         params.onFileViewerPress,
         params.onMachineClick,
@@ -118,7 +111,6 @@ export function useAgentInputActionMenuActions(params: Readonly<{
         params.onProfileClick,
         params.onResumeClick,
         params.onSessionModeClick,
-        params.onStop,
         params.openCollapsedOptionsPopover,
         params.profileIcon,
         params.profileLabel,

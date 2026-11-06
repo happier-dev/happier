@@ -1,3 +1,5 @@
+import { getNewSessionOrganizationActionChipPlacement } from '../newSessionActionChipPlacements';
+import type { AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -23,18 +25,21 @@ type PlacementChip = Readonly<{
     key: string;
     /** The folder is where the session lives (location rail); tags describe it (setup rail). */
     controlId: 'organization' | 'tags';
+    placement?: AgentInputControlPlacement;
     title: string;
     label: string;
     icon: 'folder' | 'tag';
     maxWidthCap: number;
     rootStep: SelectionListStep;
     selectedOptionId: string | null;
+    chosen?: boolean;
 }>;
 
 function createPlacementChip(params: PlacementChip): AgentInputExtraActionChip {
     return {
         key: params.key,
         controlId: params.controlId,
+        placement: params.placement ?? getNewSessionOrganizationActionChipPlacement(params.controlId, { chosen: params.chosen }),
         collapsedOptionsPopover: {
             presentation: 'list',
             title: params.title,
@@ -109,6 +114,7 @@ export function createNewSessionOrganizationPlacementActionChips(params: Readonl
             maxWidthCap: 520,
             rootStep: folderRoot,
             selectedOptionId: params.folderId ?? SESSION_FOLDER_SELECTION_ROOT_ID,
+            chosen: params.folderId !== null,
         })] : []),
         createPlacementChip({
             key: 'organization-tags',

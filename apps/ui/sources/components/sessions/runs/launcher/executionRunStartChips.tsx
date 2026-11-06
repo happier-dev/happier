@@ -1,3 +1,5 @@
+import { getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
+import type { AgentInputControlId, AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -27,6 +29,11 @@ import { t } from '@/text';
 
 export function createExecutionRunStartContentChip(params: Readonly<{
     key: string;
+    controlId: AgentInputControlId;
+    placementId?: string;
+    placementTitle?: string;
+    placement?: AgentInputControlPlacement;
+    pending?: boolean;
     icon: IconName;
     label: string;
     title: string;
@@ -44,6 +51,8 @@ export function createExecutionRunStartContentChip(params: Readonly<{
     return {
         key: params.key,
         requirement: params.requirement,
+        controlId: params.controlId,
+        placement: { ...(params.placement ?? { id: params.placementId ?? `${params.controlId}:${params.key}`, title: params.placementTitle ?? params.title, icon: params.icon, defaultPlacement: 'overflow' } satisfies AgentInputControlPlacement), pending: params.pending === true },
         onIntent: params.onIntent,
         stabilityKey: `${params.label}:${params.disabled === true}:${params.requirement?.code ?? ''}:${params.requirement?.fieldPath ?? ''}:${params.revision ?? ''}`,
         collapsedContentPopover: {
@@ -102,6 +111,8 @@ export function createExecutionRunReviewerChip(params: Readonly<{
     const removeLabel = t('agentStart.chips.removeReviewer', { name: params.label });
     return {
         key,
+        controlId: 'reviewComments',
+        placement: { id: `reviewComments:${key}`, title: getExecutionRunStartChipDefinition('reviewersAdd').placement.title, defaultPlacement: 'overflow', pending: true },
         stabilityKey: `${params.label}:${params.disabled === true}`,
         collapsedAction: ({ tint }) => ({
             id: key,
@@ -145,12 +156,15 @@ export const EXECUTION_RUN_REPORT_CHIP_KEY = 'execution-run-start-report';
  */
 export function createExecutionRunReportChip(params: Readonly<{
     value: boolean;
+    pending?: boolean;
     disabled?: boolean;
     onChange: (next: boolean) => void;
 }>): AgentInputExtraActionChip {
     const label = t('agentStart.reportToSession');
     return {
         key: EXECUTION_RUN_REPORT_CHIP_KEY,
+        controlId: 'delivery',
+        placement: { ...getExecutionRunReportChipPlacement(), pending: params.pending === true },
         stabilityKey: `${params.value}:${params.disabled === true}`,
         collapsedAction: ({ tint }) => ({
             id: EXECUTION_RUN_REPORT_CHIP_KEY,

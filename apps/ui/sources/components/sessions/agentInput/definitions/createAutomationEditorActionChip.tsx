@@ -23,6 +23,7 @@ export function createAutomationEditorActionChip(params: Readonly<{
     return {
         key: 'new-session-automate',
         controlId: 'automation',
+        placement: { id: 'automation', title: params.label, icon: 'lightning', defaultPlacement: 'overflow' },
         render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef }) => (
             <Pressable
                 ref={chipAnchorRef}

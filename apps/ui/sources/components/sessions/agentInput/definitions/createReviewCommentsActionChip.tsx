@@ -1,3 +1,4 @@
+import { getReviewCommentsActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import type { WorkspaceFileOpen } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { Pressable, View } from 'react-native';
@@ -145,6 +146,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
     const actionChip: AgentInputExtraActionChip = {
         key: 'review-comments',
         controlId: 'reviewComments',
+        placement: { ...getReviewCommentsActionChipPlacement(), pending: includedReviewCommentDrafts.length > 0 },
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'review-comments',
             label,

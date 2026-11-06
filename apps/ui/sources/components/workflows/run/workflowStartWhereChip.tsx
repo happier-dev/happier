@@ -1,3 +1,4 @@
+import { getWorkflowStartWhereChipPlacement } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -35,6 +36,9 @@ export function createWorkflowStartWhereChip(
   return {
     ...createExecutionRunStartContentChip({
       key: 'workflow-start-where',
+      controlId: params.controlId ?? 'machine',
+      placementId: 'machine:workflow-start-where',
+      pending: true,
       icon: 'folder',
       title: t('workflows.page.where.label'),
       label:
@@ -72,5 +76,6 @@ export function createWorkflowStartWhereChip(
       ),
     }),
     controlId: params.controlId ?? 'machine',
+    placement: { ...getWorkflowStartWhereChipPlacement(), pending: true },
   };
 }

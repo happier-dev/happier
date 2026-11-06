@@ -1,3 +1,4 @@
+import { getConnectedServicesAuthActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Platform, Pressable } from 'react-native';
 
@@ -41,6 +42,8 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
     /** The Agent whose models the popover routes; named in its header. */
     agentId?: string | null;
     testID?: string;
+    pending?: boolean;
+    placementId?: string;
 }>): AgentInputExtraActionChip {
     const webAuthSourceProps = Platform.OS === 'web'
         ? { dataSet: { authSource: params.authSource } }
@@ -49,6 +52,7 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
     return {
         key: 'new-session-connected-services-auth',
         controlId: 'connectedServices',
+        placement: { ...getConnectedServicesAuthActionChipPlacement(), ...(params.placementId ? { id: params.placementId } : {}), pending: params.pending === true },
         collapsedContentPopover: {
             title: params.label,
             label: params.label,

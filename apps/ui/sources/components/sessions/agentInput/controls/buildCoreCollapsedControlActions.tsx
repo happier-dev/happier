@@ -41,20 +41,35 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     onProfileClick?: () => void;
     onEnvVarsClick?: () => void;
     onAgentClick?: () => void;
+    permissionLabel?: string | null;
+    onPermissionClick?: () => void;
     sessionModeLabel?: string | null;
     onSessionModeClick?: () => void;
     onMachineClick?: () => void;
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
-    canStop?: boolean;
-    onStop?: () => void;
+    placementIds: readonly string[];
     dismiss: () => void;
     blurInput: () => void;
 }>): Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> {
     const controlActionsById: Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> = {};
+    const overflowIds = new Set(opts.placementIds);
 
-    if (opts.onProfileClick) {
+    if (overflowIds.has('permission') && opts.onPermissionClick) {
+        controlActionsById.permission = [{
+            id: 'permission',
+            label: opts.permissionLabel ?? t('newSession.wizardSection.permission'),
+            icon: <Icon name="shield-check" size={16} color={opts.tint} />,
+            onPress: () => {
+                hapticsLight();
+                opts.dismiss();
+                opts.onPermissionClick?.();
+            },
+        }];
+    }
+
+    if (overflowIds.has('profile') && opts.onProfileClick) {
         controlActionsById.profile = [{
             id: 'profile',
             label: opts.profileLabel ?? t('profiles.noProfile'),
@@ -67,7 +82,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.onEnvVarsClick) {
+    if (overflowIds.has('env') && opts.onEnvVarsClick) {
         controlActionsById.env = [{
             id: 'env-vars',
             label:
@@ -83,11 +98,11 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    const resolvedEngineLabel = opts.engineLabel
-        ?? opts.agentLabel
-        ?? resolveAgentDisplayLabel(opts.agentId);
-    if (resolvedEngineLabel && opts.onAgentClick) {
-        controlActionsById.engine = [{
+    if (overflowIds.has('engine')) {
+        const resolvedEngineLabel = opts.engineLabel
+            ?? opts.agentLabel
+            ?? resolveAgentDisplayLabel(opts.agentId);
+        controlActionsById.engine = resolvedEngineLabel ? [{
             id: 'agent',
             label: resolvedEngineLabel,
             icon: opts.agentIdentityIcon ?? (
@@ -99,15 +114,17 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
                     testID="agent-input-agent-action-logo"
                 />
             ),
-            onPress: () => {
-                hapticsLight();
-                opts.dismiss();
-                opts.onAgentClick?.();
-            },
-        }];
+            ...(opts.onAgentClick ? {
+                onPress: () => {
+                    hapticsLight();
+                    opts.dismiss();
+                    opts.onAgentClick?.();
+                },
+            } : { disabled: true }),
+        }] : [];
     }
 
-    if (opts.sessionModeLabel && opts.onSessionModeClick) {
+    if (overflowIds.has('mode') && opts.sessionModeLabel && opts.onSessionModeClick) {
         const sessionModePresentation = resolveSessionModeChipPresentation({
             options: [],
             selectedId: opts.sessionModeLabel,
@@ -125,9 +142,9 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.onMachineClick) {
+    if (overflowIds.has('machine') && opts.onMachineClick) {
         const machineLabel = opts.machineName === null
-            ? t('agentInput.noMachinesAvailable')
+            ? t('agentInput.runOn')
             : (typeof opts.machineName === 'string' && opts.machineName.length > 0
                 ? opts.machineName
                 : t('newSession.selectMachineTitle'));
@@ -143,7 +160,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.onPathClick) {
+    if (overflowIds.has('path') && opts.onPathClick) {
         // The menu entry mirrors the folder chip (one state owner), and offers removal as its own row.
         const folderState = resolveAgentInputFolderChipState(opts.currentPath, opts.folderChipState);
         const labelState = folderState.kind === 'machine_unavailable' ? folderState.label : folderState;
@@ -179,7 +196,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.path = pathActions;
     }
 
-    if (opts.onResumeClick) {
+    if (overflowIds.has('resume') && opts.onResumeClick) {
         const resumeAgentLabel = opts.agentLabel
             ?? resolveAgentDisplayLabel(opts.agentId);
         const resumeChipTitle = t('newSession.resume.chipOptional', { agent: resumeAgentLabel });
@@ -200,27 +217,15 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.sessionId && opts.onFileViewerPress) {
+    if (overflowIds.has('files') && opts.sessionId && opts.onFileViewerPress) {
         controlActionsById.files = [{
             id: 'files',
             label: t('agentInput.actionMenu.files'),
-            icon: <Icon name="git-branch" size={16} color={opts.tint} />,
+            icon: <Icon name="files" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
                 opts.onFileViewerPress?.();
-            },
-        }];
-    }
-
-    if (opts.canStop && opts.onStop) {
-        controlActionsById.stop = [{
-            id: 'stop',
-            label: t('agentInput.actionMenu.stop'),
-            icon: <Icon name="stop" size={16} color={opts.tint} />,
-            onPress: () => {
-                opts.dismiss();
-                opts.onStop?.();
             },
         }];
     }

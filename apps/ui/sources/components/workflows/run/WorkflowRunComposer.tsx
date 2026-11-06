@@ -1,3 +1,4 @@
+import { getWorkflowStartVisibilityChipPlacement, getWorkflowStepTargetsChipPlacement } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
@@ -283,11 +284,17 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
     const chips = React.useMemo<readonly AgentInputExtraActionChip[]>(() => [
         ...(props.workflowChip ? [props.workflowChip] : [createExecutionRunStartContentChip({
             key: 'workflow-start-definition', icon: 'git-branch', label: workflowLabel,
+            controlId: 'workflow',
+            placementId: 'workflow',
+            pending: true,
             title: t('workflows.start.workflow'), testID: `${prefix}-workflow-chip`,
             renderContent: <View style={styles.fields}><Text style={styles.body}>{props.preview ?? props.workflowName ?? t('workflows.start.preview')}</Text></View>,
         })]),
         ...(remaining.length === 0 && missing === 0 ? [] : [createExecutionRunStartContentChip({
             key: 'workflow-start-inputs', icon: 'sliders-horizontal',
+            controlId: 'workflowInputs',
+            placementId: 'workflowInputs',
+            pending: true,
             label: missing === 1 ? t('workflows.start.neededNamed', { name: inputTitle(missingFields[0]!.definition) })
                 : missing > 1 ? t('workflows.start.needed', { count: missing }) : t('workflows.start.inputs'),
             title: t('workflows.start.inputs'), testID: `${prefix}-inputs-chip`,
@@ -309,6 +316,9 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
         ...(props.extraActionChips ?? []),
         ...(visibility.teams.length === 0 ? [] : [createExecutionRunStartContentChip({
             key: 'workflow-start-visibility', icon: 'users', label: visibilityLabel,
+            controlId: 'sessionAccess',
+            pending: true,
+            placement: getWorkflowStartVisibilityChipPlacement(),
             title: t('workflows.start.visibility.title'), testID: `${prefix}-visibility-chip`, revision: `${visibleTeamId ?? ''}:${locked}`,
             renderContent: <View style={styles.fields}>
                 {visibility.teams.length === 1 ? <Text style={styles.body}>{visibilityLabel}</Text>
@@ -320,6 +330,9 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
         ...(!props.definition || (roleIds.length === 0 && roleOverrides.length === 0
             && !props.materializedLeaves?.some((leaf) => leaf.role)) ? [] : [createExecutionRunStartContentChip({
             key: 'workflow-start-roles', icon: 'users', title: t('workflows.start.rolesTitle'),
+            controlId: 'workflowRoles',
+            placementId: 'workflowRoles',
+            pending: true,
             label: roleOverrides.length > 0 ? t('workflows.start.rolesChanged', { count: roleOverrides.length }) : t('workflows.start.rolesYour'),
             testID: `${prefix}-roles-chip`, revision: JSON.stringify([roleOverrides, locked]),
             renderContent: <View style={styles.fields}>{acceptedRepeat
@@ -335,6 +348,9 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
         })]),
         ...(props.materializedLeaves === undefined ? [] : [createExecutionRunStartContentChip({
             key: 'workflow-start-targets', icon: 'stack',
+            controlId: 'workflowTargets',
+            placement: getWorkflowStepTargetsChipPlacement(),
+            pending: true,
             // The chip names what the steps run in, beside "Workflow" ("A session" said nothing there, DESIGN-15 R11).
             label: [...new Set(props.materializedLeaves.map((leaf) => leaf.executionTarget.kind === 'session'
                 ? t('workflows.start.targetsSessions') : t('workflows.start.targetsBackground')))].join(' · '),

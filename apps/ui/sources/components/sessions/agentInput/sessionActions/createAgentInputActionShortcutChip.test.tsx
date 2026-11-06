@@ -50,6 +50,7 @@ describe('createAgentInputActionShortcutChip', () => {
             countTextStyle: {}, popoverAnchorRef: { current: null }, toggleCollapsedPopover: opened }) as React.ReactElement<{ onPress: () => void }>;
         expect(render).toBeTruthy();
         expect(chip.controlId).toBe('workflow');
+        expect(chip.placement).toMatchObject({ id: 'workflow', defaultPlacement: 'overflow', pending: false });
         // A phone shows the picker as the shared bottom sheet, not a card over the header (lab T4-Rp).
         expect(chip.collapsedContentPopover?.phonePresentation).toBe('sheet');
         expect(detailRead).not.toHaveBeenCalled();
@@ -96,6 +97,7 @@ describe('createAgentInputActionShortcutChip', () => {
         const contentRow = children[0] as React.ReactElement<{ children?: React.ReactNode }>;
         expect(contentRow.type).toBe('View');
         expect(chip.controlId).toBe('shortcuts');
+        expect(chip.placement?.id).toBe('shortcuts:shortcut:review.start');
 
         const collapsedAction = expectSingleCollapsedAction(chip.collapsedAction?.({
             tint: '#000',

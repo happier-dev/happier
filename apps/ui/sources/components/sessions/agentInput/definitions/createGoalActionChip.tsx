@@ -57,6 +57,7 @@ export function createGoalActionChip(params: Readonly<{
     return {
         key: SESSION_GOAL_CHIP_KEY,
         controlId: 'goal',
+        placement: { id: 'goal', title: t('session.workState.goal.title'), icon: 'target', defaultPlacement: 'overflow', pending: hasGoal },
         labelPolicy: 'auto-hide',
         collapsedContentPopover: {
             title: t('session.workState.goal.title'),

@@ -3466,8 +3466,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const placementContext = props.placementContext ?? resolveAgentInputPlacementContext(props.composerRef?.kind, isConversation);
     const handleCustomizeComposer = React.useCallback(() => {
         setShowActionMenu(false);
-        openComposerPlacementCustomizer({ descriptors: customizeDescriptors, context: placementContext });
-    }, [customizeDescriptors, placementContext]);
+        openComposerPlacementCustomizer({ descriptors: customizeDescriptors, context: placementContext,
+            placeholder: props.placeholder,
+            singleRow: isConversation || compactControls,
+            previewValues: {
+                // A contributed chip's current value is the one its own overflow row states.
+                ...Object.fromEntries(extraActionChips.flatMap((chip) => {
+                    const label = chip.collapsedContentPopover?.label ?? chip.collapsedOptionsPopover?.label;
+                    return chip.placement && label ? [[chip.placement.id, { label, ...chip.composerPreview?.(theme.colors.composer.chipTint) }]] : [];
+                })),
+                engine: { label: engineChipLabel, mark: engineChipIdentityIcon },
+                mode: { label: sessionModeChipControl?.label ?? null },
+                machine: { label: props.machineName ?? null },
+                path: { label: props.currentPath ?? null },
+            } });
+    }, [customizeDescriptors, placementContext, props.placeholder, isConversation, compactControls, theme.colors.composer.chipTint, extraActionChips, engineChipLabel, engineChipIdentityIcon, sessionModeChipControl?.label, props.machineName, props.currentPath]);
     const {
         handleActionMenuPress,
         actionMenuActions,

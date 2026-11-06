@@ -9,11 +9,14 @@ import { useAgentInputActionMenuActions } from './useAgentInputActionMenuActions
 import type { AgentInputSelectionOverlayId } from '../selection/agentInputSelectionOverlayTypes';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
-import type { AgentInputControlId } from './agentInputControlTypes';
+import type { AgentInputResolvedControlLines } from './agentInputControlTypes';
+import type { AgentInputActionMenuAction } from '../actionMenuActions';
+
+const EMPTY_ACTIONS: readonly AgentInputActionMenuAction[] = [];
 
 export function useAgentInputActionMenuControls(params: Readonly<{
-    /** Collapsed layout: the controls the host keeps on its bar (see `resolveRenderedAgentInputControls`). */
-    barControlIds?: readonly AgentInputControlId[];
+    resolvedControls: AgentInputResolvedControlLines;
+    canCustomizeComposer?: boolean;
     showActionMenu: boolean;
     setShowActionMenu: React.Dispatch<React.SetStateAction<boolean>>;
     closeSelectionOverlay: (id?: AgentInputSelectionOverlayId) => void;
@@ -33,8 +36,6 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     resumePopover?: unknown;
     hasAgentPickerOptions: boolean;
     onAgentClick?: () => void;
-    actionBarIsCollapsed: boolean;
-    hasAnyActions: boolean;
     tint: string;
     agentId: string;
     agentIdentityIcon?: React.ReactNode;
@@ -54,21 +55,20 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     actionMenuAnchorRef?: FocusReturnRef;
     openCollapsedOptionsPopover: (chipKey: string | null) => void;
     sessionModeLabel?: string | null;
+    permissionLabel?: string | null;
+    onPermissionClick?: () => void;
     sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
     onSessionModeChange?: (modeId: string) => void;
-    shouldExposeSessionModeAction: boolean;
     onMachineClick?: () => void;
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
-    canStop: boolean;
-    onStop: () => void;
     hasProfile: boolean;
     hasEnvVars: boolean;
     hasAgent: boolean;
 }>): Readonly<{
     handleActionMenuPress: () => void;
-    actionMenuActions: ReturnType<typeof useAgentInputActionMenuActions>;
+    actionMenuActions: readonly AgentInputActionMenuAction[];
     hasActionMenuPopoverSections: boolean;
 }> {
     const dismissActionMenu = React.useCallback(() => {
@@ -156,10 +156,8 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         params.sessionModeChipInteraction,
     ]);
 
-    const actionMenuActions = useAgentInputActionMenuActions({
-        actionBarIsCollapsed: params.actionBarIsCollapsed,
-        ...(params.barControlIds ? { barControlIds: params.barControlIds } : {}),
-        hasAnyActions: params.hasAnyActions,
+    const buildActionMenuActions = useAgentInputActionMenuActions({
+        resolvedControls: params.resolvedControls,
         tint: params.tint,
         agentId: params.agentId,
         agentIdentityIcon: params.agentIdentityIcon,
@@ -183,17 +181,19 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         onProfileClick: params.hasProfile ? handleActionMenuProfileClick : undefined,
         onEnvVarsClick: params.hasEnvVars ? handleActionMenuEnvVarsClick : undefined,
         onAgentClick: params.hasAgent ? handleActionMenuAgentClick : undefined,
-        sessionModeLabel: params.shouldExposeSessionModeAction ? (params.sessionModeLabel ?? null) : null,
-        onSessionModeClick: params.shouldExposeSessionModeAction ? handleActionMenuSessionModeClick : undefined,
+        permissionLabel: params.permissionLabel,
+        onPermissionClick: params.onPermissionClick,
+        sessionModeLabel: params.sessionModeLabel,
+        onSessionModeClick: params.sessionModeChipInteraction ? handleActionMenuSessionModeClick : undefined,
         onMachineClick: (params.onMachineClick || params.machinePopover) ? handleActionMenuMachineClick : undefined,
         onPathClick: (params.onPathClick || params.pathPopover) ? handleActionMenuPathClick : undefined,
         onResumeClick: (params.onResumeClick || params.resumePopover) ? handleActionMenuResumeClick : undefined,
         onFileViewerPress: params.onFileViewerPress,
-        canStop: params.canStop,
-        onStop: params.onStop,
     });
 
-    const hasActionMenuPopoverSections = actionMenuActions.length > 0;
+    const actionMenuActions = React.useMemo(() => params.showActionMenu ? buildActionMenuActions() : EMPTY_ACTIONS,
+        [buildActionMenuActions, params.showActionMenu]);
+    const hasActionMenuPopoverSections = params.resolvedControls.collapsed.length > 0 || params.canCustomizeComposer === true;
 
     React.useEffect(() => {
         if (!hasActionMenuPopoverSections && params.showActionMenu) {

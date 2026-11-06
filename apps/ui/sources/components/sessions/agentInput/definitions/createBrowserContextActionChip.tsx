@@ -1,3 +1,4 @@
+import { getBrowserContextActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -104,6 +105,7 @@ export function createBrowserContextActionChip(params: Readonly<{
     const actionChip: AgentInputExtraActionChip = {
         key: 'browser-context',
         controlId: 'shortcuts',
+        placement: getBrowserContextActionChipPlacement(),
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'browser-context',
             label,

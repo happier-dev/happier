@@ -10,6 +10,7 @@ describe('buildCollapsedExtraControlActions', () => {
         const chip: AgentInputExtraActionChip = {
             key: 'mcp',
             controlId: 'plugin:fixture/mcp',
+            placement: { id: 'plugin:fixture/mcp', title: 'MCP' },
             onIntent,
             collapsedContentPopover: {
                 title: 'MCP',
@@ -37,6 +38,7 @@ describe('buildCollapsedExtraControlActions', () => {
             chips: [{
                 key: 'accessible-content',
                 controlId: 'plugin:acme.channels/source',
+                placement: { id: 'plugin:acme.channels/source', title: 'Source' },
                 collapsedContentPopover: {
                     title: 'Choose source',
                     label: 'Visible source label',
@@ -61,6 +63,7 @@ describe('buildCollapsedExtraControlActions', () => {
         const optionsChip = (key: string) => ({
             key,
             controlId: 'organization',
+            placement: { id: `organization:${key}`, title: key },
             collapsedOptionsPopover: { presentation: 'list', title: key, rootStep: { id: key, title: key, sections: [] }, selectedOptionId: null, onSelect: () => {} },
             render: () => null,
         }) as unknown as AgentInputExtraActionChip;
@@ -73,13 +76,15 @@ describe('buildCollapsedExtraControlActions', () => {
             openCollapsedOptionsPopover: vi.fn(),
         });
 
-        expect(actions.organization?.map((action) => action.id)).toEqual(['organization-folder', 'organization-tags']);
+        expect(actions['organization:organization-folder']?.map((action) => action.id)).toEqual(['organization-folder']);
+        expect(actions['organization:organization-tags']?.map((action) => action.id)).toEqual(['organization-tags']);
     });
 
     it('keeps a disabled content-popover control disabled after responsive collapse', () => {
         const disabledContentChip = {
             key: 'disabled-content',
             controlId: 'plugin:acme.channels/source',
+            placement: { id: 'plugin:acme.channels/source', title: 'Source' },
             collapsedContentPopover: {
                 title: 'Choose source',
                 disabled: true,
@@ -106,6 +111,7 @@ describe('buildCollapsedExtraControlActions', () => {
         const staleContentChip = {
             key: 'stale-content',
             controlId: 'plugin:acme.channels/source',
+            placement: { id: 'plugin:acme.channels/source', title: 'Source' },
             collapsedContentPopover: {
                 title: 'Choose source',
                 isEnabled: () => current,
@@ -135,6 +141,7 @@ describe('buildCollapsedExtraControlActions', () => {
         const malformedPickerChip = {
             key: 'malformed-picker',
             controlId: 'recipient',
+            placement: { id: 'recipient', title: 'Recipient' },
             collapsedOptionsPopover: {
                 presentation: 'picker',
                 title: 'Recipient',

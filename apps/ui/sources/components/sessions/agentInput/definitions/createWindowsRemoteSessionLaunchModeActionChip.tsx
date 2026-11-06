@@ -147,6 +147,7 @@ export function createWindowsRemoteSessionLaunchModeActionChip(params: Readonly<
     return {
         key: 'new-session-windows-remote-session-launch-mode',
         controlId: 'windowsRemoteSessionMode',
+        placement: { id: 'windowsRemoteSessionMode', title: t('machine.windows.remoteSessionModeTitle'), icon: 'windows-logo', defaultPlacement: 'overflow' },
         onIntent: params.onIntent,
         collapsedOptionsPopover: {
             presentation: 'list',

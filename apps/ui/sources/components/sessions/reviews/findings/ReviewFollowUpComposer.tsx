@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -36,6 +37,8 @@ const RECIPIENT_CHIP_KEY = 'review-follow-up-recipient';
 function createRecipientChip(recipient: ReviewFollowUpRecipient, testID: string, renderMark: (backendId: string) => React.ReactNode): AgentInputExtraActionChip {
     return {
         key: RECIPIENT_CHIP_KEY,
+        controlId: 'recipient',
+        placement: { id: 'recipient', title: t('session.participants.sendToTitle'), defaultPlacement: 'overflow', pending: true },
         stabilityKey: `${recipient.label}:${recipient.backendIds.join(',')}`,
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
             <View

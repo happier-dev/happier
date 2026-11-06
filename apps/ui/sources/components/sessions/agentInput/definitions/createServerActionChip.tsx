@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -17,6 +18,7 @@ export function createServerActionChip(params: Readonly<{
     return {
         key: 'new-session-target-server',
         controlId: 'server',
+        placement: { id: 'server', title: t('settings.servers'), icon: 'hard-drives', defaultPlacement: 'overflow' },
         collapsedContentPopover: {
             title: params.label,
             label: params.label,

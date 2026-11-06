@@ -192,7 +192,7 @@ describe('workflow composer admission', () => {
         expect(screen.getTextContent()).toContain(t('workflows.builtins.reviewAndConverge.rounds'));
     });
     it('renders and opens a custom Where control in the wrapped composer', async () => {
-        const where = { ...createExecutionRunStartContentChip({ key: 'review-where', icon: 'folder',
+        const where = { ...createExecutionRunStartContentChip({ key: 'review-where', controlId: 'machine', pending: true, icon: 'folder',
             label: 'Builder · /repo', title: 'Where', testID: 'review-where-chip',
             renderContent: <View testID="review-where-content" />,
         }), controlId: 'machine' as const };

@@ -3,6 +3,7 @@ import * as React from 'react';
 import type {
   NavigationPlacementFixedItem,
   NavigationPlacementItem,
+  NavigationPlacementPreviewControls,
 } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 import { Modal } from '@/modal';
 import { readCurrentAppShellPluginUiProjection, readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -19,7 +20,7 @@ import type { AgentInputPlacementContext, AgentInputPlacementDescriptor } from '
 import { buildAgentInputPlacementCatalogGroups } from '../controls/buildAgentInputPlacementDescriptors';
 import { listAgentInputActionChipActionIds } from '../sessionActions/listAgentInputActionChipActionIds';
 import { buildConfiguredActionShortcutPlacementDefinitions } from '../sessionActions/agentInputActionShortcutPlacements';
-import { ComposerPlacementPreview } from './ComposerPlacementPreview';
+import { ComposerPlacementPreview, type ComposerPlacementPreviewValues } from './ComposerPlacementPreview';
 
 /** Says what a row means beyond its segment: where it lives, what keeps it reachable, why it is Shown now. */
 function placementNote(
@@ -68,6 +69,11 @@ export function openComposerPlacementCustomizer(
   options: Readonly<{
     descriptors?: readonly AgentInputPlacementDescriptor[];
     context?: AgentInputPlacementContext;
+    /** What each chip shows in the composer that opened this; Settings has no composer behind it. */
+    previewValues?: ComposerPlacementPreviewValues;
+    placeholder?: string;
+    /** The opener's own rail shape; Settings has none, so a session or discussion context draws one rail. */
+    singleRow?: boolean;
   }> = {},
 ) {
   const accountLifetime = captureActiveServerAccountScopeLifetime();
@@ -151,10 +157,14 @@ export function openComposerPlacementCustomizer(
             },
             fixedItems,
             activeGroup: contextTitles[context],
-            renderPreview: (preferences: NavigationPlacementPreferences) => (
+            renderPreview: (preferences: NavigationPlacementPreferences, controls?: NavigationPlacementPreviewControls) => (
               <ComposerPlacementPreview
                 descriptors={descriptors}
                 preferences={preferences}
+                {...(options.previewValues ? { values: options.previewValues } : {})}
+                {...(options.placeholder ? { placeholder: options.placeholder } : {})}
+                {...(controls ? { reorderFor: controls.reorderFor } : {})}
+                singleRow={options.singleRow ?? (context === 'session' || context === 'discussion')}
               />
             ),
             testID: 'composer-placement-customizer',

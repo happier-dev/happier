@@ -1,3 +1,4 @@
+import { getCapabilitiesActionChipPlacement } from './capabilitiesActionChipPlacement';
 import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -35,6 +36,7 @@ function AttentionDot() {
 export function createCapabilitiesActionChip(
   params: Readonly<{
     label: string;
+    placementId?: string;
     attention: boolean;
     stabilityKey: string;
     popoverContent: AgentInputPopoverContent;
@@ -51,6 +53,7 @@ export function createCapabilitiesActionChip(
     onIntent: params.onIntent,
     stabilityKey: `${params.stabilityKey}:${params.label}:${params.attention ? 1 : 0}:${params.openRequest ? 'open' : ''}`,
     controlId: 'capabilities',
+    placement: { ...getCapabilitiesActionChipPlacement(), ...(params.placementId ? { id: params.placementId } : {}) },
     collapsedContentPopover: {
       title,
       label: params.label,

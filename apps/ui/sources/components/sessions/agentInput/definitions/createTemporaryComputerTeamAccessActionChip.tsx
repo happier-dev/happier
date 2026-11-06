@@ -1,3 +1,4 @@
+import { getTemporaryComputerTeamAccessActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -22,6 +23,8 @@ export function createTemporaryComputerTeamAccessActionChip(params: Readonly<{
         : t('newSession.temporaryComputer.teamAccess.off');
     return {
         key: 'new-session-temporary-computer-team-access',
+        controlId: 'sessionAccess',
+        placement: { ...getTemporaryComputerTeamAccessActionChipPlacement(), pending: params.authorized },
         stabilityKey: params.authorized,
         labelPolicy: 'always',
         collapsedAction: ({ tint, dismiss }) => ({

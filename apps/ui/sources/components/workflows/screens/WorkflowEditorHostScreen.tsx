@@ -1,3 +1,4 @@
+import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
 import { useSession } from '@/sync/domains/state/storage';
 import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/SessionDraftHydrationBoundary';
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
@@ -1022,12 +1023,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             testID: 'workflow-start-where-chip', testIDPrefix: 'workflow-start-where',
         }), ...(runRetained === null ? [] : [{ ...createExecutionRunStartContentChip({
             // The page's Run as belongs to the next start; the review names what this request runs in.
-            key: 'workflow-start-run-as', icon: 'stack', title: t('workflows.start.targetsTitle'),
+            ...getWorkflowContextChipDefinition('runAs'), pending: true, icon: 'stack', title: t('workflows.start.targetsTitle'),
             label: runRetained.input.executionTarget?.kind === 'detached_run' ? t('workflows.start.targetsBackground') : t('workflows.start.targetsSessions'),
             testID: 'workflow-start-run-as-chip', revision: runRetained.input.executionTarget?.kind ?? 'session',
             renderContent: <Item title={t('workflows.start.targetsTitle')} showChevron={false}
                 subtitle={runRetained.input.executionTarget?.kind === 'detached_run' ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')} />,
-        }), controlId: 'workflowTargets' as const }]), ...(ownedPlanOriginId ? [{ ...createExecutionRunStartContentChip({ key: 'workflow-plan-report', icon: 'arrow-elbow-down-right',
+        }), controlId: 'workflowTargets' as const }]), ...(ownedPlanOriginId ? [{ ...createExecutionRunStartContentChip({ ...getWorkflowContextChipDefinition('planReport'), pending: true, icon: 'arrow-elbow-down-right',
             label: t('workflows.review.reportBackTitle', { session: planOriginName }), title: t('workflows.review.reportBackTitle', { session: planOriginName }),
             testID: 'workflow-plan-report-chip', revision: String([reportShown, runRetained !== null]), renderContent: <Item
                 title={t('workflows.review.reportBackTitle', { session: planOriginName })} subtitle={t('workflows.review.reportBackBody', { session: planOriginName })}

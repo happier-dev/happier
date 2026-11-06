@@ -1,3 +1,4 @@
+import { getNewSessionSeededPlacementActionChipPlacement } from './newSessionActionChipPlacements';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -38,6 +39,8 @@ export function createNewSessionSeededPlacementActionChip(params: Readonly<{
     const label = t('newSession.selectWorkingDirectoryTitle');
     return {
         key: CHIP_KEY,
+        controlId: 'path',
+        placement: { ...getNewSessionSeededPlacementActionChipPlacement(), pending: true },
         collapsedOptionsPopover: {
             presentation: 'list',
             title: label,

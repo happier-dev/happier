@@ -351,16 +351,13 @@ export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll
         props.labels === 'all' ? AGENT_INPUT_ACTION_CHIP_STYLE : [AGENT_INPUT_ACTION_CHIP_STYLE, AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE]
     ), [props.labels]);
     const anchor = React.useRef<View | null>(null);
-    const chips = props.layout === 'collapsed'
-        ? [
-            createActionMenuTriggerChip({ anchorRef: anchor, tint, showLabel: props.labels !== 'none', chipStyle: coreChipStyle, textStyle, onPress: NOOP }),
-        ]
-        : [
-            createAgentSelectionActionChip({ anchorRef: anchor, agentId: 'claude', tint, showLabel: props.labels !== 'none', label: 'Claude', chipStyle: coreChipStyle, textStyle, onPress: NOOP }),
-            createPermissionActionChip({ anchorRef: anchor, tint, showLabel: props.labels !== 'none', label: getPermissionModeLabelForAgentType('claude', 'default'), chipStyle: coreChipStyle, textStyle, onPress: NOOP }),
-            <AgentInputFolderChip key="path" anchorRef={anchor} state={PREVIEW_FOLDER_STATE} tint={tint} chipStyle={extraChipStyle} textStyle={textStyle} onPress={NOOP} />,
-            createActionMenuTriggerChip({ anchorRef: anchor, tint, showLabel: props.labels === 'all', chipStyle: extraChipStyle, textStyle, onPress: NOOP }),
-        ];
+    // The leading + first, as the live row draws it (calm-shell C2).
+    const chips = [
+        createActionMenuTriggerChip({ anchorRef: anchor, tint, chipStyle: extraChipStyle, open: false, openStyle: null, onPress: NOOP }),
+        createAgentSelectionActionChip({ anchorRef: anchor, agentId: 'claude', tint, showLabel: props.labels !== 'none', label: 'Claude', chipStyle: coreChipStyle, textStyle, onPress: NOOP }),
+        createPermissionActionChip({ anchorRef: anchor, tint, showLabel: props.labels !== 'none', label: getPermissionModeLabelForAgentType('claude', 'default'), chipStyle: coreChipStyle, textStyle, onPress: NOOP }),
+        <AgentInputFolderChip key="path" anchorRef={anchor} state={PREVIEW_FOLDER_STATE} tint={tint} chipStyle={extraChipStyle} textStyle={textStyle} onPress={NOOP} />,
+    ];
     return (
         <View style={{ flex: props.width === undefined ? 1 : undefined, overflow: 'hidden', justifyContent: 'flex-end' }} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
             <View style={{ width: props.width ?? CANVAS_WIDTH, transform: [{ scale: props.width === undefined ? CANVAS_SCALE : 1 }], transformOrigin: 'bottom left', padding: theme.space.s10 }}>

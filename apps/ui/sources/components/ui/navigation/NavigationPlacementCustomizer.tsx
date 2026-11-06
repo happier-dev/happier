@@ -52,7 +52,7 @@ type CustomizerProps = Readonly<{
     fixedItems?: readonly NavigationPlacementFixedItem[];
     /** The group to open at (the + opener's own context); the full grouped catalog stays listed. */
     activeGroup?: string;
-    renderPreview?: (preferences: NavigationPlacementPreferences) => React.ReactNode;
+    renderPreview?: (preferences: NavigationPlacementPreferences, controls?: NavigationPlacementPreviewControls) => React.ReactNode;
 }>;
 
 type PlacementSection = Readonly<{ title: string | undefined; items: readonly NavigationPlacementItem[] }>;
@@ -101,6 +101,59 @@ export function NavigationPlacementCustomizer(props: CustomizerProps & CustomMod
     }, [footer, props.setChrome, props.surfaceId, props.description]);
     return <NavigationPlacementCustomizerView {...props} scope={scope} preferences={owner.preferences}
         placementsBySurface={placementsBySurface} onChange={setPreferences} showHeader={false} />;
+}
+
+/** What a surface's preview may offer: moving what it draws, through the same write as the list's rows. */
+export type NavigationPlacementPreviewControls = Readonly<{
+    reorderFor: (ids: readonly string[]) => EntityFlatReorderBinding;
+}>;
+
+/** One reorder admission and write, for a placement list and for the preview that draws the same items. */
+function buildPlacementReorderBinding(input: Readonly<{
+    scope: EntityDragScopeV1 | null;
+    dragSurfaceId: string;
+    items: readonly NavigationPlacementItem[];
+    /** The ids a move may land among: its own group in a list, what is drawn in a preview. */
+    moveIdsOf: (id: string) => readonly string[];
+    orderedIds: readonly string[];
+    preferences: NavigationPlacementPreferences;
+    address: NavigationPlacementAddress;
+    onChange: (preferences: NavigationPlacementPreferences) => void | Promise<boolean>;
+}>): EntityFlatReorderBinding {
+    const { items, scope } = input;
+    return {
+        scope,
+        kind: 'navigation-item',
+        items,
+        getItem: id => scope && items.some(item => item.id === id)
+            ? { kind: 'navigation-item', scope, surfaceId: input.dragSurfaceId, itemId: id } : null,
+        getSourceId: item => item.kind === 'navigation-item' && item.surfaceId === input.dragSurfaceId ? item.itemId : null,
+        resolve: (sourceId, position) => {
+            const ids = input.moveIdsOf(sourceId);
+            if (position.anchorId !== null && !ids.includes(position.anchorId)) return entityReorderRefused('same-position');
+            const moved = resolveAnchoredListMoveV1(ids, sourceId, position);
+            if (!moved || moved.every((id, index) => id === ids[index])) return entityReorderRefused('same-position');
+            // The saved order stays one list across every group; the move only relocates this row beside its anchor.
+            const next = reorderNavigationPlacement(input.preferences, [...input.orderedIds], sourceId, position);
+            if (!next) return entityReorderRefused('reorder_target_gone');
+            return { status: 'allowed', effect: { actionId: 'settings.set', input: {
+                anchor: 'appearance.navigationPlacements', value: navigationPlacementPatch(input.address, next),
+            }, preview: entityReorderPreview(position, items) } };
+        },
+        execute: async effect => {
+            const payload = effect.input;
+            if (effect.actionId !== 'settings.set' || !payload || typeof payload !== 'object' || Array.isArray(payload) || !('anchor' in payload) || payload.anchor !== 'appearance.navigationPlacements') {
+                return { status: 'refused', reason: { code: 'invalid_navigation_placement', message: t('entityDragDrop.reasons.gone') } };
+            }
+            const parsed = NavigationSurfacePlacementsV1Schema.safeParse('value' in payload ? payload.value : undefined);
+            const next = parsed.success ? readNavigationPlacementPreferences(parsed.data, input.address) : null;
+            if (!next) return { status: 'refused', reason: { code: 'invalid_navigation_placement', message: t('entityDragDrop.reasons.gone') } };
+            const applied = await input.onChange(next);
+            return applied === false
+                ? { status: 'refused', reason: { code: 'navigation_placement_not_applied', message: t('errors.operationFailed') } }
+                : { status: 'applied' };
+        },
+    };
 }
 
 type PlacementRowsProps = Readonly<{
@@ -152,39 +205,9 @@ function PlacementRows(props: PlacementRowsProps) {
     const hasGlyphColumn = items.some(item => item.icon) || (props.fixedItems ?? []).some(item => item.icon);
     // A fixed row has no handle: it keeps the handle's column, at the grip density the reorder rows draw.
     const fixedRowHandleInset = HAPPIER_DRAG_GRIP_METRICS[useHoverCapablePrimaryPointer() ? 'pointer' : 'touch'].box + LEADING_STYLE.gap;
-    const binding: EntityFlatReorderBinding = {
-        scope: props.scope ?? null,
-        kind: 'navigation-item',
-        items,
-        getItem: id => props.scope && items.some(item => item.id === id)
-            ? { kind: 'navigation-item', scope: props.scope, surfaceId: props.dragSurfaceId, itemId: id } : null,
-        getSourceId: item => item.kind === 'navigation-item' && item.surfaceId === props.dragSurfaceId ? item.itemId : null,
-        resolve: (sourceId, position) => {
-            const ids = groupIdsOf(sourceId);
-            if (position.anchorId !== null && !ids.includes(position.anchorId)) return entityReorderRefused('same-position');
-            const moved = resolveAnchoredListMoveV1(ids, sourceId, position);
-            if (!moved || moved.every((id, index) => id === ids[index])) return entityReorderRefused('same-position');
-            // The saved order stays one list across every group; the move only relocates this row beside its anchor.
-            const next = reorderNavigationPlacement(props.preferences, placements.ordered.map(item => item.id), sourceId, position);
-            if (!next) return entityReorderRefused('reorder_target_gone');
-            return { status: 'allowed', effect: { actionId: 'settings.set', input: {
-                anchor: 'appearance.navigationPlacements', value: navigationPlacementPatch(props.address, next),
-            }, preview: entityReorderPreview(position, items) } };
-        },
-        execute: async effect => {
-            const input = effect.input;
-            if (effect.actionId !== 'settings.set' || !input || typeof input !== 'object' || Array.isArray(input) || !('anchor' in input) || input.anchor !== 'appearance.navigationPlacements') {
-                return { status: 'refused', reason: { code: 'invalid_navigation_placement', message: t('entityDragDrop.reasons.gone') } };
-            }
-            const parsed = NavigationSurfacePlacementsV1Schema.safeParse('value' in input ? input.value : undefined);
-            const next = parsed.success ? readNavigationPlacementPreferences(parsed.data, props.address) : null;
-            if (!next) return { status: 'refused', reason: { code: 'invalid_navigation_placement', message: t('entityDragDrop.reasons.gone') } };
-            const applied = await props.onChange(next);
-            return applied === false
-                ? { status: 'refused', reason: { code: 'navigation_placement_not_applied', message: t('errors.operationFailed') } }
-                : { status: 'applied' };
-        },
-    };
+    const binding = buildPlacementReorderBinding({ scope: props.scope ?? null, dragSurfaceId: props.dragSurfaceId, items,
+        moveIdsOf: groupIdsOf, orderedIds: placements.ordered.map(item => item.id), preferences: props.preferences,
+        address: props.address, onChange: props.onChange });
     const fixedRows = props.fixedItems?.map(item => <Item key={item.id} testID={`${testID}.fixed:${item.id}`} title={item.title} subtitle={item.placementNote}
         // No handle: the glyph keeps the reorderable rows' column.
         leftElement={<View style={[LEADING_STYLE, { paddingLeft: fixedRowHandleInset }]}>
@@ -271,7 +294,17 @@ export function NavigationPlacementCustomizerView(props: CustomizerProps & Reado
     // (or scrolling the catalog) never carries the picture of what the rows change out of view.
     return <View style={PINNED_COLUMN_STYLE}>
         {props.renderPreview ? <View testID={`${testID}.preview`} style={{ paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, paddingBottom: theme.space.s8, flexShrink: 0 }}>
-            {props.renderPreview(props.preferences)}
+            {props.renderPreview(props.preferences, { reorderFor: ids => buildPlacementReorderBinding({
+                scope: props.scope ?? null,
+                // Its own drag identity: a chip lands among the chips, never in the list below.
+                dragSurfaceId: `${props.surfaceId}.preview`,
+                items: ids.flatMap(id => props.items.filter(item => item.id === id)),
+                moveIdsOf: () => ids,
+                orderedIds: resolveNavigationPlacements(props.items, props.preferences).ordered.map(item => item.id),
+                preferences: props.preferences,
+                address: props.address ?? props.surfaceId,
+                onChange: props.onChange,
+            }) })}
         </View> : null}
     <ItemList testID={testID}>
         {props.showHeader !== false ? <PageHeader title={t(`navigationPlacement.${props.surfaceId}`)} description={props.description ?? t('navigationPlacement.description')} /> : null}
@@ -295,7 +328,7 @@ export type DetailNavigationCustomizerSection = Readonly<{
     placementLabels?: Readonly<Partial<Record<NavigationDefaultPlacement, string>>>;
     groupTitles?: Readonly<Record<string, string>>;
     /** The surface itself at static props, drawn under the section heading. */
-    renderPreview?: (preferences: NavigationPlacementPreferences) => React.ReactNode;
+    renderPreview?: (preferences: NavigationPlacementPreferences, controls?: NavigationPlacementPreviewControls) => React.ReactNode;
 }>;
 
 export type DetailNavigationCustomizerProps = Readonly<{

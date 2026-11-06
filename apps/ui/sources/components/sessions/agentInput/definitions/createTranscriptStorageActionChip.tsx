@@ -132,6 +132,7 @@ export function createTranscriptStorageActionChip(params: Readonly<{
     return {
         key: 'new-session-storage',
         controlId: 'storage',
+        placement: { id: 'storage', title: t('settingsSession.defaultStorage.title'), icon: 'floppy-disk', defaultPlacement: 'overflow' },
         collapsedOptionsPopover: {
             presentation: 'list',
             title: t('settingsSession.defaultStorage.title'),

@@ -86,6 +86,7 @@ export function createAttachmentActionChip(params: Readonly<{
     return {
         key: 'attachments-add',
         controlId: 'attachments',
+        placement: { id: 'attachments', title: t('common.attach'), icon: 'paperclip', defaultPlacement: 'overflow' },
         labelPolicy: 'auto-hide',
         ...(showChooser ? {
             collapsedOptionsPopover: {

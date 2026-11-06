@@ -1,3 +1,4 @@
+import { getNewSessionTriggersActionChipPlacement } from '../newSessionActionChipPlacements';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -38,6 +39,7 @@ export function createNewSessionTriggersActionChip(props: InitialTriggersProps):
     return {
         key: CHIP_KEY,
         controlId: 'automation',
+        placement: getNewSessionTriggersActionChipPlacement(),
         stabilityKey: JSON.stringify([props.initialTriggers, props.machineId, props.serverId]),
         collapsedAction: ({ openCollapsedPopover, tint }) => ({
             id: CHIP_KEY, label,

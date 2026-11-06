@@ -1,557 +1,249 @@
-import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-    Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
-}));
+import type { AgentInputPlacementDescriptor, AgentInputResolvedControlLines } from './controls/agentInputControlTypes';
+import { buildAgentInputPlacementDescriptors } from './controls/buildAgentInputPlacementDescriptors';
+import { getAgentInputResetStartPlacement, getLinkedFilesActionChipPlacement } from './definitions/agentInputActionChipPlacements';
+import { createSessionAccessActionChip } from './definitions/createSessionAccessActionChip';
+import { createAutomationEditorActionChip } from './definitions/createAutomationEditorActionChip';
+import { createWorkflowRunActionChip } from './sessionActions/createWorkflowRunActionChip';
+import { buildCollapsedExtraControlActions } from './controls/buildCollapsedExtraControlActions';
+import type { AgentInputExtraActionChip } from './agentInputContracts';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
+vi.mock('@/components/ui/theme/haptics', () => ({ hapticsLight: vi.fn() }));
 
-vi.mock('@/components/ui/theme/haptics', () => ({
-    hapticsLight: vi.fn(),
-}));
-
-vi.mock('@/agents/registry/compat/customAcp', () => ({
-    resolveAgentLookupCoreConfig: () => ({ displayNameKey: 'agents.codex' }),
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex' }),
-}));
+const resolved = (collapsed: readonly string[]): AgentInputResolvedControlLines => ({
+    primary: [], secondary: [], collapsed, accessories: [], hidden: [], controls: [], effectivePlacements: {},
+});
+const base = {
+    tint: '#fff', agentId: 'codex', agentLabel: 'Codex', profileLabel: null, profileIcon: 'user-circle', dismiss: () => {}, blurInput: () => {},
+} as const;
+const action = (id: string) => ({ id, label: id, icon: null, onPress: () => {} });
 
 describe('buildAgentInputActionMenuActions', () => {
-    it('keeps machine/path entries in collapsed menu with fallback labels when values are empty', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: null,
-            profileIcon: 'user-circle',
-            machineName: undefined,
-            currentPath: '',
-            onMachineClick: () => {},
-            onPathClick: () => {},
-            dismiss: () => {},
-            blurInput: () => {},
+    it('identifies effective add operations as a first section without restoring Shown or Hidden operations', () => {
+        const menu = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: resolved(['permission', 'linkedFiles', 'path', 'attachments']),
+            permissionLabel: 'Ask', onPermissionClick: () => {}, currentPath: '/project', onPathClick: () => {}, onRemoveFolder: () => {},
+            extraControlActions: { linkedFiles: action('link'), attachments: action('attach') },
         });
-
-        const machine = actions.find((action) => action.id === 'machine');
-        const path = actions.find((action) => action.id === 'path');
-
-        expect(machine?.label).toBe('newSession.selectMachineTitle');
-        expect(path?.label).toBe('newSession.folder.a11y.loading');
-    });
-
-    it('keeps stop ahead of machine and path in the collapsed control menu order when only a resolved agent label is available', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Configured backend',
-            onAgentClick: () => {},
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            canStop: true,
-            onStop: () => {},
-            dismiss: () => {},
-            blurInput: () => {},
+        expect(menu).toMatchObject([
+            { id: 'link', section: 'add' }, { id: 'attach', section: 'add' },
+            { id: 'permission', section: 'controls' }, { id: 'path', section: 'controls' },
+            { id: 'path-remove', section: 'controls' },
+        ]);
+        const moved = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: resolved(['permission']), permissionLabel: 'Ask', onPermissionClick: () => {},
+            extraControlActions: { linkedFiles: action('link'), attachments: action('attach') },
         });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'stop',
-            'machine',
-            'path',
-        ]);
-
-        expect(actions.find((action) => action.id === 'agent')?.label).toBe('Configured backend');
+        expect(moved).toMatchObject([{ id: 'permission', section: 'controls' }]);
+        expect(moved).toHaveLength(1);
     });
 
-    it('includes recipient and delivery extra controls in the collapsed control menu ahead of machine and path', () => {
-        const opts = {
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            canStop: true,
-            onStop: () => {},
-            dismiss: () => {},
-            blurInput: () => {},
-            extraControlActions: {
-                recipient: {
-                    id: 'recipient',
-                    label: 'Recipient',
-                    icon: null,
-                    onPress: () => {},
-                },
-                delivery: {
-                    id: 'delivery',
-                    label: 'Delivery',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-        } as Parameters<typeof buildAgentInputActionMenuActions>[0];
-
-        const actions = buildAgentInputActionMenuActions(opts);
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'stop',
-            'recipient',
-            'delivery',
-            'machine',
-            'path',
-        ]);
+    it('uses the Files glyph rather than a branch glyph in the file viewer action', () => {
+        const [files] = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: resolved(['files']), sessionId: 'session', onFileViewerPress: () => {},
+        });
+        expect(files).toMatchObject({ icon: { props: { name: 'files' } } });
     });
 
-    it('keeps no, one, or many plugin controls after incumbent host groups in the collapsed menu', () => {
-        const base = {
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        } as const;
+    it('fills missing menu glyphs, detail disclosure and description from admitted catalog metadata without replacing live values or switches', () => {
+        const resetPlacement = getAgentInputResetStartPlacement();
+        const chips: AgentInputExtraActionChip[] = [
+            createSessionAccessActionChip({ label: 'Private', accessibilityLabel: 'Session access', onOpen: () => {}, popoverContent: null }),
+            createAutomationEditorActionChip({ label: 'Automate', onPress: () => {} }),
+            { key: 'reset', controlId: 'delivery', placement: resetPlacement, render: () => null,
+                collapsedContentPopover: { title: resetPlacement.title, renderContent: () => null } },
+            { key: 'issue', controlId: 'plugin:fixture/issue', placement: { id: 'plugin:fixture/issue', title: 'Issue' }, render: () => null,
+                collapsedContentPopover: { title: 'Issue', header: { title: 'Issue', description: 'Link an issue · plugin' }, renderContent: () => null } },
+        ];
+        const controls = buildAgentInputPlacementDescriptors({ coreControls: [{ id: 'permission' }, { id: 'engine' }], chips });
+        const menu = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved(chips.map(chip => chip.placement!.id)), controls },
+            extraControlActions: buildCollapsedExtraControlActions({ chips, tint: base.tint, dismiss: base.dismiss, blurInput: base.blurInput, openCollapsedOptionsPopover: () => {} }),
+        });
+        expect(menu[0]).toMatchObject({ label: 'session.access.title', subtitle: 'Private', icon: { props: { name: 'users' } }, right: { props: { name: 'caret-right' } } });
+        expect(menu[1]).toMatchObject({ label: 'Automate', icon: { props: { name: 'lightning' } }, right: null });
+        expect(menu[2]).toMatchObject({ subtitle: 'usage.board.plans.resetStartMeta', icon: { props: { name: 'clock' } } });
+        expect(menu[3]).toMatchObject({ subtitle: 'Link an issue · plugin', right: { props: { name: 'caret-right' } } });
+        const switchRight = 'existing switch';
+        const withAuthoredValue = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved([resetPlacement.id]), controls },
+            extraControlActions: { [resetPlacement.id]: { id: 'reset', label: 'Tomorrow', subtitle: 'Waiting for allowance', right: switchRight, onPress: () => {} } },
+        });
+        expect(withAuthoredValue[0]).toMatchObject({ subtitle: 'Tomorrow · Waiting for allowance', right: switchRight });
+        const coreMenu = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved(['permission', 'engine']), controls },
+            permissionLabel: 'Ask', onPermissionClick: () => {}, engineLabel: 'Current model',
+        });
+        expect(coreMenu[0]).toMatchObject({ subtitle: 'Ask', right: { props: { name: 'caret-right' } } });
+        expect(coreMenu[1]).toMatchObject({ disabled: true, right: null });
+    });
 
-        expect(buildAgentInputActionMenuActions(base).map((action) => action.id)).toEqual([
-            'agent',
-            'machine',
-            'path',
-        ]);
+    it('names the Run a pattern row once, without its chip label as a second line', () => {
+        const chip = createWorkflowRunActionChip({ label: 'Run…', title: 'Run a pattern', testID: 'run-pattern', renderContent: () => null });
+        const controls = buildAgentInputPlacementDescriptors({ coreControls: [], chips: [chip] });
+        const [row] = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved([chip.placement!.id]), controls },
+            extraControlActions: buildCollapsedExtraControlActions({ chips: [chip], tint: base.tint, dismiss: base.dismiss, blurInput: base.blurInput, openCollapsedOptionsPopover: () => {} }),
+        });
+        expect(row).toMatchObject({ label: 'Run a pattern', right: { props: { name: 'caret-right' } } });
+        expect(row?.subtitle).toBeUndefined();
+    });
 
-        expect(buildAgentInputActionMenuActions({
+    it('shows stable control names with current values and preserves supplementary operations and switch props', () => {
+        const descriptor = (id: 'permission' | 'engine' | 'path' | 'providerOption:approval', title: string): AgentInputPlacementDescriptor => ({
+            id, title, controlId: id === 'providerOption:approval' ? 'providerOption' : id,
+            line: 'primary', slot: 'chip', defaultPlacement: 'overflow', pending: false,
+        });
+        const onPermissionClick = vi.fn();
+        const toggle = 'switch fixture';
+        const menu = buildAgentInputActionMenuActions({
             ...base,
-            extraControlActions: {
-                'plugin:fixture/only': {
-                    id: 'plugin:fixture/only',
-                    label: 'Only plugin control',
-                    icon: null,
-                    onPress: () => {},
-                },
+            resolvedControls: {
+                ...resolved(['permission', 'engine', 'path', 'providerOption:approval']),
+                controls: [descriptor('permission', 'Permissions'), descriptor('engine', 'Model'),
+                    descriptor('path', 'Folder'), descriptor('providerOption:approval', 'Approval')],
             },
-        }).map((action) => action.id)).toEqual([
-            'agent',
-            'machine',
-            'path',
-            'plugin:fixture/only',
+            permissionLabel: 'Ask before edits', onPermissionClick,
+            engineLabel: 'Current model', currentPath: '/workspace/project', onPathClick: () => {}, onRemoveFolder: () => {},
+            extraControlActions: { 'providerOption:approval': {
+                id: 'approval', label: 'Enabled', subtitle: 'Unavailable offline', disabled: true,
+                right: toggle, rightElementOutsidePressable: true,
+            } },
+        });
+        expect(menu.map(({ id, label, subtitle }) => ({ id, label, subtitle }))).toEqual([
+            { id: 'permission', label: 'Permissions', subtitle: 'Ask before edits' },
+            { id: 'agent', label: 'Model', subtitle: 'Current model' },
+            { id: 'path', label: 'Folder', subtitle: '/workspace/project' },
+            { id: 'path-remove', label: 'newSession.folder.removeFolder', subtitle: undefined },
+            { id: 'approval', label: 'Approval', subtitle: 'Enabled · Unavailable offline' },
         ]);
+        expect(menu[1].disabled).toBe(true);
+        expect(menu[4]).toMatchObject({ disabled: true, right: toggle, rightElementOutsidePressable: true });
+        menu[0].onPress?.();
+        expect(onPermissionClick).toHaveBeenCalledOnce();
+    });
 
-        expect(buildAgentInputActionMenuActions({
+    it('does not repeat an operation name as its own current value or replace its authored subtitle', () => {
+        const menu = buildAgentInputActionMenuActions({
             ...base,
-            extraControlActions: {
-                'plugin:fixture/second': {
-                    id: 'plugin:fixture/second',
-                    label: 'Second plugin control',
-                    icon: null,
-                    onPress: () => {},
-                },
-                'plugin:fixture/first': {
-                    id: 'plugin:fixture/first',
-                    label: 'First plugin control',
-                    icon: null,
-                    onPress: () => {},
-                },
+            resolvedControls: { ...resolved(['attachments']), controls: [{
+                id: 'attachments', controlId: 'attachments', title: 'Attach files', line: 'primary',
+                slot: 'chip', defaultPlacement: 'overflow', pending: false,
+            }] },
+            extraControlActions: { attachments: { id: 'attach', label: 'Attach files', subtitle: 'Files and images' } },
+        });
+        expect(menu[0]).toMatchObject({ label: 'Attach files', subtitle: 'Files and images' });
+    });
+
+    it('drops a chip label that only restates the row name and keeps just the value after a repeated name', () => {
+        const descriptor = (id: AgentInputPlacementDescriptor['controlId'], title: string): AgentInputPlacementDescriptor => ({
+            id, title, controlId: id, line: 'primary', slot: 'chip', defaultPlacement: 'overflow', pending: false,
+        });
+        const menu = buildAgentInputActionMenuActions({
+            ...base,
+            resolvedControls: {
+                ...resolved(['recipient', 'profile', 'goal']),
+                controls: [descriptor('recipient', 'Send to'), descriptor('profile', 'Runs through'), descriptor('goal', 'Goal')],
             },
-        }).map((action) => action.id)).toEqual([
-            'agent',
-            'machine',
-            'path',
-            'plugin:fixture/second',
-            'plugin:fixture/first',
-        ]);
-    });
-
-    it('places attachments ahead of machine and path in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
             extraControlActions: {
-                attachments: {
-                    id: 'attachments',
-                    label: 'Attach',
-                    icon: null,
-                    onPress: () => {},
-                },
+                recipient: { id: 'send-to', label: 'To', onPress: () => {} },
+                profile: { id: 'runs-through', label: 'Runs through ChatGPT · Happier', onPress: () => {} },
+                goal: { id: 'goal', label: 'Ship the relay fix', onPress: () => {} },
             },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
         });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'attachments',
-            'agent',
-            'machine',
-            'path',
+        expect(menu.map(({ label, subtitle }) => ({ label, subtitle }))).toEqual([
+            { label: 'Send to', subtitle: undefined },
+            { label: 'Runs through', subtitle: 'ChatGPT · Happier' },
+            { label: 'Goal', subtitle: 'Ship the relay fix' },
         ]);
     });
 
-    it('leaves out the controls the host keeps on its bar, and keeps everything else in the menu', () => {
+    it('keeps the catalogued Link a file add operation plain even though it owns a picker', () => {
+        const placement = getLinkedFilesActionChipPlacement();
+        const controls = buildAgentInputPlacementDescriptors({ coreControls: [], chips: [{
+            key: 'link', controlId: 'linkedFiles', placement, render: () => null,
+            collapsedContentPopover: { title: placement.title, renderContent: () => null },
+        }] });
+        const menu = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved(['linkedFiles']), controls },
+            extraControlActions: { linkedFiles: { id: 'link', label: placement.title, onPress: () => {} } },
+        });
+        expect(menu[0]).toMatchObject({ label: placement.title, right: null });
+        expect(menu[0].subtitle).toBeUndefined();
+    });
+
+    it('keeps an available engine value readable in overflow when no editing callback is admitted', () => {
         const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
+            ...base, resolvedControls: resolved(['engine']), engineLabel: 'Current model',
+        });
+        expect(actions).toHaveLength(1);
+        expect(actions[0]).toMatchObject({ id: 'agent', label: 'Current model', disabled: true });
+        expect(actions[0].onPress).toBeUndefined();
+    });
+
+    it('preserves current model, mode, environment and file interactions in effective overflow', () => {
+        const onAgentClick = vi.fn();
+        const onSessionModeClick = vi.fn();
+        const onEnvVarsClick = vi.fn();
+        const onFileViewerPress = vi.fn();
+        const actions = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: resolved(['engine', 'mode', 'env', 'files']),
+            engineLabel: 'Configured model', sessionModeLabel: 'Build', envVarsCount: 2, sessionId: 'session-1',
+            onAgentClick, onSessionModeClick, onEnvVarsClick, onFileViewerPress,
+        });
+        expect(actions.map((item) => item.id)).toEqual(['agent', 'mode', 'env-vars', 'files']);
+        expect(actions[0].label).toBe('Configured model');
+        expect(actions[1].label).toBe('Build');
+        actions.forEach((item) => item.onPress?.());
+        expect(onAgentClick).toHaveBeenCalledOnce();
+        expect(onSessionModeClick).toHaveBeenCalledOnce();
+        expect(onEnvVarsClick).toHaveBeenCalledOnce();
+        expect(onFileViewerPress).toHaveBeenCalledOnce();
+    });
+
+    it('renders effective overflow in saved order, grouping effective add actions first', () => {
+        const actions = buildAgentInputActionMenuActions({
+            ...base,
+            resolvedControls: resolved(['delivery:second', 'resume', 'attachments', 'linkedFiles', 'delivery:first']),
+            onResumeClick: () => {},
             extraControlActions: {
-                attachments: { id: 'attachments', label: 'Attach', icon: null, onPress: () => {} },
-                'plugin:fixture/mcp': { id: 'mcp', label: 'MCP', icon: null, onPress: () => {} },
+                'delivery:first': action('first'), 'delivery:second': action('second'),
+                attachments: action('attach'), linkedFiles: action('link'),
+                'plugin:action:acme/hidden': action('hidden'),
             },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            barControlIds: ['machine', 'path', 'engine', 'permission', 'actionMenu'],
-            dismiss: () => {},
-            blurInput: () => {},
         });
-
-        expect(actions.map((action) => action.id)).toEqual(['attachments', 'mcp']);
+        expect(actions.map((item) => item.id)).toEqual(['attach', 'link', 'second', 'resume', 'first']);
     });
 
-    it('places files ahead of machine and path in the collapsed control menu order', () => {
+    it('keeps machine and folder labels and removal on their existing menu path', () => {
+        const remove = vi.fn();
         const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            sessionId: 'session-1',
-            onFileViewerPress: () => {},
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
+            ...base, resolvedControls: resolved(['machine', 'path']),
+            onMachineClick: () => {}, onPathClick: () => {}, currentPath: '/repo', onRemoveFolder: remove,
         });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'files',
-            'agent',
-            'machine',
-            'path',
-        ]);
+        expect(actions.map((item) => item.id)).toEqual(['machine', 'path', 'path-remove']);
+        expect(actions[0].label).toBe('newSession.selectMachineTitle');
+        expect(actions[1].label).toBe('/repo');
+        actions[2].onPress?.();
+        expect(remove).toHaveBeenCalledOnce();
     });
 
-    it('places linked files ahead of machine and path in the collapsed control menu order', () => {
+    it('opens Permissions through its current callback', () => {
+        const onPermissionClick = vi.fn();
+        const dismiss = vi.fn();
         const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                linkedFiles: {
-                    id: 'linked-files',
-                    label: 'common.linkFile',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
+            ...base, resolvedControls: resolved(['permission']), permissionLabel: 'Approval mode', onPermissionClick, dismiss,
         });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'linked-files',
-            'agent',
-            'machine',
-            'path',
-        ]);
-    });
-
-    it('places review comments ahead of machine and path in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                reviewComments: {
-                    id: 'review-comments',
-                    label: '1 draft review comment',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'review-comments',
-            'machine',
-            'path',
-        ]);
-    });
-
-    it('places connected services ahead of machine and path in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                connectedServices: {
-                    id: 'connected-services',
-                    label: 'connectedServices.authChip.label',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'connected-services',
-            'machine',
-            'path',
-        ]);
-    });
-
-    it('places storage ahead of machine and path in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                storage: {
-                    id: 'storage',
-                    label: 'sessionsList.storageDirectTab',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'storage',
-            'machine',
-            'path',
-        ]);
-    });
-
-    it('places grouped shortcut actions ahead of machine and path in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                shortcuts: [
-                    {
-                        id: 'session-action:review.start',
-                        label: 'Review',
-                        icon: null,
-                        onPress: () => {},
-                    },
-                    {
-                        id: 'session-action:subagents.delegate.start',
-                        label: 'Delegate',
-                        icon: null,
-                        onPress: () => {},
-                    },
-                ],
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'session-action:review.start',
-            'session-action:subagents.delegate.start',
-            'machine',
-            'path',
-        ]);
-    });
-
-    it('places a plugin MCP action after host controls in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                'plugin:fixture/mcp': {
-                    id: 'new-session-mcp',
-                    label: 'newSession.mcpChipLabel',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'machine',
-            'path',
-            'new-session-mcp',
-        ]);
-    });
-
-    it('places automation after machine and path in the collapsed location-control order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            extraControlActions: {
-                automation: {
-                    id: 'new-session-automate',
-                    label: 'newSession.automationChip.default',
-                    icon: null,
-                    onPress: () => {},
-                },
-            },
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'machine',
-            'path',
-            'new-session-automate',
-        ]);
-    });
-
-    it('places mode directly after engine in the collapsed control menu order', () => {
-        const actions = buildAgentInputActionMenuActions({
-            actionBarIsCollapsed: true,
-            hasAnyActions: true,
-            tint: '#fff',
-            agentId: 'codex' as any,
-            profileLabel: 'Default',
-            profileIcon: 'user-circle',
-            agentLabel: 'Codex',
-            onAgentClick: () => {},
-            sessionModeLabel: 'Build',
-            onSessionModeClick: () => {},
-            canStop: true,
-            onStop: () => {},
-            dismiss: () => {},
-            blurInput: () => {},
-        });
-
-        expect(actions.map((action) => action.id)).toEqual([
-            'agent',
-            'mode',
-            'stop',
-        ]);
-        expect((actions[1]?.icon as any)?.props?.name).toBe('rocket-launch');
+        expect(actions.map((item) => item.id)).toEqual(['permission']);
+        expect(actions[0].label).toBe('Approval mode');
+        actions[0].onPress?.();
+        expect(dismiss).toHaveBeenCalledOnce();
+        expect(onPermissionClick).toHaveBeenCalledOnce();
     });
 });

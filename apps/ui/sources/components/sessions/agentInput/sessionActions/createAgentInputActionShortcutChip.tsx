@@ -1,3 +1,4 @@
+import { getAgentInputActionShortcutPlacement } from './agentInputActionShortcutPlacements';
 import React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -20,6 +21,7 @@ export function createAgentInputActionShortcutChip(params: Readonly<{
     return {
         key: params.key,
         controlId: 'shortcuts',
+        placement: getAgentInputActionShortcutPlacement(params),
         collapsedAction: ({ dismiss }) => ({
             id: params.key,
             label: params.label,

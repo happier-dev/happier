@@ -223,6 +223,9 @@ export type AgentInputExtraActionChip = Readonly<{
     key: string;
     /** The owning form's missing requirement, presented at the control that can satisfy it. */
     requirement?: Readonly<{ code: string; fieldPath: string }> | null;
+    placement?: import('./controls/agentInputControlTypes').AgentInputControlPlacement;
+    /** What the customizer's preview cannot read from the row: the chip's own mark, or that `render` draws nothing now. */
+    composerPreview?: (tint: string) => Readonly<{ mark?: React.ReactNode; absent?: boolean }>;
     /**
      * Signals that the reader is reaching for this control, through either the
      * visible chip or the collapsed action menu.

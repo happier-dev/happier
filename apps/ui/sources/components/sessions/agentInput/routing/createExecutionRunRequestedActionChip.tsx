@@ -1,3 +1,4 @@
+import { getExecutionRunRequestedActionChipPlacement } from '../definitions/agentInputActionChipPlacements';
 import * as React from 'react';
 
 import type { ParticipantRecipientV1, PendingRequestedActionV1 } from '@happier-dev/protocol';
@@ -44,6 +45,7 @@ export function createExecutionRunRequestedActionChip(params: Readonly<{
     return {
         key: 'execution-run-requested-action',
         controlId: 'delivery',
+        placement: { ...getExecutionRunRequestedActionChipPlacement(), pending: params.recipient?.kind === 'execution_run' },
         collapsedOptionsPopover: {
             presentation: 'list',
             title: t('runs.delivery.title'),

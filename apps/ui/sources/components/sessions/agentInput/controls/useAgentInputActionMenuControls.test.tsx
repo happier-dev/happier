@@ -6,6 +6,11 @@ import { renderHook } from '@/dev/testkit';
 
 import { useAgentInputSelectionOverlayController } from '../selection/useAgentInputSelectionOverlayController';
 import { useAgentInputActionMenuControls } from './useAgentInputActionMenuControls';
+import type { AgentInputResolvedControlLines } from './agentInputControlTypes';
+
+const resolved = (collapsed: readonly string[]): AgentInputResolvedControlLines => ({
+    primary: [], secondary: [], collapsed, accessories: [], hidden: [], controls: [], effectivePlacements: {},
+});
 
 vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: vi.fn(),
@@ -16,13 +21,35 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: () => ({ displayNameKey: 'agents.codex' }),
-}));
 
 describe('useAgentInputActionMenuControls', () => {
+    it('builds no overflow items while closed and builds only effective overflow on open', async () => {
+        let builds = 0;
+        const chip = (id: string) => ({
+            key: id, controlId: 'shortcuts' as const, placement: { id, title: id }, render: () => null,
+            collapsedAction: () => {
+                builds += 1;
+                return { id, label: id, icon: null, onPress: () => {} };
+            },
+        });
+        const chips = [chip('shortcuts:first'), chip('shortcuts:hidden'), chip('shortcuts:second')];
+        const controlLines = resolved(['shortcuts:second', 'shortcuts:first']);
+        const hook = await renderHook(({ open }: { open: boolean }) => useAgentInputActionMenuControls({
+            resolvedControls: controlLines, showActionMenu: open, setShowActionMenu: vi.fn(),
+            closeSelectionOverlay: vi.fn(), openSelectionOverlay: vi.fn(), resetSelectionOverlays: vi.fn(),
+            inputRef: { current: null }, hasAgentPickerOptions: false, tint: '#fff', agentId: 'codex',
+            profileLabel: null, profileIcon: 'user-circle', openCollapsedOptionsPopover: vi.fn(),
+            extraActionChips: chips, hasProfile: false, hasEnvVars: false, hasAgent: false,
+        }), { initialProps: { open: false } });
+        expect(hook.getCurrent().hasActionMenuPopoverSections).toBe(true);
+        expect(hook.getCurrent().actionMenuActions).toEqual([]);
+        expect(builds).toBe(0);
+        await hook.rerender({ open: true });
+        expect(builds).toBe(2);
+        expect(hook.getCurrent().actionMenuActions.map((item) => item.id)).toEqual(['shortcuts:second', 'shortcuts:first']);
+        await hook.unmount();
+    });
+
     it('opens the collapsed Agent picker when Agent options are available', async () => {
         const hook = await renderHook(() => {
             const controller = useAgentInputSelectionOverlayController({
@@ -39,6 +66,7 @@ describe('useAgentInputActionMenuControls', () => {
             return {
                 ...controller,
                 ...useAgentInputActionMenuControls({
+                    resolvedControls: resolved(['engine']),
                     showActionMenu: true,
                     setShowActionMenu: vi.fn(),
                     closeSelectionOverlay: controller.closeSelectionOverlay,
@@ -46,8 +74,6 @@ describe('useAgentInputActionMenuControls', () => {
                     resetSelectionOverlays: controller.resetSelectionOverlays,
                     inputRef: { current: { blur: vi.fn() } } as React.RefObject<{ blur?: () => void } | null>,
                     hasAgentPickerOptions: true,
-                    actionBarIsCollapsed: true,
-                    hasAnyActions: true,
                     tint: '#fff',
                     agentId: 'codex',
                     profileLabel: null,
@@ -55,9 +81,6 @@ describe('useAgentInputActionMenuControls', () => {
                     openCollapsedOptionsPopover: () => {},
                     sessionModeLabel: null,
                     sessionModeChipInteraction: null,
-                    shouldExposeSessionModeAction: false,
-                    canStop: false,
-                    onStop: () => {},
                     hasProfile: false,
                     hasEnvVars: false,
                     hasAgent: true,
@@ -90,6 +113,7 @@ describe('useAgentInputActionMenuControls', () => {
             });
 
             const menu = useAgentInputActionMenuControls({
+                resolvedControls: resolved(['path']),
                 showActionMenu: true,
                 setShowActionMenu: vi.fn(),
                 closeSelectionOverlay: controller.closeSelectionOverlay,
@@ -99,8 +123,6 @@ describe('useAgentInputActionMenuControls', () => {
                 pathPopover: { renderContent: () => null },
                 hasAgentPickerOptions: false,
                 onPathClick,
-                actionBarIsCollapsed: true,
-                hasAnyActions: true,
                 tint: '#fff',
                 agentId: 'codex' as never,
                 profileLabel: null,
@@ -109,9 +131,6 @@ describe('useAgentInputActionMenuControls', () => {
                 openCollapsedOptionsPopover: () => {},
                 sessionModeLabel: null,
                 sessionModeChipInteraction: null,
-                shouldExposeSessionModeAction: false,
-                canStop: false,
-                onStop: () => {},
                 onMachineClick: undefined,
                 onResumeClick: undefined,
                 onFileViewerPress: undefined,

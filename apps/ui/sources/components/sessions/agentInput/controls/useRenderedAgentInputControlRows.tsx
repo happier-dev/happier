@@ -1,14 +1,12 @@
 import * as React from 'react';
 
-import type { AgentInputChipPickerOption } from '../components/AgentInputChipPickerTypes';
 import type { AgentInputExtraActionChip } from '../agentInputContracts';
-import type { AgentInputControlId } from './agentInputControlTypes';
+import type { AgentInputResolvedControlLines } from './agentInputControlTypes';
 import type { resolveSessionModeChipPresentation, SessionModeChipPresentation } from './resolveSessionModeChipPresentation';
 import { buildCoreAgentInputControlNodes } from './buildCoreAgentInputControlNodes';
 import type { AgentInputFolderChipState } from '../definitions/AgentInputFolderChip';
 import { resolveRenderedAgentInputControls } from './resolveRenderedAgentInputControls';
 import { resolveRenderedExtraActionChipNodes } from './resolveRenderedExtraActionChipNodes';
-import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ShakeInstance } from '@/components/ui/feedback/Shaker';
 import type { View } from 'react-native';
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -19,13 +17,7 @@ type SessionModeChipControlLike = Pick<Parameters<typeof resolveSessionModeChipP
 
 export function useRenderedAgentInputControlRows(params: Readonly<{
     readOnly?: boolean;
-    layout: 'scroll' | 'wrap' | 'collapsed';
-    /** One rail (an existing session); otherwise setup rail + location rail. */
-    singleRow?: boolean;
-    /** Collapsed layout: the controls the host keeps on its bar (see `resolveRenderedAgentInputControls`). */
-    barControlIds?: readonly AgentInputControlId[];
-    /** A compact composer: the only controls it contains (see `resolveRenderedAgentInputControls`). */
-    containedControlIds?: readonly AgentInputControlId[];
+    resolvedControls: AgentInputResolvedControlLines;
     chips: ReadonlyArray<AgentInputExtraActionChip> | undefined;
     overlayAnchorRef: React.RefObject<View | null>;
     onToggleExtraChipCollapsedPopover: (chipKey: string) => void;
@@ -45,7 +37,8 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     hasActionMenuPopoverSections: boolean;
     actionMenuAnchorRef: React.RefObject<View | null>;
     onActionMenuPress: () => void;
-    actionBarIsCollapsed: boolean;
+    actionMenuOpen: boolean;
+    actionChipOpenStyle: import('react-native').ViewProps['style'];
     sessionModeChipControl: SessionModeChipControlLike | null;
     shouldRenderSessionModeChip: boolean;
     sessionModeChipAnchorRef: React.RefObject<View | null>;
@@ -91,14 +84,14 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
     hasPermissionControl: boolean;
-    readOnlyEngineNodes: ReadonlyArray<React.ReactNode>;
-    extraChipNodes: ReadonlyArray<React.ReactNode>;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
     secondaryTrailingControls: ReadonlyArray<React.ReactNode>;
     extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
 }> {
     return React.useMemo(() => {
+        const placementIds = [...params.resolvedControls.primary, ...params.resolvedControls.secondary];
         const extraControlNodesById = resolveRenderedExtraActionChipNodes({
+            placementIds,
             chips: params.chips,
             renderContext: {
                 chipStyle: params.chipStyle,
@@ -123,6 +116,8 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         });
 
         const coreControlNodesById = buildCoreAgentInputControlNodes({
+            placementIds,
+            secondaryPlacementIds: params.resolvedControls.secondary,
             readOnly: params.readOnly,
             showPermissionChip: params.showPermissionChip,
             permissionChipAnchorRef: params.permissionChipAnchorRef,
@@ -131,7 +126,8 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             hasActionMenuPopoverSections: params.hasActionMenuPopoverSections,
             actionMenuAnchorRef: params.actionMenuAnchorRef,
             onActionMenuPress: params.onActionMenuPress,
-            actionBarIsCollapsed: params.actionBarIsCollapsed,
+            actionMenuOpen: params.actionMenuOpen,
+            actionChipOpenStyle: params.actionChipOpenStyle,
             sessionModeChipControl: params.sessionModeChipControl,
             shouldRenderSessionModeChip: params.shouldRenderSessionModeChip,
             sessionModeChipAnchorRef: params.sessionModeChipAnchorRef,
@@ -175,7 +171,6 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             onFileViewerPress: params.onFileViewerPress,
             sourceControlCompact: params.sourceControlCompact,
             sourceControlWrapperStyle: params.sourceControlWrapperStyle,
-            extraControlNodesById: extraControlNodesById.extraControlNodesById,
             tint: params.themeTint,
             showChipLabels: params.showChipLabels,
             chipStyle: params.chipStyle,
@@ -186,33 +181,21 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         });
 
         const renderedControls = resolveRenderedAgentInputControls({
-            layout: params.layout,
-            singleRow: params.singleRow,
+            resolvedControls: params.resolvedControls,
             coreControlNodesById,
             extraControlNodesById: extraControlNodesById.extraControlNodesById,
-            extraChips: extraControlNodesById.extraChips,
-            ...(params.barControlIds ? { barControlIds: params.barControlIds } : {}),
-            ...(params.containedControlIds ? { containedControlIds: params.containedControlIds } : {}),
         });
 
         return {
             controlNodes: renderedControls.chips,
             hasPermissionControl: renderedControls.hasPermissionControl,
-            readOnlyEngineNodes: coreControlNodesById.engine ?? [],
-            extraChipNodes: [
-                ...extraControlNodesById.extraChips,
-                ...Object.values(extraControlNodesById.extraControlNodesById).flat(),
-            ],
             secondaryLeadingControls: renderedControls.secondaryLeadingControls,
             secondaryTrailingControls: renderedControls.secondaryTrailingControls,
-            extraChipAnchorRefsByKey: extraControlNodesById.extraChipAnchorRefsByKey as Readonly<Record<string, React.RefObject<View | null>>>,
+            extraChipAnchorRefsByKey: extraControlNodesById.extraChipAnchorRefsByKey,
         };
     }, [
         params.readOnly,
-        params.singleRow,
-        params.actionBarIsCollapsed,
-        params.barControlIds,
-        params.containedControlIds,
+        params.resolvedControls,
         params.actionButtonPressedStyle,
         params.actionButtonStyle,
         params.actionMenuAnchorRef,
@@ -235,12 +218,13 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.hasProfile,
         params.isAborting,
         params.machineChipAnchorRef,
-        params.layout,
         params.machineName,
         params.pathChipAnchorRef,
         params.onAbort,
         params.onAbortPress,
         params.onActionMenuPress,
+        params.actionMenuOpen,
+        params.actionChipOpenStyle,
         params.onAgentPress,
         params.onEnvVarsPress,
         params.onFileViewerPress,

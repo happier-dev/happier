@@ -1,3 +1,4 @@
+import { getLinkedFilesActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -57,6 +58,7 @@ function createBaseLinkFileChip(params: Readonly<{
     return {
         key: params.key,
         controlId: 'linkedFiles',
+        placement: getLinkedFilesActionChipPlacement(),
         labelPolicy: 'auto-hide',
         collapsedContentPopover: {
             title: label,

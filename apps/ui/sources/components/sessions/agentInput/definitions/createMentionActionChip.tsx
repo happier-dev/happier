@@ -1,3 +1,4 @@
+import { getMentionActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -27,6 +28,8 @@ export function createMentionActionChip(
   const { label, disabled, onMention } = params;
   return {
     key: 'mention',
+    controlId: 'shortcuts',
+    placement: getMentionActionChipPlacement(),
     labelPolicy: 'auto-hide',
     stabilityKey: disabled,
     collapsedAction: ({ tint, dismiss }) => ({

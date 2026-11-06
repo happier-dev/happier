@@ -16,7 +16,7 @@ export function createWorkflowRunActionChip(params: Readonly<{
     renderContent: (args: AgentInputContentPopoverRenderArgs) => ReactNode;
 }>): AgentInputExtraActionChip {
     const chip = createExecutionRunStartContentChip({ ...params,
-        key: 'workflow-start-definition', icon: 'git-branch' });
+        key: 'workflow-start-definition', controlId: 'workflow', placementId: 'workflow', icon: 'git-branch' });
     return { ...chip, controlId: 'workflow', onIntent: params.onIntent,
         // A phone shows the picker as the shared bottom sheet rather than a card over the header (lab T4-Rp).
         // Wide enough for the list beside its preview (lab T4-R); narrower windows keep the list alone.

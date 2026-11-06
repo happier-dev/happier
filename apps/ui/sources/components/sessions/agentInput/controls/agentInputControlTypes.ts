@@ -1,4 +1,37 @@
 import type { AgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
+import type { IconName } from '@/components/ui/icons/Icon';
+import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+
+export type AgentInputPlacementContext = 'session' | 'newSession' | 'workflow' | 'discussion';
+
+export type AgentInputControlMenuMetadata = Readonly<{
+    /** Used only when the action has neither a current value nor an authored subtitle. */
+    description?: string;
+    /** The admitted owner opens a detail picker/popover, rather than executing an operation. */
+    disclosure?: boolean;
+}>;
+
+export type AgentInputControlPlacement = Readonly<{
+    id: string;
+    title: string;
+    icon?: IconName;
+    menu?: AgentInputControlMenuMetadata;
+    defaultPlacement?: NavigationPlacement;
+    pending?: boolean;
+}>;
+
+export type AgentInputPlacementDescriptor = Readonly<{
+    id: string;
+    controlId: AgentInputControlId;
+    title: string;
+    icon?: IconName;
+    menu?: AgentInputControlMenuMetadata;
+    line: AgentInputControlLine;
+    slot: 'chip' | 'fieldAccessory';
+    defaultPlacement: NavigationPlacement;
+    allowedPlacements?: readonly NavigationPlacement[];
+    pending: boolean;
+}>;
 
 export type AgentInputHostControlId =
     | 'workflow'
@@ -57,8 +90,13 @@ export type AgentInputControlDescriptor = Readonly<{
 }>;
 
 export type AgentInputResolvedControlLines = Readonly<{
-    layout: AgentInputActionBarLayout;
-    primary: readonly AgentInputControlId[];
-    secondary: readonly AgentInputControlId[];
-    collapsed: readonly AgentInputControlId[];
+    layout?: AgentInputActionBarLayout;
+    controls: readonly AgentInputPlacementDescriptor[];
+    primary: readonly string[];
+    secondary: readonly string[];
+    /** Effective overflow, retained at the existing + menu boundary. */
+    collapsed: readonly string[];
+    accessories: readonly string[];
+    hidden: readonly string[];
+    effectivePlacements: Readonly<Record<string, NavigationPlacement>>;
 }>;

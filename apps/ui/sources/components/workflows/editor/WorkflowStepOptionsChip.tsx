@@ -1,3 +1,4 @@
+import { getWorkflowStepOptionsChipPlacement } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -90,6 +91,8 @@ export function useWorkflowStepOptionsChip(props: StepOptionsChipProps): AgentIn
         const fallbackAnchorRef: React.RefObject<View | null> = { current: null };
         return {
             key: 'workflow-step-options',
+            controlId: 'shortcuts',
+            placement: getWorkflowStepOptionsChipPlacement(),
             stabilityKey: `${label}\u0000${changed ? 1 : 0}`,
             collapsedAction: ({ tint, dismiss }) => ({
                 id: 'workflow-step-options',

@@ -21,6 +21,8 @@ type ChipStyle = (pressed: boolean) => any;
 type SessionModeChipControlLike = Pick<Parameters<typeof resolveSessionModeChipPresentation>[0], 'label' | 'selectedId'>;
 
 export function buildCoreAgentInputControlNodes(params: Readonly<{
+    placementIds: readonly string[];
+    secondaryPlacementIds: readonly string[];
     readOnly?: boolean;
     showPermissionChip: boolean;
     permissionChipAnchorRef: React.RefObject<View | null>;
@@ -29,7 +31,8 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     hasActionMenuPopoverSections: boolean;
     actionMenuAnchorRef: React.RefObject<View | null>;
     onActionMenuPress: () => void;
-    actionBarIsCollapsed: boolean;
+    actionMenuOpen: boolean;
+    actionChipOpenStyle: import('react-native').ViewProps['style'];
     sessionModeChipControl: SessionModeChipControlLike | null | undefined;
     shouldRenderSessionModeChip: boolean;
     sessionModeChipAnchorRef: React.RefObject<View | null>;
@@ -73,7 +76,6 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     onFileViewerPress?: () => void;
     sourceControlCompact: boolean;
     sourceControlWrapperStyle: any;
-    extraControlNodesById: Partial<Record<AgentInputControlId, ReadonlyArray<React.ReactNode>>>;
     tint: string;
     showChipLabels: boolean;
     chipStyle: ChipStyle;
@@ -82,7 +84,8 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     actionButtonStyle: any;
     actionButtonPressedStyle: any;
 }>): Partial<Record<AgentInputControlId, ReadonlyArray<React.ReactNode>>> {
-    const permissionChip = params.showPermissionChip ? createPermissionActionChip({
+    const pinnedIds = new Set(params.placementIds);
+    const permissionChip = pinnedIds.has('permission') && params.showPermissionChip ? createPermissionActionChip({
         anchorRef: params.permissionChipAnchorRef,
         tint: params.tint,
         showLabel: params.showChipLabels,
@@ -95,13 +98,13 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     const actionMenuChip = params.hasActionMenuPopoverSections ? createActionMenuTriggerChip({
         anchorRef: params.actionMenuAnchorRef,
         tint: params.tint,
-        showLabel: params.showChipLabels && !params.actionBarIsCollapsed,
         chipStyle: params.chipStyle,
-        textStyle: params.textStyle,
+        open: params.actionMenuOpen,
+        openStyle: params.actionChipOpenStyle,
         onPress: params.onActionMenuPress,
     }) : null;
 
-    const modeChip = (!params.actionBarIsCollapsed && params.sessionModeChipControl && params.shouldRenderSessionModeChip) ? createSessionModeActionChip({
+    const modeChip = (pinnedIds.has('mode') && params.sessionModeChipControl && params.shouldRenderSessionModeChip) ? createSessionModeActionChip({
         anchorRef: params.sessionModeChipAnchorRef,
         tint: params.tint,
         showLabel: params.showChipLabels,
@@ -114,7 +117,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onModePress,
     }) : null;
 
-    const profileChip = params.hasProfile ? createProfileActionChip({
+    const profileChip = pinnedIds.has('profile') && params.hasProfile ? createProfileActionChip({
         anchorRef: params.profileChipAnchorRef,
         profileIcon: params.profileIcon,
         profileLabel: params.profileLabel,
@@ -125,7 +128,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onProfilePress,
     }) : null;
 
-    const envVarsChip = params.hasEnvVars ? createEnvVarsActionChip({
+    const envVarsChip = pinnedIds.has('env') && params.hasEnvVars ? createEnvVarsActionChip({
         anchorRef: params.envVarsChipAnchorRef,
         tint: params.tint,
         showLabel: params.showChipLabels,
@@ -136,7 +139,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onEnvVarsPress,
     }) : null;
 
-    const agentChip = params.hasAgentSelection ? createAgentSelectionActionChip({
+    const agentChip = pinnedIds.has('engine') && params.hasAgentSelection ? createAgentSelectionActionChip({
         readOnly: params.readOnly,
         anchorRef: params.agentChipAnchorRef,
         agentId: params.agentId,
@@ -149,7 +152,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onAgentPress,
     }) : null;
 
-    const machineChip = params.onMachinePress ? createMachineActionChip({
+    const machineChip = pinnedIds.has('machine') && params.onMachinePress ? createMachineActionChip({
         anchorRef: params.machineChipAnchorRef,
         machineName: params.machineName,
         tint: params.tint,
@@ -159,7 +162,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onMachinePress,
     }) : null;
 
-    const pathChip = params.onPathPress ? (
+    const pathChip = pinnedIds.has('path') && params.onPathPress ? (
         <AgentInputFolderChip
             key="path"
             anchorRef={params.pathChipAnchorRef}
@@ -169,10 +172,11 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
             textStyle={params.textStyle}
             onPress={params.onPathPress}
             onRemove={params.onRemoveFolder}
+            layout={params.secondaryPlacementIds.includes('path') ? 'wrap' : 'shrink'}
         />
     ) : null;
 
-    const resumeChip = createResumeActionChip({
+    const resumeChip = pinnedIds.has('resume') ? createResumeActionChip({
         anchorRef: params.resumeChipAnchorRef,
         onPress: params.onResumePress,
         blurInput: params.blurInput,
@@ -181,11 +185,13 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         resumeSessionId: params.resumeSessionId,
         resumeIsChecking: params.resumeIsChecking,
         tint: params.tint,
-        chipStyle: params.chipStyle,
+        chipStyle: params.secondaryPlacementIds.includes('resume')
+            ? (pressed) => [params.chipStyle(pressed), { flexShrink: 0, maxWidth: '100%' }]
+            : params.chipStyle,
         textStyle: params.textStyle,
-    });
+    }) : null;
 
-    const abortButton = params.onAbort && params.showAbortButton && !params.actionBarIsCollapsed ? createAbortActionButton({
+    const abortButton = params.onAbort && params.showAbortButton ? createAbortActionButton({
         shakerRef: params.shakerRef,
         isAborting: params.isAborting,
         tint: params.tint,
@@ -204,7 +210,6 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         env: envVarsChip ? [envVarsChip] : [],
         stop: abortButton ? [abortButton] : [],
         files: [],
-        ...params.extraControlNodesById,
         machine: machineChip ? [machineChip] : [],
         path: pathChip ? [pathChip] : [],
         resume: resumeChip ? [resumeChip] : [],

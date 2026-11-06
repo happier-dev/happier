@@ -1,3 +1,4 @@
+import { getBooleanOptionActionChipPlacement } from './booleanOptionChipPlacement';
 import * as React from 'react';
 import { Pressable, type PressableStateCallbackType } from 'react-native';
 
@@ -37,6 +38,7 @@ export function createBooleanOptionActionChip(opts: Readonly<{
     return {
         key: opts.key,
         controlId: 'providerOption',
+        placement: getBooleanOptionActionChipPlacement(opts),
         collapsedAction: ({ tint, dismiss }) => ({
             id: opts.key,
             label,

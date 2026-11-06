@@ -1,14 +1,15 @@
 import type { AgentInputFolderChipState } from './definitions/AgentInputFolderChip';
 import * as React from 'react';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
-import { resolveAgentInputControlLines } from './controls/resolveAgentInputControlLines';
-import type { AgentInputControlId } from './controls/agentInputControlTypes';
+import type { AgentInputResolvedControlLines } from './controls/agentInputControlTypes';
 import { buildCoreCollapsedControlActions } from './controls/buildCoreCollapsedControlActions';
-import type { IconName } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+
+/** The visual owner separates actual add operations from the remaining overflow controls. */
+export type AgentInputActionMenuAction = ActionListItem & Readonly<{ section: 'add' | 'controls' }>;
 
 export function buildAgentInputActionMenuActions(opts: {
-    actionBarIsCollapsed: boolean;
-    hasAnyActions: boolean;
+    resolvedControls: AgentInputResolvedControlLines;
     tint: string;
     agentId: string;
     agentIdentityIcon?: React.ReactNode;
@@ -26,38 +27,65 @@ export function buildAgentInputActionMenuActions(opts: {
     onProfileClick?: () => void;
     onEnvVarsClick?: () => void;
     onAgentClick?: () => void;
+    permissionLabel?: string | null;
+    onPermissionClick?: () => void;
     sessionModeLabel?: string | null;
     onSessionModeClick?: () => void;
     onMachineClick?: () => void;
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
-    canStop?: boolean;
-    onStop?: () => void;
-    extraControlActions?: Partial<Record<AgentInputControlId, ActionListItem | ReadonlyArray<ActionListItem>>>;
-    /** Controls the host keeps on its collapsed bar; the menu leaves them out. */
-    barControlIds?: readonly AgentInputControlId[];
+    extraControlActions?: Readonly<Record<string, ActionListItem | ReadonlyArray<ActionListItem>>>;
     dismiss: () => void;
     blurInput: () => void;
-}): ActionListItem[] {
-    if (!opts.actionBarIsCollapsed || !opts.hasAnyActions) return [] as ActionListItem[];
-
-    const controlActionsById: Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> = {
-        ...buildCoreCollapsedControlActions(opts),
+}): AgentInputActionMenuAction[] {
+    const controlActionsById: Partial<Record<string, ReadonlyArray<ActionListItem>>> = {
+        ...buildCoreCollapsedControlActions({ ...opts, placementIds: opts.resolvedControls.collapsed }),
     };
-    for (const [controlId, actionOrActions] of Object.entries(opts.extraControlActions ?? {}) as Array<[AgentInputControlId, ActionListItem | ReadonlyArray<ActionListItem>]>) {
-        controlActionsById[controlId] = Array.isArray(actionOrActions) ? actionOrActions : [actionOrActions];
+    for (const [controlId, actionOrActions] of Object.entries(opts.extraControlActions ?? {})) {
+        controlActionsById[controlId] = 'id' in actionOrActions ? [actionOrActions] : actionOrActions;
     }
 
-    const onBar = new Set(opts.barControlIds ?? []);
-    const orderedControlIds = resolveAgentInputControlLines({
-        layout: 'collapsed',
-        controlIds: (Object.keys(controlActionsById) as AgentInputControlId[]).filter((controlId) => !onBar.has(controlId)),
-    }).collapsed;
+    const overflow = opts.resolvedControls.collapsed;
+    const isAdd = (id: string) => id === 'attachments' || id === 'linkedFiles';
+    const orderedIds = [...overflow.filter(isAdd), ...overflow.filter((id) => !isAdd(id))];
+    const descriptorsById = new Map(opts.resolvedControls.controls.map((control) => [control.id, control]));
+    return orderedIds.flatMap((id) => {
+        const actions = controlActionsById[id] ?? [];
+        const descriptor = descriptorsById.get(id);
+        const [controlAction, ...supplementaryActions] = actions;
+        const section: AgentInputActionMenuAction['section'] = isAdd(id) ? 'add' : 'controls';
+        if (!descriptor || !controlAction) return actions.map(action => ({ ...action, section }));
+        const subtitle = [valueBesideName(controlAction.label, descriptor.title), controlAction.subtitle]
+            .filter((value, index, values) => value && values.indexOf(value) === index)
+            .join(' · ') || descriptor.menu?.description;
+        return [{
+            ...controlAction,
+            label: descriptor.title,
+            ...(subtitle ? { subtitle } : {}),
+            icon: controlAction.icon ?? (descriptor.icon ? <Icon name={descriptor.icon} size={16} color={opts.tint} /> : null),
+            right: controlAction.right ?? (descriptor.menu?.disclosure && controlAction.onPress && !controlAction.disabled
+                ? <Icon name="caret-right" size={16} color={opts.tint} /> : null),
+        }, ...supplementaryActions].map(action => ({ ...action, section }));
+    });
+}
 
-    return [
-        ...orderedControlIds.flatMap((controlId) => {
-            return controlActionsById[controlId] ?? [];
-        }),
-    ];
+const words = (text: string) => text.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * The row is named by its control; the chip's own label is shown beneath only when it adds a value.
+ * A label that merely restates the name ("To" under "Send to", "Link file" under "Linked files") is
+ * dropped, and a label that starts with the name keeps only what follows it ("Runs through ChatGPT"
+ * under "Runs through" reads "ChatGPT").
+ */
+function valueBesideName(label: string | undefined, name: string): string | undefined {
+    if (!label) return undefined;
+    const nameWords = words(name);
+    const labelWords = words(label);
+    if (labelWords.every((word) => nameWords.some((nameWord) => nameWord.startsWith(word) || word.startsWith(nameWord)))) return undefined;
+    if (label.toLocaleLowerCase().startsWith(name.toLocaleLowerCase())) {
+        const rest = label.slice(name.length).replace(/^[\s·:–—-]+/u, '');
+        return rest || undefined;
+    }
+    return label;
 }

@@ -1,3 +1,4 @@
+import { getRecipientActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
@@ -95,6 +96,7 @@ export function createRecipientMultiSelectActionChip(params: Readonly<{
     return {
         key: SESSION_RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
+        placement: { ...getRecipientActionChipPlacement('discussion'), pending: model.selectedIds.length > 0 },
         stabilityKey: JSON.stringify([model.selectedIds, model.targets.map((target) => [target.id, target.label])]),
         collapsedOptionsPopover: {
             presentation: 'list',
@@ -162,6 +164,7 @@ export function createRecipientActionChip(params: Readonly<{
     return {
         key: SESSION_RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
+        placement: { ...getRecipientActionChipPlacement(), pending: params.recipient !== null || Boolean(params.pendingLabel) },
         collapsedOptionsPopover: {
             presentation: 'list',
             title: t('session.participants.sendToTitle'),
@@ -204,6 +207,7 @@ function createSessionTalkChip(params: Readonly<{
     return {
         key: SESSION_RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
+        placement: { ...getRecipientActionChipPlacement(), pending: params.recipient !== null || params.sessionTalk.intent !== null },
         stabilityKey: JSON.stringify([params.sessionTalk.intent, params.recipient, params.participantTargets.length]),
         collapsedContentPopover: {
             title: t('session.participants.talk.title'),

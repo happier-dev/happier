@@ -40,6 +40,7 @@ describe('createWindowsRemoteSessionLaunchModeActionChip', () => {
             mode: 'hidden', windowsTerminalAvailable: false, onModeChange: vi.fn(), onIntent,
         });
         const nodes = resolveRenderedExtraActionChipNodes({
+            placementIds: ['windowsRemoteSessionMode'],
             chips: [chip], renderContext, autoHideRenderContext: renderContext,
         });
         const screen = await renderScreen(<>{nodes.extraControlNodesById.windowsRemoteSessionMode}</>);

@@ -1,3 +1,4 @@
+import { getSessionSourceContextActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -90,6 +91,8 @@ export function createSessionSourceContextActionChip(params: Readonly<{
 
     const actionChip: AgentInputExtraActionChip = {
         key: SESSION_SOURCE_CONTEXT_CHIP_KEY,
+        controlId: 'shortcuts',
+        placement: { ...getSessionSourceContextActionChipPlacement(), pending: params.serverMismatch === true },
         collapsedAction: ({ tint, dismiss }) => ({
             id: SESSION_SOURCE_CONTEXT_CHIP_KEY,
             label,

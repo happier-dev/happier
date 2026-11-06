@@ -1,3 +1,4 @@
+import { getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
@@ -974,7 +975,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         if (intent === 'review') {
             // Lab convo-S1 "Reviewer ▾": the review's role, from the same Roles rail.
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-role',
+                key: 'execution-run-start-role', controlId: 'workflowRoles',
                 icon: 'users',
                 label: roleItem?.name ?? (rolesStatus === 'loading' ? t('common.loading') : roleValue ?? t('roles.rail.title')),
                 title: t('roles.rail.title'),
@@ -1001,7 +1002,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             // The chip that needs a choice says so: with no reviewer Send cannot start anything, and
             // the missing reviewer reads here rather than as a dead Send.
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-reviewers-add',
+                key: 'execution-run-start-reviewers-add', controlId: 'reviewComments',
                 icon: 'plus',
                 label: options.targetRequirement ? t('agentStart.chips.reviewerNeeded') : t('agentStart.chips.reviewer'),
                 requirement: options.targetRequirement,
@@ -1015,7 +1016,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         if (options.visiblePermissionModeOptions.length > 1) {
             const selected = options.visiblePermissionModeOptions.find((option) => option.value === options.selectedPermissionMode);
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-permissions',
+                ...getExecutionRunStartChipDefinition('permissions'), pending: true,
                 icon: 'shield',
                 label: selected?.label ?? t('executionRuns.newRun.sections.permissions'),
                 title: t('executionRuns.newRun.sections.permissions'),
@@ -1029,7 +1030,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const inherits = routeFollowed;
             const hasModelField = options.fields.some((field) => field.path === 'modelId' && field.visible !== false);
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-route',
+                ...getExecutionRunStartChipDefinition('route'), pending: true,
                 icon: inherits ? 'arrow-elbow-down-right' : 'path',
                 label: routeChoice.label,
                 title: t('agentInput.model.title'),
@@ -1064,7 +1065,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const scopeLabel = scopeField.options?.find((option) => option.value === changeType)?.label
                 ?? t('agentStart.chips.scope');
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-scope',
+                ...getExecutionRunStartChipDefinition('scope'), pending: true,
                 icon: 'git-diff',
                 label: scopeLabel,
                 title: t('agentStart.chips.scope'),
@@ -1086,7 +1087,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             && !['backendTargetKeys', 'engineIds', 'instructions', 'notifyParentOnCompletion', 'secretReferenceOverlay', 'teamCredentialModel', 'teamCredentialSessionBindingConsent'].includes(field.path));
         if (options.profileChoices.length > 0 || hasAdvancedFields || (intent === 'review' && teamCredential.picker)) {
             chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-advanced',
+                ...getExecutionRunStartChipDefinition('advanced'), pending: true,
                 icon: 'sliders-horizontal',
                 label: t('agentStart.chips.advanced'),
                 title: t('agentStart.chips.advanced'),

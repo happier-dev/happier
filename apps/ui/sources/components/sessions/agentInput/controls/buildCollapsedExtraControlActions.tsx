@@ -7,7 +7,6 @@ import {
     hasAgentInputCollapsedOptionsPopoverContent,
     type AgentInputExtraActionChip,
 } from '../agentInputContracts';
-import type { AgentInputControlId } from './agentInputControlTypes';
 
 export function buildCollapsedExtraControlActions(params: Readonly<{
     chips?: readonly AgentInputExtraActionChip[];
@@ -18,11 +17,12 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
     resetCorePopovers?: () => void;
     /** The action menu's own anchor, so a chip that opens a native dialog can return focus to it. */
     focusReturnRef?: FocusReturnRef;
-}>): Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> {
-    const extraControlActions: Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> = {};
+}>): Readonly<Record<string, ReadonlyArray<ActionListItem>>> {
+    const extraControlActions: Record<string, ReadonlyArray<ActionListItem>> = {};
 
     for (const chip of params.chips ?? []) {
-        if (!chip.controlId) continue;
+        const placementId = chip.placement?.id;
+        if (!placementId) continue;
 
         let actions: ActionListItem | ReadonlyArray<ActionListItem> | null = null;
         if (typeof chip.collapsedAction === 'function') {
@@ -80,8 +80,8 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
 
         if (!actions) continue;
 
-        extraControlActions[chip.controlId] = [
-            ...(extraControlActions[chip.controlId] ?? []),
+        extraControlActions[placementId] = [
+            ...(extraControlActions[placementId] ?? []),
             ...(Array.isArray(actions) ? actions : [actions]),
         ];
     }

@@ -1,74 +1,36 @@
 import type { AgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
-
-import { AGENT_INPUT_CONTROL_REGISTRY, findAgentInputControlDescriptor } from './agentInputControlRegistry';
 import {
-    isAgentInputPluginControlId,
-    type AgentInputControlId,
+    EMPTY_NAVIGATION_PLACEMENT_PREFERENCES,
+    resolveNavigationPlacements,
+    type NavigationPlacementPreferences,
+    type NavigationSurfacePlacementsV1,
+} from '@/sync/domains/settings/mobileSurfacePinning';
+
+import {
     type AgentInputResolvedControlLines,
+    type AgentInputPlacementDescriptor,
 } from './agentInputControlTypes';
 
-/**
- * The host registry owns host-control placement. Plugin controls have already
- * been admitted and normalized by their catalog producer, so retain their
- * supplied order at the one plugin insertion point instead of silently
- * discarding or independently re-sorting them here.
- */
-export function sortControlIdsInRegistryOrder(controlIds: readonly AgentInputControlId[]): AgentInputControlId[] {
-    const requested = new Set(controlIds);
-    const hostControlIds = AGENT_INPUT_CONTROL_REGISTRY
-        .map((control) => control.id)
-        .filter((controlId) => requested.has(controlId));
-    const seenPluginControlIds = new Set<AgentInputControlId>();
-    const pluginControlIds = controlIds.filter((controlId) => {
-        if (!isAgentInputPluginControlId(controlId) || seenPluginControlIds.has(controlId)) return false;
-        seenPluginControlIds.add(controlId);
-        return true;
-    });
-
-    return [...hostControlIds, ...pluginControlIds];
-}
+/** The composer's saved placements, read from the local navigation placement setting. */
+export const selectComposerPlacementPreferences = (value: NavigationSurfacePlacementsV1) => value?.composer ?? EMPTY_NAVIGATION_PLACEMENT_PREFERENCES;
 
 export function resolveAgentInputControlLines(params: Readonly<{
-    layout: AgentInputActionBarLayout;
-    controlIds: readonly AgentInputControlId[];
+    layout?: AgentInputActionBarLayout;
+    controls: readonly AgentInputPlacementDescriptor[];
+    preferences?: NavigationPlacementPreferences;
     /** An existing session's composer is one rail: its location controls ride the same rail. */
     singleRow?: boolean;
 }>): AgentInputResolvedControlLines {
-    const orderedControlIds = sortControlIdsInRegistryOrder(params.controlIds);
-
-    if (params.layout === 'collapsed') {
-        return {
-            layout: params.layout,
-            primary: [],
-            secondary: [],
-            collapsed: orderedControlIds,
-        };
-    }
-
-    if (params.singleRow) {
-        return { layout: params.layout, primary: orderedControlIds, secondary: [], collapsed: [] };
-    }
-
-    const primary: AgentInputControlId[] = [];
-    const secondary: AgentInputControlId[] = [];
-    for (const controlId of orderedControlIds) {
-        if (isAgentInputPluginControlId(controlId)) {
-            primary.push(controlId);
-            continue;
-        }
-        const descriptor = findAgentInputControlDescriptor(controlId);
-        if (!descriptor) continue;
-        if (descriptor.line === 'secondary') {
-            secondary.push(controlId);
-            continue;
-        }
-        primary.push(controlId);
-    }
-
+    const resolved = resolveNavigationPlacements(params.controls, params.preferences);
+    const row = resolved.pinned.filter(control => control.slot === 'chip');
     return {
         layout: params.layout,
-        primary,
-        secondary,
-        collapsed: [],
+        controls: params.controls,
+        primary: row.filter(control => params.singleRow || control.line === 'primary').map(control => control.id),
+        secondary: params.singleRow ? [] : row.filter(control => control.line === 'secondary').map(control => control.id),
+        collapsed: resolved.overflow.map(control => control.id),
+        accessories: resolved.pinned.filter(control => control.slot === 'fieldAccessory').map(control => control.id),
+        hidden: resolved.hidden.map(control => control.id),
+        effectivePlacements: resolved.effectivePlacements,
     };
 }

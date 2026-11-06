@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -15,6 +16,7 @@ export function createSessionAccessActionChip(params: Readonly<{
     onOpen?: (focusReturnRef?: React.RefObject<View | null>) => void;
     /** Renders the grant row's lock glyph so the collapsed chip states the same policy fact. */
     requiredByTeamPolicy?: boolean;
+    pending?: boolean;
     popoverContent: AgentInputPopoverContent;
     maxHeightCap?: number;
     maxWidthCap?: number;
@@ -22,6 +24,7 @@ export function createSessionAccessActionChip(params: Readonly<{
     return {
         key: 'session-access',
         controlId: 'sessionAccess',
+        placement: { id: 'sessionAccess', title: t('session.access.title'), icon: 'users', defaultPlacement: 'overflow', pending: params.pending === true },
         collapsedContentPopover: {
             title: params.label,
             label: params.label,

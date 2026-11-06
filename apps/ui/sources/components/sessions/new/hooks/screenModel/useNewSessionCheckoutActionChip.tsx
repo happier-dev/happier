@@ -1,3 +1,4 @@
+import { getNewSessionCheckoutActionChipPlacement } from '../../newSessionActionChipPlacements';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 
@@ -188,6 +189,7 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
         return {
             key: CHIP_KEY,
             controlId: 'checkout',
+            placement: getNewSessionCheckoutActionChipPlacement(),
             collapsedOptionsPopover: {
                 presentation: 'list',
                 title: t('newSession.checkout.selectTitle'),

@@ -48,6 +48,7 @@ export function useDiscussionRunChips(
     () =>
       createExecutionRunStartContentChip({
         key: 'discussion-run-where',
+        controlId: 'machine',
         icon: 'folder',
         title: t('workflows.page.where.label'),
         label:
