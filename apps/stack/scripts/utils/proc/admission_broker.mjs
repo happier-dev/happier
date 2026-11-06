@@ -105,6 +105,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   let sample = { availableMemoryKiB: 0, totalMemoryKiB: 0, reservedMemoryKiB: 0,
     residentMemoryKiB: 0, unreservedMemoryKiB: 0, achievableMemoryKiB: 0 };
   let sampleCount = 0;
+  let arrivalOrder = 0;
   let serial = Promise.resolve();
   let closing = false;
   let server;
@@ -116,14 +117,24 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return { reservedMemoryKiB,
       unreservedMemoryKiB: Math.max(0, sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB) };
   }
+  function headReservationKiB(head) {
+    if (!head) return 0;
+    const floorKiB = head.floorOptions?.at(-1).floorKiB ?? head.floorKiB;
+    let precedingFloorKiB = 0;
+    for (const slot of slots.values()) {
+      // Recovered slots predate every request in this broker. Younger
+      // backfills must never count as releases that can make room for the head.
+      if (slot.arrivalOrder === undefined || slot.arrivalOrder < head.arrivalOrder) precedingFloorKiB += slot.floorKiB;
+    }
+    return Math.max(0, floorKiB - precedingFloorKiB);
+  }
   function status() {
     const memory = slotMemoryBudget();
     const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed);
-    const headFloorKiB = head ? (head.floorOptions?.at(-1).floorKiB ?? head.floorKiB) : 0;
-    // Publish the budget a new request can use, including C3's virtual head
-    // reservation. Publication-blocked demand has no memory reservation.
+    // Publish the same head reservation used by drain and read-only checks.
+    // Publication-blocked demand has no memory reservation.
     return { ...sample, ...memory,
-      unreservedMemoryKiB: Math.max(0, memory.unreservedMemoryKiB - headFloorKiB),
+      unreservedMemoryKiB: Math.max(0, memory.unreservedMemoryKiB - headReservationKiB(head)),
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
@@ -289,9 +300,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     await drain();
   }
   async function drain() {
-    // Oldest to newest. Cover each waiting floor before offering younger work
-    // the remainder, so backfill cannot delay the head when holders release.
+    // Reserve only what older holders cannot supply to the head. Their releases
+    // increase that reservation, while backfills can reuse only the remainder.
     let availableMemoryKiB = slotMemoryBudget().unreservedMemoryKiB;
+    let head;
     for (const item of [...waiting]) {
       if (item.slot || item.blocked) continue;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
@@ -314,7 +326,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else availableMemoryKiB = Math.max(0, availableMemoryKiB - minimumFloorKiB);
+          } else if (!head) {
+            head = item;
+            availableMemoryKiB = Math.max(0, availableMemoryKiB - headReservationKiB(head));
+          }
         }
         continue;
       }
@@ -325,7 +340,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const resources = readResources(item);
       if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID());
-      const slot = { address, pid: item.pid, floorKiB, workers: fitting?.workers, control: item.socket };
+      const slot = { address, pid: item.pid, floorKiB, workers: fitting?.workers, control: item.socket, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       item.slot = slot;
@@ -398,7 +413,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || !Array.isArray(request.locks ?? []) || (request.locks ?? []).some(lock => typeof lock?.path !== 'string')) {
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
       }
-      item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false };
+      item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false, arrivalOrder: ++arrivalOrder };
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       waiting.push(item);

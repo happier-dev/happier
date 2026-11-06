@@ -349,7 +349,13 @@ still drive admission and departed-owner recovery. When a queued writer blocks
 a free lock, the wait diagnostic identifies that queued owner explicitly.
 
 In current 0.3 development, the Linux host admission broker owns capacity and
-FIFO ordering with head-floor reservation. Each admitted client retains a pathname socket listener
+FIFO ordering with head-floor reservation and backfill. While the head waits,
+younger fitting requests may use memory beyond its reservation, in arrival order.
+The reserved part of the head's minimum floor excludes floors held by older jobs;
+as those jobs release, their capacity stays reserved for the head. Younger
+backfill jobs never count toward those older floors. The head is offered capacity
+first as soon as it fits, without runtime estimates, aging or new tunables.
+Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation.
 Waiting clients block on their control sockets without polling or process walks.
 Admission uses no owner/waiter files, PID reaper, separate backfill allowance or fixed

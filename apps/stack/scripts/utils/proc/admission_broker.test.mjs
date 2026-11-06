@@ -365,14 +365,20 @@ test('the head floor survives a stream of small jobs, with backfill only from sp
   const alsoHeld = await second.admit();
   const large = await acquire(root, 70, t);
   const small = await acquire(root, 20, t);
+  // admission-backfill-1106: older holders cover the head's future floor.
+  const placement = await request(root, { kind: 'sample' });
+  await placement.next();
+  placement.socket.destroy();
+  assert.equal(broker.status().activeCount, 3, 'spare memory admits the small follower before older holders release');
+  const admittedSmall = await small.admit();
   const assertNoBackfill = async () => {
     for (let index = 0; index < 4; index += 1) {
       const arrival = await acquire(root, 20, t, { noWait: true });
       assert.equal((await arrival.next()).reason, 'HSTACK_MEMORY_BUSY',
         'new small jobs must not consume memory reserved for the waiting head');
     }
-    assert.equal(broker.status().waitingCount, 2,
-      'the head and small follower must remain queued until the head floor is covered');
+    assert.equal(broker.status().waitingCount, 1,
+      'the head retains its position while small jobs use only spare memory');
   };
   await assertNoBackfill();
   const placementSample = await request(root, { kind: 'sample' });
@@ -388,11 +394,9 @@ test('the head floor survives a stream of small jobs, with backfill only from sp
   assert.equal(broker.status().sampleCount, samples);
   await held.release();
   await assertNoBackfill();
-  assert.equal(broker.status().reservedMemoryKiB, 40);
+  assert.equal(broker.status().reservedMemoryKiB, 60);
   await alsoHeld.release();
-  // Both offers must already exist before the head's ready handshake: spare
-  // memory remains usable without waiting for the older payload to start.
-  const admittedSmall = await small.admit();
+  // Backfill remains active while the second release makes room for the head.
   const admittedLarge = await large.admit();
   assert.equal(broker.status().reservedMemoryKiB, 90);
   await admittedLarge.release();
