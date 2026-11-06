@@ -76,6 +76,8 @@ export type ScopedUsageEventDbRow = Readonly<{
     brokerMachineId: string | null;
     credentialDeliveryMode: string | null;
     metadata?: unknown;
+    /** Already admitted facts on a captured row shared by one accounting batch. */
+    accountingEvidence?: ScopedUsageAccountingEvidence;
     inputTokens: number;
     outputTokens: number;
     reasoningTokens: number;
@@ -98,13 +100,13 @@ type UsageEvidenceField = 'id' | 'sessionId' | 'observedAt' | 'createdAt' | 'age
     | 'teamCredentialResourceId' | 'teamCredentialActorAccountId' | 'teamCredentialExternalApiKeyId'
     | 'teamCredentialSourceCredentialId';
 
-export type ScopedUsageEvidenceDbRow = Pick<ScopedUsageEventDbRow, UsageEvidenceField>;
+export type ScopedUsageEvidenceDbRow = Pick<ScopedUsageEventDbRow, UsageEvidenceField | 'accountingEvidence'>;
 export type ScopedUsageEvidenceRow = Pick<ScopedUsageEventRow, UsageEvidenceField>
     & { accountingEvidence: ScopedUsageAccountingEvidence };
 
-function normalizeScopedUsageMetadata(value: unknown) {
+function normalizeScopedUsageMetadata(value: unknown, admittedEvidence?: ScopedUsageAccountingEvidence) {
     const metadata = parseUsageEventMetadata(value);
-    const accountingEvidence = readScopedUsageAccountingEvidence({ metadata });
+    const accountingEvidence = admittedEvidence ?? readScopedUsageAccountingEvidence({ metadata });
     const { accounting, subject: accountingSubject } = accountingEvidence;
     // Team coverage also consumes metadata outside the accounting projection.
     const internalMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -121,7 +123,7 @@ function normalizeScopedUsageMetadata(value: unknown) {
 /** Normalize historical identity and coverage without token or monetary row bodies. */
 export function toScopedUsageEvidenceRow<Row extends ScopedUsageEvidenceDbRow>(row: Row):
     Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> {
-    return { ...row, ...normalizeScopedUsageMetadata(row.metadata) };
+    return { ...row, ...normalizeScopedUsageMetadata(row.metadata, row.accountingEvidence) };
 }
 
 function readCostBreakdown(value: string | null): Record<string, number> | undefined {
@@ -166,7 +168,7 @@ export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEv
 
 /** Captured thin evidence already owns metadata normalization for this row. */
 export function toScopedUsageEventRowWithEvidence(row: ScopedUsageEventDbRow, evidence?: ScopedUsageEvidenceRow): ScopedUsageEventRow {
-    const { metadata, accountingEvidence } = evidence ?? normalizeScopedUsageMetadata(row.metadata);
+    const { metadata, accountingEvidence } = evidence ?? normalizeScopedUsageMetadata(row.metadata, row.accountingEvidence);
     const cost: UsageObservationCost = {
         reportedUsd: row.reportedCostUsd,
         estimatedUsd: row.estimatedCostUsd,

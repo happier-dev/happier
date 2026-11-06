@@ -101,6 +101,30 @@ describe('captured usage query projection', () => {
         expect(selectUsageMessageCounts({ ...request, population: 'public_eligible_personal' }, selected, captured)).toBeUndefined();
         expect(selectUsageMessageCounts({ ...request, filters: { execution: 'happier' } }, selected, captured)).toBeUndefined();
     });
+    it('admits historical metadata once before projecting distinct ranges in one accounting open', async () => {
+        let metadataReads = 0;
+        const rows = Array.from({ length: 128 }, (_, index) => ({
+            ...row(`history-${index}`, 10, undefined),
+            observedAt: new Date(index), createdAt: new Date(index),
+            // Observe captured database bodies; the real metadata parsers and accounting fold run below.
+            get metadata() {
+                metadataReads++;
+                return { accountingSubject: subject,
+                    usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } };
+            },
+        }));
+        const queries = [[100, 128], [0, 100]].map(([startMs, endMs]) => UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs, endMs }, includeSeries: false, breakdowns: [],
+        }));
+        const captured: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const batch = await projectUsageAnalyticsBatch({ priceCatalog: captured.priceCatalog,
+            snapshots: new Map(queries.map(query => [getUsageAnalyticsQueryRequestKey(query), captured])) }, queries, true);
+        expect(batch.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([280, 1000]);
+        expect(batch.results.map(result => 'value' in result ? result.value.coverage?.sources[0]?.eventCount : null)).toEqual([128, 100]);
+        expect(metadataReads, 'raw historical metadata admission must scale with captured rows, not requested ranges').toBeLessThanOrEqual(2 * rows.length);
+    });
+
     it('releases normalized historical evidence before pricing the shared batch', async () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 },
             includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
@@ -386,7 +410,7 @@ describe('captured usage query projection', () => {
         } finally { await pendingIo; }
     });
 
-    it('normalizes one captured population once across eight output demands and keeps a changed population independent', async () => {
+    it('admits captured metadata once across eight output demands while keeping changed populations independent', async () => {
         let metadataReads = 0;
         const rows = Array.from({ length: 2733 }, (_, index) => {
             const captured = row(`batch-${index}`, 10,
@@ -430,7 +454,7 @@ describe('captured usage query projection', () => {
         };
         metadataReads = 0;
         const control = await projectUsageAnalyticsBatch(capturedControl, selected, true, false, timing);
-        expect(metadataReads, 'a genuinely different accounting population must be projected').toBe(single * 2);
+        expect(metadataReads, 'distinct population folds consume the same admitted metadata within this batch').toBe(single);
         expect(control.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([27330, 0, 27330]);
         // A pricing phase can resume more than once when its elapsed slice expires.
         const retainedTransitions = retainedSnapshotsAtPrice.filter((count, index, counts) => index === 0 || count !== counts[index - 1]);

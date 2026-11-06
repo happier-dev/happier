@@ -10,6 +10,9 @@ import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
 import { loadRetainedLegacyUsageReports, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
+import { toScopedUsageEvidenceRow } from './scopedUsageEventRow';
+
+const usageQuerySliceMs = 20;
 
 /** Output flags share a population; chart coordinates share a projection of it. */
 export function getUsageAnalyticsPopulationKey(query: UsageAnalyticsQueryRequest): string {
@@ -28,7 +31,7 @@ function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: U
     // Use the measured pricing slice (20ms) for committed normalization/folds
     // too. Reset at each advance so other requests' work is never our budget.
     let sliceStartedAt = 0;
-    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, () => performance.now() - sliceStartedAt >= 20);
+    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, () => performance.now() - sliceStartedAt >= usageQuerySliceMs);
     const advance = () => {
         sliceStartedAt = performance.now();
         return timing ? timing.measure('fold', () => steps.next()) : steps.next();
@@ -77,6 +80,34 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     return { snapshots, priceCatalog };
 }
 
+/** Admit each captured body before range fan-out, preserving the raw capture for its caller. */
+async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>,
+    queries: readonly UsageAnalyticsQueryRequest[], timing?: UsageQueryTiming) {
+    const inputs = new Map<UsageAnalyticsSnapshot['rows'], string[]>();
+    for (const query of queries) {
+        const key = getUsageAnalyticsQueryRequestKey(query);
+        const captured = snapshot.snapshots.get(key);
+        if (!captured) continue;
+        const keys = inputs.get(captured.rows) ?? [];
+        keys.push(key);
+        inputs.set(captured.rows, keys);
+    }
+    let sliceStartedAt = performance.now();
+    for (const [rows, keys] of inputs) {
+        const admitted: UsageAnalyticsSnapshot['rows'] = [];
+        for (const row of rows) {
+            admitted.push(toScopedUsageEvidenceRow(row));
+            if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
+                if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
+                await setImmediate();
+                sliceStartedAt = performance.now();
+            }
+        }
+        for (const key of keys) snapshot.snapshots.set(key, { ...snapshot.snapshots.get(key)!, rows: admitted });
+    }
+    if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
+}
+
 /**
  * The incumbent accounting projector owns reconciliation, filters, prices and coverage.
  * Consume each population's captured inputs once its canonical accounting fold succeeds.
@@ -85,6 +116,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
     queries: readonly UsageAnalyticsQueryRequest[], includeContributions: boolean, prepareSummary = false,
     timing?: UsageQueryTiming): Promise<UsageAnalyticsQueryBatchResponse> {
     const startedAt = performance.now();
+    await admitUsageBatchMetadata(snapshot, queries, timing);
     const priceCatalog = resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog);
     // Output flags do not change the admitted accounting population. Share its
     // normalization/reconciliation/prices only within this committed batch.
