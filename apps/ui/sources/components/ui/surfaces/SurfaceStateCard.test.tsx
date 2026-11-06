@@ -478,9 +478,11 @@ describe('SurfaceStateCard pane-state composition', () => {
         );
         expect(screen.getTextContent()).toContain('Couldn’t load who has access.');
         expect(screen.findAll((node) => node.props?.name === 'warning')).toHaveLength(1);
-        // A line is not a card: no Details disclosure, the code stays on the QA channel.
-        expect(screen.findByTestId('state-line-details-toggle')).toBeFalsy();
-        expect(screen.findByTestId('state-line-diagnostic-rpc_timeout')).toBeTruthy();
+        // One row (owner 11-06): a failure line offers its code behind a quiet Details beside its recovery,
+        // and keeps the code out of the tree until it is opened.
+        expect(screen.findByTestId('state-line-details-toggle')).toBeTruthy();
+        expect(screen.findByTestId('state-line-diagnostic-rpc_timeout')).toBeFalsy();
+        expect(screen.findByTestId('state-line-details-code')).toBeFalsy();
         await act(async () => {
             screen.pressByTestId('state-line-action');
         });

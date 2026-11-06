@@ -131,9 +131,18 @@ describe('SurfaceState: the shared full state composition', () => {
       retry?.click();
     });
     expect(retried).toBe(0);
-    expect(mount.container.querySelector('[data-testid="row-details-toggle"]')).toBeNull();
-    expect(mount.container.querySelector('[data-testid="row-diagnostic-E_MACHINE_UNREACHABLE"]')).not.toBeNull();
-    expect(textOf(mount.container)).not.toContain('E_MACHINE_UNREACHABLE');
+    // One row (owner 11-06): a failure line keeps its code one press away, Details beside Retry on the
+    // trailing edge, opening the code on the next line; closed, the code is never read or in the tree.
+    expect(mount.container.innerHTML).not.toContain('E_MACHINE_UNREACHABLE');
+    const toggle = mount.container.querySelector<HTMLElement>('[data-testid="row-details-toggle"]');
+    expect(toggle).not.toBeNull();
+    // Beside Retry, before it, inside the same line.
+    expect(mount.container.querySelector('[data-testid="row"]')!.contains(toggle)).toBe(true);
+    expect(toggle!.compareDocumentPosition(retry!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => {
+      toggle!.click();
+    });
+    expect(mount.container.querySelector('[data-testid="row-details-code"]')?.textContent).toBe('E_MACHINE_UNREACHABLE');
     mount.unmount();
   });
 

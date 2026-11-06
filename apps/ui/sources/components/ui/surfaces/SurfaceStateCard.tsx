@@ -130,6 +130,8 @@ export function SurfaceStateCard(props: Readonly<{
     reasonContent?: React.ReactNode;
     /** Raw machine reason code — collapsed Details disclosure and testID marker only. */
     diagnosticCode?: string | null;
+    /** Opaque correlation (a request id) shown with the code inside a line's Details; never spoken. */
+    diagnosticDetail?: string | null;
     /** Optional sanitized supplemental detail. Never pass a raw machine code. */
     detail?: string;
     /** The one next step (create the first item, retry, check again…). */
@@ -207,6 +209,7 @@ export function SurfaceStateCard(props: Readonly<{
         action,
         secondaryAction: props.secondaryAction,
         diagnosticCode: props.diagnosticCode,
+        diagnosticDetail: props.diagnosticDetail,
         accessibilitySemantics: props.accessibilitySemantics,
         bindings,
     } as const;
@@ -355,8 +358,8 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
         // copy, one tap away when someone needs to report or debug.
         renderDetailsCaret: disclosure.renderCaret,
         focusRing: disclosure.focusColor,
-        renderDetailsCode: (detail) => (
-            <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align="center">{detail}</DisclosedCodeText>
+        renderDetailsCode: (detail, align = 'center') => (
+            <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align={align === 'center' ? 'center' : undefined}>{detail}</DisclosedCodeText>
         ),
         pressedFill: theme.colors.surface.pressed,
     }), [animationEnabled, disclosure, testID, theme]);

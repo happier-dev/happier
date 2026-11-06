@@ -1,4 +1,3 @@
-import { ConnectedAccountFailureDetails } from './ConnectedAccountFailureDetails';
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appShell/workspace/destinationRoute';
 
@@ -1691,12 +1690,11 @@ const ConnectedAccountServiceController = React.memo(
                             disabled: busy || retryingDescription,
                             onPress: () => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); },
                         }}
-                    />
-                    <ConnectedAccountFailureDetails
+                        // One row: Details sits beside Retry on the trailing edge; it opens the typed code and the
+                        // request identity, never provider prose. A new failure starts it closed.
                         key={`${errorDetailsCode ?? errorCode}:${errorRequestId ?? attemptId ?? ''}`}
-                        code={errorDetailsCode ?? errorCode}
-                        correlationId={errorRequestId ?? attemptId}
-                        scope={'scope' in accountLifetime ? accountLifetime.scope : null}
+                        diagnosticCode={errorDetailsCode ?? errorCode}
+                        diagnosticDetail={errorRequestId ?? attemptId}
                     />
                 </ConnectedAccountFormSection>
             ) : null}

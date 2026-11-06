@@ -69,6 +69,8 @@ export function HappierStateLine(props: Readonly<{
   icon?: ReactNode;
   children: ReactNode;
   action?: ReactNode;
+  /** Opened detail of the line (a failure's code), on the next line at the sentence's edge. */
+  below?: ReactNode;
   accessibilitySemantics?: 'status' | 'alert';
   /**
    * `menu`: the line sits among a transient menu's rows, so it takes the menu row's height, inset and
@@ -106,8 +108,9 @@ export function HappierStateLine(props: Readonly<{
       // One line that wraps its sentence, never its parts: the glyph and the recovery stay beside the
       // text in a narrow column instead of stacking above and below it.
       flexDirection: 'row',
-      // A sentence that needs more than the room beside its recovery puts the recovery under it, instead of
-      // wrapping the sentence to four lines in a column left by the recovery.
+      // The recovery stays on the line's trailing edge and the sentence wraps beside it (owner 11-06: Retry
+      // belongs on the right of its error). Only a column too narrow for a readable sentence beside it puts
+      // the recovery under the words.
       flexWrap: 'wrap',
       alignItems: 'center',
       gap: metrics.gapPx,
@@ -119,9 +122,9 @@ export function HappierStateLine(props: Readonly<{
         gap: glyphColumn.gapPx,
         flexShrink: 1,
         minWidth: 0,
-        // The sentence asks for its whole width: one that fits beside the recovery stays one block, a longer
-        // one takes the line's width and its recovery moves beneath it rather than squeezing it into a column.
-        ...(props.action ? { flexGrow: 1, flexBasis: 'auto' } : {}),
+        // The sentence takes the room the recovery leaves and wraps there; it moves the recovery beneath only
+        // when that room is narrower than a readable sentence.
+        ...(props.action ? { flexGrow: 1, flexBasis: LINE_TEXT_BASIS_PX } : {}),
       }}>
         {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, alignItems: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
         <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
@@ -129,6 +132,7 @@ export function HappierStateLine(props: Readonly<{
       {/* Beside the sentence the growing sentence leaves it at the line's end; moved beneath, it starts on the
           sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
       {props.action ? <View style={{ flexShrink: 0, marginLeft: props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0 }}>{props.action}</View> : null}
+      {props.below ? <View style={{ flexBasis: '100%', paddingLeft: props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0 }}>{props.below}</View> : null}
     </View>
   );
 }

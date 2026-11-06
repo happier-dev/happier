@@ -1,7 +1,9 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
+import { HappierDisclosureToggle } from '../collection/DisclosureToggle.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { HappierText } from '../text/Text.js';
 import { HAPPIER_TYPE_SCALE } from '../text/typeScale.js';
 import {
   HAPPIER_STATE_LINE_METRICS,
@@ -110,7 +112,8 @@ export type HappierSurfaceStateBindings = Readonly<{
    * toggle itself is the shared `HappierDisclosureToggle`.
    */
   renderDetailsCaret: (open: boolean) => ReactNode;
-  renderDetailsCode?: (details: string) => ReactNode;
+  /** The opened code; `start` on a line's sentence edge, `center` (default) under a centred card. */
+  renderDetailsCode?: (details: string, align?: 'start' | 'center') => ReactNode;
   detailsLabel: string;
   /** The keyboard focus ring's ink; absent, the environment theme's. */
   focusRing?: string;
@@ -147,6 +150,8 @@ export type HappierSurfaceStateProps = Readonly<{
   learnMore?: HappierSurfaceStateAction;
   /** Raw machine code: a collapsed disclosure on a failure, a testID marker otherwise. Never the sentence. */
   diagnosticCode?: string | null;
+  /** An opaque correlation shown with the code inside Details (a request id). Never spoken or the sentence. */
+  diagnosticDetail?: string | null;
   accessibilitySemantics?: 'status' | 'alert';
   bindings: HappierSurfaceStateBindings;
 }>;
@@ -259,73 +264,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
   ) : diagnosticMarker;
 
   if (props.size === 'line') {
-    // One block (final-acceptance 10): the cause on the leading edge and its recovery at the trailing
-    // end. A line is not a card: it never grows a Details disclosure under it (the raw code stays on
-    // the QA marker), so a narrow card never stacks three alignments.
-    const lineActions = actions.some(Boolean) ? (
-      <View
-        style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
-      >
-        {actions.map((action, index) =>
-          action ? (
-            <HappierPressable
-              key={index}
-              testID={
-                action.testID ??
-                (props.testID
-                  ? `${props.testID}-${index === 0 ? 'action' : 'secondary-action'}`
-                  : undefined)
-              }
-              accessibilityRole="button"
-              accessibilityLabel={action.label}
-              disabled={action.disabled}
-              busy={action.busy}
-              onPress={action.onPress}
-              style={({ hovered, pressed }) => ({
-                minHeight: HAPPIER_STATE_LINE_METRICS.minHeightPx,
-                justifyContent: 'center',
-                paddingHorizontal: LINE_ACTION_PADDING_PX,
-                borderRadius: LINE_ACTION_RADIUS_PX,
-                backgroundColor:
-                  hovered || pressed ? bindings.pressedFill : undefined,
-              })}
-            >
-              {bindings.renderText({
-                role: 'lineAction',
-                metrics: HAPPIER_STATE_LINE_METRICS.text,
-                children: action.label,
-              })}
-            </HappierPressable>
-          ) : null,
-        )}
-      </View>
-    ) : (
-      props.actionSlot
-    );
-    return (
-      <View
-        style={
-          props.fillsContainer
-            ? { flexGrow: 1, justifyContent: 'center' }
-            : undefined
-        }
-      >
-        <View {...liveRegionProps}>
-          <HappierStateLine
-            testID={props.testID}
-            icon={props.glyph}
-            action={lineActions}
-          >
-            {bindings.renderText({
-              role: 'line',
-              metrics: HAPPIER_STATE_LINE_METRICS.text,
-              children: props.lineText,
-            })}
-          </HappierStateLine>
-        </View>
-        {diagnosticMarker}
-      </View>
-    );
+    return <HappierSurfaceStateLineView {...props} />;
   }
 
   const size = props.size;
@@ -547,5 +486,108 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
       )}
       {supplemental}
     </HappierSurfaceStateFrame>
+  );
+}
+
+/**
+ * One error, empty or waiting line (final-acceptance 10, owner 11-06): the cause on the leading edge and, on the
+ * trailing edge of the same row, a failure's quiet Details beside its recovery. Details opens the raw code (and an
+ * opaque request id) on the next line, on the sentence's edge, so a narrow sheet never stacks three alignments.
+ */
+function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
+  const { bindings } = props;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const liveRegionProps = resolveHappierStateAnnouncement(props.accessibilitySemantics);
+  const actions = [props.action, props.secondaryAction] as const;
+  const diagnosticMarker = props.diagnosticCode ? (
+    <View
+      testID={props.testID ? `${props.testID}-diagnostic-${props.diagnosticCode}` : undefined}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ width: 0, height: 0 }}
+    />
+  ) : null;
+  const details = props.diagnosticCode && disclosesDiagnostic(props.kind)
+    ? props.diagnosticDetail ? `${props.diagnosticCode}\n${props.diagnosticDetail}` : props.diagnosticCode
+    : null;
+  const detailsToggle = details ? (
+    <HappierDisclosureToggle
+      testID={props.testID ? `${props.testID}-details-toggle` : undefined}
+      label={bindings.detailsLabel}
+      open={detailsOpen}
+      onPress={() => setDetailsOpen((value) => !value)}
+      caret={bindings.renderDetailsCaret(detailsOpen)}
+      renderLabel={(label) => bindings.renderText({ role: 'details', children: label })}
+      focusColor={bindings.focusRing}
+    />
+  ) : null;
+  const lineActions = actions.some(Boolean) || detailsToggle ? (
+    <View
+      style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
+    >
+      {detailsToggle}
+      {actions.map((action, index) =>
+        action ? (
+          <HappierPressable
+            key={index}
+            testID={
+              action.testID ??
+              (props.testID
+                ? `${props.testID}-${index === 0 ? 'action' : 'secondary-action'}`
+                : undefined)
+            }
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
+            disabled={action.disabled}
+            busy={action.busy}
+            onPress={action.onPress}
+            style={({ hovered, pressed }) => ({
+              minHeight: HAPPIER_STATE_LINE_METRICS.minHeightPx,
+              justifyContent: 'center',
+              paddingHorizontal: LINE_ACTION_PADDING_PX,
+              borderRadius: LINE_ACTION_RADIUS_PX,
+              backgroundColor:
+                hovered || pressed ? bindings.pressedFill : undefined,
+            })}
+          >
+            {bindings.renderText({
+              role: 'lineAction',
+              metrics: HAPPIER_STATE_LINE_METRICS.text,
+              children: action.label,
+            })}
+          </HappierPressable>
+        ) : null,
+      )}
+    </View>
+  ) : (
+    props.actionSlot
+  );
+  return (
+    <View
+      style={
+        props.fillsContainer
+          ? { flexGrow: 1, justifyContent: 'center' }
+          : undefined
+      }
+    >
+      <View {...liveRegionProps}>
+        <HappierStateLine
+          testID={props.testID}
+          icon={props.glyph}
+          action={lineActions}
+          below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (
+            <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable>{details}</HappierText>
+          ) : undefined}
+        >
+          {bindings.renderText({
+            role: 'line',
+            metrics: HAPPIER_STATE_LINE_METRICS.text,
+            children: props.lineText,
+          })}
+        </HappierStateLine>
+      </View>
+      {/* With Details offered the toggle is the QA handle; the code stays out of the tree until opened. */}
+      {details ? null : diagnosticMarker}
+    </View>
   );
 }
