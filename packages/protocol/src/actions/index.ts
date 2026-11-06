@@ -652,3 +652,5 @@ export * from './sessionSpaceMembership.js';
 export * from './approvalProfiles.js';
 
 export { WorkspaceTabAddressSchema, WorkspaceOwnedTabAddressSchema, PaneTabAddressSchema, type WorkspaceTabAddress, type PaneTabAddress } from "./workspaceActionFamily.js";
+
+export { createExecutionRunHostActionApprovalDecision } from './executionRunHostActionApprovalDecision.js';

@@ -223,11 +223,14 @@ export function createCliMachineResourceActionDeps(
       const denied = await projectAccountAdmission(serverId, context);
       if (denied) return denied;
       return withProjectHome(async () => {
-        const request = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+        const policyRequest = actionId === 'machines.agentIsolation.status' ? null
+          : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+        const request = policyRequest ?? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.status'].parse(input);
         const effectActionId = actionId === 'machines.agentIsolation.preview'
           && resolveMachineRpcExternalActionEffectV1(actionId, context.externalActionExecutionAuthorization?.binding)
             === 'machines.agentIsolation.set' ? 'machines.agentIsolation.set' : actionId;
-        if (!await verifyManagedCreationAgentIsolationInput({ actionId: effectActionId, request, context,
+        if (policyRequest && effectActionId !== 'machines.agentIsolation.status' && !await verifyManagedCreationAgentIsolationInput({ actionId: effectActionId,
+          request: policyRequest, context,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
           privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
           return { ok: false as const, errorCode: 'managed_enrollment_policy_unverified', error: 'managed_enrollment_policy_unverified' };

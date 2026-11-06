@@ -1502,6 +1502,56 @@ export async function dispatchManagedMachineAgentIsolation(params: Omit<ManagedC
   return dispatchManagedChild({ ...params, targetMachineId: params.input.machineId });
 }
 
+/** Sealed creation children are compared with their retained review before target CAS. */
+export async function verifyManagedCreationAdminAccessInput(input: Readonly<{
+  request: MachineAdminAccessActionInput;
+  context: ActionExecutorContext;
+  serverHttpBaseUrl: string;
+  daemonToken: string;
+  serverIdentityId?: string;
+  privateKey?: ExternalActionMachineRequestSigningKey;
+  installationId?: string;
+}>): Promise<boolean> {
+  return verifyManagedCreationEnrollmentPolicyInput(input, 'machines.setup.adminAccess.set', row =>
+    'adminAccess' in input.request && matchesManagedMachineEnrollmentAdminAccessV1({ homeId: row.homeId,
+      machineId: input.request.machineId, enrollmentIdentity: row.enrollmentIdentity }, input.request));
+}
+
+export async function verifyManagedCreationAgentIsolationInput(input: Omit<Parameters<typeof verifyManagedCreationAdminAccessInput>[0], 'request'>
+  & Readonly<{ actionId: 'machines.agentIsolation.preview' | 'machines.agentIsolation.set';
+    request: MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 }>): Promise<boolean> {
+  return verifyManagedCreationEnrollmentPolicyInput(input, input.actionId, row =>
+    matchesManagedMachineEnrollmentAgentIsolationV1({ homeId: row.homeId, machineId: input.request.machineId,
+      enrollmentIdentity: row.enrollmentIdentity }, input.request));
+}
+
+async function verifyManagedCreationEnrollmentPolicyInput(input: Omit<Parameters<typeof verifyManagedCreationAdminAccessInput>[0], 'request'>
+  & Readonly<{ request: { serverId?: string; machineId: string } }>, actionId: string,
+  matches: (row: ManagedMachineV1) => boolean): Promise<boolean> {
+  const binding = input.context.externalActionExecutionAuthorization?.binding;
+  const continuation = binding?.managedContinuation;
+  if (!continuation) return true;
+  if (binding.actionId !== actionId || binding.machineId !== input.request.machineId
+    || binding.serverIdentityId !== input.serverIdentityId) return false;
+  const path = managedMachineActionEndpointPathV1('machines.managed.get');
+  const body = { homeId: binding.serverIdentityId, managedId: continuation.managedId };
+  const headers = resolveExternalActionServerRequestHeaders({ ...input, method: 'POST', path, body,
+    effectActionId: actionId });
+  if (!headers.ok) return false;
+  try {
+    const response = await axios.post<unknown>(`${input.serverHttpBaseUrl}${path}`, body, {
+      headers: headers.headers, signal: input.context.signal, validateStatus: () => true,
+    });
+    if (response.status !== 200) return false;
+    const row = ManagedMachineV1Schema.parse(response.data);
+    return row.id === continuation.managedId && row.homeId === binding.serverIdentityId
+      && row.enrolledMachineId === binding.machineId && row.intentRevision === continuation.expectedIntentRevision
+      && row.creationState === 'active' && row.allocation === 'bound' && row.desired !== 'delete'
+      && sameStrictJsonValue(row.controller, continuation.controller)
+      && matches(row);
+  } catch { return false; }
+}
+
 /** Provenance for the incumbent local host Account path, not effect authority.
  * Home still mints and verifies every setup Action's exact target proof. */
 export function isOriginalLocalManagedSetupContext(input: Readonly<{

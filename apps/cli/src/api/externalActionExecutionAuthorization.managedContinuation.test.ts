@@ -1,3 +1,10 @@
+import { dispatchManagedMachineAdminAccess, verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolationInput,
+    projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
@@ -33,6 +40,144 @@ describe('managed continuation through the ordinary public Action transport', ()
         } }));
     });
     afterEach(() => vi.restoreAllMocks());
+
+    it.each([true, false])('seals the administrator child with the existing creation correlation and verifies its retained policy before target execution (controller=%s)', async controllerPresent => {
+        const policy = { version: 1 as const, mode: 'ask' as const, administratorUsername: 'operator' };
+        const request = { serverId: 'srv_home', machineId: 'guest', expectedMetadataVersion: 0,
+            expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const };
+        const row = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
+            controller: controllerPresent ? { machineId: 'controller', installationId: 'installation' } : undefined,
+            launch: { provider: { pluginId: 'native.provisioner', localId: 'guest' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'native.provisioner', localId: 'guest' }, schemaVersion: 1, value: { id: 'paid-guest' } },
+            allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget',
+                adminAccessAtCreation: 'ask', administrator: { username: 'operator' } } };
+        const child = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, binding: { ...root.binding,
+            actionId: 'machines.setup.adminAccess.set', machineId: 'guest', installationId: 'guest-installation',
+            target: { kind: 'machine', machineId: 'guest' }, managedContinuation: { ...continuation,
+                controller: row.controller, acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest } } });
+        const context = { surface: 'cli' as const, actionRequestId: 'creation', externalActionExecutionAuthorization: child,
+            externalActionTarget: child.binding.target, signal: new AbortController().signal };
+        let bootstrapRetry = false;
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+            if (url.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (url.endsWith('/v1/actions/machines.setup.adminAccess.set')) {
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(carrier.managedContinuation).toEqual(continuation);
+                expect(carrier.envelope.requestId).toBe(bootstrapRetry ? 'retry' : 'creation');
+                expect(carrier.envelope).not.toHaveProperty('sessionSpawnAdmission');
+                if (carrier.envelope.v !== 2) throw new Error('Expected sealed administrator policy');
+                const binding = { serverIdentityId: 'srv_home', accountId: 'account',
+                    actionId: 'machines.setup.adminAccess.set', requestId: bootstrapRetry ? 'retry' : 'creation', target: { kind: 'machine' as const, machineId: 'guest' },
+                    authentication: { kind: 'account' as const, tokenEpoch: 2 } };
+                expect(openExternalActionRequestV2({ envelope: carrier.envelope, material, binding })?.input).toEqual(request);
+                expect(config?.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
+                return { status: 200, data: prepareExternalActionResponseV2({ binding, request: carrier.envelope, material,
+                    randomBytes: length => new Uint8Array(length).fill(4), executedMachineId: 'guest',
+                    execution: { ok: true, result: { status: 'applied', policy, metadataVersion: 1 } } }).response };
+            }
+            expect(url).toBe('https://home.example/v1/machines/managed/actions/get');
+            expect(body).toEqual({ homeId: 'srv_home', managedId: 'managed' });
+            expect(config?.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token });
+            return { status: 200, data: row };
+        });
+        expect(await dispatchManagedMachineAdminAccess({ input: request, serverId: 'home-profile', continuation, authorization: root,
+            material, installationId: 'installation', privateKey: keyPair.secretKey, serverHttpBaseUrl: 'https://home.example' }))
+            .toMatchObject({ ok: true, result: { status: 'applied' } });
+        const args = { request, context, serverIdentityId: 'srv_home', daemonToken: 'unused-host-credential',
+            privateKey: keyPair.secretKey, installationId: 'guest-installation', serverHttpBaseUrl: 'https://home.example' };
+        expect(await verifyManagedCreationAdminAccessInput(args)).toBe(true);
+        post.mockResolvedValueOnce({ status: 200, data: { ...row, controller: controllerPresent ? undefined
+            : { machineId: 'controller', installationId: 'installation' } } });
+        expect(await verifyManagedCreationAdminAccessInput(args)).toBe(false);
+        bootstrapRetry = true;
+        const retryRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root,
+            binding: { ...root.binding, actionId: 'machines.managed.bootstrap.retry', requestId: 'retry' } });
+        expect(await dispatchManagedMachineAdminAccess({ input: request, serverId: 'home-profile', continuation, authorization: retryRoot,
+            material, installationId: 'installation', privateKey: keyPair.secretKey, serverHttpBaseUrl: 'https://home.example' }))
+            .toMatchObject({ ok: true, result: { status: 'applied' } });
+        const retryChild = ExternalActionExecutionAuthorizationV1Schema.parse({ ...child,
+            binding: { ...child.binding, requestId: 'retry' } });
+        expect(await verifyManagedCreationAdminAccessInput({ ...args,
+            context: { ...context, actionRequestId: 'retry', externalActionExecutionAuthorization: retryChild } })).toBe(true);
+        bootstrapRetry = false;
+        expect(await verifyManagedCreationAdminAccessInput({ ...args, request: { ...request,
+            adminAccess: { ...policy, administratorUsername: 'different' } } })).toBe(false);
+        expect(await verifyManagedCreationAdminAccessInput({ ...args, request: { ...request, machineId: 'other-guest' } })).toBe(false);
+        expect(await verifyManagedCreationAdminAccessInput({ ...args, request: { ...request, serverId: 'srv_other' } })).toBe(false);
+        post.mockResolvedValueOnce({ status: 200, data: { ...row, intentRevision: 4 } });
+        expect(await verifyManagedCreationAdminAccessInput(args)).toBe(false);
+        const isolationRequest = { serverId: 'srv_home', machineId: 'guest', enabled: true,
+            expectedMetadataVersion: 2, expectedPolicy: { enabled: true }, expectedPlanDigest: 'reviewed-effects' };
+        const isolationChild = ExternalActionExecutionAuthorizationV1Schema.parse({ ...child,
+            binding: { ...child.binding, actionId: 'machines.agentIsolation.set', requestId: 'retry' } });
+        const isolationContext = { ...context, actionRequestId: 'retry', externalActionExecutionAuthorization: isolationChild };
+        const isolationArgs = { ...args, actionId: 'machines.agentIsolation.set' as const, request: isolationRequest, context: isolationContext };
+        expect(await verifyManagedCreationAgentIsolationInput(isolationArgs)).toBe(true);
+        expect(await verifyManagedCreationAgentIsolationInput({ ...isolationArgs, request: { ...isolationRequest, enabled: false } })).toBe(false);
+        post.mockResolvedValueOnce({ status: 200, data: { ...row, enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } } });
+        expect(await verifyManagedCreationAgentIsolationInput(isolationArgs)).toBe(false);
+        const currentness = await createRequesterCurrentnessSocketHarness();
+        try {
+            let mutations = 0;
+            let rpcResult: unknown = { status: 'applied', policy, metadataVersion: 2 };
+            currentness.server.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL, (_packet, acknowledge) => {
+                mutations++;
+                acknowledge({ ok: true, result: rpcResult });
+            }));
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url === 'https://home.example/v1/machines/guest') return { status: 200, data: { machine: {
+                    id: 'guest', kind: 'persistent', storageMode: 'plain', installationId: 'guest-installation',
+                    installationPublicKey: Buffer.from(keyPair.publicKey).toString('base64'),
+                    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                } } };
+                expect(url).toBe('https://home.example/v1/account/encryption/currentness');
+                return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null,
+                    contentKeyFingerprint: null, updatedAt: 1 } };
+            });
+            const http = await projectExternalActionRequesterHttpAuthorization({ authorization: { ...child,
+                binding: { ...child.binding, accountEncryptionMode: 'plain' } }, serverId: 'home-profile', serverIdentityId: 'srv_home',
+                serverHttpBaseUrl: 'https://home.example', target: child.binding.target, installationId: 'guest-installation',
+                privateKey: keyPair.secretKey, isCurrent: async () => true });
+            if (!http) throw new Error('Exact Home projection was not established');
+            const credentials = { token: 'requester-token', encryption: null };
+            const admitted = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: 'srv_home',
+                bootstrap: { credentials, serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+                    attribution: { serverId: 'home-profile', accountId: 'account', machineId: 'guest', installationId: 'guest-installation' } } });
+            if (!admitted) throw new Error('Requester custody was not established');
+            const deps = createCliActionDeps({ token: credentials.token, credentials, mode: 'plain', ctx: null, sessionId: '', serverId: 'home-profile',
+                serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
+                externalActionMachineInstallationId: 'guest-installation', externalActionMachineRequestPrivateKey: keyPair.secretKey });
+            const invoke = (value: typeof request) => deps.machineAdminAccessAction!({ actionId: 'machines.setup.adminAccess.set',
+                input: value, context: { ...context, serverId: 'home-profile', externalActionExecutionAuthorization: admitted }, signal: context.signal });
+            expect(await invoke({ ...request, adminAccess: { ...policy, administratorUsername: 'different' } }))
+                .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            expect(mutations).toBe(0);
+            expect(await invoke(request)).toMatchObject({ status: 'applied' });
+            expect(mutations).toBe(1);
+            const isolationHttp = await projectExternalActionRequesterHttpAuthorization({ authorization: { ...isolationChild,
+                binding: { ...isolationChild.binding, accountEncryptionMode: 'plain' } }, serverId: 'home-profile', serverIdentityId: 'srv_home',
+                serverHttpBaseUrl: 'https://home.example', target: isolationChild.binding.target, installationId: 'guest-installation',
+                privateKey: keyPair.secretKey, isCurrent: async () => true });
+            if (!isolationHttp) throw new Error('Isolation Home projection was not established');
+            const isolationAdmitted = await projectRequesterAccountActionAuthorization({ authorization: isolationHttp, serverIdentityId: 'srv_home',
+                bootstrap: { credentials, serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+                    attribution: { serverId: 'home-profile', accountId: 'account', machineId: 'guest', installationId: 'guest-installation' } } });
+            if (!isolationAdmitted) throw new Error('Isolation requester custody was not established');
+            rpcResult = { kind: 'accepted', operationId: 'isolation-operation', metadataVersion: 3,
+                status: { kind: 'applying', phase: 'runtime_replacement' } };
+            const invokeIsolation = (value: typeof isolationRequest) => deps.machineAgentIsolationAction!({ actionId: 'machines.agentIsolation.set',
+                input: value, context: { ...isolationContext, serverId: 'home-profile', externalActionExecutionAuthorization: isolationAdmitted }, signal: context.signal });
+            expect(await invokeIsolation({ ...isolationRequest, enabled: false })).toMatchObject({ ok: false, errorCode: 'managed_enrollment_policy_unverified' });
+            expect(mutations).toBe(1);
+            expect(await invokeIsolation(isolationRequest)).toMatchObject({ kind: 'accepted', status: { kind: 'applying' } });
+            expect(mutations).toBe(2);
+            post.mockClear();
+            expect(await verifyManagedCreationAdminAccessInput({ ...args, context: { surface: 'cli' } })).toBe(true);
+            expect(post).not.toHaveBeenCalled(); // Ordinary policy Actions do no creation-row read.
+        } finally { await currentness.close(); }
+    });
 
     it.each(['action_not_admitted', 'action_outcome_unknown'] as const)('preserves managed child correlation for %s and refuses a mismatched reply', async code => {
         const response = (id: string) => {
