@@ -5,6 +5,7 @@ import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixture
 import type { SessionListQueryHomeState } from './sessionListQueryController';
 import {
     buildSessionListHomeObservations,
+    areSessionListHomeObservationsEqual,
     isSessionListHomeOpening,
     isSessionListQueryHomeCoverageComplete,
     resolveOrdinarySessionListCoverage,
@@ -31,6 +32,14 @@ function queryState(
 }
 
 describe('buildSessionListHomeObservations', () => {
+    it('publishes a changed admitted failure class even when the lifecycle and success time are unchanged', () => {
+        const network = { phase: 'error' as const, lastSuccessAt: 1,
+            failure: { reason: 'network' as const, code: null } };
+        const response = { ...network, failure: { reason: 'response' as const, code: 'invalid_response' } };
+        expect(areSessionListHomeObservationsEqual(network, response)).toBe(false);
+        expect(areSessionListHomeObservationsEqual(response, { ...response, failure: { ...response.failure } })).toBe(true);
+    });
+
     it('merges active query and concurrent runtime observations by exact Home without retargeting on focus change', () => {
         const concurrent = {
             'home-b': {

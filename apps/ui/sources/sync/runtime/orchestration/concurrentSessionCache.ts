@@ -66,6 +66,7 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { invalidateCachedTransferRoutesForServer } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import type { ConcurrentSessionListCacheEntry } from '@/sync/domains/session/listing/concurrentSessionListCache';
+import { classifySessionListFailure } from '@/sync/domains/session/listing/sessionListFailure';
 import {
     areSessionListHomeObservationsEqual,
     type SessionListHomeObservation,
@@ -513,6 +514,7 @@ function updateConcurrentSessionListCache(params: Readonly<{
 function publishConcurrentSessionListObservation(params: Readonly<{
     entry: ManagedConcurrentServer;
     phase: SessionListHomeObservation['phase'];
+    failure?: SessionListHomeObservation['failure'];
 }>): void {
     if (!params.entry.snapshotDemanded) return;
     const serverId = normalizeServerId(params.entry.id);
@@ -524,6 +526,7 @@ function publishConcurrentSessionListObservation(params: Readonly<{
             listObservation: {
                 phase: params.phase,
                 lastSuccessAt: params.entry.lastSessionListSuccessAt,
+                ...(params.phase === 'error' && params.failure ? { failure: params.failure } : {}),
             },
         },
     });
@@ -1275,7 +1278,7 @@ async function runRefresh(
                 entry.reachabilityState.phase === 'online'
                 && entry.lastSessionListSuccessAt === successAtBeforeRefresh
             ) {
-                publishConcurrentSessionListObservation({ entry, phase: 'error' });
+                publishConcurrentSessionListObservation({ entry, phase: 'error', failure: classifySessionListFailure(error) });
             }
         } finally {
             if (entry.refreshAbortController === abortController) {

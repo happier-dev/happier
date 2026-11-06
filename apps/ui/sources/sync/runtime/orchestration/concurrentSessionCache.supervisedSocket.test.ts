@@ -306,7 +306,7 @@ describe('concurrent session cache supervised sockets', () => {
         h.setResponder(async input => new URL(String(input)).pathname === '/v2/sessions'
             ? Response.json({ error: 'Unavailable' }, { status: 503 }) : null);
         sessionUpdate();
-        await vi.waitFor(() => expect(observation()).toEqual({ phase: 'error', lastSuccessAt: successAt }));
+        await vi.waitFor(() => expect(observation()).toEqual({ phase: 'error', lastSuccessAt: successAt, failure: { reason: 'response', code: null } }));
         expect(phases.slice(0, 2)).toEqual(['loading', 'ready']);
         expect(phases.slice(-2)).toEqual(['refreshing', 'error']);
         expect(phases.slice(1)).not.toContain('loading');

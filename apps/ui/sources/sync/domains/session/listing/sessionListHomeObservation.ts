@@ -1,3 +1,4 @@
+import type { SessionListFailure } from './sessionListFailure';
 import { areServerProfileIdentifiersEquivalent } from '../../server/serverProfiles';
 import { readSessionListRowsForServerId, type SessionListRowStateByServerId } from './sessionListRowStateLookup';
 import { canSessionListOrdinaryPageAnswerQuery, type SessionListQueryHomeState } from './sessionListQueryController';
@@ -23,6 +24,8 @@ export type SessionListHomeObservation = Readonly<{
     phase: SessionListHomeObservationPhase;
     /** `null` until this Home has produced one successful list observation. */
     lastSuccessAt: number | null;
+    /** Present only for an admitted failed attempt; absence never proves a transport failure. */
+    failure?: SessionListFailure;
 }>;
 
 export type SessionListHomeObservationByServerId = Readonly<
@@ -138,7 +141,8 @@ export function areSessionListHomeObservationsEqual(
 ): boolean {
     if (left === right) return true;
     if (!left || !right) return false;
-    return left.phase === right.phase && left.lastSuccessAt === right.lastSuccessAt;
+    return left.phase === right.phase && left.lastSuccessAt === right.lastSuccessAt
+        && left.failure?.reason === right.failure?.reason && left.failure?.code === right.failure?.code;
 }
 
 /** The exact Home's observation, found through the Home's profile aliases (a cache key may be an alias). */
