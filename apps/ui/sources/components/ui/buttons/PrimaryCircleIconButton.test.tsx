@@ -6,6 +6,23 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>(
+            (result, entry) => ({ ...result, ...flattenStyle(entry) }),
+            {},
+        );
+    }
+    return typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
+function findNearestHostView(node: renderer.ReactTestInstance): renderer.ReactTestInstance | null {
+    let current = node.parent;
+    while (current && (current.type as unknown) !== 'View') current = current.parent;
+    return current;
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -37,6 +54,53 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('PrimaryCircleIconButton', () => {
+    it('preserves the existing styled surface size when no larger target is requested', async () => {
+        const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
+        const screen = await renderScreen(<PrimaryCircleIconButton
+            testID="circle-button"
+            active
+            accessibilityLabel="Custom size"
+            style={{ width: 40, height: 40 }}
+            onPress={() => {}}
+        >
+            <span />
+        </PrimaryCircleIconButton>);
+
+        const pressable = screen.findByTestId('circle-button');
+        if (!pressable) throw new Error('Expected primary circle icon button pressable to render');
+        expect(flattenStyle(pressable.props.style({ pressed: false }))).toMatchObject({
+            width: '100%',
+            height: '100%',
+            backgroundColor: '#000',
+        });
+    });
+
+    it('renders a real 48px target and parent around the unchanged 32px painted circle', async () => {
+        const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
+        const screen = await renderScreen(<PrimaryCircleIconButton
+            testID="circle-button"
+            active
+            accessibilityLabel="Toggle controls"
+            touchTargetSize={48}
+            onPress={() => {}}
+        >
+            <span />
+        </PrimaryCircleIconButton>);
+
+        const pressable = screen.findByTestId('circle-button');
+        if (!pressable) throw new Error('Expected primary circle icon button pressable to render');
+        const parent = findNearestHostView(pressable);
+        if (!parent) throw new Error('Expected the touch target to have an immediate parent');
+
+        expect(flattenStyle(parent.props.style)).toMatchObject({ width: 48, height: 48 });
+        expect(flattenStyle(pressable.props.style({ pressed: false }))).toMatchObject({ width: 48, height: 48 });
+        expect(pressable.props.hitSlop).toBeUndefined();
+        expect(pressable.findAllByType('View' as never).some((node) => {
+            const style = flattenStyle(node.props.style);
+            return style.width === 32 && style.height === 32;
+        })).toBe(true);
+    });
+
     it('forwards testID to the Pressable', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         const screen = await renderScreen(<PrimaryCircleIconButton

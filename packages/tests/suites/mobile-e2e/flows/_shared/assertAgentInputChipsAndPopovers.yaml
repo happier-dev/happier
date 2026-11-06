@@ -42,6 +42,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 # Disclosure preserves the selected Plan and YOLO settings while keeping the composer usable.
 - assertVisible: "YOLO"
+- assertVisible:
+    id: agent-input-controls-toggle
 - tapOn:
     id: agent-input-controls-toggle
 - assertNotVisible:

@@ -6718,7 +6718,6 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
-      controls: "控件",
       showControls: "显示输入控件",
       hideControls: "隐藏输入控件",
       sendOptions: {

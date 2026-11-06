@@ -30,6 +30,7 @@ const storageSettings: Settings = {
     agentInputChipDensity: 'labels',
     sessionPermissionModeApplyTiming: 'immediate',
 };
+const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -49,9 +50,17 @@ installAgentInputCommonModuleMocks({
                 OS: 'ios',
                 select: (v: any) => v.ios,
             },
-            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            useWindowDimensions: () => ({
+                width: windowDimensionsState.width,
+                height: windowDimensionsState.height,
+            }),
             Dimensions: {
-                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                get: () => ({
+                    width: windowDimensionsState.width,
+                    height: windowDimensionsState.height,
+                    scale: 1,
+                    fontScale: 1,
+                }),
             },
         });
     },
@@ -139,7 +148,8 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
 }));
 
 vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
-    PrimaryCircleIconButton: () => null,
+    PrimaryCircleIconButton: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('PrimaryCircleIconButton', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/ActionListSection', () => ({
@@ -315,6 +325,8 @@ vi.mock('./components/AgentInputSelectionListPopover', () => ({
 describe('AgentInput (action menu popover props)', () => {
     beforeEach(() => {
         activeSuggestionsState.value = [];
+        windowDimensionsState.width = 800;
+        windowDimensionsState.height = 600;
     });
 
     it('anchors autocomplete suggestions to the composer input container', async () => {
@@ -399,6 +411,7 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('closes the action menu when controls collapse', async () => {
+        windowDimensionsState.width = 390;
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(<AgentInput
             value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
@@ -414,6 +427,7 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('closes the permission selection overlay when controls collapse', async () => {
+        windowDimensionsState.width = 390;
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(<AgentInput
             value="draft" placeholder="Type" onChangeText={() => {}} onSend={() => {}}

@@ -6923,9 +6923,8 @@ export const es: TranslationStructure = {
   },
 
   agentInput: {
-      controls: "Controles",
-      showControls: "Mostrar controles del mensaje",
-      hideControls: "Ocultar controles del mensaje",
+      showControls: "Mostrar controles del compositor",
+      hideControls: "Ocultar controles del compositor",
       sendOptions: {
           title: "Opciones de envío",
           queue: "Poner en cola",

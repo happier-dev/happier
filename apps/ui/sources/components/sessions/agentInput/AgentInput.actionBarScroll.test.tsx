@@ -41,7 +41,7 @@ function getActionBarContentView(tree: renderer.ReactTestRenderer, index = 0) {
     return scrollView.find((node: any) => node?.type === 'View');
 }
 
-async function mockWebPlatform() {
+async function mockWebPlatform(windowWidth = 800) {
     vi.doMock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -49,6 +49,10 @@ async function mockWebPlatform() {
                             Platform: {
                                 OS: 'web',
                                 select: (v: any) => v?.web ?? v?.default ?? v?.default ?? v?.web ?? v?.native ?? v?.ios ?? v?.android,
+                            },
+                            useWindowDimensions: () => ({ width: windowWidth, height: 600 }),
+                            Dimensions: {
+                                get: () => ({ width: windowWidth, height: 600, scale: 1, fontScale: 1 }),
                             },
                         }
     );
@@ -440,7 +444,7 @@ describe('AgentInput (action bar scroll layout)', () => {
     it('hides and restores the control rows without hiding the composer or submit', async () => {
         vi.resetModules();
         vi.clearAllMocks();
-        await mockWebPlatform();
+        await mockWebPlatform(390);
         mockCommonDeps();
         mockSettings();
         mockScrollEdgeFades({ canScrollX: false, showRight: false });
@@ -485,7 +489,7 @@ describe('AgentInput (action bar scroll layout)', () => {
     it('omits the disclosure when no controls are available', async () => {
         vi.resetModules();
         vi.clearAllMocks();
-        await mockWebPlatform();
+        await mockWebPlatform(390);
         mockCommonDeps();
         mockSettings();
         mockScrollEdgeFades({ canScrollX: false, showRight: false });

@@ -10,16 +10,23 @@ const stylesheet = StyleSheet.create((theme) => ({
   root: {
     width: 32,
     height: 32,
-    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     flexShrink: 0,
   },
-  inner: {
+  target: {
     width: '100%',
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  surface: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
 }));
 
@@ -34,6 +41,7 @@ export const PrimaryCircleIconButton = React.memo(
       accessibilityHint?: string;
       accessibilityState?: { disabled?: boolean } & Record<string, unknown>;
       hitSlop?: any;
+      touchTargetSize?: 44 | 48;
       onPress?: () => void;
       onHoverIn?: PressableProps['onHoverIn'];
       onHoverOut?: PressableProps['onHoverOut'];
@@ -55,9 +63,33 @@ export const PrimaryCircleIconButton = React.memo(
       ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
       : (primary?.disabled ?? theme.colors.border.default);
     const tintColor = primary?.tint ?? theme.colors.text.primary;
+    const touchTargetSize = props.touchTargetSize ?? 32;
+    const buttonContent = (
+      <>
+        {props.active && primary?.gradient ? (
+          <GradientSurface
+            fallbackColor={backgroundColor}
+            gradient={primary.gradient}
+            borderRadius={16}
+            style={StyleSheet.absoluteFillObject}
+          />
+        ) : null}
+        {props.loading ? (
+          <ActivitySpinner size="small" color={tintColor} />
+        ) : (
+          normalizeNodeForView(props.children)
+        )}
+      </>
+    );
 
     return (
-      <View style={[styles.root, props.style]}>
+      <View
+        style={[
+          styles.root,
+          props.touchTargetSize ? { width: touchTargetSize, height: touchTargetSize } : null,
+          props.style,
+        ]}
+      >
         <Pressable
           testID={props.testID}
           accessibilityRole="button"
@@ -74,29 +106,28 @@ export const PrimaryCircleIconButton = React.memo(
           onLongPress={props.onLongPress}
           accessibilityActions={props.accessibilityActions}
           onAccessibilityAction={props.onAccessibilityAction}
-          style={({ pressed }) => [
-            styles.inner,
-            {
-              borderRadius: 16,
-              backgroundColor,
-              opacity: pressed ? 0.72 : 1,
-              overflow: 'hidden',
-            },
-          ]}
+          style={({ pressed }) => props.touchTargetSize
+            ? [
+                styles.target,
+                {
+                  width: touchTargetSize,
+                  height: touchTargetSize,
+                  opacity: pressed ? 0.72 : 1,
+                },
+              ]
+            : [
+                styles.target,
+                {
+                  borderRadius: 16,
+                  backgroundColor,
+                  opacity: pressed ? 0.72 : 1,
+                  overflow: 'hidden',
+                },
+              ]}
         >
-          {props.active && primary?.gradient ? (
-            <GradientSurface
-              fallbackColor={backgroundColor}
-              gradient={primary.gradient}
-              borderRadius={16}
-              style={StyleSheet.absoluteFillObject}
-            />
-          ) : null}
-          {props.loading ? (
-            <ActivitySpinner size="small" color={tintColor} />
-          ) : (
-            normalizeNodeForView(props.children)
-          )}
+          {props.touchTargetSize ? (
+            <View style={[styles.surface, { backgroundColor }]}>{buttonContent}</View>
+          ) : buttonContent}
         </Pressable>
       </View>
     );
