@@ -34,6 +34,47 @@ function fileAtPath(path: string) {
 }
 
 describe('File changes dependency settlement', () => {
+    it.each(['turn', 'session'] as const)('shows the non-Git unavailable reason in %s scope instead of claiming no changes', async kind => {
+        const reason = 'Git comparison evidence is unavailable outside a Git repository';
+        const unavailable = ScmComparisonSchema.parse({ ...comparison,
+            source: kind === 'turn' ? { kind: 'turnCheckpoint', sessionId: 's1', turnId: 't1' } : comparison.source,
+            inventory: { state: 'unavailable', reasons: [reason], files: [] } });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return undefined;
+            return { success: true, comparison: unavailable, metadata: { sourceKey: unavailable.id, source: unavailable.source } };
+        } });
+        const currentFixture = fixture;
+        function Probe() {
+            const review = useFileChangesReview({ scope: currentFixture.scope, sessionId: 's1', filePath: 'a.ts',
+                view: { changesScope: kind === 'turn' ? { kind, turnId: 't1' } : { kind } },
+                liveDiff: null, refreshLiveDiff: () => {}, onChangesScopeChange: () => {}, active: true });
+            return <FileChangesBody review={review} keyboardActive={false}>{() => <>unexpected-diff</>}</FileChangesBody>;
+        }
+        const screen = await fixture.render(<Probe />);
+        await vi.waitFor(() => expect(screen.findByTestId('file-changes-loading')).toBeNull());
+        expect(screen.findByTestId('file-changes-error')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(reason);
+        expect(screen.findByTestId('file-changes-empty')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('unexpected-diff');
+    });
+
+    it('renders a Git-backed captured comparison through the file review consumer', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return undefined;
+            return { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source } };
+        } });
+        const currentFixture = fixture;
+        function Probe() {
+            const review = useFileChangesReview({ scope: currentFixture.scope, sessionId: 's1', filePath: 'a.ts',
+                liveDiff: null, refreshLiveDiff: () => {}, onChangesScopeChange: () => {}, active: true });
+            return <FileChangesBody review={review} keyboardActive={false}>{surface => <>{surface.unifiedDiff}</>}</FileChangesBody>;
+        }
+        const screen = await fixture.render(<Probe />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('+new'));
+        expect(screen.findByTestId('file-changes-error')).toBeNull();
+        expect(screen.findByTestId('file-changes-empty')).toBeNull();
+    });
+
     it('retains Review content with an explicit Retry after an index refresh fails', async () => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/repo' });
         let retries = 0;

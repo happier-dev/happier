@@ -125,7 +125,10 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   const turnNumber = useSessionTurnNumber(sessionId, scope.serverId, turnId);
   const machineName = reachability.machineName;
 
-  const error = live ? params.liveDiffError ?? null : changes.error;
+  const capturedUnavailableReason = captured?.inventory.state === 'unavailable'
+    ? captured.inventory.reasons.join(' · ') || t('hunkReview.noticeUnavailable')
+    : null;
+  const error = live ? params.liveDiffError ?? null : capturedUnavailableReason ?? changes.error;
   const status: 'loading' | 'error' | 'empty' | 'ready' = live
     ? params.liveDiff
       ? 'ready'
@@ -136,7 +139,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
           : 'empty'
     : changes.loading && !captured
       ? 'loading'
-      : changes.error && !captured
+      : capturedUnavailableReason || (changes.error && !captured)
         ? 'error'
         : capturedDiff
           ? 'ready'
