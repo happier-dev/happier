@@ -162,7 +162,7 @@ import { publishReportedTerminalControlServiceability } from './sessions/publish
 import { retireExactTerminalControlServiceability } from './sessions/retireTerminalControlServiceability';
 import { recoverStrandedTerminalControlServiceability } from './sessions/recoverStrandedTerminalControlServiceability';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
-import { createStopSession } from './sessions/stopSession';
+import { createStopSession, type StopSessionOptions } from './sessions/stopSession';
 import {
   isTerminalHostPhysicallyRetiredStopResult,
   type StopSessionResult,
@@ -5719,8 +5719,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           }
         };
 
-        const stopSession = async (sessionId: string): Promise<StopSessionResult> => {
+        const stopSession = async (sessionId: string, options: StopSessionOptions = {}): Promise<StopSessionResult> => {
           const normalizedSessionId = String(sessionId ?? '').trim();
+          logger.infoFile('[DAEMON STOP] Received Stop', {
+            event: 'session_stop_received',
+            sessionId: normalizedSessionId,
+            requestSource: options.source ?? null,
+            requestTransport: options.transport ?? 'internal',
+          });
           const existingStop = stopSessionInFlightBySessionId.get(normalizedSessionId);
           if (existingStop) return await existingStop;
 
@@ -5766,7 +5772,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               sessionId: normalizedSessionId,
               elapsedMs: Date.now() - stopStartedAtMs,
             });
-            const trackedStopResult = await stopSessionCore(normalizedSessionId);
+            const trackedStopResult = await stopSessionCore(normalizedSessionId, options);
             logger.infoFile('[DAEMON STOP] Physical stop owner completed', {
               sessionId: normalizedSessionId,
               elapsedMs: Date.now() - stopStartedAtMs,
@@ -5834,7 +5840,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 });
               },
             });
-            const disconnectedStopResult = await stopDisconnectedHost(normalizedSessionId);
+            const disconnectedStopResult = await stopDisconnectedHost(normalizedSessionId, options);
             if (isTerminalHostPhysicallyRetiredStopResult(disconnectedStopResult)) {
               await retireDisconnectedTerminalHostCandidate({
                 sessionId: normalizedSessionId,

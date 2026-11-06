@@ -86,6 +86,29 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('waits for approval to Stop and retains the original tool caller when another surface approves', async () => {
+    let stored: ApprovalRequestV1 | null = null;
+    const effects: Parameters<NonNullable<ActionExecutorDeps['sessionStop']>>[0][] = [];
+    const executor = createExecutor({
+      isActionApprovalRequired: (id, context) => id === 'session.stop' && context.surface === 'mcp',
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'stop-approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+      sessionStop: async (request) => { effects.push(request); return { success: true }; },
+    });
+    const origin = { kind: 'transcript_tool_call' as const, sessionId: 'requester', toolCallId: 'stop-tool' };
+    const requested = await executor.execute('session.stop', { sessionId: 'target' }, { surface: 'mcp', approvalOrigin: origin });
+    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toEqual([]);
+    const approved = await executor.execute('approval.request.decide', { artifactId: 'stop-approval', decision: 'approve' }, {
+      surface: 'cli', approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'approver', toolCallId: 'approve-tool' },
+    });
+    expect(approved.ok).toBe(true);
+    expect(effects).toEqual([expect.objectContaining({
+      sessionId: 'target', context: expect.objectContaining({ surface: 'mcp', approvalOrigin: origin }),
+    })]);
+  });
+
   it('does not route non-surfaced actions through approvals even when a policy requires approvals', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 

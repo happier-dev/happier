@@ -6681,7 +6681,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         existingSessionId: 'sess_unresolved_terminal_topology',
         existingSessionAttachPayload: { v: 2, encryptionMode: 'plain' },
       })).resolves.toMatchObject({ type: 'success' });
-      expect(stopSessionMocks.stopSession).toHaveBeenCalledWith('sess_unresolved_terminal_topology');
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledWith('sess_unresolved_terminal_topology', {});
       expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
       const respawnManager = sessionRespawnManagerCapture.instances[0];
       expect(respawnManager?.markStopRequested).toHaveBeenCalledWith(

@@ -14,12 +14,16 @@ export function createCliActionExecutor(
   const base = createCliActionExecutorHarness(params, overrides).executor;
 
   const withCliContext = (
+    actionId: Parameters<typeof base.execute>[0],
     context: Parameters<typeof base.execute>[2],
   ): NonNullable<Parameters<typeof base.execute>[2]> => {
     const callerPermissionMode = resolveCallerPermissionMode(params);
     return {
       ...(context ?? {}),
       surface: context?.surface ?? 'cli',
+      ...(actionId === 'session.stop' && !context?.bypassApprovals && !context?.messageSource && params.sessionId !== 'cli-global'
+        ? { messageSource: { sourceSessionId: params.sessionId, via: 'action' as const } }
+        : {}),
       ...(callerPermissionMode ? { callerPermissionMode } : {}),
       actionsSettings: readActionsSettingsFromEnv(),
     };
@@ -29,10 +33,10 @@ export function createCliActionExecutor(
     prepare: async (actionId, input, context) => await base.prepare(
       actionId,
       input,
-      withCliContext(context),
+      withCliContext(actionId, context),
     ),
     execute: async (actionId, input, context) => {
-      return await base.execute(actionId, input, withCliContext(context));
+      return await base.execute(actionId, input, withCliContext(actionId, context));
     },
   };
 }

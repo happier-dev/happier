@@ -144,6 +144,8 @@ In the app, this lives under **Settings → Actions**.
 
 When an action is approval-gated, callers do not execute it immediately. Instead, Happier creates an approval request and surfaces it in **Inbox** for review and execution.
 
+For **Stop session** (`session.stop`), choose **Ask first** on each CLI or external MCP surface you want to require approval for, or **Off** to disable it there. The built-in session-agent tool has its own surface. An approved Stop terminates the session runtime even during an active turn; interrupting only the current turn is a separate operation. These action settings govern Happier actions, not arbitrary shell commands or direct local daemon administration.
+
 In development source, **Archive session** and **Unarchive session** also expose an app control under **Settings → Actions**. Set **Contextual UI → Allowed** to skip confirmation, or **Ask first** to show a confirmation dialog. This applies to session rows, the header menu, session info, the archived list, and bulk selection. Archiving an active session still asks before stopping it; delete and stop confirmations remain in place. Archive and unarchive confirmations use normal styling.
 
 Eligible tool-backed action surfaces also have a **tool exposure** setting:

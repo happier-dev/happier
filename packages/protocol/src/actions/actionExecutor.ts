@@ -288,7 +288,7 @@ export type ActionExecutorDeps = Readonly<{
     callerPermissionMode?: string | null;
   }>) => Promise<unknown>;
   sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
-  sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<SessionStopActionDependencyResult>;
+  sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null; context?: ActionExecutorContext }>) => Promise<SessionStopActionDependencyResult>;
   sessionPermissionModeSet?: (args: Readonly<{
     sessionId: string;
     permissionMode: string;
@@ -700,6 +700,27 @@ function buildApprovalMetadata(spec: ActionSpec): NonNullable<ApprovalRequestV1[
   return {
     flow: resolveActionApprovalFlow(spec.approval),
     result: spec.approval.result,
+  };
+}
+
+function buildApprovedActionContext(args: Readonly<{
+  ctx: ActionExecutorContext;
+  request: ApprovalRequestV1;
+  serverId: string | null;
+  surface: keyof ActionSurfaces | null;
+}>): ActionExecutorContext {
+  const sessionId = typeof args.request.createdBy.sessionId === 'string'
+    ? args.request.createdBy.sessionId.trim()
+    : '';
+  return {
+    ...args.ctx,
+    messageSource: args.request.messageSource,
+    approvalOrigin: args.request.origin ?? null,
+    ...(args.serverId ? { serverId: args.serverId } : {}),
+    ...(sessionId ? { defaultSessionId: sessionId } : {}),
+    ...(args.surface ? { surface: args.surface } : {}),
+    placement: null,
+    bypassApprovals: true,
   };
 }
 
@@ -1333,19 +1354,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
     const requestSurface = parseActionSurfaceKey((args.request as any).requestedSurface)
       ?? resolveApprovalRequestExecutionSurface(args.request.createdBy.surface);
-    const requestDefaultSessionId = typeof args.request.createdBy.sessionId === 'string' ? args.request.createdBy.sessionId.trim() : '';
     const exec = requestSurface
       ? args.runApprovedAction
         ? await args.runApprovedAction()
-        : await execute(args.request.actionId, args.request.actionArgs, {
-            ...args.ctx,
-            messageSource: args.request.messageSource,
-            ...(args.effectiveServerId ? { serverId: args.effectiveServerId } : {}),
-            ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
-            surface: requestSurface,
-            placement: null,
-            bypassApprovals: true,
-          })
+        : await execute(args.request.actionId, args.request.actionArgs, buildApprovedActionContext({
+            ctx: args.ctx, request: args.request, serverId: args.effectiveServerId, surface: requestSurface,
+          }))
       : { ok: false as const, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
     const executedAtMs = Date.now();
     const nextExecuted: ApprovalRequestV1 = {
@@ -1551,20 +1565,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               releaseBlockingOwnershipOnPrepareReturn = false;
               const requestSurface = parseActionSurfaceKey((approvedRequest as any).requestedSurface)
                 ?? resolveApprovalRequestExecutionSurface(approvedRequest.createdBy.surface);
-              const requestDefaultSessionId = typeof approvedRequest.createdBy.sessionId === 'string'
-                ? approvedRequest.createdBy.sessionId.trim()
-                : '';
               const approvedAdmission: PreparedAdmission = {
                 spec,
                 input: parsed.data,
-                context: {
-                  ...ctx,
-                  ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
-                  ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
-                  ...(requestSurface ? { surface: requestSurface } : {}),
-                  placement: null,
-                  bypassApprovals: true,
-                },
+                context: buildApprovedActionContext({
+                  ctx, request: approvedRequest, serverId: effectiveServerId, surface: requestSurface,
+                }),
               };
               return ready(approvedAdmission, async (runOptions) => {
                 try {
@@ -2335,7 +2341,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop' };
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionStop({ sessionId, ...(serverId ? { serverId } : {}) });
+          const res = await deps.sessionStop({ sessionId, ...(serverId ? { serverId } : {}), context: ctx });
           const stopFailed = 'success' in res ? res.success === false : res.ok === false;
           if (stopFailed) {
             const errorCode = res.code?.trim()

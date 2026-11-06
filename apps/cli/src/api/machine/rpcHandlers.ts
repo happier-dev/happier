@@ -36,6 +36,7 @@ import {
   SessionInitialGoalRequestV1Schema,
   SessionMcpSelectionV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
+  StopSessionRequestSchema,
   SessionSpawnSourceContextV1Schema,
   getActionSpec,
   resolveSessionWorkspaceRootForMachine,
@@ -77,6 +78,7 @@ import {
   type StopSessionResult,
 } from '@/daemon/sessions/stopSessionContract';
 import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
+import type { StopSessionOptions } from '@/daemon/sessions/stopSession';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
@@ -251,7 +253,7 @@ export type MachineRpcHandlers = {
     | { status: 'completed'; sessionId: string }
     | { status: 'pending' | 'not_found' | 'unsupported' | 'failed' }
   >;
-  stopSession: (sessionId: string) => Promise<MachineStopSessionHandlerResult>;
+  stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<MachineStopSessionHandlerResult>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   resolveExistingStateEnvironment?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['resolveExistingStateEnvironment']>;
@@ -2175,14 +2177,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   // Register stop session handler
-  rpcHandlerManager.registerHandler(RPC_METHODS.STOP_SESSION, async (params: any) => {
-    const { sessionId } = params || {};
-
-    if (!sessionId) {
+  rpcHandlerManager.registerHandler(RPC_METHODS.STOP_SESSION, async (params: unknown) => {
+    const parsed = StopSessionRequestSchema.safeParse(params);
+    if (!parsed.success || !parsed.data.sessionId) {
       throw new Error('Session ID is required');
     }
-
-    const result = normalizeMachineStopSessionResult(await stopSession(sessionId));
+    const { sessionId, source } = parsed.data;
+    const result = normalizeMachineStopSessionResult(await stopSession(sessionId, { source, transport: 'machine_rpc' }));
     logger.debug(`[API MACHINE] Stop session ${sessionId}: ${result.status}`);
     return result;
   });

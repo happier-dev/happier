@@ -304,7 +304,7 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     await expect(registered.get(RPC_METHODS.STOP_SESSION)?.({ sessionId: 'session-1' })).resolves.toEqual(result);
-    expect(stopSession).toHaveBeenCalledWith('session-1');
+    expect(stopSession).toHaveBeenCalledWith('session-1', { source: undefined, transport: 'machine_rpc' });
   });
 
   it('emits ONE attribution info line per spawn/resume request carrying caller-source fields, never secrets (WAVE-E-F01)', async () => {

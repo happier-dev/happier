@@ -1697,6 +1697,18 @@ deadlines and cancellation remain available. A guarded refusal to signal never
 authorizes an unsafe kill: Stop rechecks positive runner exit before deciding
 that termination is incomplete. Transport timeout or disconnect still does not
 prove physical termination.
+
+In current 0.2 development source, Stop actions retain the original tool caller
+through approval replay and carry optional diagnostic source fields to the daemon.
+The authenticated HTTP and machine-RPC receivers record their own transport;
+caller-supplied source fields are diagnostic claims, never authorization. Daemon
+file logs record each received request before coalescing and each physical Stop
+attempt, including unknown legacy/internal callers. The existing terminal-host
+kill audit includes that context on signals. Only surface, requesting session ID
+and tool-call ID travel as source metadata; tool input and credentials do not.
+Older daemons ignore the additive metadata. Stop still terminates active work;
+per-surface action availability and approvals remain the policy owners.
+
 After proving runner exit, Stop supplies its captured attachment to that owner:
 if normal exit already removed the descriptor, the same owned-host disposal and
 metadata-retirement pipeline still completes. Borrowed attachments release control

@@ -190,7 +190,7 @@ describe('createActionExecutor (session control)', () => {
     );
 
     expect(res).toEqual({ ok: true, result: { success: true } });
-    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
+    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a', context: { surface: 'cli', defaultSessionId: null } });
   });
 
   it.each([

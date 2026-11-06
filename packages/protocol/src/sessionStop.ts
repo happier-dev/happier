@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { lazySchema } from './lazySchema.js';
 
+/** Self-reported diagnostic context, never authority to stop a session. */
+export const StopSessionRequestSourceSchema = lazySchema(() => z.object({
+  surface: z.string().trim().min(1).optional(),
+  requestingSessionId: z.string().trim().min(1).optional(),
+  toolCallId: z.string().trim().min(1).optional(),
+}));
+
+export type StopSessionRequestSource = z.infer<typeof StopSessionRequestSourceSchema>;
+
+export const StopSessionRequestSchema = lazySchema(() => z.object({
+  sessionId: z.string(),
+  // Malformed optional diagnostics must not prevent an otherwise valid Stop.
+  source: StopSessionRequestSourceSchema.optional().catch(undefined),
+}));
+
 export const StopSessionIncompleteReasonSchema = lazySchema(() => z.enum([
   'invalid_session_id',
   'legacy_attachment',

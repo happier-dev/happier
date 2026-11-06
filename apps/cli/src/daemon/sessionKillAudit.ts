@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { StopSessionRequestSource } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 
@@ -12,6 +13,8 @@ export type TerminalHostKillAuditRecord = Readonly<{
   signal: string;
   callSite: string;
   observedAt?: number;
+  requestSource?: StopSessionRequestSource | null;
+  requestTransport?: string;
 }>;
 
 export function recordTerminalHostKillAudit(record: TerminalHostKillAuditRecord): void {

@@ -56,6 +56,7 @@ import {
   buildConnectedServiceBridgeRefreshFailureResponse,
 } from './connectedServices/refresh/bridgeRefreshFailureContract';
 import { TrackedSession } from './types';
+import type { StopSessionOptions } from './sessions/stopSession';
 import {
   StopSessionResultSchema,
   type StopSessionResult,
@@ -84,6 +85,7 @@ import {
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
   SessionRunnerRuntimeStateV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
+  StopSessionRequestSchema,
   type ConnectedServiceId,
   type ConnectedServiceQuotaSnapshotV1,
   type RestartAllSessionRunnersRequestV1,
@@ -806,7 +808,7 @@ export function createDaemonControlApp({
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
-  stopSession: (sessionId: string) => Promise<StopSessionResult>;
+  stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;
@@ -1797,9 +1799,7 @@ export function createDaemonControlApp({
   // Stop specific session
   typed.post('/stop-session', {
     schema: {
-      body: z.object({
-        sessionId: z.string()
-      }),
+      body: StopSessionRequestSchema,
       response: {
         200: StopSessionResultSchema,
         401: authSchema401,
@@ -1807,10 +1807,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request) => {
-    const { sessionId } = request.body;
+    const { sessionId, source } = request.body;
 
     logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-    return await stopSession(sessionId);
+    return await stopSession(sessionId, { source, transport: 'local_http' });
   });
 
   // Spawn new session
@@ -2296,7 +2296,7 @@ export function startDaemonControlServer({
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
-  stopSession: (sessionId: string) => Promise<StopSessionResult>;
+  stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;

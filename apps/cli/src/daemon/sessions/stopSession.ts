@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import type { StopSessionRequestSource } from '@happier-dev/protocol';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import type { TerminalHostRegistry } from '@/integrations/terminalHost/registry';
@@ -33,6 +34,11 @@ import {
   type ExactTerminalControlServiceabilityRetirement,
 } from './retireTerminalControlServiceability';
 
+export type StopSessionOptions = Readonly<{
+  source?: StopSessionRequestSource;
+  transport?: 'machine_rpc' | 'local_http' | 'internal' | 'marker_fallback';
+}>;
+
 function mapDispositionFailureReason(
   reason: 'legacy_attachment' | 'attachment_mismatch' | 'missing_topology_proof' | 'disposition_in_progress' | 'destroy_failed' | 'retirement_failed' | 'descriptor_retirement_failed',
 ): StopSessionIncompleteReason {
@@ -55,6 +61,7 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
   session: TrackedSession;
   normalizedSessionId: string;
   logPidReuseRefusal: (message: string) => void;
+  recordKillAudit: typeof recordTerminalHostKillAudit;
 }>): Promise<boolean> {
   if (!isTrackedChildStillLiveForPid(params.session, params.pid)) {
     params.logPidReuseRefusal(`[DAEMON RUN] Refusing to taskkill PID ${params.pid} for session ${params.normalizedSessionId} (tracked child is no longer live)`);
@@ -71,7 +78,7 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
     return false;
   }
 
-  recordTerminalHostKillAudit({
+  params.recordKillAudit({
     actor: 'daemon.stop-session',
     reason: 'stop-session',
     sessionId: params.normalizedSessionId,
@@ -97,6 +104,7 @@ async function forceKillTrackedRunner(params: Readonly<{
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   normalizedSessionId: string;
   logPidReuseRefusal: (message: string) => void;
+  recordKillAudit: typeof recordTerminalHostKillAudit;
 }>): Promise<boolean> {
   const currentSession = params.pidToTrackedSession.get(params.pid);
   if (currentSession !== params.expectedSession) {
@@ -118,7 +126,7 @@ async function forceKillTrackedRunner(params: Readonly<{
     return false;
   }
 
-  recordTerminalHostKillAudit({
+  params.recordKillAudit({
     actor: 'daemon.stop-session',
     reason: 'stop-session-timeout',
     sessionId: params.normalizedSessionId,
@@ -201,14 +209,22 @@ export function createStopSession(params: Readonly<{
   requireTerminalTopologyProof?: boolean;
   /** Exact persisted topology for reconstructed dead-runner candidates not represented by spawn options. */
   provenTerminalHostKindsByPid?: ReadonlyMap<number, TerminalHostAdapter['kind']>;
-}>): (sessionId: string) => Promise<StopSessionResult> {
+}>): (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult> {
   const { pidToTrackedSession } = params;
   const logPidReuseRefusal = params.logPidReuseRefusal ?? ((message: string): void => logger.warn(message));
   const logWarning = params.logWarning ?? ((message: string, ...args: unknown[]): void => logger.warn(message, ...args));
 
   // Stop a session by sessionId or PID fallback
-  return async (sessionId: string): Promise<StopSessionResult> => {
+  return async (sessionId: string, options: StopSessionOptions = {}): Promise<StopSessionResult> => {
     const stopStartedAtMs = Date.now();
+    const requestContext = {
+      requestSource: options.source ?? null,
+      requestTransport: options.transport ?? 'internal',
+    };
+    logger.infoFile('[DAEMON STOP] Attempting Stop', { event: 'session_stop_attempt', sessionId, ...requestContext });
+    const recordKillAudit: typeof recordTerminalHostKillAudit = (record) => {
+      recordTerminalHostKillAudit({ ...record, ...requestContext });
+    };
     logger.debug(`[DAEMON RUN] Attempting to stop session ${sessionId}`);
 
     const normalizedSessionId = String(sessionId ?? '').trim();
@@ -425,7 +441,7 @@ export function createStopSession(params: Readonly<{
 
       if (session.startedBy === 'daemon' && session.childProcess) {
         if (process.platform === 'win32') {
-          if (await taskkillWindowsDaemonChild({ pid, session, normalizedSessionId, logPidReuseRefusal })) {
+          if (await taskkillWindowsDaemonChild({ pid, session, normalizedSessionId, logPidReuseRefusal, recordKillAudit })) {
             stoppedAny = true;
             signaledPids.push(pid);
           }
@@ -435,7 +451,7 @@ export function createStopSession(params: Readonly<{
         try {
           try {
             // Prefer killing the full process group when the daemon spawned a detached session runner.
-            recordTerminalHostKillAudit({
+            recordKillAudit({
               actor: 'daemon.stop-session',
               reason: 'stop-session',
               sessionId: normalizedSessionId,
@@ -456,7 +472,7 @@ export function createStopSession(params: Readonly<{
             // fall through
           }
 
-          recordTerminalHostKillAudit({
+          recordKillAudit({
             actor: 'daemon.stop-session',
             reason: 'stop-session',
             sessionId: normalizedSessionId,
@@ -488,7 +504,7 @@ export function createStopSession(params: Readonly<{
       }
 
       try {
-        recordTerminalHostKillAudit({
+        recordKillAudit({
           actor: 'daemon.stop-session',
           reason: 'stop-session',
           sessionId: normalizedSessionId,
@@ -561,6 +577,7 @@ export function createStopSession(params: Readonly<{
           pidToTrackedSession,
           normalizedSessionId,
           logPidReuseRefusal,
+          recordKillAudit,
         }) || forceSignaledAny;
       }
 
