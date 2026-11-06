@@ -9,6 +9,7 @@ import { readAccountProviderDeclaration } from '@/providers/catalog/accountProvi
 
 import {
     presentProviderConnection,
+    providerConnectionNeedsAttention,
     type ProviderConnectionPresentationStatus,
 } from '@/providers/connection/presentation';
 import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
@@ -19,11 +20,6 @@ type DescribeSuccess = Extract<DaemonProviderConnectionsDescribeResponseV1, { st
 type Connection = DescribeSuccess['connections'][number];
 type LocalInstallation = DescribeSuccess['localInstallations'][number];
 export type ProviderAvailableContribution = DescribeSuccess['available'][number];
-
-/** Statuses that need the user; only these get the rail's trouble dot and a status line. */
-const TROUBLE_STATUSES: ReadonlySet<ProviderConnectionPresentationStatus> = new Set([
-    'partial', 'needsAttention', 'unreachable', 'sourceUnavailable',
-]);
 
 export type ProviderCollectionConnectionRow = Readonly<{
     connectionId: string;
@@ -114,7 +110,7 @@ function presentConnectionRow(connection: Connection, catalogCount: AccountProvi
         icon: resolveProviderConnectionIcon(connection, declarationContext),
         contributionKey: connection.contributionKey,
         status: presentation.status,
-        trouble: TROUBLE_STATUSES.has(presentation.status),
+        trouble: providerConnectionNeedsAttention(presentation.status),
         off: presentation.status === 'disabled',
         gateway,
     };

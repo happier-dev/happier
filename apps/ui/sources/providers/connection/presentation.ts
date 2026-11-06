@@ -1,4 +1,5 @@
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
+import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 
 export type ProviderConnectionPresentationStatus =
     | 'available'
@@ -28,6 +29,22 @@ export const PROVIDER_CONNECTION_STATUS_KEY = Object.freeze({
     disabled: 'settingsProviders.status.disabled',
     sourceUnavailable: 'settingsProviders.status.sourceUnavailable',
 } as const);
+
+/** Configuration columns draw this state in their shared icon-only slot; health stays domain-owned. */
+export const PROVIDER_CONNECTION_COLLECTION_STATUS = Object.freeze({
+    available: null,
+    partial: 'review',
+    notChecked: null,
+    needsAttention: 'review',
+    unreachable: 'failed',
+    disabled: 'off',
+    sourceUnavailable: 'review',
+} as const satisfies Record<ProviderConnectionPresentationStatus, CollectionRowStatus | null>);
+
+/** Collection and cross-kind attention consume the same native eligibility. */
+export function providerConnectionNeedsAttention(status: ProviderConnectionPresentationStatus): boolean {
+    return PROVIDER_CONNECTION_COLLECTION_STATUS[status] === 'review' || PROVIDER_CONNECTION_COLLECTION_STATUS[status] === 'failed';
+}
 
 /** Source provenance distinguishes a named connection only when it adds an identity. */
 export function presentProviderConnectionIdentity(connection: Pick<DaemonProviderConnectionViewV1,
