@@ -1,5 +1,7 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
+import { Server as TcpServer } from 'node:net';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -15,7 +17,7 @@ import { DeploymentActionInputSchemasV1, DeploymentDomainChildRpcV1Schema, Deplo
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -33,6 +35,11 @@ import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machi
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements,
     readDomainCaddyStartFirstLegs } from './domainRouteSelection';
+import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const roots: string[] = [], servers: Server[] = [];
 afterEach(async () => {
@@ -276,7 +283,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         .toEqual({ status: 'unavailable', reason: 'required_fact_unavailable', machineIds: ['a', 'b', 'joining'] });
 });
 
-it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery', 'administrator access off', 'managed CLI unavailable'] as const)(
+it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery', 'administrator access off', 'managed CLI unavailable', 'native Caddy port occupied', 'native Caddy host port occupied'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const environment = createDeploymentEnvironmentDetailV1();
     environment.content.ingress = { kind: 'cloudflareTunnel' };
@@ -285,12 +292,58 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
     link.machines = ['a', 'b'];
     link.members = [{ machineId: 'a', installationId: 'installed-a', state: 'active' },
         { machineId: 'b', installationId: 'installed-b', state: 'active' }];
-    if (scenario === 'administrator access off' || scenario === 'managed CLI unavailable') {
+    const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
+    if (scenario === 'administrator access off' || scenario === 'managed CLI unavailable' || occupiedPort) {
         delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
     }
+    if (occupiedPort) { link.state = 'deployed'; link.activeDeploymentId = 'serving'; }
     const observations = await Promise.all([observed('100.70.0.2', 9381), observed('100.70.0.3', 9381)]);
+    const nativeRuntime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'https://domain-origin.test', machineId: 'a',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        async acquirePluginRuntimeRegistryLease() { throw new Error('Uses the active deployed service'); } });
+    let installed: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+    if (occupiedPort) {
+        installed = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
+        const document = 'services: {web: {image: nginx:alpine}}';
+        const definition = { kind: 'stored' as const, contentRevision: 1, document,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['web'] };
+        const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]), async admit() {
+            return { environmentId: environment.environment.id, environmentInstanceId: 'deployed', deploymentId: 'serving',
+                machineId: 'a', installationId: 'installed-a', deploymentRoot: join(installed!.happyHomeDir, 'deployments'),
+                artifactDirectory: join(installed!.happyHomeDir, 'artifacts'), definition, async assertCurrent() {} };
+        } });
+        const release = await materializer.materialize({ environmentId: environment.environment.id, deploymentId: 'serving' });
+        await release.commit();
+        await installed.lease.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId: 'home',
+            machineId: 'a', environmentId: environment.environment.id, environmentInstanceId: 'deployed', deploymentId: 'serving', release,
+            composeService: 'web', serviceId: 'deployed/web', specIdentity: 'web', isCurrent: () => true,
+            releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
+                async inspect() { return { phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:32771' }; },
+                async stop() { return { status: 'stopped' }; },
+                nativeContainers: () => [{ id: 'healthy-web', composeProject: 'deployed', service: 'web', containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
+                nativeDocker: async () => ({ engineId: 'engine-a', async run(args) {
+                    if (args.includes('--all')) return { exitCode: 0, stdout: '', stderr: '' };
+                    if (scenario === 'native Caddy host port occupied') {
+                        // The server is the OS boundary; the Domain acquisition,
+                        // port owner and public failure projection remain real.
+                        vi.spyOn(TcpServer.prototype, 'listen').mockImplementation(function (this: TcpServer) {
+                            queueMicrotask(() => this.emit('error', Object.assign(new Error('native listener'), { code: 'EADDRINUSE' })));
+                            return this;
+                        });
+                        return { exitCode: 0, stdout: '', stderr: '' };
+                    }
+                    if (args.includes('{{json .NetworkSettings.Ports}}')) return { exitCode: 0, stdout: JSON.stringify({
+                        '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
+                        '443/tcp': [{ HostIp: '0.0.0.0', HostPort: '443' }],
+                    }), stderr: '' };
+                    if (args.includes('ls')) return { exitCode: 0, stdout: '"coolify-proxy"', stderr: '' };
+                    throw new Error('Port refusal cannot mutate Docker');
+                } }),
+            } } } });
+    }
     const machines = link.members.map((member, index) => DeploymentDomainMachineTopologyV1Schema.parse({
         machineId: member.machineId, installationId: member.installationId, dockerEngineId: `engine-${member.machineId}`,
         caddy: observations[index], privateNetworks: [], replicas: [],
@@ -322,6 +375,15 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
             const machineId = path.split('/').at(-1)!;
             return { status: 200, data: { machine: { id: machineId, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
                 storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                ...(occupiedPort ? {
+                    metadataVersion: 1, daemonStateVersion: 1,
+                    metadata: encodePlainMachineStoredContent({ host: 'own-server', platform: 'linux', happyCliVersion: '0.3',
+                        homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier', adminAccess: { version: 1, mode: 'preauthorized' } }),
+                    daemonState: encodePlainMachineStoredContent({ status: 'running', adminAccess: { version: 1, observedAt: 1,
+                        daemonUid: 1000, daemonUsername: 'happier', daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot',
+                        rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',
+                        tailscaledOperator: { authorization: 'unknown' } } }),
+                } : {}),
                 installationId: `installed-${machineId}`, installationPublicKey: Buffer.from(identity.publicKey).toString('base64') } } };
         }
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
@@ -359,6 +421,19 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
         socket.on(SOCKET_RPC_EVENTS.CALL, async (call: RpcCall, acknowledge: (result: unknown) => void) => {
             const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, call.params, call.method);
             const job = DeploymentChildRpcV1Schema.parse(decoded.params);
+            if (occupiedPort) {
+                const nativeIdentity = { version: 1 as const, installationId: 'installed-a', createdAt: 1,
+                    publicKey: Buffer.from(identity.publicKey).toString('base64url'), privateKey: Buffer.from(identity.secretKey).toString('base64url') };
+                vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(nativeIdentity);
+                try {
+                    if (job.kind === 'domain') children.push(DeploymentDomainChildRpcV1Schema.parse(job));
+                    const result = await memberDeps!.deploymentChild(job, {});
+                    acknowledge({ ok: true, result });
+                } finally {
+                    vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue({ ...nativeIdentity, installationId: 'controller-installation' });
+                }
+                return;
+            }
             if (job.kind === 'domainDiscover') {
                 if (scenario === 'managed CLI unavailable') {
                     acknowledge({ ok: true, result: { ok: false, errorCode: 'managed_cli_unavailable',
@@ -382,12 +457,25 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
     const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://domain-origin.test',
         machineId: 'controller', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         runtime: { async acquire() { throw new Error('Domain discovery cannot redeploy services'); } } });
+    const memberDeps = installed ? createDaemonDeploymentActionDeps({ credentials, serverId: 'home',
+        serverHttpBaseUrl: 'https://domain-origin.test', machineId: 'a', runtime: nativeRuntime,
+        acquirePluginRuntimeRegistryLease: async () => installed.lease,
+        captureNativeSetup: () => ({
+            readDesired: () => { throw new Error('Port refusal cannot read setup intent'); },
+            elevation: {
+                readPolicy: async () => { throw new Error('Port refusal cannot request elevation'); },
+                observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier',
+                    daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot', rootEquivalentGroups: [],
+                    passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
+            },
+        }),
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) }) : undefined;
     const target = { kind: 'machine' as const, machineId: 'controller' };
     const envelope = { v: 1 as const, requestId: 'domain-request', target, input };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'domain-root', binding: {
         serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, custodianAccountId: 'owner',
         machineId: 'controller', installationId: 'controller-installation', actionId: 'deployments.domains.add',
-        environmentId: input.environmentId, requestId: envelope.requestId, accountEncryptionMode: 'plain', target,
+        environmentId: input.environmentId, deploymentChildRoot: true, requestId: envelope.requestId, accountEncryptionMode: 'plain', target,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.domains.add', input) } });
     const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
@@ -413,6 +501,13 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
             expect(result).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(0);
+        } else if (occupiedPort) {
+            expect(ActionExecuteResultSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'foreign_effect_conflict', details: {
+                failure: { kind: 'native_observation_unavailable', reason: 'port_in_use', stepId: 'caddy-public-port', port: 80 },
+                remedy: expect.stringContaining('Tunnel'),
+            } });
+            expect(admissions).toEqual([]);
+            expect(children).toEqual([]);
         } else {
             expect(result).toMatchObject({ ok: false, errorCode: 'native_route_unavailable' });
             expect(admissions).toHaveLength(1);
@@ -423,5 +518,5 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
             ] });
             expect(children[0]?.topology?.members).toEqual(link.members.map(({ machineId, installationId }) => ({ machineId, installationId })));
         }
-    } finally { await requester?.dispose(); await channel.close(); }
+    } finally { await requester?.dispose(); await channel.close(); await installed?.dispose(); }
 });

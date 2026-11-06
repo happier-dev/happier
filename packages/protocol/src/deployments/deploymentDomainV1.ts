@@ -14,6 +14,8 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Schema,
+    DeploymentDomainCaddyFailureV1Schema, type DeploymentDomainCaddyFailureV1,
+    deploymentDomainCaddyRequiredFactsV1, type DeploymentDomainCaddyRequiredFactV1,
     DeploymentDomainFailureDetailsV1Schema, type DeploymentDomainFailureStepV1,
     type DeploymentDomainFailureDetailsV1 } from './deploymentDomainFailureV1.js';
 

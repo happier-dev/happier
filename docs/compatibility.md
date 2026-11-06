@@ -5289,6 +5289,23 @@ and released migrations remain immutable. Purpose-bound mutation challenges
 must still be rejected by ordinary login redemption. These invariants require
 neither a compatibility writer nor a separate rollout protocol.
 
+## Native Domain Caddy diagnostics (0.3 development source)
+
+The existing Domain `native_execution` failure details now retain an optional
+closed Caddy diagnostic: a fixed step and Docker phase, numeric command/container
+exit status, classified bind failure and TCP port. Raw command output and Docker
+container error text are excluded. The same schema owns persistence and public
+approval reads; existing rows without the diagnostic remain readable. Current
+development readers must update with the producer because older strict readers
+omit these added details. This is a development cut with no migration, alternate
+writer or supported reverse-development rollback.
+
+Native Domain Caddy uses local host mounts, firewall setup and a local Unix admin
+socket. Its admission observes Docker publications and local TCP conflicts before
+effects. Explicit remote Docker endpoints contribute publication evidence only;
+they cannot establish ownership of this process's local sockets. A port acquired
+after admission remains a visible native start failure recoverable by retry.
+
 ## Migration history
 
 Migration source has a stricter authoring boundary than ordinary internal code:

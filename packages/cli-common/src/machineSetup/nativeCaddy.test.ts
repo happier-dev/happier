@@ -2,21 +2,81 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, lstat, chmod } from 'node:fs/p
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
-import { afterEach, expect, it } from 'vitest';
+import * as net from 'node:net';
+import { afterEach, expect, it, vi } from 'vitest';
 import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { getRelayAccessProvider } from '../relayAccess/registry.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
-import { ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
+import { checkNativeCaddyPortAvailability, ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
     await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 const basis = { kind: 'bootstrap' as const, managedId: 'm-a', operationId: 'op-a', admittedInputDigest: 'a'.repeat(64) };
+
+it('detects a foreign host listener before producing native Caddy effects', async () => {
+    const listener = createServer(); servers.push(listener);
+    await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('Expected native TCP listener');
+    const f = await fixture(false);
+    const result = await checkNativeCaddyPortAvailability({ ...f.input, publicBindings: [{
+        ...nativeCaddyProfile.publicPortRequirements[0], requirementId: nativeCaddyProfile.publicPortRequirements[0].id,
+        hostAddress: '127.0.0.1', hostPort: address.port,
+    }] }, { run: async () => ok('') });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
+        failure: { reason: 'port_in_use', port: address.port },
+    } });
+    if (result.status !== 'unavailable') throw new Error('Expected port conflict');
+    expect(result.details?.remedy).toMatch(/Tunnel/);
+    expect(result.details?.remedy).toMatch(/stop/);
+    expect(f.commands).toEqual([]);
+    // A supplied remote endpoint has no authority over this process's sockets.
+    expect(await checkNativeCaddyPortAvailability({ ...f.input, dockerHost: 'ssh://remote-engine', publicBindings: [{
+        ...nativeCaddyProfile.publicPortRequirements[0], requirementId: nativeCaddyProfile.publicPortRequirements[0].id,
+        hostAddress: '127.0.0.1', hostPort: address.port,
+    }] }, { run: async () => ok('') })).toEqual({ status: 'ready' });
+});
+
+it('detects Docker publications without relying on a host docker-proxy listener and exempts owned Caddy publications', async () => {
+    const f = await fixture(false);
+    const input = { ...f.input, publicBindings: nativeCaddyProfile.publicPortRequirements.map(binding => ({ ...binding,
+        requirementId: binding.id, hostAddress: '0.0.0.0' })) };
+    const result = await checkNativeCaddyPortAvailability(input, { run: async command => {
+        expect(command.args).not.toContain('create');
+        expect(command.args).not.toContain('start');
+        if (command.args.includes('{{json .NetworkSettings.Ports}}')) return ok(JSON.stringify({
+            '8080/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
+            '8443/tcp': [{ HostIp: '::', HostPort: '443' }],
+        }));
+        if (command.args.includes('--all')) return ok('');
+        return ok('"foreign-proxy"\n');
+    } });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
+        failure: { reason: 'port_in_use', port: 80 },
+    } });
+    await f.setup();
+    expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
+    expect(await checkNativeCaddyPortAvailability(input, { run: f.run })).toEqual({ status: 'ready' });
+});
+
+it('does not treat permission to bind privileged ports as occupied-port evidence', async () => {
+    vi.spyOn(net.Server.prototype, 'listen').mockImplementation(function (this: net.Server) {
+        queueMicrotask(() => this.emit('error', Object.assign(new Error('private native output'), { code: 'EACCES' })));
+        return this;
+    });
+    const f = await fixture(false);
+    expect(await checkNativeCaddyPortAvailability({ ...f.input, publicBindings: [{
+        ...nativeCaddyProfile.publicPortRequirements[0], requirementId: nativeCaddyProfile.publicPortRequirements[0].id,
+        hostAddress: '0.0.0.0',
+    }] }, { run: async () => ok('') })).toEqual({ status: 'ready' });
+});
 
 it.skipIf(process.platform === 'win32')('prepares Caddy on a fresh host with no Happier state parent and remains idempotent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-caddy-fresh-')); roots.push(root);
@@ -282,9 +342,28 @@ it.skipIf(process.platform === 'win32')('retains an observed container exit whil
         await request;
         f.exit(1);
         expect(await result).toMatchObject({ status: 'unavailable', reason: 'native_effect_failed', details: {
-            failure: { kind: 'native_effect_failed', requiredFact: 'caddyAdminConfig' },
+            failure: { kind: 'native_effect_failed', requiredFact: 'caddyAdminConfig', stepId: 'caddy-container-wait',
+                nativeCommand: { command: 'docker', phase: 'wait', exitCode: 0 }, containerExitCode: 1 },
         } });
     } finally { controller.abort(); await result.catch(() => {}); }
+});
+
+it.skipIf(process.platform === 'win32')('preserves the failing native Caddy start and safe Docker container cause without copying output', async () => {
+    const f = await fixture(false); await f.setup();
+    const secret = 'never-copy-native-output';
+    const result = await ensureNativeCaddyContainer(f.input, { ...f.options(), run: async command => {
+        if (command.args.includes('start')) return { code: 1, stdout: secret, stderr: `${secret}: port is already allocated` };
+        if (command.args.includes('{{json .State}}')) return ok(JSON.stringify({ ExitCode: 128,
+            Error: `failed to set up container networking: Bind for 0.0.0.0:80 failed: port is already allocated ${secret}` }));
+        return f.run(command);
+    } });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'native_effect_failed', details: {
+        failure: { kind: 'native_effect_failed', requiredFact: 'caddyAdminConfig', stepId: 'caddy-container-start',
+            nativeCommand: { command: 'docker', phase: 'start', exitCode: 1 }, containerExitCode: 128,
+            containerError: 'port_in_use', port: 80 },
+    } });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(f.commands.some(command => command.args.includes('rm') || command.args.includes('stop'))).toBe(false);
 });
 
 it.skipIf(process.platform === 'win32')('names the unavailable live admin config without claiming container rollback', async () => {
@@ -575,7 +654,9 @@ it('connects only missing observed Caddy networks through the same native writer
     expect(f.commands.slice(before).map(command => command.args.slice(2))).toEqual([['network', 'connect', 'candidate-network', 'owned-container-id']]);
     expect(await connectNativeCaddyNetworks({ dockerHost: f.input.dockerHost, containerId: f.readContainer().Id,
         observedNetworkNames: [], networkNames: ['candidate-network'] }, { run: async () => ({ code: 1, stdout: '', stderr: 'denied' }) }))
-        .toEqual({ status: 'unavailable', reason: 'native_effect_failed' });
+        .toMatchObject({ status: 'unavailable', reason: 'native_effect_failed', details: { failure: {
+            stepId: 'caddy-container-network-connect', nativeCommand: { command: 'docker', phase: 'network-connect', exitCode: 1 },
+        } } });
 });
 
 it('consumes the setup owner result and preserves the owned running container and autosave on another admission', async () => {

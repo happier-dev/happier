@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import {
-    observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword,
+    observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
     type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
 } from '@happier-dev/cli-common/machineSetup';
 import {
@@ -118,7 +118,7 @@ export function createOwnServerStartFirstRoutesForHost(host: Readonly<{
                     networkNames: cutover.candidate.services.filter(service => affected.has(service.service))
                         .flatMap(service => service.replicas.flatMap(replica => [...replica.networks])) },
                     { run, signal: cutover.signal ?? input.signal });
-                if (connected.status !== 'ready') return { kind: 'unavailable' as const, reason: connected.reason };
+                if (connected.status !== 'ready') return { kind: 'unavailable' as const, reason: connected.reason, details: connected.details };
             }
             return adapter.switch(cutover);
         }) };
@@ -225,6 +225,10 @@ export function createOwnServerDomainNative(host: Readonly<{
                     replicas, privateNetworks, daemonGroup: admin.daemonPrimaryGroup, daemonGroupId });
                 if (!prepared) return refuse('native_route_unavailable');
                 if (prepared.status !== 'ready') return refuse(prepared.reason, 'details' in prepared ? prepared.details : undefined);
+                // The native binding owner observes conflicts before administrator
+                // setup, firewall or Docker mutations. Apply consumes this once.
+                const ports = await checkNativeCaddyPortAvailability(prepared.input, { run, signal });
+                if (ports.status !== 'ready') return refuse(ports.reason, ports.details);
                 const ready = await prepared.ensure({ setup, context, actionId: job.actionId,
                     installationId: identity.installationId, dockerEngineId: docker.engineId, run, signal });
                 if (ready.status !== 'ready') return refuse('reason' in ready ? ready.reason : 'native_route_unavailable',
@@ -390,7 +394,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const connected = await connectNativeCaddyNetworks({ containerId: topology.caddy.containerId,
                     observedNetworkNames: topology.caddy.networkNames,
                     networkNames: [...new Set(topology.replicas.flatMap(replica => replica.networkNames))] }, { run: acquired.run, signal });
-                if (connected.status !== 'ready') return refuse(connected.reason);
+                if (connected.status !== 'ready') return refuse(connected.reason, connected.details);
                 const activated = await native.activate({ ...request, captureExposure: topology.caddy });
                 if (activated.kind === 'active') await settleConnector(false);
                 return activated;
