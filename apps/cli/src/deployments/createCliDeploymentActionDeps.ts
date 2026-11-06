@@ -309,7 +309,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       return { ok: false, errorCode: settled.state === 'outcome_unknown' ? 'outcome_unknown' : settled.state === 'cancelled'
         ? 'cancelled' : 'deployment_failed', error: settled.state, details: settled };
     }
-    if (settled.state !== 'succeeded' && settled.state !== 'running_unverified') return failure('outcome_unknown');
+    // Provider builds can be accepted while queued/running. Their known receipt
+    // remains observable; acceptance does not claim the build has completed.
     return settled;
   } };
 }
