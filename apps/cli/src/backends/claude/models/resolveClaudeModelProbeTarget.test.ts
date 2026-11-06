@@ -104,7 +104,7 @@ describe('resolveClaudeModelProbeTarget', () => {
     }
   });
 
-  it.each(['{ not json', 'null', '[]', '"invalid root"'])('continues native credential precedence when user settings cannot declare a helper: %s', async (settings) => {
+  it.each(['{ not json', 'null', '[]', '"invalid root"', '{"apiKeyHelper":7}'])('continues native credential precedence when user settings cannot declare a helper: %s', async (settings) => {
     const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-invalid-settings-'));
     try {
       await writeFile(join(claudeConfigDir, 'settings.json'), settings);

@@ -358,8 +358,8 @@ includes `user`. Explicit auth tokens/API keys precede the helper; `CLAUDE_CODE_
 `ANTHROPIC_OAUTH_TOKEN` bearer alias remains supported. A configured helper failure is terminal
 for credential selection: it cannot substitute another account. Without caller cancellation, this
 unavailable target returns the built-in catalog for the current call and leaves cached observations
-untouched. Malformed JSON and non-object user settings roots are skipped,
-matching Claude Code's non-interactive settings loading. Project helpers are not executed without
+untouched. Malformed JSON, non-object user settings roots and non-string helper settings are
+skipped, matching Claude Code's non-interactive settings loading. Project helpers are not executed without
 Claude Code's workspace-trust decision. The helper receives the effective profile/session
 environment, and its credential kind and value remain part of the existing endpoint-scoped cache identity. Helper, HTTP
 and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource

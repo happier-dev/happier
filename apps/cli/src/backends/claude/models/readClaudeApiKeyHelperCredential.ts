@@ -61,7 +61,11 @@ export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifec
       }
       const command = (settings as Record<string, unknown>).apiKeyHelper;
       if (command === undefined || command === null || command === '') return { status: 'absent' };
-      if (typeof command !== 'string' || command.trim().length === 0) return { status: 'failed' };
+      if (typeof command !== 'string') {
+        logger.warnFile('[claude-models] Invalid apiKeyHelper setting type; helper settings skipped');
+        return { status: 'absent' };
+      }
+      if (command.trim().length === 0) return { status: 'failed' };
       lifecycle.signal.throwIfAborted();
 
       const value = await new Promise<string | null>((resolve) => {
