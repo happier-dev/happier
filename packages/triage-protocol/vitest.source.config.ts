@@ -12,7 +12,7 @@ const repoRoot = resolve(packageRoot, '../..');
 export default defineConfig({
     root: packageRoot,
     plugins: [createWorkspacePackageSourcesPlugin(
-        ['triage-protocol', 'channels-protocol', 'plugin-sdk', 'protocol'].map(name => ({
+        ['triage-protocol', 'channels-protocol', 'plugin-sdk', 'protocol', 'cli-common'].map(name => ({
             packageName: `@happier-dev/${name}`,
             packageSourceRoot: resolve(repoRoot, 'packages', name, 'src'),
         })),

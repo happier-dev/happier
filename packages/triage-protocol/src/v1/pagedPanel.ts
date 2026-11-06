@@ -126,6 +126,9 @@ TriagePagedPanelStateV1<TRow, TFailure, TIncomplete> {
 export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
     state: TriagePagedPanelStateV1<TRow, TFailure, TIncomplete>,
     event: TriagePagedPanelEventV1<TRow, TFailure, TIncomplete>,
+    policy?: Readonly<{
+        reconcileRows(previousRows: readonly TRow[], incomingRows: readonly TRow[], context: Readonly<{ replacing: boolean }>): readonly TRow[];
+    }>,
 ): TriagePagedPanelStateV1<TRow, TFailure, TIncomplete> {
     switch (event.kind) {
         case 'panelLeft':
@@ -162,7 +165,9 @@ export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
             const replacing = state.refreshing;
             return {
                 kind: 'ready',
-                rows: replacing ? [...event.page.rows] : [...state.rows, ...event.page.rows],
+                rows: policy?.reconcileRows
+                    ? policy.reconcileRows(state.rows, event.page.rows, { replacing })
+                    : replacing ? [...event.page.rows] : [...state.rows, ...event.page.rows],
                 omittedRowCount: replacing
                     ? event.page.omittedRowCount
                     : state.omittedRowCount + event.page.omittedRowCount,

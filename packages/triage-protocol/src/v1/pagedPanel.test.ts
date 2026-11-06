@@ -35,10 +35,41 @@ function reduce(
     state: TriagePagedPanelStateV1<Row, Failure, Incomplete>,
     ...events: readonly Parameters<typeof triagePagedPanelReducer<Row, Failure, Incomplete>>[1][]
 ): TriagePagedPanelStateV1<Row, Failure, Incomplete> {
-    return events.reduce(triagePagedPanelReducer<Row, Failure, Incomplete>, state);
+    return events.reduce((current, event) => triagePagedPanelReducer(current, event), state);
 }
 
 describe('triage paged panel state', () => {
+    it('lets the domain producer retain equal refreshed rows and reconcile appended pages before publication', () => {
+        const page = (rows: readonly Row[]) => ({ rows, omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null });
+        const oldRows = [{ id: 'a' }, { id: 'b' }];
+        const old = reduce(initial(), { kind: 'requestStarted', token: 1 }, { kind: 'pageSettled', token: 1, page: page(oldRows) });
+        const policy = {
+            reconcileRows(previous: readonly Row[], incoming: readonly Row[], { replacing }: Readonly<{ replacing: boolean }>) {
+                const byId = new Map(previous.map(row => [row.id, row]));
+                const next = incoming.map(row => byId.get(row.id) ?? row);
+                const rows = replacing ? next : [...previous, ...next];
+                return rows.length === previous.length && rows.every((row, index) => row === previous[index]) ? previous : rows;
+            },
+        };
+        const refresh = triagePagedPanelReducer(old, { kind: 'refreshStarted', token: 2 });
+        const equal = triagePagedPanelReducer(refresh, { kind: 'pageSettled', token: 2, page: page([{ id: 'a' }, { id: 'b' }]) }, policy);
+        expect(equal.rows).toBe(old.rows);
+        expect(equal.pending).toBe(false);
+        const changed = triagePagedPanelReducer(
+            triagePagedPanelReducer(equal, { kind: 'refreshStarted', token: 3 }),
+            { kind: 'pageSettled', token: 3, page: page([{ id: 'b' }, { id: 'c' }, { id: 'a' }]) }, policy,
+        );
+        expect(changed.rows[0]).toBe(old.rows[1]);
+        expect(changed.rows[2]).toBe(old.rows[0]);
+        const appended = triagePagedPanelReducer(
+            triagePagedPanelReducer(changed, { kind: 'requestStarted', token: 4 }),
+            { kind: 'pageSettled', token: 4, page: page([{ id: 'd' }]) }, policy,
+        );
+        expect(appended.rows).toEqual([{ id: 'b' }, { id: 'c' }, { id: 'a' }, { id: 'd' }]);
+        expect(appended.rows[0]).toBe(old.rows[1]);
+        expect(triagePagedPanelReducer(appended, { kind: 'pageSettled', token: 3, page: page([]) }, policy)).toBe(appended);
+    });
+
     it('keeps Load more mounted and busy while the next page is in flight', () => {
         const inFlight = reduce(
             initial(),
