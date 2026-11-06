@@ -67,7 +67,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         signal.throwIfAborted();
         const link = environment.targetLinks.find(item => item.targetLink.id === request.input.targetLinkId)?.targetLink;
         if (!link || revision !== undefined && (environment.environment.revision !== revision
-            || link.revision !== request.input.expectedTargetLinkRevision)) refuse('deployment_conflict');
+            || link.revision !== request.input.expectedTargetLinkRevision)) {
+            const conflict = failure('deployment_conflict', new Error('deployment_conflict'));
+            // An explicit reviewed revision is checked before native preparation/dispatch.
+            // Execution reads omit it, so they cannot prove that no effect started.
+            refuse(revision === undefined ? conflict : { ...conflict, effectAttempted: false });
+        }
         admitOwnServerDeploymentTargetLink(link, host.machineId,
             host.dispatchMember ? capturedControllerMachineId ?? environment.environment.controllerMachineId : undefined);
         return { environment, link, signal };
