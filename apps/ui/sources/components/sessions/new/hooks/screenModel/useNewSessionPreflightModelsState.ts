@@ -13,6 +13,7 @@ import {
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import {
     dynamicModelProbeRetryAt,
+    findRetainedDynamicModelName,
     isDynamicModelProbeCacheFresh,
     isDynamicModelProbePending,
     readDynamicModelProbeCache,
@@ -21,6 +22,7 @@ import {
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
+    withoutNewSessionConfigOptionKeyParts,
     normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts,
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
@@ -51,6 +53,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         reason?: ProbedResourceFailure['reason'];
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
         onRefresh?: () => void;
+        /** The catalog has not answered yet, so a model missing from it is not known to be unknown. */
+        namesPending: boolean;
+        retainedModelName?: (modelId: string) => string | null;
     }>;
 }> {
     const presented = useLayoutPresentationActive();
@@ -136,6 +141,19 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         });
     }, [agentType, backendTargetKey, params.capabilityServerId, params.cwd, params.providerConnectionId, params.selectedMachineId, probeContextCacheKeySuffixParts]);
 
+    // The identity of the rows this hook holds. A config-only re-key reads again but keeps showing them.
+    const catalogScopeKey = React.useMemo(() => {
+        if (!backendTargetKey || !agentType) return null;
+        return buildDynamicModelProbeCacheKey({
+            machineId: params.selectedMachineId,
+            targetKey: backendTargetKey,
+            providerConnectionId: params.providerConnectionId ?? null,
+            serverId: params.capabilityServerId,
+            cwd: params.cwd ?? null,
+            extraKeySuffixParts: withoutNewSessionConfigOptionKeyParts(probeContextCacheKeySuffixParts),
+        });
+    }, [agentType, backendTargetKey, params.capabilityServerId, params.cwd, params.providerConnectionId, params.selectedMachineId, probeContextCacheKeySuffixParts]);
+
     React.useEffect(() => {
         const core = agentType ? getAgentCore(agentType) : null;
         if (!preflightModelsKey || !agentType || core?.model?.dynamicProbe === 'static-only' || core?.model?.supportsSelection === false) {
@@ -147,7 +165,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             setSpawnFailure(null);
             setFailure({});
             setRefreshedAt(null);
-            lastCacheKeyRef.current = preflightModelsKey;
+            lastCacheKeyRef.current = catalogScopeKey;
             return;
         }
 
@@ -155,8 +173,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         const controller = new AbortController();
         let retryTimeout: ReturnType<typeof setTimeout> | null = null;
         const cacheEntry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
-        const scopeStable = lastCacheKeyRef.current === preflightModelsKey;
-        lastCacheKeyRef.current = preflightModelsKey;
+        const scopeStable = lastCacheKeyRef.current === catalogScopeKey;
+        lastCacheKeyRef.current = catalogScopeKey;
         const applyEntry = (entry: DynamicModelProbeCacheEntry | null) => {
             if (entry?.kind === 'success') {
                 setPreflightModels(entry.value);
@@ -250,7 +268,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         };
     }, [agentType, backendTargetForProbe, backendTargetKey, preflightModelsKey, modelSuccessCacheMaxAgeMs, enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, refreshNonce, retryNonce, probeContextCapabilityParams]);
 
-    const hasCurrentIdentity = lastCacheKeyRef.current === preflightModelsKey;
+    const hasCurrentIdentity = lastCacheKeyRef.current === catalogScopeKey;
     // A remounted picker renders before its effect can adopt the retained
     // snapshot. Read that exact current key so the first frame keeps its rows.
     const retainedEntry = dynamicProbeEnabled && !hasCurrentIdentity && preflightModelsKey
@@ -273,13 +291,20 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         [agentType, backendTargetKey, currentModels, currentModelsTargetKey],
     );
 
+    const namesPending = dynamicProbeEnabled && !currentModels && !(hasCurrentIdentity && modelDiscoveryFailed);
+    const retainedModelName = React.useCallback((modelId: string) => (
+        preflightModelsKey ? findRetainedDynamicModelName(preflightModelsKey, modelId) : null
+    ), [preflightModelsKey]);
+
     const probe = React.useMemo(() => ({
+        namesPending,
+        ...(dynamicProbeEnabled ? { retainedModelName } : {}),
         phase: teamCatalogSelected ? 'idle' : probePhase,
         failed: hasCurrentIdentity && modelDiscoveryFailed,
         refreshedAt: hasCurrentIdentity ? refreshedAt : null,
         spawnFailure: hasCurrentIdentity ? spawnFailure : null,
         ...(hasCurrentIdentity ? failure : {}),
         ...(dynamicProbeEnabled && preflightModelsKey && enabled ? { onRefresh } : {}),
-    }), [hasCurrentIdentity, probePhase, modelDiscoveryFailed, refreshedAt, spawnFailure, failure, dynamicProbeEnabled, preflightModelsKey, enabled, onRefresh, teamCatalogSelected]);
+    }), [namesPending, retainedModelName, hasCurrentIdentity, probePhase, modelDiscoveryFailed, refreshedAt, spawnFailure, failure, dynamicProbeEnabled, preflightModelsKey, enabled, onRefresh, teamCatalogSelected]);
     return { preflightModels: currentModels, preflightModelsTargetKey: currentModels ? currentModelsTargetKey : null, modelOptions, probe };
 }

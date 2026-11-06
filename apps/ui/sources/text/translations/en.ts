@@ -7067,7 +7067,7 @@ const enSettingsProviders = {
     connectionUnavailable:
       'This provider is unavailable on the selected machine.',
     connectedServiceSuppressed:
-      "The agent's native connected-service sign-in is not used with this provider. Your saved selection is unchanged.",
+      "The agent's native connected-service sign-in is not used with this provider. Your saved sign-in is unchanged.",
   },
 };
 
@@ -11411,12 +11411,10 @@ const enAgentInput = {
       'The selected model will be used when this session resumes.',
     configureInCli: 'Configure models in CLI settings',
     viaSource: ({ source }: { source: string }) => `· via ${source}`,
-    hiddenHere: 'Hidden here:',
+    moreSources: 'More sources',
     browseSource: ({ source }: { source: string }) => `Browse ${source}`,
-    browsing: 'Browsing',
     hiddenFromMainPicker: 'Hidden from the main picker',
     allShownSources: 'All shown sources',
-    searchSource: ({ source }: { source: string }) => `Search ${source}…`,
     nativeSubagentNote: 'Native subagent models follow Agent definitions.',
     unavailable:
       'Couldn’t list models on this machine.',

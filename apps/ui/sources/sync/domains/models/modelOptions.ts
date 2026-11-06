@@ -417,6 +417,12 @@ export function findModelOptionForEffectiveModelId<T extends Readonly<{
  * when the catalog does not know the id. Every surface that names a Session model to a person reads
  * this one lookup instead of printing the id.
  */
+/** What a catalog read can say about a model it does not hold in its current rows. */
+export type ModelCatalogNames = Readonly<{
+    namesPending?: boolean;
+    retainedModelName?: (modelId: string) => string | null;
+}>;
+
 export function resolveSessionModelLabel(
     agentType: AgentType,
     metadata: ComposerOptionsInputV1 | null | undefined,

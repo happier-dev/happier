@@ -57,7 +57,7 @@ import type {
     PermissionMode,
     ModelMode,
 } from '@/sync/domains/permissions/permissionTypes';
-import type { ModelOption } from '@/sync/domains/models/modelOptions';
+import type { ModelCatalogNames, ModelOption } from '@/sync/domains/models/modelOptions';
 import {
     EXTENDED_CONTEXT_MODEL_TOGGLE_OPTION_ID,
     resolveExtendedContextModelIdForToggle,
@@ -497,7 +497,7 @@ interface AgentInputProps {
      * Optional: show a probe/loading state + refresh control in the model picker.
      * Intended for preflight (no-session) flows that dynamically probe models.
      */
-    modelOptionsOverrideProbe?: OptionPickerProbeState;
+    modelOptionsOverrideProbe?: OptionPickerProbeState & ModelCatalogNames;
     /** Optional domain-owned model list UI; AgentInput still owns the surrounding engine detail. */
     modelContentOverride?: React.ReactNode;
     /**
@@ -1551,6 +1551,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         acpSessionModeSelectedIdOverride: props.acpSessionModeSelectedIdOverride ?? null,
         acpConfigOptionsOverride: props.acpConfigOptionsOverride ?? null,
         acpConfigOptionOverridesOverride: props.acpConfigOptionOverridesOverride ?? null,
+        modelCatalogNames: props.modelOptionsOverrideProbe ?? null,
     });
 
     // Profile data
@@ -2745,7 +2746,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     }
                     : undefined
             }
-            sectionOrder={['model', 'config']}
             surfaceVariant={surfaceVariant}
         />
     ), [
@@ -3061,7 +3061,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (picker?.selected?.providerConnectionId && (
             !armedComposerTarget || armedComposerTarget.backendTargetKey === picker.agentTargetKey
         )) {
-            return buildSessionModelSelectedTriggerPresentation(picker).subtitle;
+            const name = buildSessionModelSelectedTriggerPresentation(picker).subtitle;
+            // An id is not a name: until the projection answers, the chip stays on the Agent.
+            return !picker.providerProjectionAuthoritative && !picker.providerProjectionFailed && name === picker.selected.modelId
+                ? resolvedAgentLabel
+                : name;
         }
         // Selection IS the selection. An armed target with a model chosen names
         // that model; an armed target still on the Agent's own defaults names the
@@ -3069,7 +3073,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (armedComposerTarget) {
             return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
         }
-        return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
+        return hasAgentPickerOptions ? selectedModelLabel ?? resolvedAgentLabel : resolvedAgentLabel;
     }, [props.engineLabel, props.modelPickerPresentation, armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     /**
      * The mark on the engine chip: the armed Agent while one is armed, otherwise

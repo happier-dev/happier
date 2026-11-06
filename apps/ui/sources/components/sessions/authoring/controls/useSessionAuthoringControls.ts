@@ -28,6 +28,7 @@ import {
     supportsFreeformModelSelectionForSession,
     type ModelOption,
 } from '@/sync/domains/models/modelOptions';
+import type { ModelCatalogNames } from '@/sync/domains/models/modelOptions';
 import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import {
     getPermissionModeBadgeLabelForAgentType,
@@ -100,6 +101,7 @@ export type SessionAuthoringControlsInput = Readonly<{
     acpSessionModeSelectedIdOverride?: string | null;
     acpConfigOptionsOverride?: ReadonlyArray<SessionConfigOptionInput> | null;
     acpConfigOptionOverridesOverride?: AcpConfigOptionOverridesV1 | null;
+    modelCatalogNames?: ModelCatalogNames | null;
 }>;
 
 export type SessionAuthoringControls = Readonly<{
@@ -110,7 +112,8 @@ export type SessionAuthoringControls = Readonly<{
     effectivePermissionLabel: string;
     permissionChipLabel: string;
     effectiveModelPolicy: ReturnType<typeof describeEffectiveModelMode>;
-    selectedModelLabel: string;
+    /** Null while the catalog has not answered and nothing retained names the model. */
+    selectedModelLabel: string | null;
     appliedModelPresentation: SessionAuthoringAppliedModelPresentation | null;
     modelApplyTiming: string;
     modelNotes: readonly string[];
@@ -189,10 +192,11 @@ export function useSessionAuthoringControls(
         if (found && found.label !== found.value) return found.label;
         const label = resolveSessionModelLabel(agentId, composerOptionsInput, effectiveModelPolicy.selectedModelId);
         if (label) return label;
-        return effectiveModelPolicy.selectedModelId === 'default'
-            ? t('agentInput.model.useCliSettings')
-            : effectiveModelPolicy.selectedModelId;
-    }, [agentId, composerOptionsInput, effectiveModelPolicy.selectedModelId, modelOptions]);
+        if (effectiveModelPolicy.selectedModelId === 'default') return t('agentInput.model.useCliSettings');
+        const retained = input.modelCatalogNames?.retainedModelName?.(effectiveModelPolicy.selectedModelId);
+        if (retained) return retained;
+        return input.modelCatalogNames?.namesPending ? null : effectiveModelPolicy.selectedModelId;
+    }, [agentId, composerOptionsInput, effectiveModelPolicy.selectedModelId, input.modelCatalogNames, modelOptions]);
 
     const appliedModelPresentation = React.useMemo<SessionAuthoringAppliedModelPresentation | null>(() => {
         const appliedModelId = effectiveModelPolicy.appliedModelId;

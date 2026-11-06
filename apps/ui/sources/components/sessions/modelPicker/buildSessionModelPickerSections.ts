@@ -467,6 +467,8 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
     providerGroups: readonly SessionModelProjectionGroup[];
     hiddenNativeModelKeys: ReadonlySet<string>;
     providerProjectionAuthoritative: boolean;
+    /** The projection's read failed, rather than not having answered yet. */
+    providerProjectionFailed?: boolean;
     selected: SessionModelPickerValue;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];

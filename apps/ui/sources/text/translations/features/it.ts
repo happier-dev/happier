@@ -9140,6 +9140,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const it: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Saldi e spesa di ${provider}, nella valuta riportata.`,
+            scopeKey: 'Questa chiave',
+            scopeAccount: 'Account',
+            amountLeft: ({ amount }: { amount: string }) => `${amount} rimanenti`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${amount} rimanenti su ${limit}`,
+            notChecked: 'Non ancora controllato. Aggiorna per vedere i dati più recenti.',
+            needsMachine: 'Scegli una macchina per controllare l’utilizzo.',
+            unsupported: 'Questa connessione non riporta l’utilizzo.',
+            refreshFailed: 'Impossibile aggiornare l’utilizzo',
+            keyFailed: 'Impossibile aggiornare i dati di questa chiave',
+            accountFailed: 'Impossibile aggiornare il credito dell’account',
+            billingKeyTitle: 'Chiave di fatturazione',
+            billingKeySaved: 'Legge il credito dell’account. Non viene mai usata per le richieste.',
+            billingKeyMissing: 'Facoltativa. Aggiungine una per vedere il credito dell’account; non viene mai usata per le richieste.',
+            getBillingKey: 'Dove ottenere questa chiave',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 modello` : `${count} modelli`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 modello, altri dopo il collegamento` : `${count} modelli, altri dopo il collegamento`,
@@ -11889,7 +11906,7 @@ const providerModelLoadCancellationTranslations = { it: { cancelLoad: 'Annulla c
 
 const providerPartialStatusTranslations = { it: 'Parzialmente disponibile' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { it: 'L’accesso nativo dell’agente non viene usato con questo provider. La selezione salvata non cambia.' } as const;
+const providerConnectedServiceSuppressedTranslations = { it: 'L’accesso nativo dell’agente non viene usato con questo provider. L’accesso salvato non cambia.' } as const;
 
 const providerMachineCleanupPendingTranslations = { it: 'La macchina è stata rimossa, ma non è stato possibile salvare la pulizia dell’accesso ai provider. Controlla la connessione e rimuovi di nuovo la macchina per riprovare.' } as const;
 

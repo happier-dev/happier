@@ -9167,6 +9167,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ru: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Баланс и расходы ${provider} в указанной валюте.`,
+            scopeKey: 'Этот ключ',
+            scopeAccount: 'Аккаунт',
+            amountLeft: ({ amount }: { amount: string }) => `Осталось ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `Осталось ${amount} из ${limit}`,
+            notChecked: 'Ещё не проверено. Обновите, чтобы увидеть последние данные.',
+            needsMachine: 'Выберите машину, чтобы проверить использование.',
+            unsupported: 'Это подключение не сообщает об использовании.',
+            refreshFailed: 'Не удалось обновить использование',
+            keyFailed: 'Не удалось обновить данные этого ключа',
+            accountFailed: 'Не удалось обновить баланс аккаунта',
+            billingKeyTitle: 'Платёжный ключ',
+            billingKeySaved: 'Читает баланс аккаунта. Никогда не используется для запросов.',
+            billingKeyMissing: 'Необязательно. Добавьте его, чтобы видеть баланс аккаунта; он никогда не используется для запросов.',
+            getBillingKey: 'Где получить этот ключ',
+        },
         addDetail: {
             modelsCount: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = n === 1 && h !== 11 ? 'модель' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'модели' : 'моделей'; return `${count} ${w}`; }),
             modelsCountMore: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = n === 1 && h !== 11 ? 'модель' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'модели' : 'моделей'; return `${count} ${w}, больше после подключения`; }),
@@ -11920,7 +11937,7 @@ const providerModelLoadCancellationTranslations = { ru: { cancelLoad: 'Отме�
 
 const providerPartialStatusTranslations = { ru: 'Частично доступно' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { ru: 'Встроенная авторизация агента не используется с этим провайдером. Сохранённый выбор не изменяется.' } as const;
+const providerConnectedServiceSuppressedTranslations = { ru: 'Встроенная авторизация агента не используется с этим провайдером. Сохранённая авторизация не меняется.' } as const;
 
 const providerMachineCleanupPendingTranslations = { ru: 'Машина удалена, но не удалось сохранить очистку доступа к провайдерам. Проверьте подключение и удалите машину снова, чтобы повторить очистку.' } as const;
 

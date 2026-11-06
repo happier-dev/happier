@@ -30,3 +30,20 @@ export function buildDynamicModelProbeCacheKey(params: Readonly<{
         ...extraKeySuffixParts,
     ]);
 }
+
+function readCatalogIdentity(key: string): readonly [unknown, unknown, unknown] | null {
+    try {
+        const parts: unknown = JSON.parse(key);
+        if (!Array.isArray(parts) || parts[0] !== 'dynamicModelProbe') return null;
+        return [parts[1], parts[3], parts[4]];
+    } catch {
+        return null;
+    }
+}
+
+/** Same server, Agent and model source: lists whose rows name the same models, whatever Machine, directory or config they were read under. */
+export function isSameDynamicModelCatalog(leftKey: string, rightKey: string): boolean {
+    const left = readCatalogIdentity(leftKey);
+    const right = readCatalogIdentity(rightKey);
+    return left !== null && right !== null && left.every((part, index) => part === right[index]);
+}

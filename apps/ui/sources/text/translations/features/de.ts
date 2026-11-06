@@ -9141,6 +9141,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const de: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Guthaben und Ausgaben von ${provider}, in der gemeldeten Währung.`,
+            scopeKey: 'Dieser Schlüssel',
+            scopeAccount: 'Konto',
+            amountLeft: ({ amount }: { amount: string }) => `${amount} übrig`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${amount} von ${limit} übrig`,
+            notChecked: 'Noch nicht geprüft. Aktualisiere, um die neuesten Zahlen zu sehen.',
+            needsMachine: 'Wähle einen Rechner, um die Nutzung zu prüfen.',
+            unsupported: 'Diese Verbindung meldet keine Nutzung.',
+            refreshFailed: 'Nutzung konnte nicht aktualisiert werden',
+            keyFailed: 'Zahlen dieses Schlüssels konnten nicht aktualisiert werden',
+            accountFailed: 'Kontoguthaben konnte nicht aktualisiert werden',
+            billingKeyTitle: 'Abrechnungsschlüssel',
+            billingKeySaved: 'Liest das Kontoguthaben. Wird nie für Anfragen verwendet.',
+            billingKeyMissing: 'Optional. Füge einen hinzu, um das Kontoguthaben zu sehen; er wird nie für Anfragen verwendet.',
+            getBillingKey: 'Wo du diesen Schlüssel bekommst',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 Modell` : `${count} Modelle`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 Modell, weitere nach dem Verbinden` : `${count} Modelle, weitere nach dem Verbinden`,

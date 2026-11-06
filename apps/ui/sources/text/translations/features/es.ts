@@ -9140,6 +9140,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const es: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Saldos y gasto de ${provider}, en la moneda informada.`,
+            scopeKey: 'Esta clave',
+            scopeAccount: 'Cuenta',
+            amountLeft: ({ amount }: { amount: string }) => `Quedan ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `Quedan ${amount} de ${limit}`,
+            notChecked: 'Aún no se ha comprobado. Actualiza para ver las cifras más recientes.',
+            needsMachine: 'Elige una máquina para comprobar el uso.',
+            unsupported: 'Esta conexión no informa del uso.',
+            refreshFailed: 'No se pudo actualizar el uso',
+            keyFailed: 'No se pudieron actualizar las cifras de esta clave',
+            accountFailed: 'No se pudo actualizar el crédito de la cuenta',
+            billingKeyTitle: 'Clave de facturación',
+            billingKeySaved: 'Lee el crédito de la cuenta. Nunca se usa para solicitudes.',
+            billingKeyMissing: 'Opcional. Añade una para ver el crédito de la cuenta; nunca se usa para solicitudes.',
+            getBillingKey: 'Dónde obtener esta clave',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 modelo` : `${count} modelos`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 modelo, más al conectar` : `${count} modelos, más al conectar`,
@@ -11939,7 +11956,7 @@ const providerModelLoadCancellationTranslations = { es: { cancelLoad: 'Cancelar 
 
 const providerPartialStatusTranslations = { es: 'Disponible parcialmente' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { es: 'El inicio de sesión nativo del agente no se usa con este proveedor. Tu selección guardada no cambia.' } as const;
+const providerConnectedServiceSuppressedTranslations = { es: 'El inicio de sesión nativo del agente no se usa con este proveedor. Tu inicio de sesión guardado no cambia.' } as const;
 
 const providerMachineCleanupPendingTranslations = { es: 'La máquina se eliminó, pero no se pudo guardar la limpieza de acceso a proveedores. Comprueba la conexión y vuelve a eliminar la máquina para reintentarlo.' } as const;
 

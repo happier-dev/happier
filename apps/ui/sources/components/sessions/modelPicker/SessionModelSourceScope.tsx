@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DaemonProviderModelProjectionHiddenSourceV1 } from '@happier-dev/protocol/rpc';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { OptionPickerPaneRow } from '@/components/sessions/pickers/OptionPickerPaneRow';
+import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
@@ -17,8 +18,6 @@ export type SessionModelHiddenSource =
 /** One model source; null connection means this exact Agent's native models. Local picker state only. */
 export type SessionModelBrowseScope = Readonly<{
   label: string;
-  /** The source visibility owner's projected fact, independent of retained model rows. */
-  hiddenFromPicker?: boolean;
 } & ({ connectionId: string } | { connectionId: null })>;
 
 export function sessionModelBrowseScope(
@@ -27,15 +26,14 @@ export function sessionModelBrowseScope(
   return {
     connectionId: source.connectionId,
     label: providerConnectionSourceLabel(source),
-    hiddenFromPicker: true,
   };
 }
 
 /**
- * "Hidden here: Main gateway, OpenRouter · Work". Each name opens that source in the same picker,
- * so a source switched off for the picker stays one tap away without changing the session.
+ * The sources switched off for the picker, each a row that opens that source in the same pane,
+ * so it stays one tap away without changing the session.
  */
-export function SessionModelHiddenSourcesLine(
+export function SessionModelHiddenSources(
   props: Readonly<{
     sources: readonly SessionModelHiddenSource[];
     onBrowse: (scope: SessionModelBrowseScope) => void;
@@ -43,101 +41,49 @@ export function SessionModelHiddenSourcesLine(
 ) {
   const { theme } = useUnistyles();
   return (
-    <View testID="model-picker-hidden-sources" style={styles.line}>
-      <Icon name="eye-slash" size={12} color={theme.colors.text.tertiary} />
-      <Text style={styles.meta}>{t('agentInput.model.hiddenHere')}</Text>
-      {props.sources.map((source, index) => {
+    <View testID="model-picker-hidden-sources" style={styles.sources}>
+      <Text accessibilityRole="header" style={styles.sourcesTitle}>{t('agentInput.model.moreSources')}</Text>
+      {props.sources.map((source) => {
         const scope = sessionModelBrowseScope(source);
         return (
-          <View key={source.connectionId} style={styles.linkSlot}>
-            <Pressable
-              testID={`model-picker-hidden-source:${source.connectionId}`}
-              accessibilityRole="button"
-              accessibilityLabel={t('agentInput.model.browseSource', {
-                source: scope.label,
-              })}
-              hitSlop={{ top: 8, bottom: 8, left: 2, right: 2 }}
-              onPress={() => props.onBrowse(scope)}
-              style={({ pressed }) => (pressed ? styles.pressed : null)}
-            >
-              <Text style={styles.link}>{scope.label}</Text>
-            </Pressable>
-            {index < props.sources.length - 1 ? (
-              <Text style={styles.meta}>,</Text>
-            ) : null}
-          </View>
+          <OptionPickerPaneRow
+            key={source.connectionId}
+            testID={`model-picker-hidden-source:${source.connectionId}`}
+            title={scope.label}
+            trailing={<Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />}
+            accessibilityLabel={t('agentInput.model.browseSource', { source: scope.label })}
+            onPress={() => props.onBrowse(scope)}
+          />
         );
       })}
     </View>
   );
 }
 
-/** One line under the pane header while a source is browsed: back · "Browsing <source>" · why it is not in the list. */
-export function SessionModelSourceScopeBar(
-  props: Readonly<{
-    scope: SessionModelBrowseScope;
-    onExit: () => void;
-  }>,
+/** The way back from one browsed source to every shown source; the source's name is the pane's title. */
+export function SessionModelSourceBack(
+  props: Readonly<{ onExit: () => void }>,
 ) {
-  const { theme } = useUnistyles();
   return (
-    <View testID="model-picker-source-scope" style={styles.scopeBar}>
-      <IconButton
-        testID="model-picker-source-scope-back"
-        iconName="caret-left"
-        variant="plain"
-        size={20}
-        iconSize={14}
-        accessibilityLabel={t('agentInput.model.allShownSources')}
-        tooltip={t('agentInput.model.allShownSources')}
-        onPress={props.onExit}
-      />
-      <Text style={styles.scopeText} numberOfLines={1}>
-        {t('agentInput.model.browsing')}{' '}
-        <Text style={styles.scopeName}>{props.scope.label}</Text>
-      </Text>
-      {props.scope.hiddenFromPicker === true ? (
-        <>
-          <Icon name="eye-slash" size={12} color={theme.colors.text.tertiary} />
-          <Text style={styles.meta} numberOfLines={1}>
-            {t('agentInput.model.hiddenFromMainPicker')}
-          </Text>
-        </>
-      ) : null}
-    </View>
+    <IconButton
+      testID="model-picker-source-scope-back"
+      iconName="caret-left"
+      variant="plain"
+      size={24}
+      iconSize={16}
+      accessibilityLabel={t('agentInput.model.allShownSources')}
+      tooltip={t('agentInput.model.allShownSources')}
+      onPress={props.onExit}
+    />
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  line: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    columnGap: theme.space.s4,
-    rowGap: theme.space.s2,
-  },
-  linkSlot: { flexDirection: 'row', alignItems: 'center' },
-  meta: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
-  link: {
-    ...Typography.variant('meta'),
-    ...Typography.default('semiBold'),
-    color: theme.colors.text.primary,
-  },
-  pressed: { opacity: motionTokens.press.opacitySubtle },
-  scopeBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s6,
-    marginTop: theme.space.s6,
-    marginLeft: -4,
-  },
-  scopeText: {
-    ...Typography.variant('meta'),
+  sources: { gap: theme.space.s2 },
+  sourcesTitle: {
+    ...Typography.variant('meta', 'medium'),
     color: theme.colors.text.secondary,
-    flexShrink: 1,
-  },
-  scopeName: {
-    ...Typography.default('semiBold'),
-    color: theme.colors.text.primary,
+    paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
+    paddingBottom: theme.space.s2,
   },
 }));

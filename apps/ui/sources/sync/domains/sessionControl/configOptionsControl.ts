@@ -91,6 +91,12 @@ export type SessionConfigOptionControl = Readonly<{
      * highlighted rather than pointing at a segment that does not exist.
      */
     overriddenEffectiveValue?: SessionConfigOptionValueId;
+    /**
+     * Set on a `category: model` control while its native model selector is replaced by a model surface:
+     * which side of that selector the producer's array puts it on (a provider before it, a fast toggle after).
+     * The array order is the producer's priority; the surface places the control beside the model accordingly.
+     */
+    modelPlacement?: 'before' | 'after';
 }>;
 
 /**

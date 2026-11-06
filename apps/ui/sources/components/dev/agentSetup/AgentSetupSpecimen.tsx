@@ -33,7 +33,7 @@ import {
 /**
  * Dev-only specimen of the agent-setup surfaces (lab `agent-setup`) drawn through the real components at
  * fixture props, for side by side pairs a dev Home cannot show (installs and sign-ins are never run on
- * real machines for a screenshot). `?frame=M1|M2|T1|T1b|T1p|S1|H1|H1p|E2|ST`. Never linked from product surfaces.
+ * real machines for a screenshot). `?frame=M1|M2|T1|T1b|T1f|T1p|S1|H1|H1p|E2|ST`. Never linked from product surfaces.
  */
 export function AgentSetupSpecimen(props: Readonly<{ frame: string | null }>) {
     const frame = props.frame ?? 'M1';
@@ -165,6 +165,22 @@ function SpecimenFrame(props: Readonly<{ frame: string }>) {
                 </View>
             );
         }
+        case 'T1f':
+            return (
+                <View style={styles.bottomPane}>
+                    <AgentSignInTerminalView
+                        testID="agent-setup-specimen.signInFailed"
+                        layout="pane"
+                        agentTitle="Antigravity"
+                        mark={mark(FIXTURE_AGENTS.antigravity, 16)}
+                        machineName="devbox"
+                        session={{ ...waitingSession(), phase: 'failed', failure: 'Machine is unreachable.', authUrl: null }}
+                        accountLabel={null}
+                        terminal={<FakeTerminal done={false} />}
+                        handlers={{ onOpenUrl: () => {}, onCheckAgain: () => {}, onClose: () => {} }}
+                    />
+                </View>
+            );
         case 'T1p':
             return (
                 <AgentSignInTerminalView

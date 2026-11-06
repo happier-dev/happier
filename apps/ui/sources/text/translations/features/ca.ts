@@ -9140,6 +9140,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ca: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Saldos i despesa de ${provider}, en la moneda informada.`,
+            scopeKey: 'Aquesta clau',
+            scopeAccount: 'Compte',
+            amountLeft: ({ amount }: { amount: string }) => `Queden ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `Queden ${amount} de ${limit}`,
+            notChecked: 'Encara no s’ha comprovat. Actualitza per veure les xifres més recents.',
+            needsMachine: 'Tria una màquina per comprovar l’ús.',
+            unsupported: 'Aquesta connexió no informa de l’ús.',
+            refreshFailed: 'No s’ha pogut actualitzar l’ús',
+            keyFailed: 'No s’han pogut actualitzar les xifres d’aquesta clau',
+            accountFailed: 'No s’ha pogut actualitzar el crèdit del compte',
+            billingKeyTitle: 'Clau de facturació',
+            billingKeySaved: 'Llegeix el crèdit del compte. No s’utilitza mai per a sol·licituds.',
+            billingKeyMissing: 'Opcional. Afegeix-ne una per veure el crèdit del compte; no s’utilitza mai per a sol·licituds.',
+            getBillingKey: 'On obtenir aquesta clau',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 model` : `${count} models`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 model, més un cop connectat` : `${count} models, més un cop connectat`,
@@ -11912,7 +11929,7 @@ const providerModelLoadCancellationTranslations = { ca: { cancelLoad: 'Cancel·l
 
 const providerPartialStatusTranslations = { ca: 'Disponible parcialment' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { ca: 'L’inici de sessió natiu de l’agent no s’utilitza amb aquest proveïdor. La selecció desada no canvia.' } as const;
+const providerConnectedServiceSuppressedTranslations = { ca: 'L’inici de sessió natiu de l’agent no s’utilitza amb aquest proveïdor. L’inici de sessió desat no canvia.' } as const;
 
 const providerMachineCleanupPendingTranslations = { ca: 'La màquina s’ha eliminat, però no s’ha pogut desar la neteja de l’accés als proveïdors. Comprova la connexió i torna a eliminar la màquina per reintentar-ho.' } as const;
 

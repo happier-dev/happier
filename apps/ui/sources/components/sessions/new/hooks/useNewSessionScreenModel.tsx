@@ -1994,6 +1994,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             providerGroups: picker?.providerGroups ?? providerModelProjection.data?.groups ?? [],
             hiddenNativeModelKeys,
             providerProjectionAuthoritative: picker?.providerProjectionAuthoritative ?? providerModelProjection.status === 'success',
+            providerProjectionFailed: providerModelProjection.status === 'error',
             selected: modelSelection.ref,
             currentSelectionRecovery: picker?.currentSelectionRecovery ?? providerModelProjection.data?.currentSelectionRecovery,
             fallbackLabel: t('agentInput.model.unavailable'),

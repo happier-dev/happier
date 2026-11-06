@@ -6,6 +6,23 @@ export type ProviderCollectionCopy = typeof en;
 
 export const en = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `${provider} balances and spend, in the reported currency.`,
+            scopeKey: 'This key',
+            scopeAccount: 'Account',
+            amountLeft: ({ amount }: { amount: string }) => `${amount} left`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${amount} of ${limit} left`,
+            notChecked: 'Not checked yet. Refresh to see the latest figures.',
+            needsMachine: 'Choose a machine to check usage.',
+            unsupported: 'This connection doesn’t report usage.',
+            refreshFailed: 'Couldn’t refresh usage',
+            keyFailed: 'Couldn’t refresh this key’s figures',
+            accountFailed: 'Couldn’t refresh account credits',
+            billingKeyTitle: 'Billing key',
+            billingKeySaved: 'Reads account credits. Never used for requests.',
+            billingKeyMissing: 'Optional. Add one to see account credits; it’s never used for requests.',
+            getBillingKey: 'Where to get this key',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 model` : `${count} models`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 model, more once connected` : `${count} models, more once connected`,

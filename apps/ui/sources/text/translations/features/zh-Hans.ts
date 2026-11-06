@@ -9128,6 +9128,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const zhHans: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `${provider} 的余额和支出，按报告的币种显示。`,
+            scopeKey: '此密钥',
+            scopeAccount: '账户',
+            amountLeft: ({ amount }: { amount: string }) => `剩余 ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `剩余 ${amount}，共 ${limit}`,
+            notChecked: '尚未检查。刷新即可查看最新数据。',
+            needsMachine: '选择一台机器以检查用量。',
+            unsupported: '此连接不报告用量。',
+            refreshFailed: '无法刷新用量',
+            keyFailed: '无法刷新此密钥的数据',
+            accountFailed: '无法刷新账户余额',
+            billingKeyTitle: '账单密钥',
+            billingKeySaved: '读取账户余额。从不用于请求。',
+            billingKeyMissing: '可选。添加后可查看账户余额；从不用于请求。',
+            getBillingKey: '在哪里获取此密钥',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1个模型` : `${count}个模型`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1个模型，连接后更多` : `${count}个模型，连接后更多`,
@@ -11873,7 +11890,7 @@ const providerModelLoadCancellationTranslations = { zhHans: { cancelLoad: '取�
 
 const providerPartialStatusTranslations = { zhHans: '部分可用' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { zhHans: '此供应商不会使用代理的原生登录。你保存的选择不会更改。' } as const;
+const providerConnectedServiceSuppressedTranslations = { zhHans: '此供应商不会使用代理的原生登录。你保存的登录不会更改。' } as const;
 
 const providerMachineCleanupPendingTranslations = { zhHans: '设备已移除，但无法保存供应商访问清理。请检查连接，然后再次移除该设备以重试清理。' } as const;
 

@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
 import { providerDeclarationContext, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
@@ -18,6 +21,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
+import { useProviderConnectionUsageForSource } from '@/providers/hooks/useProviderConnectionUsageForSource';
 import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
 import {
     OptionPickerOverlay,
@@ -43,9 +47,11 @@ import {
     type SessionNativeModelOption,
 } from './buildSessionModelPickerSections';
 import { useGatewaySlotTitle } from './useGatewaySlotTitle';
+import { SessionModelSourceUsage } from './SessionModelSourceUsage';
+import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import {
-    SessionModelHiddenSourcesLine,
-    SessionModelSourceScopeBar,
+    SessionModelHiddenSources,
+    SessionModelSourceBack,
     type SessionModelBrowseScope,
     type SessionModelHiddenSource,
 } from './SessionModelSourceScope';
@@ -268,6 +274,8 @@ function SessionModelSourceBrowse(props: Readonly<{
     onExit: () => void;
 }>) {
     const { picker } = props;
+    const sourceUsage = useProviderConnectionUsageForSource({ ...props.sourceBrowse,
+        connectionId: props.scope.connectionId, declarationContext: picker.declarationContext, active: true });
     const projection = useProviderModelProjection({
         enabled: true,
         machineId: props.sourceBrowse.machineId,
@@ -298,9 +306,10 @@ function SessionModelSourceBrowse(props: Readonly<{
             onToggleFavorite={picker.onToggleFavorite}
             favoriteActionVisibility={picker.favoriteActionVisibility}
             notes={notes}
-            probe={projection.loading
+            // One refresh for the whole source: its models and its balance.
+            probe={projection.loading || sourceUsage.refreshing
                 ? { phase: 'loading' }
-                : { phase: 'idle', onRefresh: () => { void projection.refresh(); } }}
+                : { phase: 'idle', onRefresh: () => { void projection.refresh(); void sourceUsage.refresh?.(); } }}
             experimentalConfirmation={picker.experimentalConfirmation}
             fillAvailableSpace={picker.fillAvailableSpace}
             showTitle={picker.showTitle}
@@ -315,11 +324,13 @@ function SessionModelSourceBrowse(props: Readonly<{
             onSelectOptionControlValue={picker.onSelectOptionControlValue}
             gatewaySlotTitle={gatewaySlotTitle}
             scope={scope}
+            sourceUsage={sourceUsage}
         />
     );
 }
 
 function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
+    sourceUsage?: ReturnType<typeof useProviderConnectionUsageForSource>;
     onBrowseSource?: (scope: SessionModelBrowseScope) => void;
     /** While one Gateway is browsed: names the subscription behind each vendor slot so models group by it. */
     gatewaySlotTitle?: (slot: SessionModelGatewaySlot) => string | null;
@@ -328,6 +339,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
 }>) {
     const canConfirmExperimental = Boolean(props.experimentalConfirmation);
     const declarations = useDaemonMergedProjectionInputs({ machineId: props.sourceBrowse?.machineId,
+        sections: ['agentsById', 'familiesById.providers'],
         serverId: props.sourceBrowse?.serverId, enabled: props.declarationContext === undefined && Boolean(props.sourceBrowse?.machineId) });
     const projection = declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 : null;
     const declarationContext = React.useMemo(() => props.declarationContext
@@ -365,6 +377,10 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         modelName: experimentalPendingModelName,
         onOpen: () => router.pushRetainingCurrent(experimentalApprovalHref as never),
     } : null, [experimentalApprovalHref, experimentalPendingModelName, router]);
+    const sourceUsageApprovalHref = props.sourceUsage?.pendingApproval?.href ?? null;
+    const sourceUsageApprovalOpen = React.useMemo(() => sourceUsageApprovalHref
+        ? () => router.pushRetainingCurrent(sourceUsageApprovalHref as never)
+        : null, [sourceUsageApprovalHref, router]);
     const hostNativeSourceLabel = React.useContext(SessionModelNativeSourceLabelContext);
     const hostApplyTiming = React.useContext(SessionModelApplyTimingContext);
     const nativeSourceLabel = props.nativeSourceLabel ?? hostNativeSourceLabel;
@@ -491,10 +507,18 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             ? [{ ...suffixed[0]!, title: undefined }]
             : suffixed;
     }, [browsing, nativeSourceLabel, sections]);
+    // The pane's failure line says why the current selection could not be listed; its row does not repeat it.
+    const paneSaysUnavailable = props.probe?.failed === true || (props.notes ?? []).includes(t('agentInput.model.unavailable'));
+    const presentedSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
+        if (!paneSaysUnavailable) return labeledSections;
+        const unavailable = t('agentInput.model.unavailable');
+        return labeledSections.map((section) => section.id === 'current-selection-recovery'
+            ? { ...section, options: section.options.map((option) => option.description === unavailable
+                ? { ...option, description: undefined }
+                : option) }
+            : section);
+    }, [labeledSections, paneSaysUnavailable]);
     const hiddenSources = props.hiddenSources ?? [];
-    const footerContent = !props.scope && props.onBrowseSource && hiddenSources.length > 0 ? (
-        <SessionModelHiddenSourcesLine sources={hiddenSources} onBrowse={props.onBrowseSource} />
-    ) : undefined;
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
@@ -588,6 +612,43 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const projectionLineRetry = props.retryProjection && !props.probe?.onRefresh
         ? async () => { await props.retryProjection?.(); }
         : undefined;
+    // Source status closes the pane with the hidden sources (lab rpicker-MP1 footer): an unreachable source
+    // is a fact about where models come from, so it never pushes the search and the cards down.
+    // Sources failing the same way with the same source-independent recovery (retry) read as one line naming
+    // them all; a recovery that opens one source keeps that source's own line.
+    const sourceFailureLines: { key: string; error: ProviderErrorV1; subjects: string[] }[] = [];
+    for (const failure of [
+        ...(props.projectionError ? [{ connectionId: props.projectionError.connectionId, error: props.projectionError }] : []),
+        ...(props.projectionFailures ?? []),
+    ]) {
+        const subject = failureSubject(failure.connectionId);
+        const sharedRecovery = failure.error.action === 'retry' || failure.error.action === 'restart_probe';
+        const key = sharedRecovery ? `${failure.error.code}:${failure.error.action}` : `source:${failure.connectionId ?? ''}:${failure.error.code}`;
+        const line = sourceFailureLines.find((candidate) => candidate.key === key);
+        if (line) { if (subject && !line.subjects.includes(subject)) line.subjects.push(subject); }
+        else sourceFailureLines.push({ key, error: failure.error, subjects: subject ? [subject] : [] });
+    }
+    const hiddenSourcesLine = !props.scope && props.onBrowseSource && hiddenSources.length > 0
+        ? <SessionModelHiddenSources sources={hiddenSources} onBrowse={props.onBrowseSource} />
+        : null;
+    const footerContent = hasDiscoveryErrorLine || hiddenSourcesLine ? (
+        <>
+            {sourceFailureLines.length > 0 ? (
+                <View style={styles.failureLines}>
+                    {sourceFailureLines.map((line) => (
+                        <ProviderErrorItems
+                            presentation="line"
+                            key={line.key}
+                            error={line.error}
+                            subject={line.subjects.length > 0 ? line.subjects.join(', ') : null}
+                            retry={projectionLineRetry}
+                        />
+                    ))}
+                </View>
+            ) : null}
+            {hiddenSourcesLine}
+        </>
+    ) : undefined;
     const currentSelectionRecovery = props.currentSelectionRecovery
         && sessionModelSelectionKey(props.currentSelectionRecovery.ref) === sessionModelSelectionKey(props.selected)
         ? props.currentSelectionRecovery
@@ -603,16 +664,16 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             onRequestClose={props.onRequestClose}
             favoriteActionVisibility={props.favoriteActionVisibility}
             multiColumn={props.multiColumn}
-            title={t('agentInput.model.title')}
+            title={props.scope ? props.scope.scope.label : t('agentInput.model.title')}
+            titleLeading={props.scope ? <SessionModelSourceBack onExit={props.scope.onExit} /> : undefined}
             notes={notes}
             options={[]}
-            sections={labeledSections}
+            sections={presentedSections}
             selectedValue={props.selectedTeamCredentialModel ?? props.selected}
             getValueKey={sessionModelSelectionKey}
             emptyText={t('settingsProviders.models.empty')}
             headerAccessory={props.headerAccessory}
             footerContent={footerContent}
-            {...(props.scope ? { searchPlaceholder: t('agentInput.model.searchSource', { source: props.scope.scope.label }) } : {})}
             {...(customTarget ? {
                 canEnterCustomValue: true as const,
                 customLabel: t('modelPickerOverlay.customTitle'),
@@ -632,9 +693,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             onSelectOptionControlValue={props.onSelectOptionControlValue}
             summary={reportedModelPresentation.label
                 || currentSelectionRecovery
-                || props.projectionError
-                || (props.projectionFailures?.length ?? 0) > 0
-                || props.scope
+                || (props.scope && props.sourceUsage)
                 || experimentalApproval
                 || props.experimentalConfirmation?.error ? (
                 <>
@@ -648,23 +707,6 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
                     {currentSelectionRecovery ? (
                         <ProviderErrorItems presentation="line" error={currentSelectionRecovery.error} />
                     ) : null}
-                    {props.projectionError ? (
-                        <ProviderErrorItems
-                            presentation="line"
-                            error={props.projectionError}
-                            subject={failureSubject(props.projectionError.connectionId)}
-                            retry={projectionLineRetry}
-                        />
-                    ) : null}
-                    {props.projectionFailures?.map((failure) => (
-                        <ProviderErrorItems
-                            presentation="line"
-                            key={failure.connectionId}
-                            error={failure.error}
-                            subject={failureSubject(failure.connectionId)}
-                            retry={projectionLineRetry}
-                        />
-                    ))}
                     {experimentalApproval ? (
                         <ActionApprovalPendingNotice
                             testID="model-picker-experimental-approval"
@@ -684,7 +726,15 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
                                 : undefined}
                         />
                     ) : null}
-                    {props.scope ? <SessionModelSourceScopeBar scope={props.scope.scope} onExit={props.scope.onExit} /> : null}
+                    {props.scope && props.sourceUsage && props.scope.scope.connectionId !== null ? (
+                        <SessionModelSourceUsage
+                            usage={props.sourceUsage}
+                            onOpenApproval={sourceUsageApprovalOpen}
+                            onOpenConnection={() => router.pushRetainingCurrent(
+                                providerConnectionDetailRoute(props.scope!.scope.connectionId!) as never,
+                            )}
+                        />
+                    ) : null}
                 </>
             ) : undefined}
             onSelect={(ref) => {
@@ -700,3 +750,8 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         />
     );
 }
+
+const styles = StyleSheet.create(() => ({
+    /** Status lines stand on the cards' text edge, inside the pane's scrolling end. */
+    failureLines: { paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX },
+}));

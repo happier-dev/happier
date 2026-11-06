@@ -527,7 +527,6 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     },
                 });
             }}
-            sectionOrder={['model', 'config']}
         />
     );
 }

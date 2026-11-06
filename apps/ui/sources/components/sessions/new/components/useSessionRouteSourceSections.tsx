@@ -84,8 +84,7 @@ export function useSessionRouteSourceSections(
                     ...(row.worksWith ? { disabled: true } : {
                         rightAccessory: <RouteSourceChevron />,
                         accessibilityLabel: t('agentInput.model.browseSource', { source: row.label }),
-                        onSelect: () => browse(agentTargetKey, { connectionId: row.connectionId, label: row.label,
-                            hiddenFromPicker: row.hiddenFromPicker }),
+                        onSelect: () => browse(agentTargetKey, { connectionId: row.connectionId, label: row.label }),
                     }),
                 })),
             }]

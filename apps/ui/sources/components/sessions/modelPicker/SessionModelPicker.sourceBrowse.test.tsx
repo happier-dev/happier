@@ -147,7 +147,7 @@ describe('SessionModelPicker source browsing', () => {
     );
     await flushHookEffects();
     expect(projectionRequests).toHaveLength(0);
-    expect(screen.findByTestId('model-picker-source-scope')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).not.toBeNull();
     const list = screen.findByType(SelectionList);
     const options = list.props.rootStep.sections.flatMap((section: { options: { id: string; label: string }[] }) => section.options);
     expect(options.map((option: { label: string }) => option.label)).toEqual(['GPT-6.1 Sol']);
@@ -155,7 +155,7 @@ describe('SessionModelPicker source browsing', () => {
     await act(async () => { list.props.onSelect(options[0].id); });
     expect(onSelect).toHaveBeenCalledWith(nativeRef);
     await act(async () => { screen.findByTestId('model-picker-source-scope-back')!.props.onPress(); });
-    expect(screen.findByTestId('model-picker-source-scope')).toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).toBeNull();
     expect(screen.getTextContent()).toContain('Fable 5.1');
   });
 
@@ -220,8 +220,9 @@ describe('SessionModelPicker source browsing', () => {
       sourceConnectionId: 'pc_gateway',
       currentSelection: selected,
     });
-    expect(screen.findByTestId('model-picker-source-scope')).not.toBeNull();
-    expect(screen.getTextContent()).toContain(t('agentInput.model.hiddenFromMainPicker'));
+    expect(screen.findByTestId('model-picker-source-scope-back')).not.toBeNull();
+    // The way here was the list it left: the browsed source does not say it is hidden from it.
+    expect(screen.getTextContent()).not.toContain(t('agentInput.model.hiddenFromMainPicker'));
     const optionLabels = () =>
       (
         screen.findByType(SelectionList).props.rootStep
@@ -253,7 +254,7 @@ describe('SessionModelPicker source browsing', () => {
     await act(async () => {
       (back!.props.onPress as () => void)();
     });
-    expect(screen.findByTestId('model-picker-source-scope')).toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).toBeNull();
     expect(optionLabels()).toEqual(['GPT-6.1 Sol']);
     expect(onSelect).not.toHaveBeenCalled();
 
@@ -318,9 +319,9 @@ describe('SessionModelPicker source browsing', () => {
         onSelect={() => {}} />
     </SessionModelSourceBrowseHandoffContext.Provider>;
     const screen = await renderScreen(picker(AGENT));
-    expect(screen.findByTestId('model-picker-source-scope')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).not.toBeNull();
     await screen.update(picker('agent:acme.agent/reviewer'));
-    expect(screen.findByTestId('model-picker-source-scope')).toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).toBeNull();
   });
 
   it('opens on the source "Runs through" asked for, only for the Agent it was asked for, and commits nothing', async () => {
@@ -359,7 +360,7 @@ describe('SessionModelPicker source browsing', () => {
     );
     const screen = await renderScreen(picker(AGENT));
     await flushHookEffects();
-    expect(screen.findByTestId('model-picker-source-scope')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain(t('agentInput.model.hiddenFromMainPicker'));
     expect(projectionRequests.at(-1)?.payload).toMatchObject({ sourceConnectionId: 'pc_gateway' });
     expect(onSelect).not.toHaveBeenCalled();
@@ -367,6 +368,6 @@ describe('SessionModelPicker source browsing', () => {
 
     const other = await renderScreen(picker('agent:happier.agent.claude/claude'));
     await flushHookEffects();
-    expect(other.findByTestId('model-picker-source-scope')).toBeNull();
+    expect(other.findByTestId('model-picker-source-scope-back')).toBeNull();
   });
 });

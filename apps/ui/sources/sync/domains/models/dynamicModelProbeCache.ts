@@ -1,3 +1,4 @@
+import { isSameDynamicModelCatalog } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
@@ -130,6 +131,16 @@ export function isDynamicModelProbePending(key: string): boolean {
 
 function notifyDynamicModelProbeCache(key: string): void {
     for (const listener of listenersByKey.get(key) ?? []) listener();
+}
+
+/** The name this device last saw for a model in any list of the same catalog as `key`. */
+export function findRetainedDynamicModelName(key: string, modelId: string): string | null {
+    for (const [retainedKey, entry] of persistedCache.listRetained()) {
+        if (!isSameDynamicModelCatalog(retainedKey, key)) continue;
+        const model = entry.value.availableModels.find((candidate) => candidate.id === modelId || candidate.extendedContextModelId === modelId);
+        if (model?.name.trim() && model.name !== modelId) return model.name;
+    }
+    return null;
 }
 
 export function resetDynamicModelProbeCacheForTests(): void {

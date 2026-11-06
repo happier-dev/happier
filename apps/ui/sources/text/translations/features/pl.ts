@@ -9156,6 +9156,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const pl: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Salda i wydatki ${provider} w zgłoszonej walucie.`,
+            scopeKey: 'Ten klucz',
+            scopeAccount: 'Konto',
+            amountLeft: ({ amount }: { amount: string }) => `Pozostało ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `Pozostało ${amount} z ${limit}`,
+            notChecked: 'Jeszcze nie sprawdzono. Odśwież, aby zobaczyć najnowsze dane.',
+            needsMachine: 'Wybierz maszynę, aby sprawdzić użycie.',
+            unsupported: 'To połączenie nie zgłasza użycia.',
+            refreshFailed: 'Nie udało się odświeżyć użycia',
+            keyFailed: 'Nie udało się odświeżyć danych tego klucza',
+            accountFailed: 'Nie udało się odświeżyć środków konta',
+            billingKeyTitle: 'Klucz rozliczeniowy',
+            billingKeySaved: 'Odczytuje środki konta. Nigdy nie jest używany do żądań.',
+            billingKeyMissing: 'Opcjonalny. Dodaj go, aby zobaczyć środki konta; nigdy nie jest używany do żądań.',
+            getBillingKey: 'Gdzie uzyskać ten klucz',
+        },
         addDetail: {
             modelsCount: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = count === 1 ? 'model' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'modele' : 'modeli'; return `${count} ${w}`; }),
             modelsCountMore: (({ count }: { count: number }) => { const n = count % 10, h = count % 100; const w = count === 1 ? 'model' : n >= 2 && n <= 4 && (h < 12 || h > 14) ? 'modele' : 'modeli'; return `${count} ${w}, więcej po połączeniu`; }),
@@ -11908,7 +11925,7 @@ const providerModelLoadCancellationTranslations = { pl: { cancelLoad: 'Anuluj ł
 
 const providerPartialStatusTranslations = { pl: 'Częściowo dostępny' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { pl: 'Natywne logowanie agenta nie jest używane z tym dostawcą. Zapisany wybór pozostaje bez zmian.' } as const;
+const providerConnectedServiceSuppressedTranslations = { pl: 'Natywne logowanie agenta nie jest używane z tym dostawcą. Zapisane logowanie pozostaje bez zmian.' } as const;
 
 const providerMachineCleanupPendingTranslations = { pl: 'Maszyna została usunięta, ale nie udało się zapisać czyszczenia dostępu do dostawców. Sprawdź połączenie i usuń maszynę ponownie, aby ponowić próbę.' } as const;
 

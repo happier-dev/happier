@@ -9136,6 +9136,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const fr: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `Soldes et dépenses de ${provider}, dans la devise indiquée.`,
+            scopeKey: 'Cette clé',
+            scopeAccount: 'Compte',
+            amountLeft: ({ amount }: { amount: string }) => `${amount} restants`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${amount} restants sur ${limit}`,
+            notChecked: 'Pas encore vérifié. Actualisez pour voir les derniers chiffres.',
+            needsMachine: 'Choisissez une machine pour vérifier l’utilisation.',
+            unsupported: 'Cette connexion n’indique pas d’utilisation.',
+            refreshFailed: 'Impossible d’actualiser l’utilisation',
+            keyFailed: 'Impossible d’actualiser les chiffres de cette clé',
+            accountFailed: 'Impossible d’actualiser les crédits du compte',
+            billingKeyTitle: 'Clé de facturation',
+            billingKeySaved: 'Lit les crédits du compte. Jamais utilisée pour les requêtes.',
+            billingKeyMissing: 'Facultatif. Ajoutez-en une pour voir les crédits du compte ; elle n’est jamais utilisée pour les requêtes.',
+            getBillingKey: 'Où obtenir cette clé',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 modèle` : `${count} modèles`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 modèle, d’autres une fois connecté` : `${count} modèles, d’autres une fois connecté`,
@@ -11882,7 +11899,7 @@ const providerModelLoadCancellationTranslations = { fr: { cancelLoad: 'Annuler l
 
 const providerPartialStatusTranslations = { fr: 'Partiellement disponible' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { fr: 'La connexion native au service connecté de l’agent n’est pas utilisée avec ce provider. Ta sélection enregistrée est inchangée.' } as const;
+const providerConnectedServiceSuppressedTranslations = { fr: 'La connexion native au service connecté de l’agent n’est pas utilisée avec ce provider. Ta connexion enregistrée est inchangée.' } as const;
 
 const providerMachineCleanupPendingTranslations = { fr: 'La machine a été supprimée, mais ses réglages d’accès au provider n’ont pas pu être enregistrés. Vérifie ta connexion et supprime à nouveau la machine pour réessayer le nettoyage.' } as const;
 

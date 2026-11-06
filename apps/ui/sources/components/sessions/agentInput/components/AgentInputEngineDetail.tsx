@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet } from "react-native-unistyles";
 
 import {
@@ -13,8 +13,11 @@ import type {
   SessionConfigOptionControl,
   SessionConfigOptionValueId,
 } from "@/sync/domains/sessionControl/configOptionsControl";
+import { OptionPickerPaneSlotsContext } from "@/components/sessions/pickers/optionPickerPaneSlots";
 import { SessionModelApplyTimingContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
+import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from "@/components/ui/selectionList/_constants";
 import { Text } from "@/components/ui/text/Text";
+import { Typography } from "@/constants/Typography";
 import { t } from "@/text";
 
 import { AgentInputSessionConfigOptionsSection } from "./AgentInputSessionConfigOptionsSection";
@@ -63,7 +66,6 @@ type AgentInputEngineDetailProps = Readonly<{
     valueId: SessionConfigOptionValueId,
   ) => void;
 
-  sectionOrder?: ReadonlyArray<"model" | "config">;
   surfaceVariant?: "carded" | "plain";
   fillAvailableSpace?: boolean;
 }>;
@@ -81,7 +83,10 @@ function wrapSection(
   return (
     <View
       key={key}
-      style={[styles.sectionCard, fillAvailableSpace ? styles.sectionCardFill : null]}
+      style={[
+        styles.sectionCard,
+        fillAvailableSpace ? styles.sectionCardFill : null,
+      ]}
     >
       {content}
     </View>
@@ -109,7 +114,6 @@ function orderFavoriteModelOptionsFirst(
 }
 
 export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
-  const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
   const hasModelSection =
     props.modelContentOverride !== undefined
@@ -121,10 +125,17 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
   const hasConfigSection =
     (props.configControls?.length ?? 0) > 0
     || (props.configNotes?.length ?? 0) > 0;
-
-  if (!hasModelSection && !hasConfigSection) {
-    return null;
-  }
+  // The producer's array order is the priority: a model-category control it lists before its model
+  // selector sits above the model, one it lists after sits directly beneath it, the rest follow.
+  const configBlocks = React.useMemo(() => {
+    const controls = props.configControls ?? [];
+    const blocks = [
+      { key: "before", controls: controls.filter((control) => control.modelPlacement === "before") },
+      { key: "after", controls: controls.filter((control) => control.modelPlacement === "after") },
+      { key: "rest", controls: controls.filter((control) => control.modelPlacement === undefined) },
+    ];
+    return blocks.map((block) => ({ ...block, hasControls: block.controls.length > 0 }));
+  }, [props.configControls]);
 
   const resolvedModelOptions = React.useMemo(() => {
     const options = props.modelOptions ?? [];
@@ -178,70 +189,112 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     </SessionModelApplyTimingContext.Provider>
   ) : props.modelContentOverride;
 
-  const sections: Record<"model" | "config", React.ReactNode | null> =
-    {
-      model: hasModelSection
-        ? wrapSection(
-            surfaceVariant,
-            "model",
-            modelContentOverride ?? <OptionPickerOverlay
-              title={t("agentInput.model.title")}
-              summary={props.modelSummary}
-              notes={props.modelNotes ?? []}
-              options={resolvedModelOptions}
-              selectedValue={props.selectedModelId ?? "default"}
-              emptyText={
-                props.modelEmptyText ?? t("agentInput.model.configureInCli")
-              }
-              canEnterCustomValue={props.canEnterCustomModel === true}
-              customLabel={`${t("profiles.custom")}...`}
-              customDescription={t("agentInput.model.customDescription")}
-              favoriteOptions={favoriteOptions}
-              headerAccessory={props.modelHeaderAccessory}
-              probe={props.modelProbe}
-              selectedOptionControls={props.selectedModelOptionControls ?? undefined}
-              onSelectOptionControlValue={props.onSelectModelOptionValue}
-              onSelect={props.onSelectModel ?? (() => {})}
-              onSubmitCustomValue={props.onSubmitCustomValue}
-              fillAvailableSpace={props.fillAvailableSpace}
-            />,
-            props.fillAvailableSpace,
-          )
-        : null,
-      config: hasConfigSection
-        ? wrapSection(
-            surfaceVariant,
-            "config",
-            <View style={styles.configSection}>
-              {(props.configNotes ?? []).map((note, index) => (
-                <Text
-                  key={`${index}:${note}`}
-                  testID={index === 0 ? "agent-input-config-options-unavailable" : undefined}
-                  style={styles.configNote}
-                >
-                  {note}
-                </Text>
-              ))}
-              <AgentInputSessionConfigOptionsSection
-                controls={props.configControls ?? []}
-                onSelectValue={props.onSelectConfigValue}
-              />
-            </View>,
-          )
-        : null,
-    };
+  if (!hasModelSection && !hasConfigSection) {
+    return null;
+  }
 
+  const modelSection = hasModelSection
+    ? wrapSection(
+        surfaceVariant,
+        "model",
+        modelContentOverride ?? <OptionPickerOverlay
+          title={t("agentInput.model.title")}
+          summary={props.modelSummary}
+          notes={props.modelNotes ?? []}
+          options={resolvedModelOptions}
+          selectedValue={props.selectedModelId ?? "default"}
+          emptyText={
+            props.modelEmptyText ?? t("agentInput.model.configureInCli")
+          }
+          canEnterCustomValue={props.canEnterCustomModel === true}
+          customLabel={`${t("profiles.custom")}...`}
+          customDescription={t("agentInput.model.customDescription")}
+          favoriteOptions={favoriteOptions}
+          headerAccessory={props.modelHeaderAccessory}
+          probe={props.modelProbe}
+          selectedOptionControls={props.selectedModelOptionControls ?? undefined}
+          onSelectOptionControlValue={props.onSelectModelOptionValue}
+          onSelect={props.onSelectModel ?? (() => {})}
+          onSubmitCustomValue={props.onSubmitCustomValue}
+          fillAvailableSpace={props.fillAvailableSpace}
+        />,
+        props.fillAvailableSpace,
+      )
+    : null;
+
+  // Native guidance (a rejected provider, unavailable options) leads the first block that is shown,
+  // or stands alone when the producer reported no control at all.
+  const notes = props.configNotes ?? [];
+  const notesBlockKey = configBlocks.find((block) => block.hasControls)?.key ?? "rest";
+  const configBlockNodes = configBlocks.map((block) => {
+    const blockNotes = block.key === notesBlockKey ? notes : [];
+    if (!block.hasControls && blockNotes.length === 0) return null;
+    return wrapSection(
+      surfaceVariant,
+      `config:${block.key}`,
+      <View style={styles.configSection}>
+        {blockNotes.map((note, index) => (
+          <Text
+            key={`${index}:${note}`}
+            testID={index === 0 ? "agent-input-config-options-unavailable" : undefined}
+            style={styles.configNote}
+          >
+            {note}
+          </Text>
+        ))}
+        <AgentInputSessionConfigOptionsSection
+          controls={block.controls}
+          onSelectValue={props.onSelectConfigValue}
+        />
+      </View>,
+    );
+  });
+
+  const routingHint = hasModelSection ? props.modelRoutingHint ?? null : null;
+  if (props.fillAvailableSpace !== true) {
+    return (
+      <View style={styles.container}>
+        {routingHint}
+        {configBlockNodes[0]}
+        {modelSection}
+        {configBlockNodes[1]}
+        {configBlockNodes[2]}
+      </View>
+    );
+  }
+  // The model surface's one scroll owner carries everything around it, so the whole pane scrolls as one.
+  const paneSlots = {
+    leading: routingHint || configBlockNodes[0] ? <View style={styles.container}>{routingHint}{configBlockNodes[0]}</View> : null,
+    trailing: configBlockNodes[1] || configBlockNodes[2] ? <View style={styles.container}>{configBlockNodes[1]}{configBlockNodes[2]}</View> : null,
+  };
+  // One container for the whole life of a filling pane: the producer's catalog arriving or being
+  // withdrawn only changes whether this scrolls, so the model surface keeps its search, scroll and focus.
   return (
-    <View style={[styles.container, props.fillAvailableSpace ? styles.containerFill : null]}>
-      {hasModelSection ? props.modelRoutingHint ?? null : null}
-      {sectionOrder.map((sectionId) => sections[sectionId])}
-    </View>
+    <OptionPickerPaneSlotsContext.Provider value={paneSlots}>
+      <ScrollView
+        style={styles.containerFill}
+        contentContainerStyle={hasModelSection ? styles.containerFill : [styles.container, styles.controlsOnlyInset]}
+        scrollEnabled={!hasModelSection}
+      >
+        {hasModelSection ? modelSection : (
+          <>
+            {configBlockNodes[0]}
+            {configBlockNodes[1]}
+            {configBlockNodes[2]}
+          </>
+        )}
+      </ScrollView>
+    </OptionPickerPaneSlotsContext.Provider>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.space.s10,
+  },
+  // No model surface to carry the pane's top and bottom inset.
+  controlsOnlyInset: {
+    paddingVertical: theme.space.s16,
   },
   containerFill: {
     flex: 1,
@@ -258,8 +311,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
   configNote: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: theme.colors.text.secondary,
+    ...Typography.variant("meta"),
+    color: theme.colors.text.tertiary,
+    paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
   },
 }));

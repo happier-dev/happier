@@ -9133,6 +9133,23 @@ const en = Shared_providerCollectionTranslations.en;
 
 const ja: ProviderCollectionCopy = {
     settingsProvidersCollection: {
+        usage: {
+            description: ({ provider }: { provider: string }) => `${provider} の残高と支出を、報告された通貨で表示します。`,
+            scopeKey: 'このキー',
+            scopeAccount: 'アカウント',
+            amountLeft: ({ amount }: { amount: string }) => `残り ${amount}`,
+            amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${limit} 中 残り ${amount}`,
+            notChecked: 'まだ確認していません。更新すると最新の数値が表示されます。',
+            needsMachine: '使用量を確認するマシンを選んでください。',
+            unsupported: 'この接続は使用量を報告しません。',
+            refreshFailed: '使用量を更新できませんでした',
+            keyFailed: 'このキーの数値を更新できませんでした',
+            accountFailed: 'アカウントのクレジットを更新できませんでした',
+            billingKeyTitle: '請求用キー',
+            billingKeySaved: 'アカウントのクレジットを読み取ります。リクエストには使用されません。',
+            billingKeyMissing: '任意。追加するとアカウントのクレジットが表示されます。リクエストには使用されません。',
+            getBillingKey: 'このキーの取得先',
+        },
         addDetail: {
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 モデル` : `${count} モデル`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 モデル（接続後にさらに追加）` : `${count} モデル（接続後にさらに追加）`,
@@ -11877,7 +11894,7 @@ const providerModelLoadCancellationTranslations = { ja: { cancelLoad: '読み込
 
 const providerPartialStatusTranslations = { ja: '一部利用可能' } as const;
 
-const providerConnectedServiceSuppressedTranslations = { ja: 'このプロバイダーではエージェントの標準サインインを使用しません。保存済みの選択は変更されません。' } as const;
+const providerConnectedServiceSuppressedTranslations = { ja: 'このプロバイダーではエージェントの標準サインインを使用しません。保存済みのサインインは変更されません。' } as const;
 
 const providerMachineCleanupPendingTranslations = { ja: 'マシンは削除されましたが、プロバイダーアクセス設定のクリーンアップを保存できませんでした。接続を確認し、もう一度マシンを削除して再試行してください。' } as const;
 

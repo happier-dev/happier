@@ -4319,6 +4319,7 @@ export function useSessionComposerController({
                 providerGroups: providerModelProjection.data?.groups ?? EMPTY_SESSION_MODEL_PROJECTION_GROUPS,
                 hiddenNativeModelKeys: existingSessionHiddenNativeModelKeys,
                 providerProjectionAuthoritative: providerModelProjection.status === 'success',
+                providerProjectionFailed: providerModelProjection.status === 'error',
                 selected: existingSessionSelectedModelRef,
                 currentSelectionRecovery: providerModelProjection.data?.currentSelectionRecovery,
                 fallbackLabel: t('agentInput.model.unavailable'),

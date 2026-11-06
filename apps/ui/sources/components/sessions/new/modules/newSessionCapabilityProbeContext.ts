@@ -16,7 +16,10 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type NewSessionCapabilityProbeContext = Readonly<{
     cacheKeySuffixParts?: readonly string[] | null;
-    capabilityParams?: Readonly<Record<string, unknown> & { connectedServices?: ConnectedServiceBindingsV2 }> | null;
+    capabilityParams?: Readonly<Record<string, unknown> & {
+        connectedServices?: ConnectedServiceBindingsV2;
+        configOptionOverrides?: Readonly<Record<string, string>>;
+    }> | null;
     modelSuccessCacheMaxAgeMs?: number | null;
 }>;
 
@@ -64,11 +67,34 @@ export function normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(
     return normalized.length > 0 ? normalized : null;
 }
 
+const CONFIG_OPTIONS_KEY_PART = 'config-options:';
+
+/** The key parts that change what a model catalog is. Config options re-key the probe but do not change which models exist or what they are called. */
+export function withoutNewSessionConfigOptionKeyParts(parts: readonly string[] | null): readonly string[] | null {
+    return parts?.filter((part) => !part.startsWith(CONFIG_OPTIONS_KEY_PART)) ?? null;
+}
+
 export function buildNewSessionCapabilityProbeContextKey(probeContext: NewSessionCapabilityProbeContext | null | undefined): string {
     return stableJsonStringify({
         cacheKeySuffixParts: probeContext?.cacheKeySuffixParts ?? null,
         capabilityParams: probeContext?.capabilityParams ?? null,
         modelSuccessCacheMaxAgeMs: probeContext?.modelSuccessCacheMaxAgeMs ?? null,
+    });
+}
+
+export function withNewSessionConfigOptionOverrides(
+    context: NewSessionCapabilityProbeContext | null | undefined,
+    overrides: Readonly<Record<string, string>> | null | undefined,
+): NewSessionCapabilityProbeContext | null {
+    if (!overrides || Object.keys(overrides).length === 0) return context ?? null;
+    const configOptionOverrides = Object.fromEntries(Object.entries(overrides).sort(([left], [right]) => left.localeCompare(right)));
+    const cacheKeySuffixParts = [...(context?.cacheKeySuffixParts ?? []), `${CONFIG_OPTIONS_KEY_PART}${stableJsonStringify(configOptionOverrides)}`];
+    const capabilityParams = { ...(context?.capabilityParams ?? {}), configOptionOverrides };
+    return getOrCreateProbeContext({
+        key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams, modelSuccessCacheMaxAgeMs: context?.modelSuccessCacheMaxAgeMs }),
+        cacheKeySuffixParts,
+        capabilityParams,
+        modelSuccessCacheMaxAgeMs: context?.modelSuccessCacheMaxAgeMs,
     });
 }
 

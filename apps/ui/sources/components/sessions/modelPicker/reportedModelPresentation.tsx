@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
@@ -55,19 +55,11 @@ export function ReportedModelSummary(props: Readonly<{
     /** When a change takes effect ("Applies from your next message"), on the same line. */
     applyTiming?: string;
 }>) {
-    const { theme } = useUnistyles();
     return (
-        <View style={styles.container}>
-            <Icon
-                name={reportedModelIconName(props.status)}
-                size={14}
-                color={theme.colors.text.secondary}
-            />
-            <Text style={styles.label}>
-                {reportedModelSummary(props.status, props.modelLabel)}
-                {props.applyTiming ? ` · ${props.applyTiming}` : null}
-            </Text>
-        </View>
+        <Text style={styles.label}>
+            {reportedModelSummary(props.status, props.modelLabel)}
+            {props.applyTiming ? ` · ${props.applyTiming}` : null}
+        </Text>
     );
 }
 
@@ -93,14 +85,8 @@ export function ReportedModelStatusIcon(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-    container: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s4,
-    },
     label: {
-        fontSize: 12,
-        lineHeight: 16,
-        color: theme.colors.text.secondary,
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
     },
 }));
