@@ -5,13 +5,52 @@ import { z } from 'zod/mini';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 
 let cleanup: (() => void) | undefined;
 afterEach(() => { cleanup?.(); cleanup = undefined; vi.restoreAllMocks(); });
+
+it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded activity query without private Session reads', async surface => {
+  const app = fastify();
+  let hours: { startHour: number; endHour: number } | null = { startHour: 23, endHour: 7 };
+  const reads: string[] = [];
+  app.addHook('preHandler', async request => { reads.push(request.url.split('?')[0]!); });
+  app.post('/v2/usage/query', async () => ({ v: 1, totals: { eventCount: 10,
+    tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
+    cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } }, activity: {
+      weekdayHourBuckets: [{ weekday: 5, hour: 0, eventCount: 7 }, { weekday: 5, hour: 12, eventCount: 3 }],
+    } }));
+  app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+  app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: { usageNightHoursV1: hours } }, version: 1 }));
+  app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+  cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-night.test' });
+  const credentials = { token: 'owner-token', encryption: null };
+  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+    token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage-night.test',
+  }), isActionApprovalRequired: () => false });
+  const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, timeZoneOffsetMinutes: 120,
+    includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+  const readNight = async () => {
+    const result = await executor.execute('usage.query', { queries: [query] }, { surface, serverId: 'home' });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+    const ui = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: slice.accounting, status: 'available' }],
+      nightHours: hours });
+    expect(slice.howYouWork?.nightShift).toEqual(ui.results[0]?.howYouWork?.nightShift);
+    return slice.howYouWork?.nightShift;
+  };
+  expect(await readNight()).toEqual({ startHour: 23, endHour: 7, recordedActivityCount: 7, observedBusyMs: null });
+  hours = { startHour: 9, endHour: 17 };
+  expect(await readNight()).toEqual({ startHour: 9, endHour: 17, recordedActivityCount: 3, observedBusyMs: null });
+  hours = null;
+  expect(await readNight()).toBeNull();
+  expect(reads.filter(path => /^\/v[12]\/sessions(?:\/|$)/.test(path))).toEqual([]);
+  await app.close();
+});
 
 it.each([true, false])('uses one relative read range through the CLI HTTP boundary with accounting demand=%s', async includeAccounting => {
   const nowMs = Date.UTC(2026, 9, 12, 12);

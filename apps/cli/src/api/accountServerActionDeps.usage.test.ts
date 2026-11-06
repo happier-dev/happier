@@ -49,6 +49,41 @@ let cleanup: (() => void) | undefined;
 afterEach(() => { cleanup?.(); cleanup = undefined; vi.restoreAllMocks(); socketBoundary.mockReset(); resetActiveAccountSettingsSnapshotForTests(); process.exitCode = undefined; });
 
 describe('CLI and MCP personal usage Account transport', () => {
+  it('distinguishes a missing Session from a missing Usage operation without re-polling or retaining values', async () => {
+    const app = fastify();
+    let state: 'available' | 'not_found' | 'Session not found' | 'missing_operation' = 'available';
+    let reads = 0;
+    app.post('/v2/usage/query', async (_request, reply) => {
+      reads += 1;
+      if (state === 'available') return response;
+      return reply.code(404).send(state === 'missing_operation'
+        ? { message: 'Route POST:/v2/usage/query not found', error: 'Not Found', statusCode: 404 }
+        : { error: state });
+    });
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-retired-session.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: 'owner-token', serverId: 'home', serverHttpBaseUrl: 'http://usage-retired-session.test' }) });
+    const read = async () => {
+      const result = await executor.execute('usage.query', { queries: [{ session: ['owned-session'],
+        includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }] },
+      { surface: 'cli', serverId: 'home' });
+      expect(result.ok).toBe(true);
+      return UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+    };
+    try {
+      expect((await read()).accounting?.totals.tokens.total).toBe(12);
+      for (const next of ['not_found', 'Session not found', 'missing_operation'] as const) {
+        state = next;
+        const before = reads;
+        const slice = await read();
+        expect(slice.sources.find(source => source.source === 'accounting')).toMatchObject(next === 'missing_operation'
+          ? { status: 'unsupported', errorCode: 'unsupported' } : { status: 'error', errorCode: 'denied' });
+        expect(slice.accounting).toBeUndefined();
+        expect(slice.pending).toBe(false);
+        expect(reads - before).toBe(1);
+      }
+    } finally { await app.close(); }
+  });
   it('reads the captured Account public view without private Usage and refuses a retired result', async () => {
     const app = fastify();
     let current = true;
