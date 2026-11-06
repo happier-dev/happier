@@ -42,6 +42,54 @@ describe('readPluginNewSessionSeedV1', () => {
 });
 
 describe('seedAndOpenNewSession', () => {
+    it('keeps placement-only seeds (Machine, branch worktree, Project) off the Account until the person writes', async () => {
+        const { configureSessionDraftRepository, flushSessionDraft, listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { createSessionDraftPrivatePayloadV2 } = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
+        // The Account draft endpoint is the network boundary; every remote draft write reaches `mutate`.
+        const remoteWrites: string[] = [];
+        configureSessionDraftRepository({
+            scope, syncEnabled: true,
+            cipher: {
+                seal: async (address, document) => ({ t: 'plain' as const, v: createSessionDraftPrivatePayloadV2(address, document) }),
+                open: async (_address, content) => content.t === 'plain' ? content.v.document : null,
+            },
+            transport: {
+                read: async () => ({ status: 'absent' as const }),
+                list: async () => ({ items: [], nextAfter: undefined }),
+                mutate: async ({ address, content }) => {
+                    remoteWrites.push(address.kind === 'newSession' ? address.draftId : address.kind);
+                    return { status: 'updated' as const, record: { address, revision: 0, content, createdAt: 1, updatedAt: 1 } };
+                },
+            },
+        });
+        try {
+            const seeds = [
+                { placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-1' } },
+                { placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-1', directory: '/repo' }, checkoutIntent: 'createWorktree' },
+                { placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-1', directory: '/repo' } },
+            ] as const;
+            const opened: string[] = [];
+            let next = 0;
+            for (const seed of seeds) {
+                const outcome = seedAndOpenNewSession({ seed, scope, isCurrent: () => true,
+                    createDraftId: () => `00000000-0000-4000-8000-00000000010${next++}`, navigateToNewSession: () => {} });
+                if (outcome.kind !== 'opened') throw new Error(JSON.stringify(outcome));
+                opened.push(outcome.draftId);
+            }
+            await Promise.all(opened.map(id => flushSessionDraft({ scope, address: { kind: 'newSession', draftId: id } })));
+            expect({ remoteWrites: remoteWrites.length, listed: listNewSessionDraftProjections(scope).length }).toEqual({ remoteWrites: 0, listed: 0 });
+            // The opened New Session still starts on the chosen Machine and folder.
+            expect(readNewSessionDraftFromRepository({ scope, draftId: opened[2]! })).toMatchObject({
+                selectedMachineId: 'machine-1', selectedPath: '/repo' });
+
+            const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: opened[0]! } });
+            owner.replaceDocument({ ...owner.read().document, text: 'Start on this Machine' });
+            await flushSessionDraft({ scope, address: { kind: 'newSession', draftId: opened[0]! } });
+            expect({ remoteWrites, listed: listNewSessionDraftProjections(scope).length }).toEqual({ remoteWrites: [opened[0]], listed: 1 });
+            expect(readNewSessionDraftFromRepository({ scope, draftId: opened[0]! })).toMatchObject({ selectedMachineId: 'machine-1' });
+        } finally { configureSessionDraftRepository({ syncEnabled: false }); }
+    });
+
     it('opens a capture-only draft without manufacturing a prompt', () => {
         const navigate = vi.fn();
         const outcome = seedAndOpenNewSession({ seed: {}, media: { items: [{ kind: 'image', source: {
@@ -201,8 +249,10 @@ describe('seedAndOpenNewSession', () => {
         const { outcome, navigate } = harness({ seed: { agentTarget } });
         expect(outcome.kind).toBe('opened');
         expect(navigate.mock.results[0]?.value).toMatchObject({ agentTarget });
-        resetSessionDraftRepositoryForTests();
         expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ agentTarget });
+        // An Agent choice alone is opener context: it is not kept across a restart until the person writes.
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toBeNull();
         expect(readPluginNewSessionSeedV1({ agentTarget: { ...agentTarget, targetKey: 'untrusted' } })).toBeNull();
     });
 

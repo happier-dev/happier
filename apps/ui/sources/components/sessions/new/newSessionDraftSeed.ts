@@ -219,10 +219,15 @@ export function seedNewSessionDraftV1(input: Readonly<{
         existingDraft: input.configurationDraft ?? null,
         updatedAt: input.nowMs?.() ?? Date.now(),
     });
+    // A prompt, attachments and composer media are real content. Everything else an opener declares
+    // (Machine, folder, checkout, Project, Agent, copied setup) is context: the repository keeps it locally
+    // until the person writes, and its authored-content rule decides when the draft is kept.
+    const seedsContent = normalizedNonEmpty(input.seed.prompt?.text) !== null
+        || (input.attachmentSeeds?.length ?? 0) > 0 || hasComposerContent;
     (input.writeDraft ?? writeNewSessionDraftToRepository)({
         scope,
         draftId,
-        materializationIntent: 'seeded',
+        materializationIntent: seedsContent ? 'seeded' : 'seededContext',
         draft: input.attachmentSeeds === undefined
             ? draft
             : { ...draft, composerAttachmentSeeds: input.attachmentSeeds },

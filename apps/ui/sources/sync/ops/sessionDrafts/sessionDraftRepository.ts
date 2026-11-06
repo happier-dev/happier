@@ -44,7 +44,12 @@ export type SessionDraftRepositoryScope = ServerAccountScope;
  * truthful copy instead of the generic sync error.
  */
 export type SessionDraftStatus = 'clean' | 'pending' | 'offline' | 'conflict' | 'error' | 'unsupported';
-export type SessionDraftMaterializationIntent = 'passiveHydration' | 'userEdit' | 'seeded' | 'launchInterrupted';
+/**
+ * `seededContext`: an opener's placement/context for a New Session (Machine, folder, checkout, Project, copied
+ * setup). It is held as a device-local, unlisted, unsynced replica of this process until the person authors
+ * content; only then does it become a kept draft and flush. `seeded` remains for real seeded content.
+ */
+export type SessionDraftMaterializationIntent = 'passiveHydration' | 'userEdit' | 'seeded' | 'seededContext' | 'launchInterrupted';
 
 type DraftFieldMutationV1 = Readonly<{
     path: DraftFieldPathV1;
@@ -776,6 +781,12 @@ function hasMeaningfulContent(
         || value({ kind: 'routing', field: 'executionRunDelivery' }) !== null;
 }
 
+/** Opener context for a New Session that was never authored or sent (see `seededContext`). */
+function isUnauthoredNewSessionContext(replica: Pick<PersistedReplica, 'address' | 'materialized' | 'baseRevision' | 'deleteWhenEmpty'> | undefined): boolean {
+    return replica?.address.kind === 'newSession' && !replica.materialized
+        && replica.baseRevision === 'absent' && !replica.deleteWhenEmpty;
+}
+
 function runRecipientValue(runId: string): StrictJsonValue {
     return { mode: 'manual', recipient: { kind: 'execution_run', runId } };
 }
@@ -951,7 +962,7 @@ export class SessionDraftRepository {
             const key = canonicalSessionDraftAddressV2(params.address);
             const replica = restored.replicas.get(key);
             if (replica) previous.replicas.set(key, replica);
-            else previous.replicas.delete(key);
+            else if (!isUnauthoredNewSessionContext(previous.replicas.get(key))) previous.replicas.delete(key);
             this.scopeStates.set(scopeKey, previous);
         }
         this.notify(params.scope, params.address);
@@ -1133,6 +1144,8 @@ export class SessionDraftRepository {
         const state = this.getScopeState(scope);
         const entries: string[] = [...state.retainedReplicaEntries];
         for (const [key, replica] of state.replicas) {
+            // Unauthored New Session context lives only for this process (see `seededContext`).
+            if (isUnauthoredNewSessionContext(replica)) continue;
             let serialized = this.serializedReplicas.get(replica);
             if (serialized === undefined) {
                 serialized = serializeSessionDraftReplica(replica);
@@ -1418,12 +1431,15 @@ export class SessionDraftRepository {
         const materialized = existing?.materialized === true
             || materializationIntent === 'seeded'
             || materializationIntent === 'launchInterrupted'
-            || (materializationIntent === 'userEdit' && (address.kind === 'newSession'
+            || ((materializationIntent === 'userEdit' || materializationIntent === 'seededContext') && (address.kind === 'newSession'
                 // Opening the composer autosaves resolved configuration; only
                 // authored content turns a New Session into a kept draft.
                 ? hasMeaningfulContent(document, address)
                 : changed || hasMeaningfulContent(document, address)));
-        if (!materialized && address.kind === 'newSession') return;
+        // An unauthored New Session stays entry context: only an opener's context write (or a later
+        // edit of that local context) is kept, unsynced and unlisted, and nothing else is stored.
+        const entryContext = !materialized && address.kind === 'newSession';
+        if (entryContext && !existing && materializationIntent !== 'seededContext') return;
         const meaningfulContent = hasMeaningfulContent(document, address, { localSupplement: existing?.localSupplement });
         this.writeReplica(scope, {
             address,
@@ -1432,7 +1448,7 @@ export class SessionDraftRepository {
             localRawDocument: document,
             documentRevision: (existing?.documentRevision ?? 0) + (changed ? 1 : 0),
             pendingFieldMutations: pending,
-            status: this.isSyncEnabledForScope(scope) ? 'pending' : 'clean',
+            status: !entryContext && this.isSyncEnabledForScope(scope) ? 'pending' : 'clean',
             conflict: existing?.conflict ?? null,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -2181,6 +2197,8 @@ export class SessionDraftRepository {
             const replica = this.readReplica(params.scope, params.address);
             if (!replica?.localRawDocument && !replica?.deleteWhenEmpty) return { status: 'clean' };
             if (replica.conflict) return { status: 'conflict' };
+            // Unauthored New Session context never reaches the Account; its first authored edit sends it all.
+            if (isUnauthoredNewSessionContext(replica)) return { status: 'local-only' };
             if (replica.status === 'clean' && replica.pendingFieldMutations.length === 0 && !replica.deleteWhenEmpty) {
                 return { status: 'clean' };
             }
