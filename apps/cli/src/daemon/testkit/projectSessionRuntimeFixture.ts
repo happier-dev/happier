@@ -96,7 +96,7 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
         canManage: (options.machineAccess?.role ?? 'manage') === 'manage', grants: [], ownDirectGrant: false, ownAccessSources: [] })
       : { kind: 'refused', code: 'access_denied' } };
     if (url.endsWith('/v1/machines/machine')) return { status: 200, data: { machine: {
-      id: 'machine', installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      id: 'machine', managedMachineRef: null, installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       access: { custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' },
         role: options.machineAccess?.role ?? 'manage', resourceMode: 'plain', accessState: 'ready' },
       metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
