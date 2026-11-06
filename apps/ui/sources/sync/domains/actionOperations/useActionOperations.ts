@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { actionOperationSelectors, selectTerminalActionOperationState, type TerminalActionOperationQuery } from './actionOperationSelectors';
+import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { actionOperationStore } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
 
@@ -62,6 +62,14 @@ export function useActionOperationByRequestId(
 
 export function useActiveActionOperations() {
     return useActionOperationSelector(() => actionOperationSelectors.selectActive(actionOperationStore.getSnapshot()));
+}
+
+export function useMachineRebootActionOperations(scope: Readonly<{ serverId: string; accountId: string }> | null) {
+    const read = React.useMemo(() => {
+        const selectors = createActionOperationSelectors();
+        return () => selectors.selectMachineReboots(actionOperationStore.getSnapshot(), scope);
+    }, [scope]);
+    return useActionOperationSelector(read);
 }
 
 export function useSessionActionOperations(address: ActionOperationSessionAddress) {

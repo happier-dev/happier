@@ -64,12 +64,49 @@ export const BillingCapabilitiesV1Schema = lazyDefinition(() => z.strictObject({
   stoppedBilling: z.enum(['billed', 'not-billed', 'unknown']),
   storageCharges: z.optional(z.array(ProviderPriceV1Schema)),
 }));
+/** Native deletion evidence only. afterMs 0 means deletion on Stop; an omitted date never guesses a Stop time. */
+export const ProviderDeletionNoticeV1Schema = lazyDefinition(() => z.strictObject({
+  kind: z.literal('stopped-storage'), at: z.optional(instant()),
+  rule: z.strictObject({ kind: z.literal('after-stop'), afterMs: z.number().check(z.gte(0)) }),
+  consequence: z.literal('disk-deleted'),
+}));
+export type ProviderDeletionNoticeV1 = z.infer<typeof ProviderDeletionNoticeV1Schema>;
+
+/** Observation, including an explicit withdrawal, supersedes the reviewed provider rule. */
+export function resolveProviderDeletionNoticeV1(input: Readonly<{
+  observation?: Pick<ProviderObservationV1, 'deletionNotices'>;
+  retentionCapabilities?: Pick<RetentionCapabilitiesV1, 'deletionNotices'>;
+}>): ProviderDeletionNoticeV1 | null {
+  const notices = input.observation?.deletionNotices ?? input.retentionCapabilities?.deletionNotices ?? [];
+  let nearest: ProviderDeletionNoticeV1 | null = null;
+  for (const notice of notices) {
+    if (nearest === null || notice.at !== undefined && (nearest.at === undefined || notice.at < nearest.at)) {
+      nearest = notice;
+    }
+  }
+  return nearest;
+}
+
+/** App-open attention and native Stop-time scheduling consume this same lead-time projection. */
+export function resolveProviderDeletionReminderV1(input: Readonly<{
+  observation?: Pick<ProviderObservationV1, 'deletionNotices'>;
+  retentionCapabilities?: Pick<RetentionCapabilitiesV1, 'deletionNotices'>;
+  leadTimeMs: number;
+  nowMs: number;
+}>): Readonly<{ notice: ProviderDeletionNoticeV1 & { at: number }; remindAt: number; due: boolean }> | null {
+  const notice = resolveProviderDeletionNoticeV1(input);
+  if (notice?.at === undefined) return null;
+  const remindAt = notice.at - input.leadTimeMs;
+  return { notice: { ...notice, at: notice.at }, remindAt, due: input.nowMs >= remindAt };
+}
+
 export const RetentionCapabilitiesV1Schema = lazyDefinition(() => z.strictObject({
   supportedIntents: z.array(SupportedNativeIntentSchema),
   /** Leaf-qualified native Stop effect only; the host's admin owner decides promptless poweroff availability. */
   guestLocalStop: z.optional(z.enum(['poweroff', 'process-exit'])),
   /** Omission is unknown; expiry and supported power operations do not imply this fact. */
   finiteOnly: z.optional(z.boolean()),
+  deletionNotices: z.optional(z.array(ProviderDeletionNoticeV1Schema)),
   nativeExpiry: z.optional(z.union([
     z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)) }),
     z.strictObject({ kind: z.literal('deadline'), at: instant() }),
@@ -84,6 +121,7 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   billing: z.optional(BillingCapabilitiesV1Schema),
   prices: z.optional(z.array(ProviderPriceV1Schema)),
   nativeExpiry: z.optional(instant()),
+  deletionNotices: z.optional(z.array(ProviderDeletionNoticeV1Schema)),
   reason: z.optional(id()),
   nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
 }).check(z.superRefine((value, context) => {

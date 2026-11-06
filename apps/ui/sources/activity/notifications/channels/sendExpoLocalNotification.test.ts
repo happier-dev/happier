@@ -9,6 +9,7 @@ vi.mock('expo-notifications', () => {
     }
     return {
         scheduleNotificationAsync,
+        SchedulableTriggerInputTypes: { DATE: 'date' },
     };
 });
 
@@ -128,6 +129,20 @@ describe('sendExpoLocalNotification', () => {
                 sound: 'happier_soft.wav',
             },
             trigger: { channelId: 'happier.default.soft.v1' },
+        });
+    });
+
+    it('schedules the provider reminder at its native date while preserving its Android channel', async () => {
+        const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
+        const date = new Date('2026-11-12T10:00:00Z');
+        const reminder = {
+            title: 'Disk deletion', body: 'Start this Machine to keep its disk.',
+            data: { managedId: 'managed-1' }, date, channelId: 'happier.default.soft.v1',
+        };
+        await sendExpoLocalNotification(reminder);
+        expect(scheduleNotificationAsync).toHaveBeenCalledWith({
+            content: { title: reminder.title, body: reminder.body, data: reminder.data, sound: 'default' },
+            trigger: { type: 'date', date, channelId: reminder.channelId },
         });
     });
 });

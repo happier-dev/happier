@@ -54,6 +54,7 @@ export type ActionOperationSelectors = Readonly<{
         accountId?: string | null,
     ): ActionOperationSnapshotV1 | null;
     selectActive(state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[];
+    selectMachineReboots(state: ActionOperationStoreSnapshot, scope: Readonly<{ serverId: string; accountId: string }> | null): readonly ActionOperationProjection[];
     selectForSession(state: ActionOperationStoreSnapshot, address: ActionOperationSessionAddress): readonly ActionOperationProjection[];
     selectForProjectScript(state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery): ActionOperationProjection | null;
     selectForProjectSetup(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
@@ -170,6 +171,9 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     let previousState: ActionOperationStoreSnapshot | null = null;
     let previousAll: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
     let previousActive: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
+    let previousMachineReboots: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
+    let previousMachineRebootsState: ActionOperationStoreSnapshot | null = null;
+    let previousMachineRebootScope: Readonly<{ serverId: string; accountId: string }> | null = null;
     let previousInbox: readonly InboxActionOperationEntry[] = EMPTY_INBOX_OPERATIONS;
     let previousActivitySummaryState: ActionOperationStoreSnapshot | null = null;
     let previousActivitySummary: ActionOperationActivitySummary = Object.freeze({ activeCount: 0, hasAttention: false });
@@ -213,6 +217,21 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             ? EMPTY_OPERATIONS
             : hasSameItems(previousActive, active) ? previousActive : Object.freeze(active);
         return previousAll;
+    };
+
+    const selectMachineReboots = (state: ActionOperationStoreSnapshot, scope: Readonly<{ serverId: string; accountId: string }> | null): readonly ActionOperationProjection[] => {
+        if (state === previousMachineRebootsState && scope === previousMachineRebootScope) return previousMachineReboots;
+        // Dismissal affects Activity visibility, not a retained operation's subject.
+        const next = [...state.operationsByKey.entries()]
+            .filter(([, operation]) => scope && operation.snapshot.actionId === 'machines.reboot'
+                && operation.snapshot.scope.accountId === scope.accountId
+                && areServerProfileIdentifiersEquivalent(operation.serverId, scope.serverId))
+            .map(([key, operation]) => readProjection(state, key, operation))
+            .sort(compareOperations);
+        previousMachineRebootsState = state;
+        previousMachineRebootScope = scope;
+        if (!hasSameItems(previousMachineReboots, next)) previousMachineReboots = Object.freeze(next);
+        return previousMachineReboots;
     };
 
     const selectById = (state: ActionOperationStoreSnapshot, address: ActionOperationAddress) => {
@@ -457,6 +476,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectById,
         selectSnapshotByRequestId,
         selectActive,
+        selectMachineReboots,
         selectForSession,
         selectForProjectScript,
         selectForProjectSetup,

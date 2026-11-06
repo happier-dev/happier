@@ -56,6 +56,7 @@ import { useSessionContentDemand } from '@/sync/domains/session/useSessionConten
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 
 import { useInboxFriendRequests } from './useInboxFriendRequests';
+import { useInboxMachineReachability } from './useInboxMachineReachability';
 import { useInboxPluginSessionRows } from './useInboxPluginSessionRows';
 import type { InboxPluginSessionControlInvoker } from './useInboxPluginSessionControls';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
@@ -98,6 +99,7 @@ export type InboxModel = Readonly<{
     sessionPresentation: InboxSessionPresentation;
     targetBySessionAddress: ReadonlyMap<string, SessionBulkActionTarget>;
     actionOperationEntries: readonly InboxActionOperationEntry[];
+    machineReachabilityEntries: ReturnType<typeof useInboxMachineReachability>;
     pendingReadKeys: ReadonlySet<string>;
     markAllPending: boolean;
     isLoading: boolean;
@@ -169,6 +171,7 @@ function useCreateInboxModel(): InboxModel {
     const artifacts = useArtifacts();
     const artifactSource = useInboxArtifactSource();
     const profileScope = storage((state) => state.profileScope);
+    const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
     const readableOperations = useActiveActionOperations();
     const appPlugins = useAppShellPluginUiProjection();
     const pluginPackages = appPlugins.accountLifetime?.isCurrent()
@@ -315,7 +318,8 @@ function useCreateInboxModel(): InboxModel {
         || sessionPresentation.sessionsNeedingAttention.length > 0
         || sessionPresentation.readySessions.length > 0
         || friends.requests.length > 0
-        || actionOperationEntries.length > 0;
+        || actionOperationEntries.length > 0
+        || machineReachabilityEntries.length > 0;
     const showCaughtUp = !isLoading && !hasPrimaryAttention
         && artifactSource.phase === 'current'
         && !executionRuns.failed
@@ -463,6 +467,7 @@ function useCreateInboxModel(): InboxModel {
         sessionPresentation,
         targetBySessionAddress,
         actionOperationEntries,
+        machineReachabilityEntries,
         pendingReadKeys,
         markAllPending,
         isLoading,
@@ -484,6 +489,7 @@ function useCreateInboxModel(): InboxModel {
         pluginSessionInbox.invokeControl,
         spansHomes,
         actionOperationEntries,
+        machineReachabilityEntries,
         friends.requests,
         hasPrimaryAttention,
         isLoading,

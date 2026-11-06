@@ -7,6 +7,10 @@ export async function sendExpoLocalNotification(params: Readonly<{
     categoryIdentifier?: string | null;
     sound?: string | null;
     channelId?: string;
+    /** A native OS date trigger; the app does no work while waiting. */
+    date?: Date;
+    /** Existing OS schedule identity, used to replace a resource's pending reminder. */
+    identifier?: string;
 }>): Promise<string> {
     const Notifications = await loadExpoNotifications();
     const categoryIdentifier = typeof params.categoryIdentifier === 'string' && params.categoryIdentifier.trim().length > 0
@@ -25,7 +29,11 @@ export async function sendExpoLocalNotification(params: Readonly<{
         content.sound = sound;
     }
     return Notifications.scheduleNotificationAsync({
+        ...(params.identifier === undefined ? {} : { identifier: params.identifier }),
         content,
-        trigger: params.channelId ? { channelId: params.channelId } : null,
+        trigger: params.date
+            ? { type: Notifications.SchedulableTriggerInputTypes.DATE, date: params.date,
+                ...(params.channelId ? { channelId: params.channelId } : {}) }
+            : params.channelId ? { channelId: params.channelId } : null,
     });
 }
