@@ -344,7 +344,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
         status: 'waiting',
         nextRetryAtMs: 3_000,
         attemptCount: 0,
-        maxAttempts: 3,
+        maxAttempts: 0,
       });
 
       await vi.advanceTimersByTimeAsync(1_999);
@@ -371,7 +371,6 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       store,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      maxAttempts: 2,
       resume,
     });
 
@@ -405,7 +404,6 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       resume: async (): Promise<{ status: 'continued' }> => {
         throw new Error('still throttled');
       },
-      maxAttempts: 3,
     });
 
     await scheduler.enable({
@@ -436,7 +434,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
 
     expect(scheduler.read('sess-1')).toMatchObject({
       attemptCount: 1,
-      maxAttempts: 3,
+      maxAttempts: 0,
     });
   });
 
@@ -449,7 +447,6 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       resume: async (): Promise<{ status: 'continued' }> => {
         throw new Error('still throttled');
       },
-      maxAttempts: 3,
     });
 
     await scheduler.enable({

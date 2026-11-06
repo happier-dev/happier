@@ -4906,12 +4906,6 @@ daemonWorkSignal: AbortSignal;
         60_000,
         { min: 1_000, max: 10 * 60_000 },
       ),
-      maxAttempts: resolvePositiveIntEnv(
-        params.processEnv
-          .HAPPIER_CONNECTED_SERVICES_TEMPORARY_THROTTLE_MAX_ATTEMPTS,
-        3,
-        { min: 1, max: 100 },
-      ),
       resume: async (intent, { sessionId }) => {
         return await withSessionAccountContext(sessionId, async (accountContext) =>
           await withSessionAccountHome(accountContext, async () => {

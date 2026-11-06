@@ -49,7 +49,6 @@ type ConnectedServiceTemporaryThrottleRetrySchedulerDeps = Readonly<{
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   jitterMs?: () => number;
-  maxAttempts?: number;
   random?: () => number;
   onStateChange?: (sessionId: string, intent: ConnectedServiceTemporaryThrottleRetryIntent | null, previous: ConnectedServiceTemporaryThrottleRetryIntent | null) => Promise<void> | void;
   store?: DurableBackoffRecoveryStore<ConnectedServiceTemporaryThrottleRetryIntent> | null;
@@ -74,8 +73,6 @@ type EnableTemporaryThrottleRetryInput = Readonly<{
   resetAtMs?: number | null;
   continuation?: ConnectedServiceTemporaryThrottleContinuationIntent | null;
 }>;
-
-const defaultMaxAttempts = 3;
 
 function createDefaultTemporaryThrottleRetryStore(): DurableBackoffRecoveryStore<ConnectedServiceTemporaryThrottleRetryIntent> {
   return createRecoveryIntentFileStore(join(
@@ -173,7 +170,7 @@ function normalizeIntent(value: unknown): ConnectedServiceTemporaryThrottleRetry
     retryAfterMs,
     resetAtMs,
     attemptCount,
-    maxAttempts: continuation?.recoveryKind === 'capacity' ? 0 : maxAttempts,
+    maxAttempts: 0,
     lastError: normalizeString(record.lastError) || null,
     continuation,
     ...(normalizeNonNegativeInteger(record.capacityFailureCount) !== null
@@ -208,14 +205,13 @@ function mergeTemporaryThrottleIntent(
       ? next.nextRetryAtMs
       : Math.min(previous.nextRetryAtMs, next.nextRetryAtMs ?? previous.nextRetryAtMs),
     lastError: previous.lastError,
-    maxAttempts: Math.min(previous.maxAttempts, next.maxAttempts),
+    maxAttempts: 0,
   };
 }
 
 export class ConnectedServiceTemporaryThrottleRetryScheduler {
   readonly #nowMs: () => number;
   readonly #baseBackoffMs: number;
-  readonly #maxAttempts: number;
   readonly #random: () => number;
   readonly #hasDurableStore: boolean;
   readonly #scheduler: DurableBackoffRecoveryScheduler<ConnectedServiceTemporaryThrottleRetryIntent>;
@@ -225,7 +221,6 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
     this.#nowMs = deps.nowMs;
     this.#random = deps.random ?? Math.random;
     this.#baseBackoffMs = Math.max(1, Math.trunc(deps.baseBackoffMs ?? 1_000));
-    this.#maxAttempts = Math.max(1, Math.trunc(deps.maxAttempts ?? defaultMaxAttempts));
     const sourceStore = deps.store === undefined
       ? createDefaultTemporaryThrottleRetryStore()
       : deps.store;
@@ -277,7 +272,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       getStatus: (intent) => intent.status === 'awaiting_outcome' ? 'checking' : intent.status,
       getNextRetryAtMs: (intent) => intent.nextRetryAtMs,
       getAttemptCount: (intent) => intent.attemptCount,
-      getMaxAttempts: (intent) => intent.maxAttempts,
+      getMaxAttempts: () => 0,
       markChecking: (intent, attemptCount) => ({
         ...intent,
         status: 'checking',
@@ -387,7 +382,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       retryAfterMs,
       resetAtMs,
       attemptCount: 0,
-      maxAttempts: this.#maxAttempts,
+      maxAttempts: 0,
       lastError: null,
       continuation,
     };
