@@ -226,7 +226,7 @@ test('optional web renderers stay outside their entry static closures', async ()
     }
 });
 
-test('development includes dynamic imports in one graph on web and native', async () => {
+test('development splits web dynamic imports while native retains one graph', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-single-graph-'));
     let server;
     try {
@@ -237,8 +237,8 @@ test('development includes dynamic imports in one graph on web and native', asyn
         const rewrite = config.server.rewriteRequestUrl;
         const entryUrl = '/index.bundle?platform=web&dev=true&lazy=true&hot=false';
         const rewritten = new URL(rewrite(entryUrl), 'http://localhost');
-        assert.equal(rewritten.searchParams.get('lazy'), 'false',
-            'web development must not retain a second transitive graph for each dynamic import');
+        assert.equal(rewritten.searchParams.get('lazy'), 'true',
+            'web development must preserve Expo lazy chunk requests');
         assert.equal(rewritten.searchParams.get('hot'), 'false');
         for (const platform of ['ios', 'android']) {
             assert.equal(new URL(rewrite(`/index.bundle?platform=${platform}&dev=true&lazy=true`), 'http://localhost').searchParams.get('lazy'), 'false',
@@ -251,9 +251,9 @@ test('development includes dynamic imports in one graph on web and native', asyn
             '/index.bundle?platform=web&dev=0&lazy=true',
             '/assets/icon.png?platform=web&dev=true&lazy=true',
         ]) assert.equal(rewrite(unchanged), unchanged);
-        assert.equal(new URL(rewrite('http://localhost' + entryUrl), 'http://localhost').searchParams.get('lazy'), 'false');
-        assert.equal(new URL(rewrite('/index.map?platform=web&dev=true&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'false');
-        assert.equal(new URL(rewrite('/index.bundle?platform=web&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'false');
+        assert.equal(new URL(rewrite('http://localhost' + entryUrl), 'http://localhost').searchParams.get('lazy'), 'true');
+        assert.equal(new URL(rewrite('/index.map?platform=web&dev=true&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'true');
+        assert.equal(new URL(rewrite('/index.bundle?platform=web&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'true');
         config.watchFolders = [...config.watchFolders, fixture];
         config.maxWorkers = 2;
         config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
@@ -271,19 +271,18 @@ test('development includes dynamic imports in one graph on web and native', asyn
                     unstable_transformProfile: 'hermes-stable',
                 }),
                 lazy: request.searchParams.get('lazy') === 'true',
+                sourceUrl: request.toString(),
             });
             const graphs = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()];
             assert.equal(graphs.length, platformIndex + 1);
             const graph = graphs.at(-1);
-            assert.equal(graph.dependencies.has(path.join(fixture, 'detail.js')), true,
-                'the dynamic module must already be in the initial graph');
-            assert.equal(graph.dependencies.get(path.join(fixture, 'detail.js')).output.some(
-                ({ data: { map } }) => (Array.isArray(map) ? map.length : map?.mappings?.length) > 0), true,
-                `${platform} app dynamic-module source maps remain available for debugging`);
-            assert.equal(JSON.parse(result.map).sources.includes(path.join(fixture, 'detail.js')), true,
-                `${platform} serialized source maps include the dynamic module`);
-            assert.equal(result.code.includes('detail.bundle?'), false,
-                'dynamic import must resolve locally without requesting another lazy graph');
+            const isWeb = platform === 'web';
+            assert.equal(graph.dependencies.has(path.join(fixture, 'detail.js')), !isWeb,
+                'web must exclude the dynamic module; native keeps it in the initial graph');
+            assert.equal(JSON.parse(result.map).sources.includes(path.join(fixture, 'detail.js')), !isWeb,
+                'source maps follow the modules actually delivered in this response');
+            assert.equal(result.code.includes('detail.bundle?'), isWeb,
+                'web imports must carry an on-demand chunk URL while native resolves locally');
             assert.doesNotThrow(() => new Script(result.code),
                 'the complete Metro script must parse even when a dynamic dependency uses import.meta');
         }
