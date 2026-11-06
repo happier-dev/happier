@@ -18,8 +18,9 @@ type StoredTabState = Readonly<{
 }>;
 
 function normalizeStoredTab(value: unknown): TabType | null {
-  if (value === 'sessions' || value === 'projects' || value === 'inbox' || value === 'friends') return value;
-  if (value === 'settings') return 'sessions';
+  if (value === 'sessions' || value === 'projects' || value === 'inbox') return value;
+  // Friends and Settings were tabs before owner Q4 (2026-10-30); Workflows is its own route.
+  if (value === 'friends' || value === 'settings' || value === 'workflows') return 'sessions';
   // Zen is a legacy value; it is no longer rendered in the tab bar.
   if (value === 'zen') return 'sessions';
   return null;

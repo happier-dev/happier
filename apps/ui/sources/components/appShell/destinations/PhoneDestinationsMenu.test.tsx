@@ -5,6 +5,7 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { createSessionListRenderableSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -13,8 +14,7 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel, type PluginUi
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { readHitFrameReach } from '@/dev/testkit/harness/hitFrameReach';
-import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
+import { t } from '@/text';
 import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
@@ -55,7 +55,11 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'app' });
+// The Home's real feature answer, through the transport boundary: Search and Bots are catalog destinations only when it enables them.
+const runtime = installSessionPaneRuntimeTestHarness({
+    scopeId: 'app',
+    features: () => createRootLayoutFeaturesResponse({ features: { search: { enabled: true }, bots: { enabled: true } } }),
+});
 let projection: PluginUiProjectionModel;
 
 function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
@@ -80,7 +84,8 @@ function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
 function page(localId: string, extra: Partial<Pick<PluginPage, 'requestedPlacement' | 'disabledReason'>> = {}) {
     return placement(localId, 'appPage', extra);
 }
-const reviewTab = placement('review-panel', 'rightSidebarTab');
+const RAIL = { requestedPlacement: { kind: 'rail' } } as const;
+const reviewTab = placement('review-panel', 'rightSidebarTab', RAIL);
 
 function setCatalog(input: Readonly<{
     pages?: readonly PluginUiSurfacePlacementProjection[];
@@ -145,32 +150,30 @@ describe('PhoneDestinationsMenu', () => {
         setCatalog({ pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })] });
     });
 
-    // The trigger is the last glyph of the phone header, 2 px after View options (or Activity): a finger's
-    // hit area splits that gap instead of reaching 6 px into the neighbour, and keeps its reach at the edge.
-    it('keeps the trigger hit area off the header glyph beside it', async () => {
-        const { PhoneDestinationsMenu } = await import('./PhoneDestinationsMenu');
-        const screen = await render(
-            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
-                <PhoneDestinationsMenu />
-            </HappierUiPlatformProvider>,
-        );
-        const reach = readHitFrameReach(screen.findByTestId('phone-launcher-button')!);
-        expect(reach?.left).toBe(1);
-        expect(reach?.right).toBeGreaterThanOrEqual(6);
+    // The trigger is the tab bar's last slot, named More, so the menu rises from it and ends at its edge.
+    it('is the tab bar More: named More and rising from its slot', async () => {
+        const screen = await renderMenu();
+        expect(screen.findByTestId('phone-launcher-button')!.props.accessibilityLabel).toBe(t('common.more'));
+        expect(menuOf(screen).props.placement).toBe('top');
+        expect(menuOf(screen).props.popoverAnchorAlign).toBe('end');
     });
 
     it("leads with the app's own shortcuts and keeps plugin destinations under the hairline, then Customize", async () => {
         setCatalog({
-            pages: [page('log', { requestedPlacement: { kind: 'column', column: 'sessions' } }), page('board')],
+            // `quiet` asks for no placement: contextual (owner Q3), so it waits in Customize, not here.
+            pages: [page('log', { requestedPlacement: { kind: 'column', column: 'sessions' } }), page('board', RAIL), page('quiet')],
             tabs: [reviewTab],
         });
         const menu = await renderMenu();
         expect(groups(menu)).toEqual({
+            // Workflows is a phone tab now (owner Q4); Friends left the tabs for the shortcuts.
+            // Home leads (owner 2026-11-04): the phone's one door to the Home the desktop opens on.
             pinned: [
+                'phone-launcher-home',
                 'sessions-search-all-button',
-                'compact-app-destination:workflows',
-                'compact-app-destination:artifacts',
+                'compact-app-destination:friends',
                 'compact-app-destination:bots',
+                'compact-app-destination:artifacts',
             ],
             more: [
                 'compact-app-destination:boards',
@@ -181,6 +184,7 @@ describe('PhoneDestinationsMenu', () => {
                 'compact-app-destination:rightSidebarTab:plugin:acme.review:review-panel',
             ],
             customize: ['phone-launcher-customize'],
+            recovery: ['plugin-app-pages-menu'],
         });
         expect(menuOf(menu).props.separateCategories).toBe(true);
     });
@@ -190,20 +194,54 @@ describe('PhoneDestinationsMenu', () => {
             pages: [page('board')],
             navigationPlacements: {
                 phoneLauncher: { orderedIds: [], placements: { 'plugin:acme.board:board': 'pinned', boards: 'hidden', artifacts: 'overflow' } },
-                appRail: { orderedIds: [], placements: { workflows: 'hidden' } },
+                appRail: { orderedIds: [], placements: { friends: 'hidden' } },
             },
         });
         const menu = await renderMenu();
         const { pinned = [], more = [] } = groups(menu);
         expect(pinned).toContain('compact-app-destination:plugin:acme.board:board');
-        expect(pinned).toContain('compact-app-destination:workflows');
+        expect(pinned).toContain('compact-app-destination:friends');
         expect(more).toContain('compact-app-destination:artifacts');
         expect([...pinned, ...more]).not.toContain('compact-app-destination:boards');
     });
 
+    it.each([
+        { surface: 'phone', os: 'ios' },
+        { surface: 'phone', os: 'android' },
+        { surface: 'column', os: 'web' },
+    ] as const)('recovers hidden and unavailable plugin pages through $surface on $os without rewriting placement or guessing routes', async ({ surface, os }) => {
+        surfaceState.platformOS = os;
+        const preferences = {
+            phoneLauncher: { orderedIds: [], placements: { 'plugin:acme.notes:notes': 'hidden' as const } },
+        };
+        setCatalog({
+            pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } }),
+                page('offline', { disabledReason: 'feature_disabled' })],
+            tabs: [reviewTab],
+            navigationPlacements: preferences,
+        });
+        const { PluginAppPagesMenu } = await import('./PluginAppPagesMenu');
+        const menu = surface === 'phone' ? await renderMenu() : await render(<PluginAppPagesMenu />);
+        if (surface === 'phone') expect(itemFor(menu, 'compact-app-destination:plugin:acme.notes:notes')).toBeUndefined();
+        const recoveryItems = surface === 'phone' ? itemFor(menu, 'plugin-app-pages-menu')?.submenu?.items : items(menu);
+        expect(recoveryItems?.map(item => item.id)).toEqual([
+            'plugin:acme.notes:notes', 'plugin:acme.offline:offline',
+        ]);
+        expect(recoveryItems?.find(item => item.id === 'plugin:acme.offline:offline')?.disabled).not.toBe(true);
+        await act(async () => { menuOf(menu).props.onSelect('plugin:acme.offline:offline'); });
+        await act(async () => { menuOf(menu).props.onSelect('plugin:acme.notes:notes'); });
+        expect(routeState.push.mock.calls.map(([href]) => href)).toEqual([
+            '/plugins/acme.offline/offline', '/plugins/acme.notes/notes',
+        ]);
+        if (surface === 'phone') expect(itemFor(menu, 'compact-app-destination:rightSidebarTab:plugin:acme.review:review-panel')?.disabled).toBe(false);
+        expect(storage.getState().localSettings.navigationSurfacePlacementsV1).toEqual(
+            NavigationSurfacePlacementsV1Schema.parse(preferences),
+        );
+    });
+
     it('names why a pinned destination is unavailable, and dims an unavailable one in More without repeating it', async () => {
         setCatalog({
-            pages: [page('pinned', { disabledReason: 'feature_disabled' }), page('later', { disabledReason: 'feature_disabled' })],
+            pages: [page('pinned', { ...RAIL, disabledReason: 'feature_disabled' }), page('later', { ...RAIL, disabledReason: 'feature_disabled' })],
             navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { 'plugin:acme.pinned:pinned': 'pinned' } } },
         });
         const menu = await renderMenu();
@@ -228,6 +266,17 @@ describe('PhoneDestinationsMenu', () => {
         await select(menu, 'compact-app-destination:plugins');
         await select(menu, 'compact-app-destination:plugin:acme.notes:notes');
         expect(routeState.push.mock.calls.map(([href]) => href)).toEqual(['/plugins', '/plugins/acme.notes/notes']);
+    });
+
+    it('opens Home as its own page, marked while it is open', async () => {
+        const menu = await renderMenu();
+        expect(itemFor(menu, 'phone-launcher-home')?.checked).toBe(false);
+        await select(menu, 'phone-launcher-home');
+        expect(routeState.push.mock.calls.map(([href]) => href)).toEqual(['/home']);
+
+        routeState.pathname = '/home';
+        const onHome = await renderMenu();
+        expect(itemFor(onHome, 'phone-launcher-home')?.checked).toBe(true);
     });
 
     it("carries the Bots faces and what needs you on the phone's one Bots entry", async () => {

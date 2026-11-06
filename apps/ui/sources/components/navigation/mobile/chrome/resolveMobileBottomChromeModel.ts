@@ -19,7 +19,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
     }
 
     const pathname = typeof input.pathname === 'string' ? input.pathname.trim() : '';
-    if (pathname === '/' || isSettingsRoutePathname(pathname)) {
+    if (pathname === '/' || isWorkflowsTabRoutePathname(pathname)) {
         return { kind: 'mainAppTabs' };
     }
 
@@ -71,8 +71,12 @@ function isImmersiveSessionDetailsRoute(pathname: string, detailsKind: string | 
     return /^\/session\/[^/]+\/details$/.test(pathWithoutQuery);
 }
 
-function isSettingsRoutePathname(pathname: string): boolean {
-    return pathname === '/settings' || pathname.startsWith('/settings/');
+/**
+ * The Workflows tab's own page (owner Q4). A workflow, run or editor it opens is pushed over it with
+ * its own back, as Settings is now pushed from the avatar.
+ */
+export function isWorkflowsTabRoutePathname(pathname: string): boolean {
+    return pathname.split(/[?#]/, 1)[0]!.replace(/\/+$/, '') === '/workflows';
 }
 
 function resolvePersistedProjectSurface(

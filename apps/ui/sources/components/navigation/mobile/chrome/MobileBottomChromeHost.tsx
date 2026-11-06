@@ -33,6 +33,7 @@ import {
 import { useDeviceType } from '@/utils/platform/responsive';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
+import type { TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import {
     useSessionCockpitBottomChromeHeightSetter,
@@ -49,17 +50,17 @@ import { useSessionTerminalAvailability } from '@/components/sessions/terminal/u
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 import { MainAppTabBar } from './bars/MainAppTabBar';
+import { PhoneDestinationsMenu } from '@/components/appShell/destinations/PhoneDestinationsMenu';
 import { ProjectCockpitTabBar } from './bars/ProjectCockpitTabBar';
 import { SessionCockpitTabBar } from './bars/SessionCockpitTabBar';
 import { useMainAppTabState } from './MainAppTabStateProvider';
-import { resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
+import { isWorkflowsTabRoutePathname, resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
 
 const MAIN_TAB_DEFAULT_ROUTES = {
     inbox: '/',
     sessions: '/',
     projects: '/',
-    friends: '/',
-    settings: '/settings',
+    workflows: '/workflows',
 } as const satisfies Record<TabType, string>;
 
 function createInitialMainTabRoutes(): Record<TabType, string> {
@@ -88,9 +89,7 @@ function resolveRouteWorkspaceRefId(pathname: string | null | undefined): string
 }
 
 function resolveRouteOwnedMainTab(pathname: string | null | undefined): TabType | null {
-    if (typeof pathname !== 'string') return null;
-    if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'settings';
-    return null;
+    return typeof pathname === 'string' && isWorkflowsTabRoutePathname(pathname) ? 'workflows' : null;
 }
 
 function resolveRememberedMainTabRoute(
@@ -132,6 +131,8 @@ function isBottomChromeStateSettled(
 ): boolean {
     return state.previous === null && isSameBottomChromeItem(state.current, resolvedChrome);
 }
+
+const renderMainBarMore = (metrics: TabBarMetrics) => <PhoneDestinationsMenu metrics={metrics} />;
 
 export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost(props: Readonly<{
     /** Canonical pre-push presentation decision from the app stack owner. */
@@ -238,7 +239,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         if (targetRoute !== '/' || routeOwnedMainTab) {
             router.navigate(admitInternalRouteHref(targetRoute));
         }
-        if (tab !== 'settings') {
+        if (tab !== 'workflows') {
             void setActiveTab(tab);
         }
     }, [activeTab, pathname, routeOwnedMainTab, router, setActiveTab]);
@@ -348,6 +349,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
                 // Session creation belongs to the sessions surface; the other tabs keep the bar as
                 // a pure navigation control.
                 trailingAccessory={tab === 'sessions' ? <TabBarNewSessionButton /> : undefined}
+                more={renderMainBarMore}
             />
         ),
     }), [handleMainAppTabPress]);

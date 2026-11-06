@@ -8,6 +8,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { actionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { Popover } from '@/components/ui/popover';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -83,14 +84,18 @@ describe('ActionOperationActivityButtonView', () => {
                 onOpenOperation={onOpenOperation}
                 onMarkVisibleTerminalSeen={markSeen}
             />,
+            {
+                // The anchor wraps the button's own box: its rect is what the popover anchors to on the web.
+                createNodeMock: (element) => (
+                    (element as { props?: { collapsable?: boolean } }).props?.collapsable === false
+                        ? { getBoundingClientRect: () => ({ left: 262, top: 6, width: 44, height: 44 }) }
+                        : null
+                ),
+            },
         );
 
         await act(async () => {
-            await screen.findByTestId('action-operation-activity-button')?.props.onPress({
-                currentTarget: {
-                    getBoundingClientRect: () => ({ left: 262, top: 6, width: 44, height: 44 }),
-                },
-            });
+            await screen.findByTestId('action-operation-activity-button')?.props.onPress();
         });
 
         expect(screen.findAllByType(Popover)).toHaveLength(1);
@@ -201,6 +206,21 @@ describe('ActionOperationActivityButtonView', () => {
         expect(screen.findByTestId('action-operation-activity-count')).not.toBeNull();
         expect(screen.getTextContent()).toContain('1');
         expect(screen.findByTestId('action-operation-activity-attention-dot')).toBeNull();
+    });
+
+    it('draws the header glyph at the shared icon-button size: a finger reaches it through the hit area, not a larger box', async () => {
+        const { ActionOperationActivityButtonView } = await import('./ActionOperationActivityButton');
+        const screen = await renderScreen(
+            <ActionOperationActivityButtonView
+                operations={[operation()]}
+                hasAttention={true}
+                onOpenOperation={() => {}}
+                onMarkVisibleTerminalSeen={() => {}}
+            />,
+        );
+
+        const button = screen.findHostByTestId('action-operation-activity-button')!;
+        expect(readHitArea(button).drawn).toEqual({ width: 28, height: 28 });
     });
 
     it('subscribes to ledger details only while the activity popover is open', async () => {

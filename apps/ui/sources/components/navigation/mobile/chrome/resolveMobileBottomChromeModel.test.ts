@@ -24,14 +24,13 @@ describe('resolveMobileBottomChromeModel', () => {
         }))).toEqual({ kind: 'hidden' });
     });
 
-    it('returns main app tabs for the authenticated home route', () => {
-        expect(resolveMobileBottomChromeModel(createChromeInput({}))).toEqual({ kind: 'mainAppTabs' });
-    });
-
-    it('returns main app tabs for route-owned settings routes', () => {
-        expect(resolveMobileBottomChromeModel(createChromeInput({
-            pathname: '/settings/session',
-        }))).toEqual({ kind: 'mainAppTabs' });
+    it('returns main app tabs for authenticated home and Workflow tab routes', () => {
+        for (const pathname of ['/', '/workflows', '/workflows/', '/workflows?view=all', '/workflows/#runs']) {
+            for (const mobileWorkspaceExperience of ['classic', 'cockpit'] as const) {
+                expect(resolveMobileBottomChromeModel(createChromeInput({ pathname, mobileWorkspaceExperience })))
+                    .toEqual({ kind: 'mainAppTabs' });
+            }
+        }
     });
 
     it('returns a session cockpit model for session routes in cockpit mode', () => {
@@ -134,5 +133,10 @@ describe('resolveMobileBottomChromeModel', () => {
             pathname: '/projects',
             mobileWorkspaceExperience: 'cockpit',
         }))).toEqual({ kind: 'hidden' });
+    });
+    it('leaves Classic Session, pushed settings, and unrelated routes to their own chrome', () => {
+        for (const pathname of ['/session/s_123', '/settings/session', '/projects']) {
+            expect(resolveMobileBottomChromeModel(createChromeInput({ pathname }))).toEqual({ kind: 'hidden' });
+        }
     });
 });

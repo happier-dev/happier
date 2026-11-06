@@ -118,14 +118,6 @@ describe('useTabState', () => {
     expect(hook.getCurrent().activeTab).toBe('inbox');
   });
 
-  it('does not persist route-owned settings as the main tab state', async () => {
-    const hook = await renderTabState();
-    await act(async () => { await hook.getCurrent().setActiveTab('settings'); });
-
-    expect(hook.getCurrent().activeTab).toBe('sessions');
-    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'sessions', version: 0 });
-  });
-
   it('retries the requested tab after a recoverable version mismatch', async () => {
     const hook = await renderTabState();
     // Another HTTP writer advances the row after this reader saw no key.

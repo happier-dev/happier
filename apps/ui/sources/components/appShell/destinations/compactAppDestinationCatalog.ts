@@ -160,6 +160,12 @@ type CompactAppDestinationCommon = Readonly<{
     activation: AppDestinationActivation;
     /** Hidden destinations remain catalogued for their exact route/tombstone owner. */
     visibility?: CompactAppDestinationVisibility;
+    /**
+     * Contextual (owner Q3, 2026-10-30): a plugin destination that did not ask for the rail. It is listed
+     * like any other (its route, the command palette, the entry points where it belongs) but navigation
+     * surfaces leave it off until the person pins it.
+     */
+    contextual?: true;
     /** The host-built route of the destination's own page. */
     routePath: string;
 }>;
@@ -280,13 +286,6 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         available: (availability) => availability.inbox,
     },
     {
-        id: DISCUSSIONS_DESTINATION_ID, titleKey: 'session.collaboration.discussion.title', icon: 'chat-circle',
-        placement: { kind: 'rail', region: 'app' }, column: 'discussions', activation: 'navigate', routePath: '/discussions',
-        currentRoutePatterns: ['/discussions/[...rest]'],
-        workspaceNavigationIdentity: { resourceParam: 'discussionId', scopeParams: ['serverId'] },
-        available: (availability) => availability.discussions === true,
-    },
-    {
         id: 'projects', titleKey: 'tabs.projects', icon: 'folder', placement: { kind: 'rail', region: 'app' },
         column: 'projects', activation: 'navigate', routePath: '/projects', currentRoutePatterns: ['/projects/[...rest]'],
     },
@@ -301,6 +300,24 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         available: (availability) => availability.workflows,
     },
     {
+        id: DISCUSSIONS_DESTINATION_ID, titleKey: 'session.collaboration.discussion.title', icon: 'chat-circle',
+        placement: { kind: 'rail', region: 'app' }, column: 'discussions', activation: 'navigate', routePath: '/discussions',
+        currentRoutePatterns: ['/discussions/[...rest]'],
+        workspaceNavigationIdentity: { resourceParam: 'discussionId', scopeParams: ['serverId'] },
+        available: (availability) => availability.discussions === true,
+    },
+    {
+        id: 'friends', titleKey: 'tabs.friends', icon: 'users', placement: { kind: 'rail', region: 'app' },
+        activation: 'navigate', routePath: '/friends', currentRoutePatterns: ['/friends/[...rest]'],
+        available: (availability) => availability.friends,
+    },
+    // Last of Together, its rail-pinned Bots right under it (lab `b-rail A`).
+    {
+        id: 'bots', titleKey: 'bots.title', icon: BOTS_GLYPH,
+        placement: { kind: 'rail', region: 'app' }, activation: 'botsRoster', routePath: '/',
+        activationAvailable: availability => availability.botsRoster === true,
+    },
+    {
         // Live sessions, runs, workflows and machines, arranged by the user (INT §5.1).
         id: 'boards', titleKey: 'boards.title', icon: 'squares-four',
         placement: { kind: 'rail', region: 'app' }, column: 'boards',
@@ -311,17 +328,6 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         id: 'artifacts', titleKey: 'artifacts.title', icon: 'files',
         placement: { kind: 'rail', region: 'app' },
         activation: 'navigate', routePath: '/artifacts', currentRoutePatterns: ['/artifacts/[...rest]'],
-    },
-    {
-        id: 'friends', titleKey: 'tabs.friends', icon: 'users', placement: { kind: 'rail', region: 'app' },
-        activation: 'navigate', routePath: '/friends', currentRoutePatterns: ['/friends/[...rest]'],
-        available: (availability) => availability.friends,
-    },
-    // Last of the app's own entries, on its own beside its rail-pinned Bots (lab `b-rail A`).
-    {
-        id: 'bots', titleKey: 'bots.title', icon: BOTS_GLYPH,
-        placement: { kind: 'rail', region: 'app' }, activation: 'botsRoster', routePath: '/',
-        activationAvailable: availability => availability.botsRoster === true,
     },
     {
         id: BROWSE_EXISTING_SESSIONS_DESTINATION_ID, titleKey: 'externalSessions.browseOpenExisting', icon: 'folder-open',
@@ -379,13 +385,20 @@ function resolvePlacement(
         : Object.freeze({ kind: 'rail', region: fallbackRegion });
 }
 
-/** A plugin asks for the rail or a column; the rail is its own region and the default. */
-function resolvePluginPlacement(requested: PluginUiDestinationPlacementV1 | undefined): AppDestinationPlacement {
-    return resolvePlacement(
-        requested?.kind === 'column' ? requested : { kind: 'rail', region: 'plugins' },
-        'plugins',
-    );
+/**
+ * A plugin asks for the rail or a column. Without a placement it is contextual (owner Q3): listed in
+ * the plugins region, so the person can pin it, but not shown there until they do.
+ */
+function resolvePluginPlacement(requested: PluginUiDestinationPlacementV1 | undefined): Readonly<{
+    placement: AppDestinationPlacement;
+    contextual?: true;
+}> {
+    return {
+        placement: resolvePlacement(requested?.kind === 'column' ? requested : { kind: 'rail', region: 'plugins' }, 'plugins'),
+        ...(requested === undefined ? { contextual: true as const } : {}),
+    };
 }
+
 
 /** The qualified renderer a destination placement binds, when the Registry projected one. */
 function readDestinationRendererKey(
@@ -450,7 +463,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
             title: page.label,
             icon: page.icon,
             order: page.order,
-            placement: resolvePluginPlacement(page.requestedPlacement),
+            ...resolvePluginPlacement(page.requestedPlacement),
             activation: 'navigate',
             ...(page.badge === undefined ? {} : { badge: page.badge }),
             ...(page.rankHint === undefined ? {} : { rankHint: page.rankHint }),
@@ -485,7 +498,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
             title: tab.label,
             icon: tab.icon,
             order: tab.order,
-            placement: resolvePluginPlacement(tab.requestedPlacement),
+            ...resolvePluginPlacement(tab.requestedPlacement),
             activation: 'rightSidebarTab',
             ...(tab.badge === undefined ? {} : { badge: tab.badge }),
             ...(tab.rankHint === undefined ? {} : { rankHint: tab.rankHint }),

@@ -105,7 +105,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
-    useInboxAvailable: () => false,
+    useInboxAvailable: () => mainAppTabStateMock.activeTab === 'inbox',
 }));
 
 vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
@@ -276,7 +276,22 @@ describe('MainView sidebar actions', () => {
         const trailing = await renderScreen(<>{navRow.props.trailing}</>);
         expect(trailing.findAllByProps({ testID: 'main-header-start-new-session' })).toHaveLength(0);
         expect(trailing.findAllByProps({ testID: 'main-header-action-operations' }).length).toBeGreaterThan(0);
+        // More lives on the tab bar, on every tab; the header no longer carries a second way in.
+        expect(trailing.findAllByProps({ testID: 'phone-launcher-button' })).toHaveLength(0);
         expect(navRow.findByType('SessionsListWrapper' as never)).toBeDefined();
+    });
+
+    // Every phone tab opens on one head: the Home line and the glyphs, with the tab's own large title below.
+    it.each(['projects', 'inbox'] as const)('gives the %s tab the same nav row as Sessions, without a second bar or logo', async (tab) => {
+        platformState.isTablet = false;
+        mainAppTabStateMock.activeTab = tab;
+
+        const tree = (await renderScreen(<MainView variant="phone" />)).tree;
+
+        expect(tree.findAllByType('Header')).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'main-header-home-logo' })).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'main-tab-nav-row' }).length).toBeGreaterThan(0);
+        expect(tree.root.findAllByProps({ testID: 'main-header-settings-avatar' }).length).toBeGreaterThan(0);
     });
 
     it('pins the retained phone sessions surface to the root pathname across route changes', async () => {

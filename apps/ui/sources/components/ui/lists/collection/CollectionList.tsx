@@ -14,6 +14,7 @@ import {
     type HappierCollectionDraftTitleStore,
     type HappierCollectionListHost,
     type HappierCollectionListProps,
+    type HappierCollectionRowRole,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -234,6 +235,8 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     testID: string;
     title: string;
     subtitle?: string;
+    /** Navigation keeps its compact role even when it has a descriptive subtitle. */
+    rowRole?: Exclude<HappierCollectionRowRole, 'catalogRow'>;
     /** An inline mark before the subtitle: the collection's trouble dot when the row needs the person. */
     subtitleLeading?: React.ReactNode;
     /** An inline mark on the title's line, after the title and its qualifier. */
@@ -283,6 +286,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const onPlane = props.surface !== 'page';
+    const rowRole = props.rowRole ?? 'item';
     const hasCount = props.count !== undefined && props.count !== null && props.count !== '';
     const trailing = props.status && hasCount ? (
         <View style={styles.trailing}>
@@ -311,7 +315,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             {...(props.rightElement ? { rightElement: props.rightElement, rightElementOutsidePressable: true }
                 : trailing ? { rightElement: trailing } : {})}
             title={props.title}
-            // A column row keeps one line (lab `clfamily`): a long name truncates rather than breaking the rhythm.
+            rowRole={rowRole}
             titleLines={1}
             subtitle={props.subtitle}
             subtitleLeading={props.subtitleLeading}

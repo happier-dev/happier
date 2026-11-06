@@ -531,11 +531,11 @@ describe('MobileBottomChromeHost', () => {
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
-        // Session creation belongs to the sessions surface; settings, inbox, projects and friends
+        // Session creation belongs to the sessions surface; Workflows, inbox and projects
         // keep the bar as a pure navigation control.
         expect(screen.tree.findByType('MainAppTabBar' as never).props.trailingAccessory).toBeTruthy();
 
-        pathState.pathname = '/settings';
+        pathState.pathname = '/workflows';
         await act(async () => {
             notifyPathListeners();
         });
@@ -612,8 +612,8 @@ describe('MobileBottomChromeHost', () => {
         expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(1);
     });
 
-    it('renders the main app tab bar on route-owned settings surfaces', async () => {
-        pathState.pathname = '/settings/session';
+    it('renders the main app tab bar on route-owned Workflow surfaces', async () => {
+        pathState.pathname = '/workflows';
         authState.isAuthenticated = true;
         tabState.activeTab = 'sessions';
         settingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -623,11 +623,11 @@ describe('MobileBottomChromeHost', () => {
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
         const bar = screen.tree.findByType('MainAppTabBar' as never);
-        expect(bar.props.activeTab).toBe('settings');
+        expect(bar.props.activeTab).toBe('workflows');
     });
 
-    it('navigates from route-owned settings surfaces back to state-owned main tabs', async () => {
-        pathState.pathname = '/settings/session';
+    it('navigates from route-owned Workflow surfaces back to state-owned main tabs', async () => {
+        pathState.pathname = '/workflows';
         authState.isAuthenticated = true;
         tabState.activeTab = 'sessions';
         settingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -646,8 +646,8 @@ describe('MobileBottomChromeHost', () => {
         expect(routerState.replace).not.toHaveBeenCalled();
     });
 
-    it('returns to the last routed settings surface after switching away through the main tab bar', async () => {
-        pathState.pathname = '/settings/session';
+    it('returns to the last routed Workflow surface after switching away through the main tab bar', async () => {
+        pathState.pathname = '/workflows';
         authState.isAuthenticated = true;
         tabState.activeTab = 'sessions';
         settingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -656,9 +656,9 @@ describe('MobileBottomChromeHost', () => {
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
-        const settingsBar = screen.tree.findByType('MainAppTabBar' as never);
+        const workflowsBar = screen.tree.findByType('MainAppTabBar' as never);
         act(() => {
-            void settingsBar.props.onTabPress('sessions');
+            void workflowsBar.props.onTabPress('sessions');
         });
 
         expect(routerState.navigate).toHaveBeenCalledWith('/');
@@ -674,16 +674,16 @@ describe('MobileBottomChromeHost', () => {
 
         const sessionsBar = screen.tree.findByType('MainAppTabBar' as never);
         act(() => {
-            void sessionsBar.props.onTabPress('settings');
+            void sessionsBar.props.onTabPress('workflows');
         });
 
-        expect(routerState.navigate).toHaveBeenCalledWith('/settings/session');
+        expect(routerState.navigate).toHaveBeenCalledWith('/workflows');
         expect(tabState.setActiveTab).not.toHaveBeenCalled();
         expect(routerState.replace).not.toHaveBeenCalled();
     });
 
-    it('resets route-owned settings to settings home when the selected settings tab is pressed again', async () => {
-        pathState.pathname = '/settings/session';
+    it('resets route-owned Workflows to Workflows home when the selected Workflows tab is pressed again', async () => {
+        pathState.pathname = '/workflows';
         authState.isAuthenticated = true;
         tabState.activeTab = 'sessions';
         settingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -694,10 +694,10 @@ describe('MobileBottomChromeHost', () => {
 
         const bar = screen.tree.findByType('MainAppTabBar' as never);
         act(() => {
-            void bar.props.onTabPress('settings');
+            void bar.props.onTabPress('workflows');
         });
 
-        expect(routerState.navigate).toHaveBeenCalledWith('/settings');
+        expect(routerState.navigate).toHaveBeenCalledWith('/workflows');
         expect(tabState.setActiveTab).not.toHaveBeenCalled();
         expect(routerState.replace).not.toHaveBeenCalled();
     });

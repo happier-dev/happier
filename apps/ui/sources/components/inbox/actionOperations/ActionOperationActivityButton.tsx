@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
@@ -34,6 +33,7 @@ export type ActionOperationActivityButtonViewProps = Readonly<{
     tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
+    interactiveTargetGapPx?: number;
     testID?: string;
 }>;
 
@@ -54,6 +54,7 @@ type ActionOperationActivityButtonChromeProps = Readonly<{
     tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
+    interactiveTargetGapPx?: number;
     testID?: string;
 }>;
 
@@ -71,23 +72,22 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
     }> | null>(null);
     const visible = props.hasAttention || open;
     const handleRequestClose = React.useCallback(() => setOpen(false), []);
-    // Icon-sized mark: the glyph mode pairs the scale with the opacity dip.
-    const feedback = usePressFeedback({ glyph: true });
-
     if (!visible) return null;
 
     const tintColor = props.tintColor ?? theme.colors.chrome.header.foreground;
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-            <Pressable
+            <IconButton
                 testID={props.testID ?? 'action-operation-activity-button'}
-                accessibilityRole="button"
+                variant="plain"
+                size={props.buttonSize}
                 accessibilityLabel={t('inbox.updates')}
-                accessibilityState={{ expanded: open }}
-                hitSlop={8}
-                onPress={(event) => {
+                expanded={open}
+                interactiveTargetGapPx={props.interactiveTargetGapPx}
+                onPress={() => {
                     if (!open && Platform.OS === 'web') {
-                        const target = event?.currentTarget as unknown as {
+                        // The anchor wraps the button's own box, so its rect is the button's.
+                        const target = anchorRef.current as unknown as {
                             getBoundingClientRect?: () => Readonly<{
                                 left: number;
                                 top: number;
@@ -107,29 +107,20 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                     }
                     setOpen((current) => !current);
                 }}
-                onPressIn={feedback.onPressIn}
-                onPressOut={feedback.onPressOut}
-                style={[
-                    styles.button,
-                    props.buttonSize != null ? {
-                        width: props.buttonSize,
-                        height: props.buttonSize,
-                        borderRadius: props.buttonSize / 2,
-                    } : null,
-                ]}
-            >
-                <Animated.View style={[styles.glyph, feedback.animatedStyle]}>
-                    <Icon name="pulse" size={props.iconSize ?? ICON_SIZE.md} color={tintColor} />
-                    {/* A glyph on the chrome canvas takes the rail's badge: a neutral count, or an attention dot. */}
-                    {props.activeCount > 0 ? (
-                        <AppRailBadge testID="action-operation-activity-count" glyphSizePx={props.iconSize ?? ICON_SIZE.md}
-                            signal={{ kind: 'count', value: props.activeCount, tone: 'neutral' }} />
-                    ) : (
-                        <AppRailBadge testID="action-operation-activity-attention-dot" glyphSizePx={props.iconSize ?? ICON_SIZE.md}
-                            signal={{ kind: 'dot', tone: 'attention' }} />
-                    )}
-                </Animated.View>
-            </Pressable>
+                icon={(
+                    <View style={styles.glyph}>
+                        <Icon name="pulse" size={props.iconSize ?? ICON_SIZE.md} color={tintColor} />
+                        {/* A glyph on the chrome canvas takes the rail's badge: a neutral count, or an attention dot. */}
+                        {props.activeCount > 0 ? (
+                            <AppRailBadge testID="action-operation-activity-count" glyphSizePx={props.iconSize ?? ICON_SIZE.md}
+                                signal={{ kind: 'count', value: props.activeCount, tone: 'neutral' }} />
+                        ) : (
+                            <AppRailBadge testID="action-operation-activity-attention-dot" glyphSizePx={props.iconSize ?? ICON_SIZE.md}
+                                signal={{ kind: 'dot', tone: 'attention' }} />
+                        )}
+                    </View>
+                )}
+            />
             {open ? props.renderDetails({
                 anchorRef,
                 anchor: webAnchorRect ? {
@@ -228,6 +219,7 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}
+            interactiveTargetGapPx={props.interactiveTargetGapPx}
             testID={props.testID}
         />
     );
@@ -264,6 +256,7 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
     tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
+    interactiveTargetGapPx?: number;
     testID?: string;
 }>) {
     const summary = useActionOperationActivitySummary();
@@ -280,6 +273,7 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}
+            interactiveTargetGapPx={props.interactiveTargetGapPx}
             testID={props.testID}
         />
     );
@@ -289,13 +283,6 @@ const styles = StyleSheet.create((theme) => ({
     anchor: {
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    button: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 22,
     },
     glyph: {
         position: 'relative',

@@ -344,12 +344,12 @@ describe('resolveCompactAppDestinations', () => {
             ['projects', { kind: 'rail', region: 'app' }],
             // One Workflows destination (FIN 04 §3.1): there is no Automations row.
             ['workflows', { kind: 'rail', region: 'app' }],
+            // Together precedes Library (owner Q8).
+            ['bots', { kind: 'rail', region: 'app' }],
             // Boards (INT §5.1): its own column listing the user's boards.
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
             ['artifacts', { kind: 'rail', region: 'app' }],
-            // Bots last of the app's own entries, standing apart with its rail pins (lab `b-rail A`).
-            ['bots', { kind: 'rail', region: 'app' }],
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
             ['plugins', { kind: 'rail', region: 'plugins' }],
             // The Machines page's rail door, drawn on the rail by its own footer control (plan 10 §4.2).
@@ -367,14 +367,15 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
         // Gated built-ins are omitted; the local Bots overlay remains honestly unavailable until its leaf mounts.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'bots', 'plugins', 'machines', 'settings', 'personalize']);
+            .toEqual(['sessions', 'search', 'projects', 'bots', 'boards', 'artifacts', 'plugins', 'machines', 'settings', 'personalize']);
     });
 
     it('places a plugin page on the rail or in a named column, and falls back to the rail for a column this host lacks', () => {
         const destinations = resolveCompactAppDestinations({
             builtins: CORE_BUILTINS,
             pages: [
-                pageWith('rail'),
+                pageWith('rail', { requestedPlacement: { kind: 'rail' } }),
+                pageWith('quiet'),
                 pageWith('prompts', { requestedPlacement: { kind: 'column', column: 'sessions' } }),
                 pageWith('later', { requestedPlacement: { kind: 'column', column: 'workflows' } }),
             ],
@@ -383,6 +384,19 @@ describe('resolveCompactAppDestinations', () => {
         expect(placements['plugin:acme.rail:rail']).toEqual({ kind: 'rail', region: 'plugins' });
         expect(placements['plugin:acme.prompts:prompts']).toEqual({ kind: 'column', column: 'sessions' });
         expect(placements['plugin:acme.later:later']).toEqual({ kind: 'rail', region: 'plugins' });
+        // Owner Q3 (2026-10-30): a page that asks for no placement is contextual — catalogued in the plugins
+        // region, so the person can pin it, but not on the rail until they do. Asking for the rail opts in.
+        const byId = Object.fromEntries(destinations.map((destination) => [destination.id, destination]));
+        expect(placements['plugin:acme.quiet:quiet']).toEqual({ kind: 'rail', region: 'plugins' });
+        expect(byId['plugin:acme.quiet:quiet']).toMatchObject({ contextual: true });
+        expect(byId['plugin:acme.rail:rail']).not.toHaveProperty('contextual');
+        expect(byId['plugin:acme.later:later']).not.toHaveProperty('contextual');
+    });
+
+    it('makes an App right-sidebar tab without a placement contextual too', () => {
+        const [tab] = resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [], rightSidebarTabs: [appSidebarTab] })
+            .filter((destination) => destination.kind === 'plugin');
+        expect(tab).toMatchObject({ placement: { kind: 'rail', region: 'plugins' }, contextual: true });
     });
 
     it('retains an unavailable qualified page as its exact destination instead of substituting another launcher', () => {

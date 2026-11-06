@@ -139,7 +139,7 @@ describe('MainAppTabBar', () => {
             const path = new URL(String(url)).pathname;
             if (path === '/v2/account/settings') return Promise.resolve(Response.json({ content: { t: 'plain', v: badgeSettings() }, version: 1 }));
             if (path === '/v1/features') {
-                const base = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false }, automations: { enabled: false } } });
+                const base = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true }, automations: { enabled: true } } });
                 return Promise.resolve(Response.json(FeaturesResponseSchema.parse({ ...base, capabilities: { ...base.capabilities,
                     social: { friends: { allowUsername: true, requiredIdentityProviderId: null } } } })));
             }
@@ -206,11 +206,10 @@ describe('MainAppTabBar', () => {
         expect(screen.tree.findAll((node) => node.props.accessibilityRole === 'tablist')).toHaveLength(1);
 
         const expectedTabs = [
-            ['settings', 'tabs.settings', false],
-            ['friends', 'tabs.friends', false],
-            ['projects', 'tabs.projects', false],
             ['sessions', 'tabs.sessionsNeedsAttention', true],
+            ['projects', 'tabs.projects', false],
             ['inbox', 'tabs.inbox', false],
+            ['workflows', 'workflows.title', false],
         ] as const;
 
         for (const [id, label, selected] of expectedTabs) {
@@ -283,7 +282,7 @@ describe('MainAppTabBar', () => {
         expect(allTextNodes.some((node) => String(node.props.children) === '2')).toBe(false);
     });
 
-    it('renders tabs in settings, friends, projects, sessions, inbox order', async () => {
+    it('renders the owner Q4 tabs: Sessions, Projects, Inbox, Workflows — no Settings or Friends tab', async () => {
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
         const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
@@ -293,10 +292,10 @@ describe('MainAppTabBar', () => {
                 .map((node) => String(node.props.testID).replace('tabbar-tab-', '')),
         ));
 
-        expect(tabIds).toEqual(['settings', 'friends', 'projects', 'sessions', 'inbox']);
+        expect(tabIds).toEqual(['sessions', 'projects', 'inbox', 'workflows']);
     });
 
-    it('shows friend request counts on the friends tab and a dot for inbox content', async () => {
+    it('shows a dot for inbox content, where friend requests now arrive', async () => {
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
         inboxState.hasContent = true;
         const { MainAppTabBar } = await import('./MainAppTabBar');
@@ -304,11 +303,10 @@ describe('MainAppTabBar', () => {
         const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const inboxTab = tree.root.findByProps({ testID: 'tabbar-tab-inbox' });
-        const friendsTab = tree.root.findByProps({ testID: 'tabbar-tab-friends' });
         const sessionsTab = tree.root.findByProps({ testID: 'tabbar-tab-sessions' });
 
         expect(inboxTab).toBeTruthy();
-        expect(hasTextChild(friendsTab, '2')).toBe(true);
+        expect(tree.root.findAllByProps({ testID: 'tabbar-tab-friends' })).toHaveLength(0);
         expect(hasIndicatorDot(inboxTab!)).toBe(true);
         expect(hasTextChild(inboxTab!, '2')).toBe(false);
         expect(hasIndicatorDot(sessionsTab)).toBe(false);
