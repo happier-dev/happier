@@ -329,14 +329,13 @@ describe('installed runtime real-process lifecycle', () => {
     const before = existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8').length : 0;
     const params = { cwd: runtime.directory, timeoutMs: 1_000, processEnv: runtime.processEnv,
       ...(callerOwned ? { signal: new AbortController().signal } : {}) };
+    // The child keeps runtime.processEnv; only this owner's actual ps exec boundary is unavailable.
+    process.env.PATH = runtime.directory;
     const settled = probeClaudeInstalledRuntimeCapabilities(params).then(
       (value) => ({ status: 'fulfilled', value } as const),
       (reason: unknown) => ({ status: 'rejected', reason } as const),
     );
     try {
-      await waitForPids(runtime.pids, 1);
-      // Exercise actual ps-list -> OS exec failure; the runtime retains its launch environment.
-      process.env.PATH = runtime.directory;
       const result = await settled.finally(() => {
         if (originalPath === undefined) delete process.env.PATH;
         else process.env.PATH = originalPath;
