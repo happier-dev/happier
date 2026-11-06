@@ -141,6 +141,16 @@ afterEach(async () => {
 });
 
 describe('WorkflowsColumn', () => {
+    it('opens the page form on its name, with the Definitions and Runs switch under it in both views (FIN-DESIGN-REVIEW L6)', async () => {
+        const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<View testID="workflow-definitions-content" />} />, { wrapper: TestAuth });
+        const order = () => screen.tree.root.findAll((node) => typeof node.type === 'string'
+            && (node.props.testID === 'workflows-column:header' || node.props.testID === 'workflows-column:view:definitions'))
+            .map((node) => node.props.testID as string);
+        expect(order()[0]).toBe('workflows-column:header');
+        expect(order()).toContain('workflows-column:view:definitions');
+        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        expect(order()[0]).toBe('workflows-column:header');
+    });
     it.each([false, true])('reveals the Workflow filter search anchor from retained Runs (page=%s)', async page => {
         const content = page ? <View testID="workflow-definitions-content" /> : undefined;
         const screen = await renderScreen(<WorkflowsColumn surface="plane" definitionsContent={content} />, { wrapper: TestAuth });

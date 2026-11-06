@@ -38,6 +38,9 @@ import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinit
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
+import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
+import { PageFrame } from '@/components/ui/layout/PageFrame';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -65,9 +68,9 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const titleChrome = useNavigationTitleChromeShowsTitle();
     const phone = useViewportClass() === 'compact';
     const ownsCreation = (titleChrome || phone) && props.definitionsContent !== undefined;
-    // A phone-sized window with no navigation bar over the page: it opens on its name, with the actions on the
-    // name's line, then the switch. Under a native header the bar already carries the name.
-    const headsPage = phone && !titleChrome && props.definitionsContent !== undefined;
+    // A page with no navigation bar over it opens on its name, with the actions on the name's line, then the
+    // switch, in both views (FIN-DESIGN-REVIEW L6). Under a native header the bar already carries the name.
+    const headsPage = !titleChrome && props.definitionsContent !== undefined;
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
@@ -99,19 +102,30 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 segmentSizing="equal"
                 />
             </View>
-            {props.definitionsContent === undefined || headsPage ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
+            {props.definitionsContent === undefined || (headsPage && phone) ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
         </View>;
     // Without a shell column, Definitions is the full home, not a second compact navigation list.
     // The same view owner still reaches Runs; the home carries its own page identity, actions and spaces.
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
-            {headsPage ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
+            {headsPage && phone ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
                 <PhoneMainTabLine />
                 <NavigationLargeTitleProvider largeTitle>
                     <PageHeader title={t('workflows.title')} actionsPlacement="page" actions={<WorkflowsColumnActions canCreate={ownsCreation} />} />
                 </NavigationLargeTitleProvider>
             </View> : null}
-            {viewTabs}
+            {headsPage && !phone ? (
+                // The page's name, then the switch, on the library's own wide column, in both views (FIN-DESIGN-REVIEW L6).
+                <ListPresentationProvider value="page">
+                    <PageFrame column="wide" content="column" style={styles.pageHead}>
+                        <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
+                            <PageHeader title={t('workflows.title')} description={t('workflows.destination.description')}
+                                actions={<WorkflowsLibraryHeaderActions secondary={!ownsCreation} />} />
+                        </View>
+                        {viewTabs}
+                    </PageFrame>
+                </ListPresentationProvider>
+            ) : viewTabs}
             {view === 'runs' ? <SessionsList fixedShow="runs" pathname={pathname} /> : (
                 <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                     <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
@@ -359,6 +373,8 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // As the destination's page (a phone), the switch sits on the page sheets' edge, not the column's row inset.
     viewsOnPage: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
+    /** The page form's head keeps no page-end padding of its own: the views' content follows it. */
+    pageHead: { paddingBottom: 0 },
     // Under the page's large title, the same gap the Inbox's tabs keep (lab `phone-P4`).
     viewsUnderPageTitle: { paddingTop: theme.space.s8, paddingBottom: 0 },
     viewTabs: { flex: 1, minWidth: 0 },

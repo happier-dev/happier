@@ -44,7 +44,7 @@ import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
-import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../column/WorkflowsColumnActions';
+import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../workflowsRoutes';
 import { useWorkflowsColumnHeadsPage, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
 import {
     dismissWorkflowLibraryDeletionReceipt,
@@ -53,6 +53,7 @@ import {
 } from './workflowLibraryReads';
 import { projectWorkflowRunStrip } from './workflowRunStrip';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
+import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
@@ -216,28 +217,15 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         onPress={newWorkflow}
     />;
     const header = (<>
-        {columnHeadsPage ? (landingNeedsNew ? <View style={styles.headerActions}>{newWorkflowButton}</View> : null) : <PageHeader
+        {/* A wide page form's column heads the page with these same actions; only a phone lends its landing button. */}
+        {columnHeadsPage ? (landingNeedsNew && phone ? <View style={styles.headerActions}>{newWorkflowButton}</View> : null) : <PageHeader
             testID="workflows-home:header"
             title={t('workflows.title')}
             description={t('workflows.destination.description')}
             actionsPlacement={landingNeedsNew ? 'page' : undefined}
             // The column normally owns phone creation.
             actions={columnOwnsCreation && !landingNeedsNew ? undefined : (
-                <View style={styles.headerActions}>
-                    {!columnOwnsCreation ? <><RoundButton
-                        testID="workflows-home:import"
-                        display="inverted"
-                        title={t('workflows.destination.import')}
-                        leading={<Icon name="download" size={14} color={theme.colors.text.secondary} />}
-                        textStyle={{ color: theme.colors.text.secondary }}
-                        onPress={importWorkflow}
-                    />
-                    <RoundButton testID="workflows-home:agent" display="secondary"
-                        title={t('workflows.authoring.create')}
-                        leading={<Icon name="sparkle" size={14} color={theme.colors.text.primary} />}
-                        onPress={createWithAgent} /></> : null}
-                    {newWorkflowButton}
-                </View>
+                <WorkflowsLibraryHeaderActions secondary={!columnOwnsCreation} controlRef={setCreationRef} />
             )}
         />}
         {deleted ? <View testID="workflows-home:deleted-focus">

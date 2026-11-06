@@ -13,9 +13,7 @@ import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthorin
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 
 /** Where each "+" choice goes; the editor owns what happens next. */
-export const WORKFLOWS_NEW_ROUTE = '/workflows/new';
-export const WORKFLOWS_IMPORT_ROUTE = '/workflows/new?importJson=1';
-export const WORKFLOWS_RUN_SETTINGS_ROUTE = '/workflows/settings';
+import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE, WORKFLOWS_RUN_SETTINGS_ROUTE } from '../workflowsRoutes';
 
 /**
  * The column header's two controls (lab `nav-N1m`, FIN 04 §3.3): `⋯` with the destination's run
