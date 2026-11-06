@@ -573,6 +573,9 @@ describe('workflow library page anatomy', () => {
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
         // The canonical Workflows root opts out of native chrome; its page owns identity.
         expect(screen.findHostByTestId('workspace-destination-header')).toBeNull();
+        // A phone tab like the others: the Home line, Activity and the Settings avatar above its large title.
+        expect(screen.findHostByTestId('main-tab-nav-row')).not.toBeNull();
+        expect(screen.findHostByTestId('main-header-settings-avatar')).not.toBeNull();
         await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000001')).not.toBeNull());
         // One overflow: the title bar carries no page-actions `⋯` of raw buttons beside the column's own.
         expect(screen.findHostByTestId('page-header-actions.trigger')).toBeNull();

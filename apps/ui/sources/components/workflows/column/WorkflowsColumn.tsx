@@ -13,6 +13,7 @@ import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, Coll
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { NavigationLargeTitleProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PhoneMainTabLine } from '@/components/navigation/shell/PhoneMainTabLine';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -105,6 +106,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
             {headsPage ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
+                <PhoneMainTabLine />
                 <NavigationLargeTitleProvider largeTitle>
                     <PageHeader title={t('workflows.title')} actionsPlacement="page" actions={<WorkflowsColumnActions canCreate={ownsCreation} />} />
                 </NavigationLargeTitleProvider>

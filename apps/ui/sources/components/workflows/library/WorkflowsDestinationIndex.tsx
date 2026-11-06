@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkflowsColumn } from '@/components/workflows/column/WorkflowsColumn';
+import { PhoneMainTabShell } from '@/components/navigation/shell/PhoneMainTabLine';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 
@@ -30,6 +32,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
  */
 export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinationIndex() {
     const columnVisible = useAppShellColumn().columnVisible;
+    const phone = useViewportClass() === 'compact';
     const access = useWorkflowsDestinationAccess();
     const router = useRouter();
     const params = useLocalSearchParams<{ authoringSessionId?: string; authoringServerId?: string; automationUnavailable?: string; automationEventSeedId?: string; serverId?: string }>();
@@ -49,8 +52,12 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
     }), [hideWorkflowLabel, showWorkflowLabel, workflowsName]);
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
     const content = !columnVisible && (access.kind === 'workflows' || access.kind === 'triggersOnly')
-        ? <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
-            ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} />
+        ? phone
+            // A phone tab like the others: the shell hands the column its Home line and glyphs.
+            ? <PhoneMainTabShell><WorkflowsColumn surface="page" {...(access.kind === 'workflows'
+                ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} /></PhoneMainTabShell>
+            : <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
+                ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} />
         : <WorkflowsGate surface="destination"><WorkflowsLibraryIdle /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}
