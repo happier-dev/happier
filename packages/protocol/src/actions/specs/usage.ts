@@ -72,7 +72,7 @@ export const USAGE_ACTION_SPECS = [
     description: 'Compose a selected-field preview from an authorized private Usage query. Names and dollars are excluded by default. Missing detail stays unavailable. This produces data without opening a share sheet or publishing.',
     bindings: { mcpToolName: 'usage_recap_private_compose' }, inputSchema: UsageRecapPrivateComposeInputSchema, outputSchema: UsageRecapComposeResultSchema,
     inputHints: { fields: privateRecapFields } },
-  { ...common, id: 'usage.query', approval: {result: 'none'}, title: 'Query usage', description: 'Read the current authorized personal usage snapshot for a batch of independently resolved queries. Source harvesting and vendor refresh do not block this read.',
+  { ...common, id: 'usage.query', approval: {result: 'none'}, title: 'Query usage', description: 'Read the current authorized personal usage snapshot for a batch of independently resolved queries. Source harvesting and vendor refresh do not block this read. Evidence that cannot fit the Action response is explicitly omitted in each affected slice’s incomplete.omittedSections; narrow the period or Session/filter scope to read that evidence. Summary accounting remains admitted, not truncated.',
     bindings: { mcpToolName: 'usage_query' }, inputSchema: UsageQueryBatchInputSchema, outputSchema: UsageQueryBatchResultSchema,
     inputHints: { fields: [{ path: 'queries', title: 'Usage queries', widget: 'json', required: true }] } },
   { ...common, id: 'usage.export', approval: {result: 'none'}, title: 'Export usage', description: 'Serialize explicitly selected authorized usage facts as JSON, CSV or text file bytes. Local Save, Copy and Share remain explicit client operations.',

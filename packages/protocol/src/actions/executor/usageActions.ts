@@ -16,6 +16,7 @@ import { sameQualifiedConnectedAccountRef } from '../../connect/qualifiedConnect
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '../../usage/usageModelPriceSchemas.js';
 import { PublicProfileReadResultV1Schema, type PublicProfileReadResultV1 } from '../../account/publicProfilePublication.js';
 import { composePublicUsageRecap } from '../../usage/composePublicUsageRecap.js';
+import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery.js';
 
 export type UsageActionPorts = Readonly<{
   prices?: Readonly<{
@@ -66,7 +67,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
   };
   if (actionId === 'usage.query') {
     const result = await read(UsageQueryBatchInputSchema.parse(value));
-    return 'ok' in result ? result : { ok: true, result };
+    return 'ok' in result ? result : { ok: true, result: projectUsageQueryDelivery(result) };
   }
   if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver') {
     const delivery = actionId === 'usage.recap.deliver' ? UsageRecapDeliveryInputSchema.parse(value) : null;
@@ -135,7 +136,11 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     return file ? { ok: true, result: file } : failure('usage_calendar_fact_unavailable');
   }
   const request = UsageExportInputSchema.parse(value);
-  const queried = await read({ queries: [request.query] });
+  const exportQuery = normalizeUsageQuery({ ...request.query, includeAccounting: true,
+    includeComparison: false,
+    includeContributions: request.fields.includes('contributions'), includeQuotaHistory: false,
+    includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+  const queried = await read({ queries: [exportQuery] });
   if ('ok' in queried) return queried;
   const slice = queried.results[0];
   if (!slice?.accounting) return failure('usage_accounting_unavailable');
