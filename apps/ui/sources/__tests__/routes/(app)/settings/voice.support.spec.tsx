@@ -501,9 +501,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         const screen = await renderVoiceSettings("conversations");
         await openAdvancedAgent(screen);
 
-        await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorAgentSource');
         await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.itMayTitle');
-        await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorChatModelSource');
         await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorCommitModelSource');
         await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.repliesTitle');
 
