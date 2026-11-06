@@ -128,7 +128,8 @@ function createFillHarness(params: Readonly<{
         transcriptWebHotTailItemCount: 0,
     });
 
-    const deps: EntryHostDeps = {
+    // Cases replace individual seams (DOM readings, first paint) before rendering the hook.
+    const deps: { -readonly [K in keyof EntryHostDeps]: EntryHostDeps[K] } = {
         activeTargetWindowTargetRef: { current: null },
         anchorLookupExhaustedRef: { current: false },
         anchorLookupInFlightRef: { current: false },
@@ -150,6 +151,7 @@ function createFillHarness(params: Readonly<{
         entryRestoreOwner: createEntryRestoreOwner(),
         entrySliceWindowRef: { current: null },
         executeViewportCommand: vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => true),
         initialBottomPositionOwner: 'app' as const,
         initialFillAbortRef: { current: null },
@@ -526,6 +528,81 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         // never an unbounded fetch loop.
         expect(harness.loadOlder.mock.calls.length).toBeLessThanOrEqual(4);
         expect(harness.isScrollable()).toBe(false);
+    });
+
+    // Issue #864 (cold session switch): the bottom-entry fill must not read the DOM in the frames
+    // between the first page's data and its settled initial end placement. There the viewport is
+    // either not laid out yet (DOM 297 / 297 px while the renderer measured 7,164 px) or laid out
+    // at scrollTop 0 before the end placement lands. Read there, the reader looks underfilled or at
+    // the older edge, and the open fetches, decrypts and prepends an older page the reader never
+    // asked for (0.3 live 2026-11-03: 300 messages per cold open instead of 150). Placed, the tail
+    // reader sits 6.8k px clear of the older edge. These drive production's own readings of that
+    // geometry: DOM scrollability and the pager threshold on the live scrollTop, until the
+    // renderer's load.
+    it.each([
+        ['first page not yet laid out in the DOM', { scrollTop: 0, scrollHeight: 297, clientHeight: 297 }],
+        ['laid out but the initial end placement has not landed', { scrollTop: 0, scrollHeight: 7_164, clientHeight: 297 }],
+    ] as const)('web post-settle fill loads NO older page while %s', async (_case, initialDomGeometry) => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 297,
+            initialContentHeightPx: 7_164,
+            contentGrowthPerLoadPx: [7_000],
+            loadDurationMs: 500,
+        });
+        let dom: { scrollTop: number; scrollHeight: number; clientHeight: number } = { ...initialDomGeometry };
+        harness.deps.resolveWebScrollMetrics = vi.fn(() => ({ element: {} as HTMLElement, ...dom }));
+        harness.isScrollable.mockImplementation(() => dom.scrollHeight > dom.clientHeight + 1);
+        harness.isViewportNearOlderEdge.mockImplementation(() => (
+            dom.scrollHeight > dom.clientHeight + 1 && dom.scrollTop <= OLDER_PREFETCH_THRESHOLD_PX
+        ));
+        // The renderer lays the page out, then Legend's initial end placement lands and it reports load.
+        const rendererLoaded = { current: false };
+        harness.deps.firstListPaintObservedRef = rendererLoaded;
+        setTimeout(() => { dom = { scrollTop: 0, scrollHeight: 7_164, clientHeight: 297 }; }, 60);
+        setTimeout(() => {
+            dom = { scrollTop: 6_867, scrollHeight: 7_164, clientHeight: 297 };
+            rendererLoaded.current = true;
+        }, 120);
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        expect(harness.loadOlder).toHaveBeenCalledTimes(0);
+    });
+
+    it('web post-settle fill still loads older pages for a laid-out first page that does not fill the viewport', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 297,
+            initialContentHeightPx: 180,
+            contentGrowthPerLoadPx: [400, 1_200],
+            loadDurationMs: 500,
+        });
+        const dom = () => {
+            const scrollHeight = Math.max(297, harness.listContentHeightRef.current);
+            return { scrollTop: scrollHeight - 297, scrollHeight, clientHeight: 297 };
+        };
+        harness.deps.resolveWebScrollMetrics = vi.fn(() => ({ element: {} as HTMLElement, ...dom() }));
+        harness.isScrollable.mockImplementation(() => dom().scrollHeight > 297 + 1);
+        harness.isViewportNearOlderEdge.mockImplementation(() => (
+            dom().scrollHeight > 297 + 1 && dom().scrollTop <= OLDER_PREFETCH_THRESHOLD_PX
+        ));
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.loadOlder).toHaveBeenCalledTimes(2);
+        }, { timeout: 5000 });
+        expect(harness.isViewportNearOlderEdge()).toBe(false);
     });
 
     it('keeps filling through raw-only (sidechain) pages until displayable content is sufficient', async () => {

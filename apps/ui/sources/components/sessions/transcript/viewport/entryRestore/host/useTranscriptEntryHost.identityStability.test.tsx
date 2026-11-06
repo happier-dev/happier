@@ -85,6 +85,7 @@ function createStableMembers() {
         entryRestoreOwner: createEntryRestoreOwner(),
         entrySliceWindowRef: { current: null },
         executeViewportCommand: vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialBottomPositionOwner: 'app' as const,
         initialFillAbortRef: { current: null },
