@@ -91,7 +91,7 @@ export function runAgentSkillDeliveryContract(input: AgentSkillDeliveryContractI
                 const plan = SessionSkillPlanV1Schema.parse(resolveSessionSkillPlanV1({
                     items: [{ skillId: 'contract:skill', name: 'contract-skill', sourceFolderName: 'contract-source', digest: 'sha256:contract',
                         description: 'Contract skill', disableModelInvocation: false, userInvocable: true }],
-                    selected: [{ kind: 'skill', id: 'contract:skill', name: 'contract-skill', selected: true,
+                    selected: [{ kind: 'skill', id: 'contract:skill', name: 'contract-skill', selected: true, reachEnabled: true,
                         selectable: true, reason: 'rule_on', decidedBy: null, sessionOverride: null }],
                     excludeNativeSkillNames: [], agentSkills: capability ?? null, agentHasActionChannel,
                     nativeSkills: { status: 'ok', names: [] },
