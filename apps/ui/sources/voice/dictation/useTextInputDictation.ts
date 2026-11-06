@@ -20,6 +20,9 @@ import { VoiceDictationActionResultSchema, VoiceSetupMicrophonePermissionActionR
 export type TextInputDictation = Readonly<{
     status: ReturnType<typeof useVoiceDictation>['status'];
     available: boolean;
+    failure: ReturnType<typeof useVoiceDictation>['failure'];
+    onRetry(): Promise<ActionExecuteResult>;
+    onDiscard(): Promise<ActionExecuteResult>;
     onPress(): Promise<void>;
     /** The real field/button focus lends its exact target to current-UI Actions. */
     onFocus(): Promise<boolean>;
@@ -65,14 +68,14 @@ export function useTextInputDictation(input: Readonly<{
         mount?.clear();
     }, [input.enabled, input.presented, input.editable, mount]);
 
-    const toggleAndInsert = React.useCallback(async (isCurrent: () => boolean = () => true) => {
-        const result = await dictation.toggle();
+    const toggleAndInsert = React.useCallback(async (isCurrent: () => boolean = () => true, retry = false) => {
+        const result = await (retry ? dictation.retry() : dictation.toggle());
         const owner = authorityRef.current;
         const inserted = result.kind === 'completed' && Boolean(result.text)
             && owner.controlId === input.controlId && owner.enabled && owner.presented && owner.editable && isCurrent();
         if (inserted && result.kind === 'completed' && result.text) owner.onTranscription(result.text);
         return { result, inserted };
-    }, [dictation.toggle, input.controlId]);
+    }, [dictation.retry, dictation.toggle, input.controlId]);
     const deliveryRef = React.useRef(toggleAndInsert);
     deliveryRef.current = toggleAndInsert;
 
@@ -90,7 +93,7 @@ export function useTextInputDictation(input: Readonly<{
                     && authorityRef.current.enabled && authorityRef.current.presented && authorityRef.current.editable;
                 if (!current()) return unavailable('dictation_field_unavailable');
                 const controller = dictationRef.current;
-                if (operation === 'cancel') { await controller.cancel(); return { status: 'completed', dictationStatus: 'idle', inserted: false }; }
+                if (operation === 'cancel') { await controller.discard(); return { status: 'completed', dictationStatus: 'idle', inserted: false }; }
                 if (operation === 'dismiss') {
                     const failure = controller.getSnapshot().failure;
                     if (failure) controller.dismissFailure(failure.id);
@@ -103,11 +106,13 @@ export function useTextInputDictation(input: Readonly<{
                 }
                 // Never let an explicit Start become toggle's Finish (or Finish acquire a mic).
                 const before = controller.getSnapshot();
-                if (operation === 'start' ? before.status !== 'idle' : before.status !== 'listening') return unavailable('dictation_state_changed');
+                const retry = operation === 'retry';
+                if (operation === 'start' ? before.status !== 'idle'
+                    : operation === 'finish' && before.status !== 'listening') return unavailable('dictation_state_changed');
                 const cancel = () => { void controller.cancel(); };
                 signal.addEventListener('abort', cancel, { once: true });
                 try {
-                    const delivery = await deliveryRef.current(current);
+                    const delivery = await deliveryRef.current(current, retry);
                     if (!current() || delivery.result.kind === 'cancelled') return unavailable('dictation_cancelled');
                     return { status: 'completed', dictationStatus: controller.getSnapshot().status, inserted: delivery.inserted };
                 } catch (error) {
@@ -120,9 +125,9 @@ export function useTextInputDictation(input: Readonly<{
             const cancelFocusedDictation = dictationRef.current.cancel;
             const retirement = account.onRetire(() => { mount.clear(); void cancelFocusedDictation(); });
             focus.current = { account, dispose: () => retirement.dispose(), enrichment: {
-                commands: (['start', 'finish', 'cancel', 'dismiss'] as const).map(operation => ({
+                commands: (['start', 'finish', 'cancel', 'dismiss', 'retry'] as const).map(operation => ({
                     title: t(operation === 'start' ? 'voiceAssistant.startDictation' : operation === 'finish' ? 'voiceAssistant.endDictation'
-                        : operation === 'cancel' ? 'common.cancel' : 'common.close'),
+                        : operation === 'cancel' ? 'common.cancel' : operation === 'retry' ? 'common.retry' : 'common.close'),
                     command: { kind: 'voiceDictation', operation, account, invoke: ({ signal }) => invoke(operation, signal) },
                 })),
             } };
@@ -140,8 +145,14 @@ export function useTextInputDictation(input: Readonly<{
                 serverId: focused?.account.scope.serverId, expectedAccountId: focused?.account.scope.accountId }),
         });
     }, [execute, onFocus, reader]);
+    const onRetry = React.useCallback(() => invokeAction('retry'), [invokeAction]);
+    const onDiscard = React.useCallback(() => invokeAction('cancel'), [invokeAction]);
+
     React.useEffect(() => {
         if (!dictation.failure) return;
+        // Retained recordings belong to the field's persistent Retry/Discard
+        // presentation. A generic alert must not auto-dismiss their custody.
+        if (dictation.failure.canRetry !== undefined) return;
         if (dictation.failure.kind !== 'mic_permission_denied') {
             Modal.alert(t('common.error'), t(resolveVoiceDictationFailureTranslationKey(dictation.failure.reason)));
         }
@@ -193,5 +204,5 @@ export function useTextInputDictation(input: Readonly<{
             Modal.alert(t('common.error'), t(key ?? 'errors.dictationFailed'));
         }
     }, [execute, invokeAction, input.controlId]);
-    return { status: dictation.status, available, onPress, onFocus };
+    return { status: dictation.status, available, failure: dictation.failure, onPress, onFocus, onRetry, onDiscard };
 }

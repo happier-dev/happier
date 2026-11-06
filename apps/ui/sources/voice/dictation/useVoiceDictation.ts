@@ -84,6 +84,8 @@ export function useVoiceDictation(
     transcriptionSessionId?: string | null,
 ): Readonly<{
     cancel: () => Promise<void>;
+    discard: () => Promise<void>;
+    retry: () => Promise<VoiceDictationToggleResult>;
     getSnapshot: () => VoiceDictationSnapshot;
     dismissFailure: (failureId: number) => void;
     failure: VoiceDictationFailure | null;
@@ -138,6 +140,8 @@ export function useVoiceDictation(
     }, []);
 
     const cancel = React.useCallback(() => voiceDictationController.cancel(normalizedSessionId), [normalizedSessionId]);
+    const discard = React.useCallback(() => voiceDictationController.discard(normalizedSessionId), [normalizedSessionId]);
+    const retry = React.useCallback(() => voiceDictationController.retry(normalizedSessionId), [normalizedSessionId]);
     const getSnapshot = React.useCallback(() => {
         const current = voiceDictationController.getSnapshot();
         return current.sessionId === normalizedSessionId || current.failure?.sessionId === normalizedSessionId
@@ -146,6 +150,8 @@ export function useVoiceDictation(
 
     return {
         cancel,
+        discard,
+        retry,
         getSnapshot,
         status: snapshot.sessionId === presentedSessionId
             ? snapshot.status

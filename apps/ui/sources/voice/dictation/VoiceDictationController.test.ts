@@ -106,6 +106,8 @@ function createRealCaptureBoundary(input: Readonly<{
     });
     captures.push({ stopSession: real.stopSession, dispose: native.coordinator.dispose });
     return {
+        coordinator: native.coordinator,
+        emitSession: native.emitSession,
         startCapture: vi.fn(real.startCapture),
         stopCapture: vi.fn(real.stopCapture),
         stopSession: vi.fn((...args: Parameters<typeof real.stopSession>) => { stopSessionEntered.resolve(); return real.stopSession(...args); }),
@@ -206,8 +208,8 @@ afterAll(() => network.dispose());
 const ORIGINAL_PLATFORM_OS = Platform.OS;
 
 const EXPECTED_DICTATION_LIMITS = {
+    // Former cutoffs are regression probes, not current capture/text limits.
     captureDurationMs: 60_000,
-    transcriptionDeadlineMs: 30_000,
     transcriptCharacters: 8_000,
     recordedAudioBytes: 8 * 1024 * 1024,
 } as const;
@@ -479,6 +481,102 @@ describe('createVoiceDictationController', () => {
             sessionId: null,
             status: 'idle',
         });
+    });
+
+    it('supersedes pending transcription with a fresh Dictation attempt and drops the stale text', async () => {
+        const stale = createDeferred<string>();
+        let requestCount = 0;
+        let firstSignal: AbortSignal | null | undefined;
+        const transcribeRecordedAudio = createTranscriptionProbe(async request => {
+            if (++requestCount === 1) {
+                firstSignal = request.signal;
+                return await stale.promise;
+            }
+            return 'fresh dictated text';
+        });
+        const captureOwner = createRealCaptureBoundary();
+        const controller = createVoiceDictationController({ captureOwner, ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({ voice: { providerId: 'local_conversation',
+                dictation: { sttBinding: 'same_as_local' }, providers: { local_conversation: {
+                    schemaVersion: 1, config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
+                } } } }), transcribeRecordedAudio });
+        await controller.toggle('session-1');
+        const oldCompletion = controller.toggle('session-1');
+        try {
+            await transcribeRecordedAudio.entered;
+            expect(controller.getSnapshot().status).toBe('transcribing');
+            await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+            expect(firstSignal?.aborted).toBe(true);
+            expect(controller.getSnapshot().status).toBe('listening');
+            stale.resolve('stale text must not enter the composer');
+            await expect(oldCompletion).resolves.toEqual({ kind: 'cancelled' });
+            await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'completed', text: 'fresh dictated text' });
+            expect(captureOwner.startCapture).toHaveBeenCalledTimes(2);
+            expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
+        } finally {
+            stale.resolve('discarded');
+            await controller.cancel('session-1');
+            await oldCompletion;
+        }
+    });
+
+    it.each(['retry', 'discard', 'account cleanup', 'native lifecycle'] as const)('retains failed dictation audio until %s without recording again or idle work', async (disposition) => {
+        const captureOwner = createRealCaptureBoundary();
+        const deletion = createDeferred<void>();
+        const deleteRecordedAudio = vi.fn(async () => { deletion.resolve(); });
+        let failing = true;
+        const transcribeRecordedAudio = createTranscriptionProbe(async () => {
+            if (failing) throw new Error('speech service unavailable');
+            return 'recovered editable words';
+        });
+        const controller = createVoiceDictationController({
+            captureOwner, ...TEST_RECORDED_AUDIO_BOUNDARY, deleteRecordedAudio,
+            nativeAudioSessionCoordinator: captureOwner.coordinator,
+            getSettings: () => ({ voice: { dictation: { sttBinding: 'explicit',
+                stt: { provider: 'happier.voice.openai-compat/stt' } } } }),
+            transcribeRecordedAudio,
+        });
+        await controller.toggle('session-1');
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
+        expect(controller.getSnapshot()).toMatchObject({ status: 'idle', failure: { canRetry: true } });
+        expect(deleteRecordedAudio).not.toHaveBeenCalled();
+        expect(captureOwner.stopSession).toHaveBeenCalledOnce();
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
+        expect(deleteRecordedAudio).not.toHaveBeenCalled();
+        const notifications = vi.fn();
+        const unsubscribe = controller.subscribe(notifications);
+        // A retained failure is settled, with no scheduled transcription or publication.
+        await Promise.resolve();
+        expect(transcribeRecordedAudio).toHaveBeenCalledOnce();
+        expect(notifications).not.toHaveBeenCalled();
+        if (disposition === 'retry') {
+            await expect(controller.retry('other-field')).resolves.toEqual({ kind: 'cancelled' });
+            await expect(controller.retry('session-1')).resolves.toEqual({ kind: 'cancelled' });
+            expect(controller.getSnapshot()).toMatchObject({ failure: { canRetry: true } });
+            expect(deleteRecordedAudio).not.toHaveBeenCalled();
+            failing = false;
+            await expect(controller.retry('session-1')).resolves.toEqual({ kind: 'completed', text: 'recovered editable words' });
+            expect(transcribeRecordedAudio.mock.calls.map(([request]) => request.uri))
+                .toEqual(['file:///dictation.m4a', 'file:///dictation.m4a', 'file:///dictation.m4a']);
+        } else if (disposition === 'discard') {
+            await controller.discard('session-1');
+        } else if (disposition === 'native lifecycle') {
+            captureOwner.emitSession({ generation: captureOwner.coordinator.getSnapshot().generation,
+                kind: 'lifecycle_changed', state: 'background' });
+            controller.reportCaptureError({ controlSessionId: 'session-1', kind: 'provider_error', reason: 'late_capture_error' });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(deleteRecordedAudio).not.toHaveBeenCalled();
+            expect(controller.getSnapshot()).toMatchObject({ failure: { canRetry: true } });
+            await controller.discard('session-1');
+        } else {
+            await controller.cancel();
+        }
+        await deletion.promise;
+        expect(captureOwner.startCapture).toHaveBeenCalledOnce();
+        expect(deleteRecordedAudio).toHaveBeenCalledExactlyOnceWith('file:///dictation.m4a');
+        expect(controller.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
+        await expect(controller.retry('session-1')).resolves.toEqual({ kind: 'cancelled' });
+        unsubscribe();
     });
 
     it('surfaces a failed recorded-audio deletion without discarding the completed transcript', async () => {
@@ -884,126 +982,64 @@ describe('createVoiceDictationController', () => {
         expect(controller.getSnapshot().status).toBe('idle');
     });
 
-    it('settles a pending capture start at the deadline while retaining admission through teardown', async () => {
+    it('keeps an uncooperative capture start pending without a deadline and cancels through teardown', async () => {
         vi.useFakeTimers();
         const harness = createPendingCaptureStartHarness();
-        let startResult: unknown;
-        let startFinished = false;
+        try {
+            let startResult: unknown;
+            let startFinished = false;
+            const starting = harness.controller.toggle('session-1').then((result) => {
+                startResult = result;
+                startFinished = true;
+            });
+            await harness.rawCaptureOwner.preparing;
+            expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(1);
+            expect(harness.hasEnteredPrepare()).toBe(true);
 
-        void harness.controller.toggle('session-1').then((result) => {
-            startResult = result;
-            startFinished = true;
-        });
-        await vi.advanceTimersByTimeAsync(0);
-        expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(1);
-        expect(harness.hasEnteredPrepare()).toBe(true);
-        expect(harness.getObservedSignal()?.aborted).toBe(false);
+            await vi.advanceTimersByTimeAsync(60_001);
+            expect(harness.controller.getSnapshot()).toEqual({ sessionId: 'session-1', status: 'starting' });
+            expect(startFinished).toBe(false);
+            expect(harness.getObservedSignal()?.aborted).toBe(false);
+            vi.useRealTimers();
 
-        await vi.advanceTimersByTimeAsync(EXPECTED_DICTATION_LIMITS.captureDurationMs);
-        expect(harness.controller.getSnapshot()).toEqual({
-            sessionId: 'session-1',
-            status: 'starting',
-        });
+            let cancelSettlementCount = 0;
+            const cancellation = harness.controller.cancel('session-1').then(() => {
+                cancelSettlementCount += 1;
+            });
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
 
-        await vi.advanceTimersByTimeAsync(1);
-        await Promise.resolve();
+            expect(cancelSettlementCount).toBe(0);
+            expect(startFinished).toBe(true);
+            expect(startResult).toEqual({ kind: 'cancelled' });
+            expect(harness.getObservedSignal()?.aborted).toBe(true);
+            expect(harness.controller.getSnapshot()).toEqual({
+                sessionId: null,
+                status: 'idle',
+            });
+            expect(harness.rawCaptureOwner.stopSession).toHaveBeenCalledTimes(1);
+            expect(harness.admission.acquire('conversation')).toEqual({
+                status: 'busy',
+                activeOwner: 'dictation',
+            });
 
-        expect(startFinished).toBe(true);
-        expect(startResult).toEqual({ kind: 'cancelled' });
-        expect(harness.getObservedSignal()?.aborted).toBe(true);
-        expect(harness.controller.getSnapshot()).toMatchObject({
-            sessionId: null,
-            status: 'idle',
-            failure: {
-                kind: 'stt_timeout',
-                reason: 'capture_start_deadline_exceeded',
-                sessionId: 'session-1',
-            },
-        });
-        expect(harness.rawCaptureOwner.stopCapture).not.toHaveBeenCalled();
-        expect(harness.rawCaptureOwner.stopSession).toHaveBeenCalledTimes(1);
-        expect(harness.admission.acquire('conversation')).toEqual({
-            status: 'busy',
-            activeOwner: 'dictation',
-        });
-        let earlyRetryResult: unknown;
-        let earlyRetryFinished = false;
-        void harness.controller.toggle('session-1').then((result) => {
-            earlyRetryResult = result;
-            earlyRetryFinished = true;
-        });
-        await vi.advanceTimersByTimeAsync(0);
-        expect(earlyRetryFinished).toBe(true);
-        expect(earlyRetryResult).toEqual({ kind: 'cancelled' });
-        expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(1);
-        expect(harness.admission.acquire('conversation')).toEqual({
-            status: 'busy',
-            activeOwner: 'dictation',
-        });
-
-        harness.startSettled.resolve();
-        await Promise.resolve();
-        expect(harness.admission.acquire('conversation')).toEqual({
-            status: 'busy',
-            activeOwner: 'dictation',
-        });
-
-        harness.teardownSettled.resolve();
-        await harness.rawCaptureOwner.stopSession.mock.results[0]?.value;
-        // SDK teardown is settled; drain deterministic continuations on this
-        // test's existing fake clock before admitting the single retry.
-        await vi.advanceTimersByTimeAsync(0);
-        await expect(harness.controller.toggle('session-1')).resolves.toEqual({
-            kind: 'started',
-        });
-        expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(2);
-        await harness.controller.cancel('session-1');
-    });
-
-    it('aborts an uncooperative capture start before cancellation settles after teardown', async () => {
-        const harness = createPendingCaptureStartHarness();
-        let startResult: unknown;
-        let startFinished = false;
-        const starting = harness.controller.toggle('session-1').then((result) => {
-            startResult = result;
-            startFinished = true;
-        });
-        await harness.rawCaptureOwner.preparing;
-        expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(1);
-        expect(harness.hasEnteredPrepare()).toBe(true);
-
-        let cancelSettlementCount = 0;
-        const cancellation = harness.controller.cancel('session-1').then(() => {
-            cancelSettlementCount += 1;
-        });
-        await new Promise<void>((resolve) => {
-            setTimeout(resolve, 0);
-        });
-
-        expect(cancelSettlementCount).toBe(0);
-        expect(startFinished).toBe(true);
-        expect(startResult).toEqual({ kind: 'cancelled' });
-        expect(harness.getObservedSignal()?.aborted).toBe(true);
-        expect(harness.controller.getSnapshot()).toEqual({
-            sessionId: null,
-            status: 'idle',
-        });
-        expect(harness.rawCaptureOwner.stopSession).toHaveBeenCalledTimes(1);
-        expect(harness.admission.acquire('conversation')).toEqual({
-            status: 'busy',
-            activeOwner: 'dictation',
-        });
-
-        harness.startSettled.resolve();
-        harness.teardownSettled.resolve();
-        await harness.rawCaptureOwner.stopSession.mock.results[0]?.value;
-        await Promise.all([starting, cancellation]);
-        expect(cancelSettlementCount).toBe(1);
-        await expect(harness.controller.toggle('session-1')).resolves.toEqual({
-            kind: 'started',
-        });
-        expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(2);
-        await harness.controller.cancel('session-1');
+            harness.startSettled.resolve();
+            harness.teardownSettled.resolve();
+            await harness.rawCaptureOwner.stopSession.mock.results[0]?.value;
+            await Promise.all([starting, cancellation]);
+            expect(cancelSettlementCount).toBe(1);
+            await expect(harness.controller.toggle('session-1')).resolves.toEqual({
+                kind: 'started',
+            });
+            expect(harness.rawCaptureOwner.startCapture).toHaveBeenCalledTimes(2);
+            await harness.controller.cancel('session-1');
+        } finally {
+            vi.useRealTimers();
+            harness.startSettled.resolve();
+            harness.teardownSettled.resolve();
+            await harness.controller.cancel('session-1');
+        }
     });
 
     it('waits for cross-session teardown to release admission before starting the next session', async () => {
@@ -1173,12 +1209,12 @@ describe('createVoiceDictationController', () => {
         expect(captureOwner.startCapture).toHaveBeenCalledTimes(2);
     });
 
-    it('allows capture at the exact duration limit and fails at limit + 1 with one bounded teardown', async () => {
+    it('retains capture beyond one minute and returns its text with one teardown', async () => {
         vi.useFakeTimers();
         const captureOwner = createRealCaptureBoundary({ recordedUri: () => 'file:///dictation.m4a' });
         const measureRecordedAudioBytes = vi.fn(async () => 4);
         const deleteRecordedAudio = vi.fn(async () => {});
-        const transcribeRecordedAudio = createTranscriptionProbe(async () => 'must not be inserted');
+        const transcribeRecordedAudio = createTranscriptionProbe(async () => 'editable long-capture transcript');
         const controller = createVoiceDictationController({
             captureOwner,
             getSettings: () => ({
@@ -1206,22 +1242,16 @@ describe('createVoiceDictationController', () => {
         });
 
         await vi.advanceTimersByTimeAsync(1);
-        await vi.waitFor(() => {
-            expect(controller.getSnapshot()).toMatchObject({
-                sessionId: null,
-                status: 'idle',
-                failure: {
-                    kind: 'stt_timeout',
-                    reason: 'capture_duration_exceeded',
-                    sessionId: 'session-1',
-                },
-            });
+        expect(controller.getSnapshot()).toEqual({ sessionId: 'session-1', status: 'listening' });
+        vi.useRealTimers();
+        await expect(controller.toggle('session-1')).resolves.toEqual({
+            kind: 'completed', text: 'editable long-capture transcript',
         });
 
         expect(captureOwner.stopCapture).toHaveBeenCalledTimes(1);
         expect(captureOwner.stopSession).toHaveBeenCalledTimes(1);
-        expect(measureRecordedAudioBytes).not.toHaveBeenCalled();
-        expect(transcribeRecordedAudio).not.toHaveBeenCalled();
+        expect(measureRecordedAudioBytes).toHaveBeenCalledOnce();
+        expect(transcribeRecordedAudio).toHaveBeenCalledOnce();
         expect(deleteRecordedAudio).toHaveBeenCalledOnce();
         expect(deleteRecordedAudio).toHaveBeenCalledWith('file:///dictation.m4a');
 
@@ -1229,7 +1259,7 @@ describe('createVoiceDictationController', () => {
         expect(captureOwner.startCapture).toHaveBeenCalledTimes(2);
     });
 
-    it('bounds a pending provider transcription and settles a simultaneous navigation cancel once', async () => {
+    it('keeps provider transcription visibly pending without a deadline and cancels it once', async () => {
         vi.useFakeTimers();
         let transcriptionSignal: AbortSignal | null = null;
         const transcribing = createDeferred<void>();
@@ -1259,11 +1289,10 @@ describe('createVoiceDictationController', () => {
         });
 
         await controller.toggle('session-1');
-        const stopRequestedAt = Date.now();
         const completion = controller.toggle('session-1');
         await transcribing.promise;
         expect(transcriptionSignal).not.toBeNull();
-        await vi.advanceTimersByTimeAsync(EXPECTED_DICTATION_LIMITS.transcriptionDeadlineMs - (Date.now() - stopRequestedAt));
+        await vi.advanceTimersByTimeAsync(60_001);
         expect(controller.getSnapshot().status).toBe('transcribing');
 
         const navigationCancel = controller.cancel('session-1');
@@ -1281,7 +1310,7 @@ describe('createVoiceDictationController', () => {
         expect(captureOwner.startCapture).toHaveBeenCalledTimes(2);
     });
 
-    it('bounds recorder finalization from the stop request and still cleans a late recording', async () => {
+    it('keeps recorder finalization visibly pending until Cancel and still cleans a late recording', async () => {
         vi.useFakeTimers();
         let resolveStoppedCapture!: (uri: string) => void;
         const captureOwner = createRealCaptureBoundary({ stop: () => new Promise<string>(resolve => { resolveStoppedCapture = resolve; }) });
@@ -1317,11 +1346,12 @@ describe('createVoiceDictationController', () => {
         expect(captureOwner.stopCapture).toHaveBeenCalledOnce();
 
         try {
-            await vi.advanceTimersByTimeAsync(EXPECTED_DICTATION_LIMITS.transcriptionDeadlineMs);
+            await vi.advanceTimersByTimeAsync(60_001);
             expect(completionSettled).toBe(false);
+            expect(controller.getSnapshot()).toEqual({ sessionId: 'session-1', status: 'transcribing' });
 
-            await vi.advanceTimersByTimeAsync(1);
-            await Promise.resolve();
+            await controller.cancel('session-1');
+            await completion;
             expect(completionSettled).toBe(true);
             expect(completionResult).toEqual({ kind: 'cancelled' });
             expect(captureOwner.startCapture).toHaveBeenCalledWith(expect.objectContaining({
@@ -1330,15 +1360,13 @@ describe('createVoiceDictationController', () => {
             expect(controller.getSnapshot()).toMatchObject({
                 sessionId: null,
                 status: 'idle',
-                failure: {
-                    kind: 'stt_timeout',
-                    reason: 'transcription_deadline_exceeded',
-                },
             });
+            expect(controller.getSnapshot().failure).toBeUndefined();
             expect(deleteRecordedAudio).not.toHaveBeenCalled();
             expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
             expect(transcribeRecordedAudio).not.toHaveBeenCalled();
         } finally {
+            await controller.cancel('session-1');
             resolveStoppedCapture('file:///late-dictation-after-deadline.m4a');
             await completion;
         }
@@ -1386,9 +1414,8 @@ describe('createVoiceDictationController', () => {
 
         await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
         const staleCompletion = controller.toggle('session-1');
-        await vi.advanceTimersByTimeAsync(
-            EXPECTED_DICTATION_LIMITS.transcriptionDeadlineMs + 1,
-        );
+        await captureOwner.stopCaptureEntered;
+        await controller.cancel('session-1');
         await expect(staleCompletion).resolves.toEqual({ kind: 'cancelled' });
 
         await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
@@ -1404,61 +1431,10 @@ describe('createVoiceDictationController', () => {
         });
     });
 
-    it('reports a typed transcription deadline when the provider remains pending', async () => {
-        vi.useFakeTimers();
-        let transcriptionSignal: AbortSignal | null = null;
-        const transcribing = createDeferred<void>();
-        const captureOwner = createRealCaptureBoundary({ recordedUri: () => 'file:///dictation.m4a' });
-        const controller = createVoiceDictationController({
-            captureOwner,
-            getSettings: () => ({
-                voice: {
-                    providerId: 'local_conversation',
-                    dictation: { sttBinding: 'same_as_local' },
-                    providers: {
-                        local_conversation: {
-                            schemaVersion: 1,
-                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
-                        },
-                    },
-                },
-            }),
-            measureRecordedAudioBytes: vi.fn(async () => 4),
-            deleteRecordedAudio: vi.fn(async () => {}),
-            transcribeRecordedAudio: createTranscriptionProbe((params) => {
-                transcriptionSignal = params.signal ?? null;
-                transcribing.resolve();
-                return new Promise<string>(() => {});
-            }),
-        });
-
-        await controller.toggle('session-1');
-        const stopRequestedAt = Date.now();
-        const completion = controller.toggle('session-1');
-        await transcribing.promise;
-        expect(transcriptionSignal).not.toBeNull();
-
-        await vi.advanceTimersByTimeAsync(EXPECTED_DICTATION_LIMITS.transcriptionDeadlineMs - (Date.now() - stopRequestedAt));
-        expect(controller.getSnapshot().status).toBe('transcribing');
-        await vi.advanceTimersByTimeAsync(1);
-
-        await expect(completion).resolves.toEqual({ kind: 'cancelled' });
-        expect((transcriptionSignal as AbortSignal | null)?.aborted).toBe(true);
-        expect(controller.getSnapshot()).toMatchObject({
-            sessionId: null,
-            status: 'idle',
-            failure: {
-                kind: 'stt_timeout',
-                reason: 'transcription_deadline_exceeded',
-            },
-        });
-        expect(captureOwner.stopSession).toHaveBeenCalledTimes(1);
-    });
-
     it.each([
         { label: 'ASCII', scalar: 'a' },
         { label: 'four-byte Unicode', scalar: '😀' },
-    ])('accepts exactly 8,000 $label code points and rejects code point 8,001', async ({
+    ])('retains more than 8,000 $label code points without rejecting text', async ({
         scalar,
     }) => {
         const exact = scalar.repeat(EXPECTED_DICTATION_LIMITS.transcriptCharacters);
@@ -1491,15 +1467,10 @@ describe('createVoiceDictationController', () => {
         });
 
         await controller.toggle('session-1');
-        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
-        expect(controller.getSnapshot()).toMatchObject({
-            sessionId: null,
-            status: 'idle',
-            failure: {
-                kind: 'provider_error',
-                reason: 'transcript_character_limit_exceeded',
-            },
-        });
+        const result = await controller.toggle('session-1');
+        expect(result.kind).toBe('completed');
+        expect(result.kind === 'completed' && result.text === over).toBe(true);
+        expect(controller.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
         expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
     });
 
@@ -1541,7 +1512,7 @@ describe('createVoiceDictationController', () => {
         });
     });
 
-    it('accepts the exact recorded-payload limit, rejects limit + 1, and removes both temporary recordings', async () => {
+    it('accepts the exact upload boundary and retains an oversized failed recording until Discard', async () => {
         const sizes = [
             EXPECTED_DICTATION_LIMITS.recordedAudioBytes,
             EXPECTED_DICTATION_LIMITS.recordedAudioBytes + 1,
@@ -1577,12 +1548,15 @@ describe('createVoiceDictationController', () => {
         await controller.toggle('session-1');
         await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
         expect(transcribeRecordedAudio).toHaveBeenCalledTimes(1);
-        expect(deleteRecordedAudio).toHaveBeenCalledTimes(2);
+        expect(deleteRecordedAudio).toHaveBeenCalledOnce();
         expect(controller.getSnapshot()).toMatchObject({
             failure: {
                 kind: 'provider_error',
                 reason: 'recorded_audio_limit_exceeded',
+                canRetry: true,
             },
         });
+        await controller.discard('session-1');
+        expect(deleteRecordedAudio).toHaveBeenCalledTimes(2);
     });
 });

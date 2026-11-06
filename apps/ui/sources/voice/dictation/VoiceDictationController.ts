@@ -26,32 +26,16 @@ import type {
 } from '@happier-dev/audio-stream-native';
 
 export const VOICE_DICTATION_LIMITS = Object.freeze({
-    // Dictation is one utterance, not a conversational session. One minute is
-    // deliberately below the retained speech-carrier/session ceilings while
-    // remaining generous for a composer entry.
-    captureDurationMs: 60_000,
-    // Provider transports own shorter per-hop timeouts where applicable. This
-    // owner-level deadline bounds complete finalization, beginning when the
-    // recorder is asked to stop so it cannot wait forever for a final artifact.
-    transcriptionDeadlineMs: 30_000,
-    // A one-minute utterance is comfortably below this composer bound. Count
-    // Unicode code points so every accepted scalar has the same advertised
-    // 8,000-character capacity regardless of its UTF-8 representation.
-    transcriptCharacters: 8_000,
     // This is the smallest current recorded-audio carrier ceiling: both bundled
     // speech and OpenAI-compatible daemon uploads reject payloads above 8 MiB.
     recordedAudioBytes: 8 * 1024 * 1024,
 });
 
-const TRANSCRIPTION_DEADLINE = Symbol('voice_dictation_transcription_deadline');
+const TRANSCRIPTION_CANCELLED = Symbol('voice_dictation_transcription_cancelled');
 
 export type VoiceDictationFailureReason =
     | 'capture_failed'
     | 'provider_unavailable'
-    | 'capture_start_deadline_exceeded'
-    | 'capture_duration_exceeded'
-    | 'transcription_deadline_exceeded'
-    | 'transcript_character_limit_exceeded'
     | 'transcription_credentials_required'
     | 'transcription_machine_unavailable'
     | 'transcription_transfer_failed'
@@ -64,6 +48,8 @@ export type VoiceDictationFailure = Readonly<{
     sessionId: string;
     kind: VoiceMachineErrorKind;
     reason: VoiceDictationFailureReason;
+    /** Present while a failed recording is retained; true once capture teardown settles. */
+    canRetry?: boolean;
 }>;
 
 export type VoiceDictationCaptureError = Readonly<{
@@ -127,8 +113,7 @@ type ActiveDictation = {
     phase: 'starting' | 'listening' | 'transcribing';
     cancelled: boolean;
     failed: boolean;
-    captureTimer: ReturnType<typeof setTimeout> | null;
-    transcriptionTimer: ReturnType<typeof setTimeout> | null;
+    retryableRecording: boolean;
     stopCapturePromise: Promise<Awaited<ReturnType<DictationCaptureOwner['stopCapture']>>> | null;
     stopCaptureSettled: boolean;
     stopSessionPromise: Promise<void> | null;
@@ -139,6 +124,8 @@ type ActiveDictation = {
 
 export type VoiceDictationController = Readonly<{
     cancel: (sessionId?: string | null) => Promise<void>;
+    discard: (sessionId: string) => Promise<void>;
+    retry: (sessionId: string) => Promise<VoiceDictationToggleResult>;
     dismissFailure: (failureId: number) => void;
     getSnapshot: () => VoiceDictationSnapshot;
     reportCaptureError: (error: VoiceDictationCaptureError) => void;
@@ -156,12 +143,8 @@ export function createVoiceDictationController(deps: Readonly<{
     ) => Promise<string | null>;
     measureRecordedAudioBytes: (uri: string) => Promise<number | null>;
     deleteRecordedAudio: (uri: string) => Promise<void>;
-    setTimer?: (task: () => void, waitMs: number) => ReturnType<typeof setTimeout>;
-    clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }>): VoiceDictationController {
     const listeners = new Set<() => void>();
-    const setTimer = deps.setTimer ?? ((task, waitMs) => setTimeout(task, waitMs));
-    const clearTimer = deps.clearTimer ?? ((timer) => clearTimeout(timer));
     let snapshot: VoiceDictationSnapshot = {
         sessionId: null,
         status: 'idle',
@@ -176,28 +159,12 @@ export function createVoiceDictationController(deps: Readonly<{
             snapshot.sessionId === next.sessionId
             && snapshot.status === next.status
             && snapshot.failure?.id === next.failure?.id
+            && snapshot.failure?.canRetry === next.failure?.canRetry
         ) {
             return;
         }
         snapshot = next;
         listeners.forEach((listener) => listener());
-    };
-
-    const clearCaptureTimer = (attempt: ActiveDictation): void => {
-        if (attempt.captureTimer === null) return;
-        clearTimer(attempt.captureTimer);
-        attempt.captureTimer = null;
-    };
-
-    const clearTranscriptionTimer = (attempt: ActiveDictation): void => {
-        if (attempt.transcriptionTimer === null) return;
-        clearTimer(attempt.transcriptionTimer);
-        attempt.transcriptionTimer = null;
-    };
-
-    const clearAttemptTimers = (attempt: ActiveDictation): void => {
-        clearCaptureTimer(attempt);
-        clearTranscriptionTimer(attempt);
     };
 
     const stopCapture = (
@@ -292,10 +259,11 @@ export function createVoiceDictationController(deps: Readonly<{
             kind: VoiceMachineErrorKind;
             reason: VoiceDictationFailureReason;
         }>,
+        retainRecording = false,
     ): boolean => {
         if (attempt.cancelled || attempt.failed) return false;
         attempt.failed = true;
-        clearAttemptTimers(attempt);
+        attempt.retryableRecording = retainRecording;
         attempt.abortController.abort();
         if (active === attempt) {
             publish({
@@ -305,43 +273,11 @@ export function createVoiceDictationController(deps: Readonly<{
                     id: nextFailureId++,
                     sessionId: attempt.sessionId,
                     ...failure,
+                    ...(retainRecording ? { canRetry: false } : {}),
                 },
             });
         }
         return true;
-    };
-
-    const settleFailedCapture = async (attempt: ActiveDictation): Promise<void> => {
-        try {
-            if (attempt.phase !== 'starting') {
-                await stopCapture(attempt);
-            }
-        } catch {
-            // The typed bound failure is already authoritative; teardown below
-            // must still settle even when provider stop/finalization rejects.
-        } finally {
-            await cleanup(attempt);
-        }
-    };
-
-    const armCaptureDurationBound = (attempt: ActiveDictation): void => {
-        clearCaptureTimer(attempt);
-        attempt.captureTimer = setTimer(() => {
-            attempt.captureTimer = null;
-            if (
-                active !== attempt
-                || (attempt.phase !== 'starting' && attempt.phase !== 'listening')
-                || !failAttempt(attempt, {
-                    kind: 'stt_timeout',
-                    reason: attempt.phase === 'starting'
-                        ? 'capture_start_deadline_exceeded'
-                        : 'capture_duration_exceeded',
-                })
-            ) {
-                return;
-            }
-            void settleFailedCapture(attempt);
-        }, VOICE_DICTATION_LIMITS.captureDurationMs + 1);
     };
 
     const startCaptureUntilAbort = (
@@ -375,43 +311,28 @@ export function createVoiceDictationController(deps: Readonly<{
         })
     );
 
-    const transcribeWithDeadline = <T,>(
+    const transcribeUntilCancelled = <T,>(
         attempt: ActiveDictation,
         request: () => Promise<T>,
-    ): Promise<T | typeof TRANSCRIPTION_DEADLINE> => (
+    ): Promise<T | typeof TRANSCRIPTION_CANCELLED> => (
         new Promise((resolve, reject) => {
             let settled = false;
             const onAbort = (): void => {
-                settle(TRANSCRIPTION_DEADLINE);
+                settle(TRANSCRIPTION_CANCELLED);
             };
             const settle = (
-                value: T | typeof TRANSCRIPTION_DEADLINE,
+                value: T | typeof TRANSCRIPTION_CANCELLED,
             ): void => {
                 if (settled) return;
                 settled = true;
                 attempt.abortController.signal.removeEventListener('abort', onAbort);
-                clearTranscriptionTimer(attempt);
                 resolve(value);
             };
             attempt.abortController.signal.addEventListener('abort', onAbort, { once: true });
-            attempt.transcriptionTimer = setTimer(() => {
-                attempt.transcriptionTimer = null;
-                if (
-                    active === attempt
-                    && attempt.phase === 'transcribing'
-                ) {
-                    settle(TRANSCRIPTION_DEADLINE);
-                    failAttempt(attempt, {
-                        kind: 'stt_timeout',
-                        reason: 'transcription_deadline_exceeded',
-                    });
-                }
-            }, VOICE_DICTATION_LIMITS.transcriptionDeadlineMs + 1);
             request().then(settle, (error) => {
                 if (settled) return;
                 settled = true;
                 attempt.abortController.signal.removeEventListener('abort', onAbort);
-                clearTranscriptionTimer(attempt);
                 reject(error);
             });
             if (attempt.abortController.signal.aborted) {
@@ -423,14 +344,13 @@ export function createVoiceDictationController(deps: Readonly<{
     const finishAttempt = async (
         attempt: ActiveDictation,
     ): Promise<VoiceDictationToggleResult> => {
-        clearCaptureTimer(attempt);
         attempt.phase = 'transcribing';
         publish({
             sessionId: attempt.sessionId,
             status: 'transcribing',
         });
         try {
-            const result = await transcribeWithDeadline(attempt, async () => {
+            const result = await transcribeUntilCancelled(attempt, async () => {
                 const stopped = await stopCapture(attempt);
                 if (
                     attempt.cancelled
@@ -456,14 +376,14 @@ export function createVoiceDictationController(deps: Readonly<{
                             failAttempt(attempt, {
                                 kind: 'provider_error',
                                 reason: 'recorded_audio_size_unavailable',
-                            });
+                            }, true);
                             return { kind: 'cancelled' } as const;
                         }
                         if (sizeBytes > VOICE_DICTATION_LIMITS.recordedAudioBytes) {
                             failAttempt(attempt, {
                                 kind: 'provider_error',
                                 reason: 'recorded_audio_limit_exceeded',
-                            });
+                            }, true);
                             return { kind: 'cancelled' } as const;
                         }
                         try {
@@ -479,7 +399,7 @@ export function createVoiceDictationController(deps: Readonly<{
                             failAttempt(attempt, {
                                 kind: 'provider_error',
                                 reason: resolveDictationTranscriptionFailureReason(error),
-                            });
+                            }, true);
                             return { kind: 'cancelled' } as const;
                         }
                     }
@@ -496,16 +416,9 @@ export function createVoiceDictationController(deps: Readonly<{
                 const text = typeof rawText === 'string' && rawText.trim()
                     ? rawText.trim()
                     : null;
-                if (text && Array.from(text).length > VOICE_DICTATION_LIMITS.transcriptCharacters) {
-                    failAttempt(attempt, {
-                        kind: 'provider_error',
-                        reason: 'transcript_character_limit_exceeded',
-                    });
-                    return { kind: 'cancelled' } as const;
-                }
                 return { kind: 'completed', text } as const;
             });
-            if (result === TRANSCRIPTION_DEADLINE) {
+            if (result === TRANSCRIPTION_CANCELLED) {
                 return { kind: 'cancelled' };
             }
             if (
@@ -526,20 +439,28 @@ export function createVoiceDictationController(deps: Readonly<{
             }
             throw error;
         } finally {
-            clearAttemptTimers(attempt);
-            if (attempt.failed && !attempt.stopCaptureSettled) {
-                // A capture provider may still be finalizing a late URI. Its
-                // attempt-owned cleanup retains that URI/session work without
-                // keeping this timeout/cancel result pending indefinitely.
-                cleanupInBackground(attempt);
+            if (attempt.retryableRecording && !attempt.cancelled) {
+                // Release microphone admission, retaining only this attempt's
+                // recording and cleanup owner for deliberate Retry or Discard.
+                await stopSessionAfterCapture(attempt);
+                if (active === attempt && attempt.failed && snapshot.failure) {
+                    publish({ sessionId: null, status: 'idle', failure: { ...snapshot.failure, canRetry: true } });
+                }
             } else {
-                await cleanup(attempt);
-            }
-            if (
-                snapshot.sessionId === attempt.sessionId
-                && snapshot.failure?.sessionId !== attempt.sessionId
-            ) {
-                publish({ sessionId: null, status: 'idle' });
+                if (attempt.failed && !attempt.stopCaptureSettled) {
+                    // A capture provider may still be finalizing a late URI. Its
+                    // attempt-owned cleanup retains that URI/session work without
+                    // keeping this cancellation result pending indefinitely.
+                    cleanupInBackground(attempt);
+                } else {
+                    await cleanup(attempt);
+                }
+                if (
+                    snapshot.sessionId === attempt.sessionId
+                    && snapshot.failure?.sessionId !== attempt.sessionId
+                ) {
+                    publish({ sessionId: null, status: 'idle' });
+                }
             }
         }
     };
@@ -568,7 +489,6 @@ export function createVoiceDictationController(deps: Readonly<{
             return;
         }
         attempt.cancelled = true;
-        clearAttemptTimers(attempt);
         attempt.abortController.abort();
         if (active === attempt) {
             publish({ sessionId: null, status: 'idle' });
@@ -602,11 +522,11 @@ export function createVoiceDictationController(deps: Readonly<{
         // The coordinator already rejects stale native generations. Retain the
         // exact active attempt so queued cleanup cannot terminate a later retry.
         const attempt = active;
-        if (!attempt) return;
+        if (!attempt || attempt.failed) return;
         nativeLifecycleWork = nativeLifecycleWork
             .catch(() => undefined)
             .then(async () => {
-                if (active !== attempt) return;
+                if (active !== attempt || attempt.failed) return;
                 await cancel(attempt.sessionId);
             });
     });
@@ -630,8 +550,7 @@ export function createVoiceDictationController(deps: Readonly<{
             phase: 'starting',
             cancelled: false,
             failed: false,
-            captureTimer: null,
-            transcriptionTimer: null,
+            retryableRecording: false,
             stopCapturePromise: null,
             stopCaptureSettled: false,
             stopSessionPromise: null,
@@ -641,7 +560,6 @@ export function createVoiceDictationController(deps: Readonly<{
         };
         active = attempt;
         publish({ sessionId, status: 'starting' });
-        armCaptureDurationBound(attempt);
         try {
             const captureStart = deps.captureOwner.startCapture({
                 sessionId,
@@ -667,7 +585,6 @@ export function createVoiceDictationController(deps: Readonly<{
             }
             attempt.phase = 'listening';
             publish({ sessionId, status: 'listening' });
-            armCaptureDurationBound(attempt);
             return { kind: 'started' };
         } catch (error) {
             if (
@@ -699,8 +616,23 @@ export function createVoiceDictationController(deps: Readonly<{
 
     return {
         cancel,
+        discard: (sessionId) => cancel(sessionId, { awaitTeardown: true }),
+        retry: async (sessionId) => {
+            const attempt = active;
+            if (!attempt || attempt.sessionId !== sessionId.trim() || !attempt.failed || snapshot.failure?.canRetry !== true) {
+                return { kind: 'cancelled' };
+            }
+            attempt.failed = false;
+            attempt.retryableRecording = false;
+            attempt.abortController = new AbortController();
+            return await finishAttempt(attempt);
+        },
         dismissFailure: (failureId) => {
             if (snapshot.failure?.id !== failureId) return;
+            if (active?.retryableRecording) {
+                void cancel(active.sessionId);
+                return;
+            }
             publish({ sessionId: null, status: 'idle' });
         },
         getSnapshot: () => snapshot,
@@ -710,12 +642,12 @@ export function createVoiceDictationController(deps: Readonly<{
             if (!attempt || !sessionId || attempt.sessionId !== sessionId) {
                 return;
             }
-            failAttempt(attempt, {
+            if (!failAttempt(attempt, {
                 kind: error.kind,
                 reason: error.kind === 'provider_error'
                     ? 'provider_unavailable'
                     : 'capture_failed',
-            });
+            })) return;
             void cleanup(attempt);
         },
         subscribe: (listener) => {
@@ -754,7 +686,7 @@ export function createVoiceDictationController(deps: Readonly<{
                 return await start(sessionId, transcriptionSessionId);
             }
             if (attempt.failed) {
-                cleanupInBackground(attempt);
+                if (!attempt.retryableRecording) cleanupInBackground(attempt);
                 return { kind: 'cancelled' };
             }
             if (attempt.sessionId !== sessionId) {
@@ -763,6 +695,13 @@ export function createVoiceDictationController(deps: Readonly<{
             }
             if (snapshot.status === 'listening') {
                 return await finishAttempt(attempt);
+            }
+            if (snapshot.status === 'transcribing') {
+                await cancel(sessionId, { awaitTeardown: true });
+                // Teardown releases capture admission; a concurrent fresh attempt
+                // may already own it when this waiter resumes.
+                if (active !== null) return { kind: 'cancelled' };
+                return await start(sessionId, transcriptionSessionId);
             }
             await cancel(sessionId);
             return { kind: 'cancelled' };

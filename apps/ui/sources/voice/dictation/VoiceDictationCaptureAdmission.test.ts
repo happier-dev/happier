@@ -4,7 +4,7 @@ import { createDeferred } from '@/dev/testkit';
 import { createVoiceCaptureAdmissionBinding } from '@/voice/runtime/input/VoiceCaptureAdmissionBinding';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 
-import { createVoiceDictationController, VOICE_DICTATION_LIMITS } from './VoiceDictationController';
+import { createVoiceDictationController } from './VoiceDictationController';
 import { createLocalVoiceCaptureOwner } from '@/voice/runtime/input/LocalVoiceCaptureOwner';
 import { createDeviceSttController } from '@/voice/input/DeviceSttController';
 import { createNativeMicSession, createExpoAudioRecordingMicSession } from '@/voice/runtime/mic/NativeMicSession';
@@ -137,9 +137,12 @@ describe('Dictation capture admission integration', () => {
     });
 
     it('abandons a never-settling stop, permits Conversation Voice immediately, and cleans one late artifact once', async () => {
-        vi.useFakeTimers();
         let resolveStop!: (uri: string) => void;
-        const rawCaptureOwner = createCaptureBoundary(() => new Promise<string>(resolve => { resolveStop = resolve; }));
+        const stopEntered = createDeferred<void>();
+        const rawCaptureOwner = createCaptureBoundary(() => {
+            stopEntered.resolve();
+            return new Promise<string>(resolve => { resolveStop = resolve; });
+        });
         const admission = createVoiceCaptureAdmissionController();
         const captureOwner = createVoiceCaptureAdmissionBinding({
             admission,
@@ -169,7 +172,8 @@ describe('Dictation capture admission integration', () => {
 
         await controller.toggle('dictation-session');
         const completion = controller.toggle('dictation-session');
-        await vi.advanceTimersByTimeAsync(VOICE_DICTATION_LIMITS.transcriptionDeadlineMs + 1);
+        await stopEntered.promise;
+        await controller.cancel('dictation-session');
         await expect(completion).resolves.toEqual({ kind: 'cancelled' });
 
         expect(rawCaptureOwner.stopSession).toHaveBeenCalledWith('dictation-session');

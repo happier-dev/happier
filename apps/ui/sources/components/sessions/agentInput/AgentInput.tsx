@@ -264,6 +264,8 @@ import type { AgentInputChipPickerOption } from './components/AgentInputChipPick
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { insertTextAtSelection } from './insertTextAtSelection';
 import { AgentInputDictationButton } from './components/AgentInputDictationButton';
+import { AgentInputDictationRecovery, useDictationRecoveryFailure } from './components/AgentInputDictationRecovery';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { subscribeToIosHardwareShiftEnter } from './subscribeToIosHardwareShiftEnter';
 import {
     COMPOSER_ABORT_CONFIRMATION_WINDOW_MS,
@@ -3227,18 +3229,37 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             ...entry.range, treatment: entry.treatment, ...(entry.label ? { label: entry.label } : {}),
         })))
     ), [props.composerDecorations]);
+    // A failed dictation that kept its recording stays beside the field until Retry succeeds or the
+    // person discards it; the field's text is never touched by either.
+    const recoveryFailure = useDictationRecoveryFailure(dictation.failure, dictation.status);
+    const retainedDictationFailure = voiceEnabled ? recoveryFailure : null;
+    const dictationRecovery = React.useMemo(() => retainedDictationFailure ? (
+        // The line's glyph stands on the field's text edge, inside the same inset as the input-lock note.
+        <View testID="agent-input-dictation-recovery-slot" style={styles.composerPresentationEffects}>
+            <HappierBodyEdgeContext.Provider value>
+                <AgentInputDictationRecovery failure={retainedDictationFailure} status={dictation.status}
+                    onRetry={dictation.onRetry} onDiscard={dictation.onDiscard} />
+            </HappierBodyEdgeContext.Provider>
+        </View>
+    ) : null, [retainedDictationFailure, dictation.status, dictation.onRetry, dictation.onDiscard, styles.composerPresentationEffects]);
     const composerPresentationFeedback = React.useMemo(() => {
         const inputLock = props.composerInputLock ?? null;
-        if (inputLock === null) return null;
+        if (inputLock === null && dictationRecovery === null) return null;
 
         return (
-            <View testID="agent-input-composer-presentation-effects" style={styles.composerPresentationEffects}>
-                <View testID="agent-input-composer-lock" style={styles.composerInputLockFeedback}>
-                    <Text style={styles.composerInputLockFeedbackText}>{inputLock.reasons.join(' · ')}</Text>
-                </View>
-            </View>
+            <>
+                {inputLock === null ? null : (
+                    <View testID="agent-input-composer-presentation-effects" style={styles.composerPresentationEffects}>
+                        <View testID="agent-input-composer-lock" style={styles.composerInputLockFeedback}>
+                            <Text style={styles.composerInputLockFeedbackText}>{inputLock.reasons.join(' · ')}</Text>
+                        </View>
+                    </View>
+                )}
+                {dictationRecovery}
+            </>
         );
     }, [
+        dictationRecovery,
         props.composerInputLock,
         styles.composerInputLockFeedback,
         styles.composerInputLockFeedbackText,
