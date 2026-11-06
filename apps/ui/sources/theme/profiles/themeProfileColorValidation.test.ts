@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { isValidThemeProfileColorValue } from './themeProfileColorValidation';
+import { isValidThemeProfileColorValue, normalizeOpaqueThemeHexColor } from './themeProfileColorValidation';
 
 describe('theme profile color validation', () => {
+    it('normalizes opaque appearance colours without admitting alpha or CSS expressions', () => {
+        expect(normalizeOpaqueThemeHexColor(' #aBc ')).toBe('#AABBCC');
+        expect(normalizeOpaqueThemeHexColor('#a1b2c3')).toBe('#A1B2C3');
+        for (const value of ['#abcd', '#aabbccdd', 'red', 'rgb(1,2,3)', null]) {
+            expect(normalizeOpaqueThemeHexColor(value)).toBeNull();
+        }
+    });
     it('accepts V1 color values supported by import and editing', () => {
         expect(isValidThemeProfileColorValue('transparent')).toBe(true);
         expect(isValidThemeProfileColorValue('#abc')).toBe(true);
