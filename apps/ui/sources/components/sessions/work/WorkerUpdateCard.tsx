@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol';
 import { composeSessionWorkerUpdateHeadlineV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
@@ -8,8 +8,8 @@ import type { WorkerUpdateFollowMatchV1 } from '@happier-dev/protocol/sessions/m
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { executeSessionFollowAction } from '@/sync/api/session/sessionFollowApi';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, type HappierWorkUpdateCardSurface, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { useWorkTheme, WORK_HOST, workTextStyle } from '@/components/work/map/WorkMapView';
+import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST, workTextStyle } from '@/components/work/map/WorkMapView';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -18,7 +18,6 @@ import { useCurrentWorkerUpdate } from '@/components/sessions/transcript/source/
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { describeWorkKind, WORKER_KIND_GLYPHS } from './workerKindGlyphs';
 import { Text } from '@/components/ui/text/Text';
@@ -232,14 +231,7 @@ function WorkerUpdateMuteAction(props: Readonly<{ receiverSessionId: string; ser
         loading={state === 'busy'} disabled={state === 'busy'} onPress={() => change('session.delivery.mute.set')} />;
 }
 
-/** The card stands on core's inset card material; the frame hands it the tone's ring and tint. */
-function renderWorkerUpdateSurface(surface: HappierWorkUpdateCardSurface) {
-    return (
-        <SurfaceCard testID={surface.testID} tone="muted" padding="none" style={surface.toneStyle as StyleProp<ViewStyle>}>
-            {surface.children}
-        </SurfaceCard>
-    );
-}
+
 
 const FOLLOW_STATUS_KEY = {
     queued: 'sessionWork.workerFollow.queued',
@@ -417,7 +409,7 @@ export function WorkerUpdateCard(props: Readonly<{
             tone={status.tone}
             theme={workTheme}
             host={WORK_HOST}
-            renderSurface={renderWorkerUpdateSurface}
+            renderSurface={renderWorkUpdateCardSurface}
             mark={<WorkerMark update={update} />}
             title={<StructuredFindText blockId="structured-worker-title" testID="worker-update-title" numberOfLines={1} style={styles.title} text={content.title} />}
             state={<StructuredFindText blockId="structured-worker-state" testID="worker-update-state" numberOfLines={1} style={[styles.word, workStatusWordStyle(status.tone)]} text={content.state} />}

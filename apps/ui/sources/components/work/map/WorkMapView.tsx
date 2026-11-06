@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { GestureResponderEvent, StyleProp, TextStyle } from 'react-native';
+import type { GestureResponderEvent, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     HappierWorkMapView,
@@ -9,9 +9,11 @@ import {
     type HappierWorkMapViewProps,
     type HappierWorkTextProps,
     type HappierWorkTheme,
+    type HappierWorkUpdateCardSurface,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { projectPluginUiHostPalette, projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Text } from '@/components/ui/text/Text';
 import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
 import { Typography } from '@/constants/Typography';
@@ -88,6 +90,15 @@ function WorkText(props: HappierWorkTextProps) {
 
 /** Core's host primitives for the shared Work primitives: the app's own text owner. */
 export const WORK_HOST: HappierWorkHost = Object.freeze({ Text: WorkText });
+
+/** Every Work update card stands on core's inset card material; the frame hands it the tone's ring and tint. */
+export function renderWorkUpdateCardSurface(surface: HappierWorkUpdateCardSurface) {
+    return (
+        <SurfaceCard testID={surface.testID} tone="muted" padding="none" style={surface.toneStyle as StyleProp<ViewStyle>}>
+            {surface.children}
+        </SurfaceCard>
+    );
+}
 
 export type WorkMapViewProps<TNode extends HappierWorkMapNode> = Omit<
     HappierWorkMapViewProps<TNode>,
