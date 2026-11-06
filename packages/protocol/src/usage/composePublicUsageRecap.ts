@@ -36,7 +36,7 @@ export function composePublicUsageRecap(input: UsageRecapPublicComposeInput, raw
   return UsageRecapComposeResultSchema.parse({ kind: 'composed', v: 1, source: 'public_profile',
     style: input.style, format: input.format, selectedFields,
     unavailableFields: selectedFields.filter(field => !available[field as keyof typeof available]),
-    period: publicSnapshot.period, asOfMs: publicSnapshot.computedAtMs,
+    period: publicSnapshot.period, asOfMs: null,
     coverage: { accounting: null, sourceCoverage: [], sourceStatuses: [], pending: false },
     facts: {}, publicSnapshot,
   });

@@ -5,15 +5,15 @@ import { SettingsDeclarationActionOutputSchemasV1 } from '../settingsDeclaration
 import { UsageCoachApplyInputSchema, UsageCoachUndoInputSchema, UsageCoachDismissInputSchema,
     UsageCoachSnoozeInputSchema, type UsageCoachReversal } from '../../usage/coach/coachActions.js';
 import { UsageCoachEvaluationSchema } from '../../usage/coach/coachFinding.js';
-import type { UsageCoachRemedy } from '../../usage/coach/coachRemedy.js';
 import type { UsageCoachActionId } from '../specs/usageCoach.js';
-import { UsageCoachPreferencesV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
+import type { UsageCoachSuppressionPort } from '../../usage/coach/coachActions.js';
 import { UsageQueryBatchResultSchema } from '../../usage/resolveUsagePageAggregation.js';
 import { getUsageQueryKey } from '../../inputs/usageQuery.js';
-import { SessionModelMutationReversalV1Schema } from '../../sessions/control/modelTransitionV1.js';
+import { SessionModelSetResultV1Schema } from '../../sessions/control/modelTransitionV1.js';
 import { McpRulesSetOutputV1Schema } from '../specs/capabilityRules.js';
 import { reachRulesToDraftsV1 } from '../../reach/reachRulesChangeV1.js';
-import { SessionSpawnNewResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { projectSessionSpawnNewActionInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 export const USAGE_COACH_PREFERENCES_ANCHOR = 'usage.coachPreferences';
@@ -24,20 +24,16 @@ const record = (value: unknown): Readonly<Record<string, unknown>> | null =>
     value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 const paused = (result: ActionExecuteResult) => !result.ok || ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success;
 
-/** Re-query admission and delegate effects; only mutation owners capture or restore state. */
-export async function executeUsageCoachAction(actionId: UsageCoachActionId, value: unknown, child: Child): Promise<ActionExecuteResult> {
+/** Query Apply evidence and delegate effects; only mutation owners capture or restore state. */
+export async function executeUsageCoachAction(actionId: UsageCoachActionId, value: unknown, child: Child,
+    suppressionsOwner?: UsageCoachSuppressionPort): Promise<ActionExecuteResult> {
     const parsedRequest = actionId === 'usage.coach.undo' ? { actionId, request: UsageCoachUndoInputSchema.parse(value) } as const
         : actionId === 'usage.coach.dismiss' ? { actionId, request: UsageCoachDismissInputSchema.parse(value) } as const
         : actionId === 'usage.coach.snooze' ? { actionId, request: UsageCoachSnoozeInputSchema.parse(value) } as const
         : { actionId, request: UsageCoachApplyInputSchema.parse(value) } as const;
     const request = parsedRequest.request;
-    const queried = await child('usage.query', { queries: [request.query] });
-    if (paused(queried)) return queried;
-    const batch = UsageQueryBatchResultSchema.safeParse(queried.ok ? queried.result : undefined);
-    if (!batch.success || batch.data.results.length !== 1 || batch.data.results[0]?.key !== getUsageQueryKey(request.query))
-        return failure('usage_query_result_invalid');
-    // A successful remedy can remove its finding. Undo is admitted by this
-    // authorized query and the original owner's atomic receipt, not fresh advice.
+    // A successful remedy can remove its finding. The original mutation
+    // owner's atomic receipt admits Undo without requiring fresh advice.
     if (parsedRequest.actionId === 'usage.coach.undo') {
         const reversal = parsedRequest.request.reversal;
         if (reversal.kind === 'model' && request.query.session !== null
@@ -63,10 +59,33 @@ export async function executeUsageCoachAction(actionId: UsageCoachActionId, valu
                 break;
         }
         if (paused(restored)) return restored;
-        const semantic = semanticFailure(restored, reversal.kind);
-        if (semantic) return semantic;
+        const result = restored.ok ? restored.result : undefined;
+        if (reversal.kind === 'setting') {
+            if (!SettingsDeclarationActionOutputSchemasV1['settings.set'].safeParse(result).success) return failure('coach_owner_result_invalid');
+        } else if (reversal.kind === 'model') {
+            const model = SessionModelSetResultV1Schema.safeParse(result);
+            if (!model.success) return failure('coach_owner_result_invalid');
+            if (model.data.status === 'armed') return failure('coach_owner_refused', result);
+        } else {
+            const receipt = McpRulesSetOutputV1Schema.safeParse(result);
+            if (!receipt.success) return failure('coach_owner_result_invalid');
+            if (!receipt.data.ok) return failure('coach_owner_refused', receipt.data);
+        }
         return { ok: true, result: { kind: 'undone', evidenceKey: request.evidenceKey } };
     }
+    if (parsedRequest.actionId === 'usage.coach.dismiss' || parsedRequest.actionId === 'usage.coach.snooze') {
+        const preferenceRequest = parsedRequest.request;
+        if (!suppressionsOwner) return failure('coach_preferences_unavailable');
+        await suppressionsOwner.edit({ evidenceKey: request.evidenceKey,
+            ...('dismissed' in preferenceRequest ? { dismissed: preferenceRequest.dismissed } : { untilMs: preferenceRequest.untilMs }) });
+        return { ok: true, result: { kind: 'preference_updated', evidenceKey: request.evidenceKey,
+            ...('dismissed' in preferenceRequest ? { dismissed: preferenceRequest.dismissed } : {}), ...('untilMs' in preferenceRequest ? { untilMs: preferenceRequest.untilMs } : {}) } };
+    }
+    const queried = await child('usage.query', { queries: [request.query] });
+    if (paused(queried)) return queried;
+    const batch = UsageQueryBatchResultSchema.safeParse(queried.ok ? queried.result : undefined);
+    if (!batch.success || batch.data.results.length !== 1 || batch.data.results[0]?.key !== getUsageQueryKey(request.query))
+        return failure('usage_query_result_invalid');
     const slice = record(batch.data.results[0]);
     const coach = UsageCoachEvaluationSchema.safeParse(slice?.coach);
     if (!coach.success || coach.data.currentness !== 'current') return failure('coach_evidence_not_current');
@@ -74,26 +93,6 @@ export async function executeUsageCoachAction(actionId: UsageCoachActionId, valu
     const finding = matches.length === 1 ? matches[0] : undefined;
     if (!finding || finding.currentness !== 'current' || finding.queryKey !== getUsageQueryKey(request.query))
         return failure('coach_evidence_not_current');
-
-    if (parsedRequest.actionId === 'usage.coach.dismiss' || parsedRequest.actionId === 'usage.coach.snooze') {
-        const preferenceRequest = parsedRequest.request;
-        const read = await child('settings.get', { anchor: USAGE_COACH_PREFERENCES_ANCHOR, includeVersion: true });
-        if (paused(read)) return read;
-        const current = SettingsDeclarationActionOutputSchemasV1['settings.get'].safeParse(read.ok ? read.result : undefined);
-        if (!current.success || current.data.settingsVersion === undefined || !('value' in current.data)) return failure('coach_preferences_unavailable');
-        const preferences = UsageCoachPreferencesV1Schema.safeParse(current.data.value);
-        if (!preferences.success) return failure('coach_preferences_unavailable');
-        const suppressions = preferences.data.suppressions.filter(row => row.evidenceKey !== request.evidenceKey);
-        if ('dismissed' in preferenceRequest && preferenceRequest.dismissed) suppressions.push({ kind: 'dismissed', evidenceKey: request.evidenceKey });
-        if ('untilMs' in preferenceRequest && preferenceRequest.untilMs !== null) suppressions.push({ kind: 'snoozed', evidenceKey: request.evidenceKey, untilMs: preferenceRequest.untilMs });
-        const written = await child('settings.set', { anchor: USAGE_COACH_PREFERENCES_ANCHOR,
-            value: { ...preferences.data, suppressions }, expectedSettingsVersion: current.data.settingsVersion });
-        if (paused(written)) return written;
-        const refused = semanticFailure(written, 'setting');
-        if (refused) return refused;
-        return { ok: true, result: { kind: 'preference_updated', evidenceKey: request.evidenceKey,
-            ...('dismissed' in preferenceRequest ? { dismissed: preferenceRequest.dismissed } : {}), ...('untilMs' in preferenceRequest ? { untilMs: preferenceRequest.untilMs } : {}) } };
-    }
     const remedy = finding.remedy;
     if (!remedy) return failure('coach_remedy_unavailable');
     if ((remedy.kind === 'model' || remedy.kind === 'recovery') && request.query.session !== null
@@ -110,12 +109,10 @@ export async function executeUsageCoachAction(actionId: UsageCoachActionId, valu
             expectedRevision: remedy.expectedRevision,
             change: { kind: 'write', write: { place: remedy.target, state: remedy.enabled ? 'on' : 'off',
                 ...(remedy.agentId ? { agentId: remedy.agentId } : {}) } } }); break;
-        case 'prepared_session': applied = await child('session.spawn_new', remedy.input); break;
+        case 'prepared_session': applied = await child('session.spawn_new', projectSessionSpawnNewActionInputV2(remedy.input)); break;
         case 'recovery': applied = await child(remedy.actionId, { sessionId: remedy.sessionId }); break;
     }
     if (paused(applied)) return applied;
-    const semantic = semanticFailure(applied, remedy.kind);
-    if (semantic) return semantic;
     const result = record(applied.ok ? applied.result : undefined);
     let reversal: UsageCoachReversal | undefined;
     let noChange = false;
@@ -131,45 +128,25 @@ export async function executeUsageCoachAction(actionId: UsageCoachActionId, valu
             reversal = { kind: 'setting', anchor: remedy.anchor, appliedValue: setting.data.value, owner: setting.data.reversal };
         }
     } else if (remedy.kind === 'model') {
-        const owner = SessionModelMutationReversalV1Schema.safeParse(result?.reversal);
-        if (!owner.success) return failure('coach_owner_result_invalid');
-        reversal = { kind: 'model', sessionId: remedy.sessionId, owner: owner.data };
+        const model = SessionModelSetResultV1Schema.safeParse(result);
+        if (!model.success) return failure('coach_owner_result_invalid');
+        if (model.data.status === 'armed') return failure('coach_owner_refused', result);
+        if (!('reversal' in model.data) || !model.data.reversal) return failure('coach_owner_result_invalid');
+        reversal = { kind: 'model', sessionId: remedy.sessionId, owner: model.data.reversal };
     } else if (remedy.kind === 'mcp_binding') {
         const receipt = McpRulesSetOutputV1Schema.safeParse(result);
-        if (!receipt.success || !receipt.data.ok || receipt.data.items.length !== 1) return failure('coach_owner_result_invalid');
+        if (!receipt.success) return failure('coach_owner_result_invalid');
+        if (!receipt.data.ok) return failure('coach_owner_refused', receipt.data);
+        if (receipt.data.items.length !== 1) return failure('coach_owner_result_invalid');
         reversal = { kind: 'mcp_binding', owner: receipt.data.items[0]!, appliedRevision: receipt.data.revision };
+    } else if (remedy.kind === 'prepared_session') {
+        const spawned = SessionSpawnNewActionResultV1Schema.safeParse(result);
+        if (!spawned.success || spawned.data.type !== 'success') return failure('coach_session_not_created', result);
+        if (!['accepted', 'alreadyAccepted'].includes(spawned.data.initialInput.status)) return failure('coach_prompt_not_admitted', result);
+    } else if (result?.ok === false) {
+        return failure(typeof result.errorCode === 'string' ? result.errorCode : 'coach_owner_refused', result);
     }
-    if (reversal && !matchesRemedy(remedy, reversal)) return failure('coach_owner_result_invalid');
     return { ok: true, result: { kind: 'applied', evidenceKey: request.evidenceKey, remedy,
         ...(reversal ? { reversal } : { reversalUnavailableReason: noChange ? 'no_change' : 'not_reversible' }),
         ...(remedy.kind === 'prepared_session' && typeof result?.sessionId === 'string' ? { spawnedSessionId: result.sessionId } : {}) } };
-}
-
-function matchesRemedy(remedy: UsageCoachRemedy, reversal: UsageCoachReversal): boolean {
-    if (remedy.kind === 'setting' && reversal.kind === 'setting') return remedy.anchor === reversal.anchor
-        && sameStrictJsonValue(remedy.value, reversal.appliedValue);
-    if (remedy.kind === 'model' && reversal.kind === 'model') return remedy.sessionId === reversal.sessionId
-        && remedy.modelId === reversal.owner.applied.modelId && (remedy.providerConnectionId === undefined
-            || remedy.providerConnectionId === reversal.owner.applied.providerConnectionId)
-        && (!remedy.expected || remedy.expected.owner === reversal.owner.owner
-            && sameStrictJsonValue(remedy.expected.scope, reversal.owner.scope)
-            && sameStrictJsonValue(remedy.expected.selection, reversal.owner.before)
-            && (remedy.expected.owner !== 'active' || reversal.owner.owner === 'active' && remedy.expected.runId === reversal.owner.runId));
-    return remedy.kind === 'mcp_binding' && reversal.kind === 'mcp_binding' && remedy.serverId === reversal.owner.serverId
-        && reversal.owner.rules.some(rule => rule.id === remedy.bindingId && rule.enabled === remedy.enabled
-            && rule.agentId === remedy.agentId && sameStrictJsonValue(rule.target, remedy.target));
-}
-
-function semanticFailure(result: ActionExecuteResult, kind: UsageCoachRemedy['kind']): ActionExecuteFailure | null {
-    if (!result.ok) return result;
-    const value = record(result.result);
-    if (value?.ok === false) return failure(typeof value.errorCode === 'string' ? value.errorCode : 'coach_owner_refused', result.result);
-    if (kind === 'mcp_binding' && value?.ok !== true) return failure('coach_owner_refused', result.result);
-    if (kind === 'model' && !['applied', 'already_active', 'intent_updated'].includes(String(value?.status))) return failure('coach_owner_refused', result.result);
-    if (kind === 'prepared_session') {
-        const spawned = SessionSpawnNewResultV1Schema.safeParse(result.result);
-        if (!spawned.success || spawned.data.type !== 'success') return failure('coach_session_not_created', result.result);
-        if (!['accepted', 'alreadyAccepted'].includes(spawned.data.initialInput.status)) return failure('coach_prompt_not_admitted', result.result);
-    }
-    return null;
 }

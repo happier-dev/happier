@@ -141,18 +141,7 @@ export const UsageRecapExportResultSchema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ kind: z.literal('exported'), compose: UsageRecapComposeResultSchema, file: UsageRecapImageResultSchema }),
   z.strictObject({ kind: z.literal('unavailable'), reason: z.enum(['render_target_unavailable', 'render_failed', 'compose_unavailable']),
     compose: UsageRecapComposeResultSchema }),
-]).check(z.superRefine((result, context) => {
-  if (result.kind !== 'exported') return;
-  if (result.compose.kind !== 'composed') {
-    context.addIssue({ code: 'custom', path: ['compose'], message: 'Image requires composed facts' });
-    return;
-  }
-  if (result.file.asOfMs !== result.compose.asOfMs
-    || JSON.stringify(result.file.selectedFields) !== JSON.stringify(result.compose.selectedFields)
-    || result.file.fileName !== usageRecapImageFileName(result.compose)) {
-    context.addIssue({ code: 'custom', path: ['file'], message: 'Image does not match its composed manifest' });
-  }
-})));
+]));
 export type UsageRecapExportResult = z.infer<typeof UsageRecapExportResultSchema>;
 
 export const UsageRecapDeliveryOutcomeSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [

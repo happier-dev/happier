@@ -183,7 +183,7 @@ import { executeWaitActionV1 } from './executor/waitAction.js';
 import { executeUsageAction } from './executor/usageActions.js';
 import { isPublicProfilePreparationActionIdV1 } from '../account/publicProfileActionIds.js';
 import { preparePublicProfileAction, executePublicProfileAction, PublicProfileAccountScopeError } from './executor/publicProfileActions.js';
-import { executeUsageCoachAction } from './executor/usageCoachActions.js';
+import { executeUsageCoachAction, USAGE_COACH_PREFERENCES_ANCHOR } from './executor/usageCoachActions.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
 import { isProjectActionIdV1 } from './projectActionIdsV1.js';
@@ -3441,6 +3441,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      const convertCoachPreferences = async () => {
+        if ((actionId === 'settings.set' || actionId === 'settings.reset')
+          && readRecord(admittedInput).anchor === USAGE_COACH_PREFERENCES_ANCHOR) {
+          const owner = deps.usageActions?.coachSuppressions?.(ctx);
+          if (!owner) throw Object.assign(new Error('Coach suppression storage unavailable'), { code: 'coach_preferences_unavailable' });
+          await owner.convertLegacy();
+        }
+      };
       if (actionId === 'inbox.get') {
         const accountId = readNoticeInboxAccountIdV1(ctx);
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
@@ -3491,10 +3499,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (actionId === 'usage.coach.apply' || actionId === 'usage.coach.undo'
             || actionId === 'usage.coach.dismiss' || actionId === 'usage.coach.snooze') {
             return await executeUsageCoachAction(actionId, admittedInput, (childId, childInput) => executeHostChild(childId, childInput,
-              childId === 'usage.query' && actionId !== 'usage.coach.undo' ? { ...ctx, usageQueryReadiness: 'coach_evidence' } : ctx));
+              childId === 'usage.query' && actionId !== 'usage.coach.undo' ? { ...ctx, usageQueryReadiness: 'coach_evidence' } : ctx), deps.usageActions?.coachSuppressions?.(ctx));
           }
           if ((actionId === 'settings.get' || actionId === 'settings.set') && deps.settingsDeclarationAction
             && !('reversal' in readRecord(admittedInput))) {
+            await convertCoachPreferences();
             return completeActionResult(await deps.settingsDeclarationAction({ actionId, input: admittedInput, context: ctx,
               executeOwnerAction: request => executeInvocation(request.actionId, request.input, { ...request.context, bypassApprovals: false }),
             }));
@@ -3545,7 +3554,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'usage.coach.apply' || actionId === 'usage.coach.undo'
         || actionId === 'usage.coach.dismiss' || actionId === 'usage.coach.snooze') {
         return executeUsageCoachAction(actionId, admittedInput, (childId, childInput) => executeHostChild(childId, childInput,
-          childId === 'usage.query' && actionId !== 'usage.coach.undo' ? { ...ctx, usageQueryReadiness: 'coach_evidence' } : ctx));
+          childId === 'usage.query' && actionId !== 'usage.coach.undo' ? { ...ctx, usageQueryReadiness: 'coach_evidence' } : ctx), deps.usageActions?.coachSuppressions?.(ctx));
       }
       if (MEMORY_DOCUMENT_ACTION_IDS_V1.some(id => id === actionId)) {
         if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -4735,6 +4744,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.settingsDeclarationAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
+        await convertCoachPreferences();
         const result = await deps.settingsDeclarationAction({ actionId, input: parsed.data, context: ctx,
           executeOwnerAction: request => executeInvocation(request.actionId, request.input, { ...request.context, bypassApprovals: false }),
         });

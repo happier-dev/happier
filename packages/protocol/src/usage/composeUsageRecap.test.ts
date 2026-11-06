@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeUsageQuery, getUsageQueryKey } from '../inputs/usageQuery.js';
+import { normalizeUsageQuery, getUsageQueryKey, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from './resolveUsagePageAggregation.js';
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { composeUsageRecap } from './composeUsageRecap.js';
@@ -9,6 +9,7 @@ import { ScmPullRequestWorkEvidenceSchema } from '../scm/pullRequests.js';
 import { projectUsagePageCost } from './usageCostFacts.js';
 import { buildUsageFileResult } from './usageExport.js';
 import { decodeBase64 } from '../crypto/base64.js';
+import { projectUsageAnalyticsSummary } from './usageSummary.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 9000 }, timeZoneOffsetMinutes: 120,
   session: 'private-session', projects: ['private-project'], includeInsights: true, includeActivity: true });
@@ -24,6 +25,57 @@ const response = UsageAnalyticsQueryResponseSchema.parse({
 const snapshot = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available', asOfMs: 9500 }] }).results[0]!;
 
 describe('private recap composition', () => {
+  it('keeps All private interval, night and Coach facts on their admitted source period', () => {
+    const endMs = 5 * 86_400_000;
+    const observedAtMs = 4 * 86_400_000 + 1000;
+    const selected = normalizeUsageQuery({ ...query, period: { endMs }, timeZoneOffsetMinutes: 0 });
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ ...response, coverage: {
+      status: 'partial', reasons: [], missingDimensions: [], ranked: [], sources: [],
+      range: { startMs: 0, endMs, complete: false } }, contributions: [{ id: 'all-private', observedAtMs,
+        sessionId: 'private-session', turnId: 'private-turn', agentId: 'codex', modelId: null,
+        machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
+        tokens: response.totals.tokens, cost: response.totals.cost }] });
+    const read = { evidenceId: 'first', observedAtMs, turnId: 'private-turn', fileKey: '/private/file',
+      versionDigest: 'same-version', selectionKey: 'all', reason: 'required' as const };
+    const shown = resolveUsagePageAggregation({ queries: [selected],
+      accounting: [{ query: selected, value: accounting, status: 'available', asOfMs: endMs }],
+      howYouWork: [{ query: selected, nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'partial',
+        facts: [{ workId: 'private-work', machineId: null, agentId: 'codex', evidenceId: 'busy', kind: 'busy',
+          startMs: observedAtMs, endMs: observedAtMs + 3000 }],
+        coach: { detail: { coverage: 'partial', fileReads: [read,
+          { ...read, evidenceId: 'second', observedAtMs: observedAtMs + 1000, reason: 'redundant' }] } } } }] }).results[0]!;
+    const input = UsageRecapComposeInputSchema.parse({ query: selected, selectedFields: ['parallel', 'night', 'coach'] });
+    const composed = composeUsageRecap({ input, snapshot: shown });
+    expect(composed).toMatchObject({ kind: 'composed', period: { startMs: 0, endMs }, unavailableFields: [], facts: {
+      parallel: { sumAgentMs: 3000, unionElapsedMs: 3000, maximumConcurrency: 1 },
+      night: { observedBusyMs: 3000 }, coach: { findings: [{ detectorId: 'repeated_file_reads', evidenceCount: 2 }] },
+    } });
+  });
+  it.each([false, true])('preserves bounded All artifact metadata from compact accounting (relative %s)', relative => {
+    const endMs = Date.parse('2026-10-11T20:30:00Z');
+    const observedAtMs = Date.parse('2026-10-10T23:30:00Z');
+    const selected = normalizeUsageQuery({ ...query, period: relative ? { relative: 'all' } : { endMs },
+      includeActivity: false, includeModelTimeline: false });
+    const rich = UsageAnalyticsQueryResponseSchema.parse({ ...response,
+      coverage: { status: 'partial', reasons: [], missingDimensions: [],
+        range: { startMs: 0, endMs, complete: false }, ranked: [], sources: [] },
+      contributions: [{ id: 'all-observation', observedAtMs, sessionId: null, turnId: null, agentId: 'codex',
+        modelId: null, machineId: null, projectKey: null, workspaceId: null, source: 'native',
+        eventCount: 2, tokens: response.totals.tokens, cost: response.totals.cost }] });
+    const accounting = projectUsageAnalyticsSummary(rich, usageQueryToAnalyticsRequest(selected, endMs));
+    expect(accounting.summary?.accountingCalendar).toBeUndefined();
+    const shown = resolveUsagePageAggregation({ queries: [selected], accounting: [{ query: selected,
+      value: accounting, status: 'available', asOfMs: endMs }] }).results[0]!;
+    const input = UsageRecapComposeInputSchema.parse({ query: selected, selectedFields: ['tokens'] });
+    for (const snapshot of [shown, { ...shown, accounting: { ...accounting, summary: undefined },
+      accountingObservationRange: accounting.summary!.observationRange }]) {
+      expect(composeUsageRecap({ input, snapshot })).toMatchObject({ kind: 'composed',
+        period: { startMs: 0, endMs, timeZoneOffsetMinutes: 120 }, facts: { tokens: response.totals.tokens } });
+      const explicit = normalizeUsageQuery({ ...selected, period: { startMs: 0, endMs } });
+      expect(composeUsageRecap({ input: { ...input, query: explicit }, snapshot })).toMatchObject({ kind: 'composed',
+        period: { startMs: 0, endMs, timeZoneOffsetMinutes: 120 } });
+    }
+  });
   it('keeps unknown execution qualified without interpreting private producer ids as execution', () => {
     const contribution = { id: 'unknown', observedAtMs: 2000, sessionId: 'private-session', turnId: null,
       agentId: null, modelId: null, machineId: null, projectKey: null, workspaceId: null,
@@ -207,11 +259,8 @@ describe('private recap composition', () => {
     }
   });
 
-  it('refuses a previous or differently filtered query and missing accounting instead of re-labelling old values', () => {
+  it('keeps missing accounting unavailable after read admission', () => {
     const input = UsageRecapComposeInputSchema.parse({ query });
-    const different = normalizeUsageQuery({ ...query, machines: ['other-machine'] });
-    expect(composeUsageRecap({ input, snapshot: { ...snapshot, requestedQuery: different, shownQuery: different, key: getUsageQueryKey(different) } }))
-      .toEqual({ kind: 'unavailable', reason: 'query_mismatch' });
     expect(composeUsageRecap({ input, snapshot: { ...snapshot, accounting: undefined } }))
       .toEqual({ kind: 'unavailable', reason: 'accounting_unavailable' });
   });

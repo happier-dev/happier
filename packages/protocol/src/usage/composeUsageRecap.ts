@@ -1,28 +1,28 @@
-import { getUsageQueryKey } from '../inputs/usageQuery.js';
 import type { UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
+import { resolveUsageQueryPeriod } from '../inputs/usageQuery.js';
 import { projectUsagePageCost } from './usageCostFacts.js';
 import { projectUsageCostFactTotals } from './usageCostFactTotals.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
-import { UsageRecapPrivateComposeInputSchema, UsageRecapComposeResultSchema, USAGE_RECAP_FIELDS,
-  resolveUsageRecapQuery,
+import { UsageRecapComposeResultSchema, USAGE_RECAP_FIELDS,
   type UsageRecapPrivateComposeInput, type UsageRecapComposeResult, type UsageRecapFacts } from './usageRecap.js';
 
-/** One selected-fact projection for all styles and formats, with no file or sharing effect. */
+/** Project schema-admitted input and its correlated read, admitted by the Usage Action owner. */
 export function composeUsageRecap(args: Readonly<{
   input: UsageRecapPrivateComposeInput;
   snapshot: UsageQueryResultSlice;
 }>): UsageRecapComposeResult {
-  const input = UsageRecapPrivateComposeInputSchema.parse(args.input);
-  const { snapshot } = args;
-  const key = getUsageQueryKey(resolveUsageRecapQuery(input));
-  if (snapshot.key !== key || getUsageQueryKey(snapshot.requestedQuery) !== key || getUsageQueryKey(snapshot.shownQuery) !== key) {
-    return { kind: 'unavailable', reason: 'query_mismatch' };
-  }
+  const { input, snapshot } = args;
+  const key = snapshot.key;
   const accounting = snapshot.accounting;
   if (!accounting) return { kind: 'unavailable', reason: 'accounting_unavailable' };
-  const { startMs, endMs } = 'relative' in input.query.period
+  const witnessedPeriod = 'relative' in input.query.period
     ? accounting.coverage?.range ?? {} : input.query.period;
-  if (startMs === undefined || endMs === undefined || endMs < startMs) return { kind: 'unavailable', reason: 'period_unavailable' };
+  const endMs = witnessedPeriod.endMs;
+  if (endMs === undefined) return { kind: 'unavailable', reason: 'period_unavailable' };
+  const requestedPeriod = resolveUsageQueryPeriod(input.query, endMs);
+  const startMs = requestedPeriod.startMs === undefined
+    ? accounting.coverage?.range.startMs ?? 0 : witnessedPeriod.startMs;
+  if (startMs === undefined || endMs < startMs) return { kind: 'unavailable', reason: 'period_unavailable' };
   const selectedFields = USAGE_RECAP_FIELDS.filter(field => input.selectedFields.includes(field));
   const selected = new Set(selectedFields);
   const facts: UsageRecapFacts = {};
@@ -83,7 +83,7 @@ export function composeUsageRecap(args: Readonly<{
   const coverage = accounting.coverage;
   const accountingCoverage = coverage ? (({ sources: _sources, ...value }) => value)(coverage) : null;
   const source = snapshot.sources.find(row => row.source === 'accounting');
-  const execution = summarizeUsageExecutionSources(accounting.contributions);
+  const execution = accounting.summary?.execution ?? summarizeUsageExecutionSources(accounting.contributions);
   return UsageRecapComposeResultSchema.parse({ kind: 'composed', v: 1, style: input.style, format: input.format,
     sourceSelection: input.sourceSelection,
     selectedFields, unavailableFields: selectedFields.filter(field => field !== 'names' && !(field in facts)),

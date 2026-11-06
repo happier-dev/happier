@@ -5,7 +5,8 @@ import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecuti
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
-import { UsageRecapComposeInputSchema, UsageRecapExportResultSchema, UsageRecapDeliveryInputSchema,
+import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapExportResultSchema,
+  UsageRecapPrivateDeliveryInputSchema, UsageRecapPublicDeliveryInputSchema,
   UsageRecapDeliveryOutcomeSchema, UsageRecapDeliveryResultSchema, usageRecapImageFileName,
   resolveUsageRecapQuery,
   type UsageRecapComposed, type UsageRecapImageResult, type UsageRecapDeliveryInput, type UsageRecapDeliveryOutcome } from '../../usage/usageRecap.js';
@@ -17,8 +18,10 @@ import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '../..
 import { PublicProfileReadResultV1Schema, type PublicProfileReadResultV1 } from '../../account/publicProfilePublication.js';
 import { composePublicUsageRecap } from '../../usage/composePublicUsageRecap.js';
 import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery.js';
+import { projectUsageQueryResultIssues } from '../../usage/usageAnalyticsContracts.js';
 
 export type UsageActionPorts = Readonly<{
+  coachSuppressions?(context: ActionExecutorContext): import('../../usage/coach/coachActions.js').UsageCoachSuppressionPort;
   prices?: Readonly<{
     get(context: ActionExecutorContext): Promise<UsageModelPriceCatalog | ActionExecuteFailure>;
     refresh(context: ActionExecutorContext): Promise<UsageModelPriceCatalog | ActionExecuteFailure>;
@@ -34,7 +37,8 @@ export type UsageActionPorts = Readonly<{
   readPublicProfile?(context: ActionExecutorContext): Promise<PublicProfileReadResultV1 | ActionExecuteFailure>;
 }>;
 
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const failure = (errorCode: string, details?: ActionExecuteFailure['details']): ActionExecuteFailure =>
+  ({ ok: false, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) });
 
 export function executeUsageAction(actionId: 'usage.query', value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteFailure | Readonly<{ ok: true; result: UsageQueryBatchResult }>>;
 export function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteResult>;
@@ -57,11 +61,11 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     const refusal = readActionFailureEnvelope(raw);
     if (refusal) return refusal;
     const parsed = UsageQueryBatchResultSchema.safeParse(raw);
-    if (!parsed.success) return failure('usage_query_result_invalid');
+    if (!parsed.success) return failure('usage_query_result_invalid', { issues: projectUsageQueryResultIssues(parsed.error.issues, UsageQueryBatchResultSchema) });
     const wanted = new Set(queries.map(getUsageQueryKey));
     if (parsed.data.results.length !== wanted.size || parsed.data.results.some(slice =>
       !wanted.delete(slice.key) || getUsageQueryKey(slice.requestedQuery) !== slice.key || getUsageQueryKey(slice.shownQuery) !== slice.key)) {
-      return failure('usage_query_result_invalid');
+      return failure('usage_query_result_invalid', { issues: [{ code: 'custom', path: ['results'] }] });
     }
     return parsed.data;
   };
@@ -69,9 +73,14 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     const result = await read(UsageQueryBatchInputSchema.parse(value));
     return 'ok' in result ? result : { ok: true, result: projectUsageQueryDelivery(result) };
   }
-  if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver') {
-    const delivery = actionId === 'usage.recap.deliver' ? UsageRecapDeliveryInputSchema.parse(value) : null;
-    const request = delivery ? (({ intent: _intent, ...compose }) => compose)(delivery) : UsageRecapComposeInputSchema.parse(value);
+  if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver'
+    || actionId === 'usage.recap.private.compose' || actionId === 'usage.recap.private.export' || actionId === 'usage.recap.private.deliver') {
+    const privateSource = actionId === 'usage.recap.private.compose' || actionId === 'usage.recap.private.export'
+      || actionId === 'usage.recap.private.deliver';
+    const delivery = actionId === 'usage.recap.deliver' || actionId === 'usage.recap.private.deliver'
+      ? (privateSource ? UsageRecapPrivateDeliveryInputSchema : UsageRecapPublicDeliveryInputSchema).parse(value) : null;
+    const request = delivery ? (({ intent: _intent, ...compose }) => compose)(delivery)
+      : (privateSource ? UsageRecapPrivateComposeInputSchema : UsageRecapPublicComposeInputSchema).parse(value);
     const compose = await (async () => {
       if ('source' in request) {
         if (!ports.readPublicProfile) return { kind: 'unavailable' as const, reason: 'public_profile_source_unavailable' as const };
@@ -82,10 +91,22 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
         const source = PublicProfileReadResultV1Schema.safeParse(raw);
         return source.success ? composePublicUsageRecap(request, source.data) : failure('usage_recap_result_invalid');
       }
-      const query = normalizeUsageQuery({ ...resolveUsageRecapQuery(request), breakdown: [...request.query.breakdown,
-        ...(request.selectedFields.includes('agentMix') ? ['agent' as const] : []),
-        ...(request.selectedFields.includes('modelMix') ? ['model' as const] : []),
-      ] });
+      // The originating widget supplies scope, not the card's fact demand.
+      // Explicit selected evidence still uses the negotiated query delivery.
+      const selected = new Set(request.selectedFields);
+      const privateDetail = selected.has('parallel') || selected.has('night') || selected.has('coach');
+      const query = normalizeUsageQuery({ ...resolveUsageRecapQuery(request),
+        includeAccounting: true, includeContributions: false, includeComparison: false, includeQuotaHistory: false,
+        includeInsights: selected.has('activeDays') || selected.has('streak'),
+        includeActivity: selected.has('rhythm') || selected.has('night'), activityResolution: 'both',
+        includeSeries: selected.has('highlights'), includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
+        includeSessionEvidence: privateDetail, includeTranscriptEvidence: privateDetail,
+        includeWorkEvidence: selected.has('work') || selected.has('highlights'), workProjection: 'detail',
+        breakdown: [
+          ...(selected.has('agentMix') ? ['agent' as const] : []),
+          ...(selected.has('modelMix') ? ['model' as const] : []),
+        ],
+      });
       const queried = await read({ queries: [query] });
       if ('ok' in queried) return queried;
       const snapshot = queried.results[0];
@@ -93,7 +114,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
       return composeUsageRecap({ input: { ...request, query }, snapshot });
     })();
     if ('ok' in compose) return compose;
-    if (actionId === 'usage.recap.compose') return { ok: true, result: compose };
+    if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.private.compose') return { ok: true, result: compose };
     if (compose.kind !== 'composed') return { ok: true, result: { kind: 'unavailable', reason: 'compose_unavailable', compose } };
     if (!ports.renderRecap) return { ok: true, result: { kind: 'unavailable', reason: 'render_target_unavailable', compose } };
     const rendered = await ports.renderRecap(compose, context);
@@ -106,7 +127,8 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     if (!delivery) return { ok: true, result: result.data };
     if (!ports.deliverRecap) return { ok: true, result: { kind: 'unavailable', reason: 'delivery_target_unavailable', compose } };
     const delivered = await ports.deliverRecap(result.data.file, delivery.intent, context);
-    if (context.signal?.aborted) return failure('cancelled');
+    // Delivery owns the issued device effect. Later cancellation cannot undo
+    // its acknowledged or explicitly unobservable outcome.
     const outcome = UsageRecapDeliveryOutcomeSchema.safeParse(delivered);
     if (!outcome.success) return failure('usage_recap_result_invalid');
     return { ok: true, result: UsageRecapDeliveryResultSchema.parse({ ...outcome.data, compose }) };
