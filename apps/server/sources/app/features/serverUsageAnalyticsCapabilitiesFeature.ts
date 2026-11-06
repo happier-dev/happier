@@ -3,6 +3,9 @@ import { accountUsageRoutePaths } from '../api/routes/account/accountUsageRouteP
 
 export function resolveServerUsageAnalyticsCapabilitiesFeature(): FeaturesPayloadDelta {
     return {
+        // Representation support, not an operator rollout switch. Incumbent
+        // clients discard this additive feature family and keep their grammar.
+        features: { usage: { compactBatch: { enabled: true } } },
         capabilities: {
             server: {
                 usageAnalytics: {

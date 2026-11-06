@@ -32,15 +32,33 @@ async function withApp(run: (app: FastifyInstance) => Promise<void>) {
 }
 
 describe('API response compression', () => {
+    it.each([['gzip', 'gzip'], ['br', 'br'], ['zstd, br, gzip', 'br']] as const)(
+        'compresses finite Usage NDJSON accepting %s with the API encoding %s without changing any batch member', async (accepted, encoding) => {
+        await withApp(async app => {
+            const bytes = Array.from({ length: 12 }, (_, index) => JSON.stringify({ v: 1,
+                results: [{ query: { index }, value: sessionList }] }) + '\n').join('');
+            app.post('/v2/usage/query-batch', (_request, reply) => reply.type('application/x-ndjson').send(Readable.from([bytes])));
+            const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch', headers: { 'accept-encoding': accepted } });
+            expect(response.headers['content-encoding']).toBe(encoding);
+            expect(response.rawPayload.byteLength).toBeLessThan(Buffer.byteLength(bytes));
+            const decoded = encoding === 'gzip' ? gunzipSync(response.rawPayload) : brotliDecompressSync(response.rawPayload);
+            expect(decoded.toString()).toBe(bytes);
+        });
+    });
+
     it.each(['gzip', 'br'] as const)('negotiates %s, reduces bytes and preserves encrypted rows exactly', async (encoding) => {
         await withApp(async (app) => {
-            const response = await app.inject({ url: '/v2/sessions', headers: { 'accept-encoding': encoding } });
-            expect(response.statusCode).toBe(200);
-            expect(response.headers['content-encoding']).toBe(encoding);
-            expect(response.headers.vary?.toString().toLowerCase()).toContain('accept-encoding');
-            expect(response.rawPayload.byteLength).toBeLessThan(Buffer.byteLength(JSON.stringify(sessionList)));
-            const decoded = encoding === 'gzip' ? gunzipSync(response.rawPayload) : brotliDecompressSync(response.rawPayload);
-            expect(decoded.toString()).toBe(JSON.stringify(sessionList));
+            app.post('/v2/usage/query-batch', () => sessionList);
+            for (const url of ['/v2/sessions', '/v2/usage/query-batch']) {
+                const response = await app.inject({ method: url === '/v2/sessions' ? 'GET' : 'POST',
+                    url, headers: { 'accept-encoding': encoding } });
+                expect(response.statusCode).toBe(200);
+                expect(response.headers['content-encoding']).toBe(encoding);
+                expect(response.headers.vary?.toString().toLowerCase()).toContain('accept-encoding');
+                expect(response.rawPayload.byteLength).toBeLessThan(Buffer.byteLength(JSON.stringify(sessionList)));
+                const decoded = encoding === 'gzip' ? gunzipSync(response.rawPayload) : brotliDecompressSync(response.rawPayload);
+                expect(decoded.toString()).toBe(JSON.stringify(sessionList));
+            }
         });
     });
 

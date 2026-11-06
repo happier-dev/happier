@@ -5,6 +5,7 @@ import { withAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { registerAccountUsageRoutes } from './registerAccountUsageRoutes';
 import { eventRouter } from '@/app/events/eventRouter';
 import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
+import { UsageAnalyticsQueryBatchResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 // Event delivery is the process-external boundary; admission and SQLite storage stay real.
 vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
@@ -22,6 +23,40 @@ describe('native usage HTTP admission', () => {
     afterEach(async () => {
         harness.resetEnv();
         await harness.resetDbTables([() => db.usageEvent.deleteMany(), () => db.session.deleteMany(), () => db.machine.deleteMany(), () => db.account.deleteMany()]);
+    });
+
+    it.each(['json', 'ndjson', 'compact-json', 'compact-ndjson'])('reports duration-only batch phases with unchanged %s results', async format => {
+        const account = await db.account.create({ data: { publicKey: `usage-timing-${format}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-timing', metadata: 'ciphertext' } });
+        await db.usageEvent.create({ data: { accountId: account.id, sessionId: session.id, observedAt: new Date(100),
+            source: 'runtime', scope: 'turn_delta', isCumulative: false, turnId: 'timed-turn', agentId: 'codex',
+            modelId: 'claude-haiku-4-5', inputTokens: 10, totalTokens: 10, metadata: {
+                usageAccounting: { path: 'runtime', status: 'available', historyComplete: true },
+            } } });
+        await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': account.id, ...(format.endsWith('ndjson') ? { accept: 'application/x-ndjson' } : {}) },
+                payload: { queries: [{ dateRange: { startMs: 0, endMs: 200 }, includeSeries: true }],
+                    ...(format.startsWith('compact') ? { contributionQueries: [], sessionQueries: [] } : {}) } });
+            expect(response.statusCode).toBe(200);
+            const responseBody: string = response.body;
+            const chunks = format.endsWith('ndjson')
+                ? responseBody.trim().split('\n').map(line => UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(line)))
+                : [UsageAnalyticsQueryBatchResponseSchema.parse(response.json())];
+            const result = chunks.flatMap(chunk => chunk.results).find(result => 'value' in result);
+            if (!result || !('value' in result)) throw new Error('Expected an admitted accounting answer');
+            expect(result.value.totals.tokens.total).toBe(10);
+            const header = response.headers['server-timing'];
+            expect(typeof header).toBe('string');
+            const phases = Object.fromEntries(String(header).split(', ').map(metric => {
+                expect(metric).toMatch(/^(auth|read|fold|price|project|serialize);dur=\d+(?:\.\d+)?$/);
+                const [name, duration] = metric.split(';dur=');
+                return [name, Number(duration)];
+            }));
+            expect(Object.keys(phases)).toEqual(['auth', 'read', 'fold', 'price', 'project', 'serialize']);
+            for (const duration of Object.values(phases)) expect(duration).toBeGreaterThanOrEqual(0);
+            for (const phase of ['read', 'fold', 'price', 'serialize']) expect(phases[phase]).toBeGreaterThan(0);
+        });
     });
 
     it('deletes only the authenticated native root/range while keeping runtime witness history', async () => {

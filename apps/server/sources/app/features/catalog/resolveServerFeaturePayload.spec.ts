@@ -65,6 +65,16 @@ async function loadSessionFoldersFeatureModule(): Promise<Record<string, any> | 
 }
 
 describe("resolveServerFeaturePayload", () => {
+    it('advertises compact Usage delivery through the existing Usage producer and Home feature registry', () => {
+        const direct = resolveServerFeaturePayload({}, [resolveServerUsageAnalyticsCapabilitiesFeature]);
+        const registered = resolveServerFeaturePayload({}, serverFeatureRegistry);
+        expect(readServerEnabledBit(direct, 'usage.compactBatch')).toBe(true);
+        expect(readServerEnabledBit(registered, 'usage.compactBatch')).toBe(true);
+        // Existing strict diagnostic children stay byte-shape compatible with incumbent readers.
+        expect(registered.capabilities.server.usageAnalytics).toEqual(direct.capabilities.server.usageAnalytics);
+        expect(registered.capabilities.server.usageAnalytics).not.toHaveProperty('compactBatch');
+    });
+
     beforeEach(() => {
         resetSessionSystemRecordsProtocolV1ActivationForTests();
     });

@@ -13,6 +13,8 @@ import { resolveServerScopedTransport } from './resolveServerScopedTransport';
 
 /** Physical read binding only. Every borrower still admits its own authority and result. */
 export type CapturedServerReadTransport = Readonly<{
+    /** Captured Home for per-server protocol negotiation; absent on legacy adapters. */
+    serverId?: string;
     /** Existing prepared configuration lifetime; not a borrower or an authorization verdict. */
     scope?: object;
     /** Snapshot once per acquisition; a Home wake separates later demand from incumbent reads. */
@@ -47,17 +49,19 @@ export function createCapturedServerReadTransport(params: Readonly<{
     /** An admitted finite invocation retains its own HTTP proof and read scope. */
     prepareRequest?: CapturedServerRequestPreparation;
 } & ({ profile: CapturedProfile; prepared?: never } | { prepared: PreparedReadTransport; profile?: CapturedProfile })>): CapturedServerReadTransport {
+    const serverId = resolveServerProfileScopeIdForIdentifier(params.serverId);
     if (params.prepared) {
         const prepared = params.prepared;
         // The prepared request already owns the incumbent carrier and its
         // configuration retirement fence. Never resolve a staged profile here.
         const bindingKey = createCanonicalJsonSigningInput([
-            'prepared', resolveServerProfileScopeIdForIdentifier(params.serverId),
+            'prepared', serverId,
             canonicalizeServerUrl(prepared.endpointUrl), prepared.runtimeOrigin ?? null,
             prepared.carrier ?? null, prepared.homeCarrier?.endpointId ?? null,
             prepared.generation, resolveAuthCredentialsScopeKey(params.credentials),
         ]);
         return {
+            serverId,
             ...(params.prepareRequest ? { scope: params } : prepared.scope ? { scope: prepared.scope } : {}),
             get key() { return JSON.stringify([bindingKey, readHomeAccountReadRevision(params.serverId)]); },
             async read(path, init, options, consumeResponse) {
@@ -73,12 +77,13 @@ export function createCapturedServerReadTransport(params: Readonly<{
         homeConnectionDescriptor: params.profile.homeConnectionDescriptor,
     };
     const bindingKey = createCanonicalJsonSigningInput([
-        resolveServerProfileScopeIdForIdentifier(params.serverId),
+        serverId,
         canonicalizeServerUrl(profile.canonicalServerUrl ?? profile.serverUrl),
         profile.homeConnectionDescriptor ?? null,
         resolveAuthCredentialsScopeKey(params.credentials),
     ]);
     return {
+        serverId,
         ...(params.prepareRequest ? { scope: params } : {}),
         get key() {
             return JSON.stringify([bindingKey, readHomeAccountReadRevision(params.serverId)]);

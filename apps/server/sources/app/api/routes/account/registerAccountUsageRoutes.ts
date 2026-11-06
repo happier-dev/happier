@@ -1,7 +1,9 @@
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { FastifyReply } from 'fastify';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { z } from "zod/mini";
-import { inTx, type Tx } from "@/storage/inTx";
+import { inReadSnapshot, type Tx } from "@/storage/inTx";
+import { readDatabaseErrorCode } from "@/storage/transactionErrors";
 import { log } from "@/utils/logging/log";
 import { captureUsageAnalyticsInTx, projectUsageAnalytics } from "@/app/usage/usageQueryService";
 import { recordLegacyUsageReport, recordUsageEvent, deleteNativeUsageHistory } from "@/app/usage/usageWriteService";
@@ -12,6 +14,13 @@ import { readUsageModelPriceCatalog, refreshUsageModelPriceCatalog } from '@/app
 import { readCurrentSessionIdsInTx } from '@/app/session/access/sessionReadAdmission';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
+import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from '@/app/usage/query/readUsageAnalyticsBatch';
+import { Readable } from 'node:stream';
+import { collectUsageAnalyticsBatchDelivery, encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
+    readUsageContributionEncoding, readUsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
+import { UsageQueryTiming } from '@/app/usage/query/usageQueryTiming';
+
+const batchTimings = new WeakMap<object, UsageQueryTiming>();
 
 const LegacyUsageReportRouteResponseSchema = z.object({
     success: z.literal(true),
@@ -69,14 +78,15 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                     ...(endTime ? { endMs: endTime * 1000 + 1 } : {}),
                 } : undefined,
             });
-            const snapshot = await inTx(async tx => {
+            const snapshot = await inReadSnapshot(async tx => {
                 if (sessionId) {
                     if (!await ensureReadableSessionIds(tx, userId, [sessionId], readSessionAccessAuthenticationFromRequest(request))) {
                         return null;
                     }
                 }
-                return captureUsageAnalyticsInTx(tx, userId, query);
-            }, { readOnly: true });
+                return captureUsageAnalyticsInTx(tx, userId, query, () => reply.raw.destroyed);
+            });
+            if (reply.raw.destroyed) { reply.hijack(); return; }
             if (!snapshot) return reply.code(404).send({ error: 'Session not found' });
             const result = projectUsageAnalytics(snapshot, query);
             return reply.send({
@@ -89,6 +99,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                 totalReports: result.totals.eventCount,
             });
         } catch (error) {
+            if (reply.raw.destroyed) { reply.hijack(); return; }
+            if (readDatabaseErrorCode(error)) throw error;
             log({ module: 'api', level: 'error' }, `Failed to query usage reports: ${error}`);
             return reply.code(500).send({ error: 'Failed to query usage reports' });
         }
@@ -110,7 +122,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                 && !await isServerFeatureEnabledForHome('account.publicProfiles', { request })) {
                 return reply.code(404).send({ error: 'not_found' });
             }
-            const snapshot = await inTx(async tx => {
+            const snapshot = await inReadSnapshot(async tx => {
                 if (request.body.filters?.sessionIds?.length) {
                     const isReadable = await ensureReadableSessionIds(tx, request.userId, request.body.filters.sessionIds,
                         readSessionAccessAuthenticationFromRequest(request));
@@ -119,14 +131,84 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                     }
                 }
 
-                return captureUsageAnalyticsInTx(tx, request.userId, request.body);
-            }, { readOnly: true });
+                return captureUsageAnalyticsInTx(tx, request.userId, request.body, () => reply.raw.destroyed);
+            });
+            if (reply.raw.destroyed) { reply.hijack(); return; }
             if (!snapshot) return reply.code(404).send({ error: 'Session not found' });
             return reply.send(projectUsageAnalytics(snapshot, request.body));
         } catch (error) {
+            if (reply.raw.destroyed) { reply.hijack(); return; }
+            if (readDatabaseErrorCode(error)) throw error;
             log({ module: 'api', level: 'error' }, `Failed to query usage analytics: ${error}`);
             return reply.code(500).send({ error: 'Failed to query usage analytics' });
         }
+    });
+
+    app.post<{
+        Body: UsageAnalyticsQueryBatchRequest;
+        Reply: UsageAnalyticsQueryBatchResponse | ReturnType<FastifyReply['serialize']> | Readable;
+    }>(accountUsageRoutePaths.analyticsQueryBatch, {
+        schema: { body: UsageAnalyticsQueryBatchRequestSchema, response: { 200: UsageAnalyticsQueryBatchResponseSchema } },
+        onRequest: async request => { batchTimings.set(request, new UsageQueryTiming()); },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const timing = batchTimings.get(request)!;
+        const queries = [...new Map(request.body.queries.map(query => [getUsageAnalyticsQueryRequestKey(query), query])).values()];
+        const publicEnabled = queries.some(query => query.population === 'public_eligible_personal')
+            ? await isServerFeatureEnabledForHome('account.publicProfiles', { request }) : false;
+        const captured = await inReadSnapshot(async tx => {
+            const sessionIds = [...new Set(queries.flatMap(query => query.filters?.sessionIds ?? []))];
+            const readable = sessionIds.length ? await readCurrentSessionIdsInTx(tx, { accountId: request.userId,
+                sessionIds, authentication: readSessionAccessAuthenticationFromRequest(request) }) : new Set<string>();
+            const admitted = queries.filter(query => (query.population !== 'public_eligible_personal' || publicEnabled)
+                && (query.filters?.sessionIds ?? []).every(id => readable.has(id)));
+            const readStart = performance.now();
+            try {
+                return { admitted, snapshot: admitted.length ? await captureUsageAnalyticsBatchInTx(tx, request.userId, admitted,
+                    () => reply.raw.destroyed) : undefined };
+            } finally { timing.durations.read += performance.now() - readStart; }
+        }).catch(error => {
+            if (reply.raw.destroyed) { reply.hijack(); return null; }
+            throw error;
+        });
+        if (!captured) return;
+        // Authentication, validation, feature/session admission and transaction acquisition/commit.
+        timing.durations.auth = performance.now() - timing.startedAt - timing.durations.read;
+        if (reply.raw.destroyed) { reply.hijack(); return; }
+        const projected = captured.snapshot ? await projectUsageAnalyticsBatch(captured.snapshot, captured.admitted,
+            request.body.includeContributions || request.body.contributionQueries !== undefined,
+            request.body.contributionQueries !== undefined, timing) : undefined;
+        if (reply.raw.destroyed) { reply.hijack(); return; }
+        const results = new Map(projected?.results.map(result => [getUsageAnalyticsQueryRequestKey(result.query), result]));
+        const batch = { v: 1 as const, ...(projected?.priceCatalog ? { priceCatalog: projected.priceCatalog } : {}),
+            results: queries.map(query => results.get(getUsageAnalyticsQueryRequestKey(query)) ?? { query, error: 'not_found' as const }) };
+        const sendJson = (value: typeof batch) => {
+            const serialized = timing.measure('serialize', () => reply.serialize(value));
+            return reply.header('Server-Timing', timing.header()).type('application/json').send(serialized);
+        };
+        const sendLines = (chunks: Iterable<typeof batch>) => {
+            // All facts are already projected. Encode each line once before sending
+            // headers so Server-Timing includes serialization rather than a zero placeholder.
+            const dictionary = readUsageContributionEncoding(request.headers.accept);
+            const lines = timing.measure('serialize', () => Array.from(chunks, chunk =>
+                JSON.stringify(dictionary ? encodeUsageAnalyticsBatchDelivery(chunk) : chunk) + '\n'));
+            return reply.header('Server-Timing', timing.header()).type('application/x-ndjson').send(Readable.from(lines));
+        };
+        if (request.body.contributionQueries !== undefined) {
+            const streaming = request.headers.accept?.includes('application/x-ndjson') === true;
+            const chunks = projectUsageAnalyticsBatchDelivery(batch, request.body, streaming,
+                readUsageContributionProjection(request.headers.accept));
+            return streaming ? sendLines(chunks) : sendJson(timing.measure('project', () => collectUsageAnalyticsBatchDelivery(chunks)));
+        }
+        if (request.headers.accept?.includes('application/x-ndjson')) {
+            // Each line is the same closed response schema. The shared catalog
+            // is delivered once before per-query facts, not copied per slice.
+            return sendLines((function* () {
+                yield { v: 1 as const, ...(batch.priceCatalog ? { priceCatalog: batch.priceCatalog } : {}), results: [] };
+                for (const result of batch.results) yield { v: 1 as const, results: [result] };
+            })());
+        }
+        return sendJson(batch);
     });
 
     app.post(accountUsageRoutePaths.analyticsEventsIngest, {
