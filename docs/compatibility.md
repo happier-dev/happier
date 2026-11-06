@@ -4786,15 +4786,20 @@ part of this diagnostic. V1 continues projecting only `errorCode` and `error`.
 
 Unexpected Action exceptions in the development read retain optional `failureCause`
 on Action and operation failures: the producer phase, known exception class,
-allowlisted error code (or null), and HTTP status (or null). This replaces the
+producer-declared identifier code (or null), and HTTP status (or null). This replaces the
 `actionException` details kind, leaving domain details available alongside it.
 The Action owner projects at most one immediate native cause when the outer
-error has no known code; transport adapters preserve the producer's cause and
+error has no typed code; transport adapters preserve the producer's cause and
 phase. Managed enrollment preserves the administrator or isolation child phase.
 The existing `error` message uses the bug-report redactor, which removes secrets,
 tokens and labeled secret paths while deliberately retaining ordinary diagnostic
 paths. Stack traces, opaque exception fields and native output are excluded from
 the typed cause. Confidential continuation still exposes only its closed failure.
+The development Action failure envelope also retains optional `requestId` from
+the invocation context. Generic CLI invoke creates or accepts that identity once
+and supplies it to dispatch and failure settlement, including pre-dispatch failures.
+Typed exception details remain under their existing producer-owned `details` field;
+the separate code-only log diagnostic reader retains its narrower allowlist.
 The V1 operation projection omits diagnostics; existing failures without `failureCause`
 remain readable. Released 0.2 RPC readers select error and code and ignore this
 optional field. Accepted-spawn recovery identity remains in its existing details.

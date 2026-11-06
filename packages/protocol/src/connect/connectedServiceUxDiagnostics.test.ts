@@ -1,12 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ConnectedServicesDefaultUnavailableDetailsV1Schema,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   ConnectedServiceUxDiagnosticV1Schema,
   isConnectedServiceUxDiagnosticV1,
   normalizeConnectedServiceUxDiagnosticV1,
 } from './connectedServiceUxDiagnostics.js';
+import { normalizeActionExecutorThrownError } from '../actions/executor/resultProjection.js';
+
+it.each(['connected_account_purpose_catalog_unavailable', 'connected_services_default_settings_invalid'] as const)(
+  'preserves closed %s provenance without admitting arbitrary exception metadata', reason => {
+    const details = ConnectedServicesDefaultUnavailableDetailsV1Schema.parse({
+      v: 1, source: 'account_default', reason, phase: 'purpose_binding',
+    });
+    const error = Object.assign(new Error(reason), { code: 'connected_services_default_unavailable', details });
+    expect(normalizeActionExecutorThrownError(error)).toEqual({
+      errorCode: error.code, error: reason, details,
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: error.code, httpStatus: null },
+    });
+    expect(normalizeActionExecutorThrownError(Object.assign(new Error(reason), {
+      code: error.code, details: { ...details, privatePayload: 'must-not-cross' },
+    }))).not.toHaveProperty('details');
+    expect(normalizeActionExecutorThrownError(Object.assign(new Error(reason), {
+      code: error.code, details: { ...details, reason: 'arbitrary-provider-text' },
+    }))).not.toHaveProperty('details');
+  },
+);
 
 describe('ConnectedServiceUxDiagnosticV1', () => {
   it('retains optional reconnect provenance while rejecting an unrecognized cause', () => {

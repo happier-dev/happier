@@ -11,7 +11,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActio
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionDefinitionV1, ActionExecuteFailure, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
-import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -51,7 +51,6 @@ import {
 } from '@/cli/actions/parseCommandInput';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { assertCommandArguments, argvBeforeOptionTerminator, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
-import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { getServerProfile } from '@/server/serverProfiles';
@@ -86,12 +85,10 @@ const INVOKE_TRANSPORT_VALUE_FLAGS = [
 
 type ActionsDeps = ActionCliExecutionDeps;
 type ActionCommandError = Error & Readonly<{
-  actionFailure?: boolean;
+  actionFailure?: ActionExecuteFailure;
   expectedFailure?: boolean;
   code?: unknown;
   candidates?: unknown;
-  details?: unknown;
-  goalControlFailure?: unknown;
 }>;
 const DEFAULT_DEPS: ActionsDeps = {
   readCredentialsFn: readStoredCredentials,
@@ -272,15 +269,6 @@ function emitLegacyJsonOnlyDiagnostic(actionId: string): void {
   );
 }
 
-function throwActionFailure(result: ActionExecuteFailure): never {
-  throw Object.assign(new Error(result.error), {
-    actionFailure: true,
-    code: result.errorCode,
-    ...(result.details !== undefined ? { details: result.details } : {}),
-    ...(result.goalControlFailure ? { goalControlFailure: result.goalControlFailure } : {}),
-  });
-}
-
 function actionContext(signal?: AbortSignal) {
   return {
     surface: 'cli' as const,
@@ -293,7 +281,7 @@ function unwrapOuterActionResult(result: ActionExecuteResult): unknown {
   return result.result;
 }
 
-async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal): Promise<void> {
+async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, requestId?: string): Promise<void> {
   const subcommand = args[0];
   if (
     !subcommand
@@ -308,8 +296,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
 
   // The invoked Action, its request identity and its input are resolved before
   // authentication so an argument defect never constructs an executor.
-  const requestId = readRawFlagValue(args, ACTION_CLI_REQUEST_ID_FLAG) ?? randomUUID();
-  if (!ExternalActionRequestIdV1Schema.safeParse(requestId).success) {
+  if (!requestId || !ExternalActionRequestIdV1Schema.safeParse(requestId).success) {
     throw Object.assign(new Error('Invalid --request-id.'), { code: 'invalid_arguments' });
   }
   const contributed = parseQualifiedPluginActionId(requested);
@@ -491,10 +478,6 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: error.result, executionPlacement: 'account' });
         return;
       }
-      if (error instanceof SavedSecretsInputFailure) throw Object.assign(new Error(error.message), {
-        actionFailure: true, code: error.failure.errorCode,
-        ...(error.failure.details !== undefined ? { details: error.failure.details } : {}),
-      });
       throw error;
     }
     const validated = getActionSpec(invocation.actionId).inputSchema.safeParse(resolvedInput);
@@ -595,31 +578,29 @@ export async function handleActionsCommand(
     });
     return;
   }
-  try { await execute(args, { ...DEFAULT_DEPS, ...deps }, signal); }
+  // This producer supplies the same identity to dispatch and every failure,
+  // including argument/authentication failures before an executor exists.
+  const requestId = args[0] === 'invoke' ? readRawFlagValue(args, ACTION_CLI_REQUEST_ID_FLAG) ?? randomUUID() : undefined;
+  try { await execute(args, { ...DEFAULT_DEPS, ...deps }, signal, requestId); }
   catch (error) {
-    const candidate: ActionCommandError | null = error instanceof SavedSecretsInputFailure
-      ? Object.assign(error, { actionFailure: true, code: error.failure.errorCode, details: error.failure.details })
-      : error instanceof Error ? error as ActionCommandError : null;
-    const mapped = candidate?.actionFailure === true || candidate?.expectedFailure === true
-      ? { code: String(candidate.code ?? 'action_failed'), unexpected: false, message: candidate.message }
-      : mapUnknownErrorToControlError(error);
-    const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(candidate?.goalControlFailure);
-    const structured = {
-      code: mapped.code,
-      ...(mapped.message ? { message: mapped.message } : {}),
-      ...(Array.isArray(candidate?.candidates) ? { candidates: candidate.candidates } : {}),
-      ...(candidate?.actionFailure === true && candidate.details !== undefined ? { details: candidate.details } : {}),
-      ...(candidate?.actionFailure === true && goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
-    };
+    const candidate = error instanceof Error ? error as ActionCommandError : null;
+    const normalized = candidate?.actionFailure ? normalizeActionExecuteResult(candidate.actionFailure) : null;
+    const mapped = error instanceof SavedSecretsInputFailure
+      ? { failure: { ...error.failure, errorMessage: error.message }, unexpected: false }
+      : normalized && !normalized.ok ? { failure: normalized, unexpected: false }
+      : candidate?.expectedFailure ? { failure: { errorCode: String(candidate.code ?? 'action_failed'), errorMessage: candidate.message,
+        ...(Array.isArray(candidate.candidates) ? { candidates: candidate.candidates.filter((value): value is string => typeof value === 'string') } : {}) }, unexpected: false }
+      : normalizeCliActionThrownError(error);
+    const structured = projectCliActionFailure(mapped.failure, requestId);
     const exitCode = hasInvokeOption(args, INVOKE_WAIT_FLAG) && supportsFiniteActionOutcome(args[1] ?? '')
-      ? finiteActionExitCode(mapped.code, mapped.unexpected) : mapped.unexpected ? 2 : 1;
+      ? finiteActionExitCode(mapped.failure.errorCode, mapped.unexpected) : mapped.unexpected ? 2 : 1;
     if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured }, { exitCode });
     else {
-      console.error(fail(mapped.message ?? mapped.code));
+      console.error(fail(mapped.failure.errorMessage ?? mapped.failure.errorCode));
       if ('candidates' in structured && Array.isArray(structured.candidates)) {
         console.error(`Candidates: ${structured.candidates.join(', ')}`);
       }
-      if (mapped.code === 'invalid_arguments' || mapped.code === 'unknown_subcommand') showHelp();
+      if (mapped.failure.errorCode === 'invalid_arguments' || mapped.failure.errorCode === 'unknown_subcommand') showHelp();
       process.exitCode = exitCode;
     }
   }

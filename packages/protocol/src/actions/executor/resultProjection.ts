@@ -4,7 +4,7 @@ import { isRecord } from '../../inputs/inputRecords.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
-import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
+import { isRpcError } from '../../rpc/errors.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
 import { MemoryDocFailureV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import { ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFailureDetailsV1Schema } from '../../prompts/library/promptFolderActionsV1.js';
@@ -14,16 +14,10 @@ import { readRecord, hasOwn } from '../../inputs/inputRecords.js';
 import { readSshCommandFailure, readRemoteEnrollmentCommandFailure } from '../../ssh/commandFailure.js';
 import { ActionOperationFailureV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
-import { SessionControlErrorCodeSchema } from '../../sessions/control/contract.js';
-import { SpawnSessionErrorCodeSchema } from '../../sessions/spawnSession.js';
-import { ArtifactAccessErrorCodeV1Schema } from '../../artifacts/artifactAccessV1.js';
-import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
-import { MemoryDecisionSourceErrorCodeV1Schema } from '../../prompts/library/memoryActionsV1.js';
-import { SkillUnavailableReasonV1Schema } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import { isActionOutcomeUnknownErrorCodeV1, ActionFailureCauseV1Schema,
-  projectActionFailureCauseV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
-import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunTransportErrorCodeSchema } from '../../execution/runs/responseSchemas.js';
+  projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
 import { type ActionId } from '../actionIds.js';
@@ -31,8 +25,6 @@ import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSche
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '../../execution/runs/streaming.js';
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
 import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
-
-const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
 export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
   const failure = classifyActionExecutorThrownError(error);
@@ -87,15 +79,24 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     const defaultDetails = ConnectedServicesDefaultUnavailableDetailsV1Schema.safeParse(rawDetails);
     if (defaultDetails.success) return { errorCode: 'connected_services_default_unavailable',
       error: defaultDetails.data.reason, details: defaultDetails.data };
+    return { errorCode: 'connected_services_default_unavailable', error: 'connected_services_default_unavailable' };
   }
   const managedRequest = ManagedControllerRequestFailureDetailsV1Schema.safeParse(rawDetails);
   if (managedRequest.success && (!managedRequest.data.code || rawCodes.includes(managedRequest.data.code))) {
     const code = managedRequest.data.code ?? rawCodes[0] ?? 'managed_controller_request_failed';
     return { errorCode: code, error: code, details: managedRequest.data };
   }
+  if (ManagedControllerRequestFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success) {
+    const code = rawCodes[0] ?? 'managed_controller_request_failed';
+    return { errorCode: code, error: code };
+  }
   const managedNative = ManagedNativeFailureDetailsV1Schema.safeParse(rawDetails);
   if (managedNative.success && rawCodes[0]) {
     return { errorCode: rawCodes[0], error: rawCodes[0], details: managedNative.data };
+  }
+  if (ManagedNativeFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success) {
+    const code = rawCodes[0] ?? 'action_failed';
+    return { errorCode: code, error: code };
   }
   if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedAgentIsolation')) {
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
@@ -105,6 +106,7 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
         ? { ...failure.data, error: `Agent isolation requires a fresh review (reviewed metadata version ${details.expectedMetadataVersion}, current ${details.metadataVersion}). Review the Machine's Agent isolation settings before applying.` }
         : failure.data;
     }
+    return { errorCode: rawCodes[0], error: rawCodes[0] };
   }
   // Closed native bootstrap reasons remain useful without a vendor error body.
   if (errorRecord.code === 'native_resource_unavailable' || errorRecord.code === 'native_action_failed'
@@ -120,37 +122,10 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
       details: sessionListUnavailable.data,
     };
   }
-  const protocolCode = rawCodes.find((value) => (
-    SessionControlErrorCodeSchema.safeParse(value).success
-    || SpawnSessionErrorCodeSchema.safeParse(value).success
-    || ArtifactAccessErrorCodeV1Schema.safeParse(value).success
-    || WorkflowOperationErrorCodeV1Schema.safeParse(value).success
-    || MemoryDecisionSourceErrorCodeV1Schema.safeParse(value).success
-    || SkillUnavailableReasonV1Schema.safeParse(value).success
-    || value === 'workspace_sync_update_required'
-    // Host HTTP readers have already validated the strict authentication refusal.
-    || value === 'credential_scope_denied'
-    // A host-local delegation can be revoked before the decision is issued.
-    || value === 'present_user_required'
-    // The selected transport can lack an adapter for an admitted operation.
-    || value === 'unsupported_action'
-    || value === 'project_requester_home_unavailable'
-    // Transport owners have already decided whether a mutation may have committed.
-    || isActionOutcomeUnknownErrorCodeV1(value)
-    || value === 'MACHINE_RPC_TIMEOUT'
-    || value === 'cancelled'
-    || value === 'version_mismatch'
-    || value === 'approval_request_conflict'
-    || value === 'prompt_bundle_invalid_kind'
-    || value === 'connected_services_default_unavailable'
-    || ExecutionRunTransportErrorCodeSchema.safeParse(value).success
-  )) ?? '';
-  const rpcErrorCode = readRpcErrorCode(error);
-  const typedRpcErrorCode = rpcErrorCode && (isRpcError(error) || RPC_ERROR_CODE_SET.has(rpcErrorCode))
-    ? rpcErrorCode
-    : '';
-  const normalizedCode = isActionOutcomeUnknownErrorCodeV1(protocolCode) ? 'outcome_unknown' : protocolCode || typedRpcErrorCode;
-  const rawCode = rawCodes[0] ?? '';
+  const protocolCode = readActionErrorCodeV1(error);
+  const normalizedCode = isActionOutcomeUnknownErrorCodeV1(protocolCode) ? 'outcome_unknown'
+    : protocolCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(protocolCode)
+      ? 'server_unreachable' : protocolCode;
   const message =
     error instanceof Error
       ? error.message
@@ -168,20 +143,10 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     return {
       errorCode: normalizedCode,
       error: message || normalizedCode,
-      ...(details !== undefined ? { details } : {}),
-      ...(isRpcError(error) && errorRecord.effectAttempted === false ? { effectAttempted: false as const } : {}),
+      ...((details ?? rawDetails) === undefined ? {} : { details: details ?? rawDetails }),
+      ...(isRpcError(error) && typeof errorRecord.effectAttempted === 'boolean' ? { effectAttempted: errorRecord.effectAttempted } : {}),
     };
   }
-
-  // Common network failures from axios/node.
-  if (rawCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(rawCode)) {
-    return {
-      errorCode: 'server_unreachable',
-      error: message || 'server_unreachable',
-      ...(details !== undefined ? { details } : {}),
-    };
-  }
-
   return {
     errorCode: 'action_failed',
     error: message || 'action_failed',
@@ -267,15 +232,17 @@ export function completeSpawnActionResult(result: unknown): ActionExecuteResult 
     { treatReturnedErrorEnvelopeAsFailure: true });
 }
 
-export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult): ActionExecuteResult {
-  const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => result.operationCredentialUses?.length
-    ? { ...settled, operationCredentialUses: result.operationCredentialUses } : settled;
+export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string): ActionExecuteResult {
+  const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => {
+    const projected = settled.ok ? settled : projectActionExecuteFailure(settled, requestId);
+    return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;
+  };
   if (!result.ok) {
     if (actionId === 'projects.open' && (result.errorCode === 'outcome_unknown'
       || result.errorCode === 'invalid_action_output' || result.errorCode === 'result_too_large')) {
       return withCredentialUses(completeUnknownProjectOpenResult(result.details));
     }
-    return withCredentialUses(projectActionExecuteFailure(result));
+    return withCredentialUses(result);
   }
   if (isDeferredApprovalResult(result)) return result;
   const outputSchema = getActionSpec(actionId).outputSchema;

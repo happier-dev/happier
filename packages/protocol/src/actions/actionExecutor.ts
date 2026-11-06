@@ -1986,28 +1986,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }),
   });
 
-  /**
-   * The one terminal Action boundary: public failures lose bridge-private
-   * metadata and successful built-in Actions project through their declared
-   * output schema. Approval admission is deliberately not an action output.
-   */
-  function settleActionOutput(actionId: ActionId, result: ActionExecuteResult): ActionExecuteResult {
-    const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => result.operationCredentialUses?.length
-      ? { ...settled, operationCredentialUses: result.operationCredentialUses } : settled;
-    if (!result.ok) return withCredentialUses(projectActionExecuteFailure(result));
-    if (isDeferredApprovalResult(result)) return result;
-    const outputSchema = getActionSpec(actionId).outputSchema;
-    if (!outputSchema) return result;
-    try {
-      const output = outputSchema.safeParse(result.result);
-      return withCredentialUses(output.success
-        ? { ok: true, result: output.data }
-        : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
-    } catch {
-      return withCredentialUses({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
-    }
-  }
-
   function settlePrepareResult(
     actionId: ActionId,
     result: ActionExecuteResult | PrivatePrepareResult,
@@ -6810,7 +6788,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Only this invocation's host observer may stamp the annotation. An
       // arbitrary dependency/plugin result cannot assert a credential identity.
       const { operationCredentialUses: _untrustedAnnotation, ...unannotated } = result;
-      const settled = settleActionOutput(actionId, unannotated);
+      const settled = settleActionOutput(actionId, unannotated, context?.actionRequestId ?? undefined);
       return operationCredentialUses.length ? { ...settled, operationCredentialUses } : settled;
     } finally {
       observing = false;
@@ -7083,7 +7061,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const admitted = prepared.admission;
       if (resolveActionExecutionPlacementForInput(spec, admitted.input) === 'machine') {
         const routed = await deps.routeHostChildAction({ actionId, input: admitted.input, context: admitted.context });
-        if (routed) return settleActionOutput(actionId, routed);
+        if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
       }
     }
     const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
@@ -7094,7 +7072,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         target: request.data.target, condition: request.data.condition, disposition: 'cancelled',
       } });
     }
-    return result;
+    return result.ok ? result : projectActionExecuteFailure(result, context?.actionRequestId ?? undefined);
   };
 
   const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,

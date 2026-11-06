@@ -32,8 +32,66 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { executeActionOperationActionV1, type ActionOperationMachineTransportV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import axios from 'axios';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
+
+describe('public Action failure evidence', () => {
+  it.each(['connectedServices.quota.get', 'machines.agents.list', 'session.open'] as const)(
+    'keeps the typed cause and caller request ID through %s', async actionId => {
+      let output = '';
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+        output += String(chunk);
+        const callback = args.find(argument => typeof argument === 'function');
+        if (typeof callback === 'function') callback();
+        return true;
+      });
+      await seedTestServerProfile({ id: 'failure-home', homeId: 'srv_failure_home', serverUrl: 'https://failure-home.example' });
+      const stored = credentials('stored_session');
+      const code = actionId === 'connectedServices.quota.get'
+        ? 'account_encryption_currentness_unavailable' : actionId === 'session.open' ? 'session_archived' : 'machine_inventory_unavailable';
+      // HTTP and Machine RPC are the boundaries. Keep the real quota reader,
+      // Machine adapter, Action executor and public CLI projection below them.
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (actionId !== 'session.open') throw Object.assign(new Error('Connection refused'), { code: 'ECONNREFUSED' });
+        if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+          mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        } };
+        return { status: 200, data: { session: createSessionRecordFixture({ id: 'c111111111111111111111111',
+          active: false, archivedAt: 10, encryptionMode: 'plain', machineId: 'machine-1',
+          metadata: JSON.stringify({ path: '/repo', machineId: 'machine-1', flavor: 'codex' }),
+        }) } };
+      });
+      const executor = createActionExecutor(createCliActionDeps({
+        token: stored.token, credentials: stored, sessionId: '', mode: 'plain', ctx: null,
+        serverId: 'failure-home', serverHttpBaseUrl: 'https://failure-home.example',
+        machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => {
+          throw Object.assign(new Error('Inventory unavailable'), { code,
+            stage: 'capabilities.detect', details: { reason: 'fixture_unavailable' } });
+        } },
+      }));
+      const input = actionId === 'connectedServices.quota.get'
+        ? { source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'fixture-account' } } }
+        : actionId === 'session.open' ? { sessionId: 'c111111111111111111111111', intent: 'resume' }
+        : { machineId: 'machine-1', agentId: 'codex' };
+      await handleActionsCommand(['invoke', actionId, '--server-id', 'failure-home', '--input-json', JSON.stringify(input),
+        '--request-id', 'fixture-public-failure', '--json'], {
+        readCredentialsForServerIdFn: async () => stored,
+        createExecutorFn: () => ({ ...executor, resolveSessionTarget: async sessionId => ({ ok: true as const, sessionId }) }),
+      });
+      expect(JSON.parse(output)).toMatchObject({ ok: false, error: {
+        code, requestId: 'fixture-public-failure',
+        ...(actionId === 'session.open' ? {} : { failureCause: {
+          phase: actionId === 'machines.agents.list' ? 'capabilities.detect' : 'dispatch', errorCode: code,
+        } }),
+        ...(actionId === 'machines.agents.list' ? { details: { reason: 'fixture_unavailable' } } : {}),
+      } });
+      expect(process.exitCode).toBe(1);
+    },
+  );
+});
 
 function credentials(provenance: 'api_token' | 'stored_session'): StoredCredentials {
   return { token: 'token', encryption: null, credentialProvenance: provenance };
@@ -295,7 +353,8 @@ describe('actions root command', () => {
     }
     expect(JSON.parse(output)).toEqual({ v: 1, ok: false,
       kind: surface === 'invoke' ? 'actions_invoke' : 'session_goal_get',
-      error: { code: 'codex_goal_thread_unavailable', message: 'codex_goal_thread_unavailable', goalControlFailure } });
+      error: { code: 'codex_goal_thread_unavailable', message: 'codex_goal_thread_unavailable',
+        requestId: expect.any(String), goalControlFailure } });
     expect(process.exitCode).toBe(1);
   });
 

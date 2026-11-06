@@ -84,7 +84,7 @@ describe('managed controller failure causes', () => {
     expect(ActionFailureCauseV1Schema.safeParse(projectActionFailureCauseV1(error, 'machines.managed.acquire')).success).toBe(true);
     // The detached operation stores exactly this projection, so its readers see the code.
     const failure = normalizeActionExecutorThrownError(error, 'machines.managed.acquire');
-    expect(ActionOperationFailureV1Schema.parse(failure)).toMatchObject({ errorCode: 'action_failed',
+    expect(ActionOperationFailureV1Schema.parse(failure)).toMatchObject({ errorCode: 'native_acquisition_unconfirmed',
       failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' } });
   });
   it.each([

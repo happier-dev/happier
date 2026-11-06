@@ -126,6 +126,7 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false),
   errorCode: z.string().check(z.trim(), z.minLength(1)),
   error: z.string().check(z.trim(), z.minLength(1)),
+  requestId: z.optional(z.string().check(z.minLength(1))),
   // Producer evidence for approval settlement; absence after dispatch is unknown.
   effectAttempted: z.optional(z.boolean()),
   // Failure details remain an existing opaque Action contract. Their owning
@@ -145,29 +146,49 @@ export type ActionFailureCauseV1 = Readonly<{
   errorCode: string | null;
   httpStatus: number | null;
 }>;
+const ActionFailurePhaseV1Schema = lazyZodSchema(() => z.union([z.literal('dispatch'), ActionIdSchema,
+  z.string().check(z.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u))]));
+
+/** An Action producer's typed code is data, not a second vocabulary to maintain. */
+export function readActionErrorCodeV1(error: unknown): string | null {
+  try {
+    if (!error || typeof error !== 'object') return null;
+    const record = error as Readonly<Record<string, unknown>>;
+    for (const key of ['code', 'errorCode', 'rpcErrorCode']) {
+      const code = record[key];
+      if (typeof code === 'string' && /^[a-z][a-z0-9_.:-]*$/iu.test(code)) return code;
+    }
+  } catch { /* A throwing diagnostic accessor cannot replace the Action failure. */ }
+  return null;
+}
 export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = lazyZodSchema(() => z.strictObject({
-  phase: z.union([z.literal('dispatch'), ActionIdSchema,
-    z.string().check(z.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u))]),
+  phase: ActionFailurePhaseV1Schema,
   errorClass: ActionErrorClassV1Schema,
   errorCode: z.nullable(z.string()),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
-}).check(z.refine(value => readUnexpectedActionErrorDiagnosticV1({
+}).check(z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
   name: value.errorClass, code: value.errorCode,
 }).errorCode === value.errorCode || (value.errorCode !== null
   && readUnexpectedActionErrorDiagnosticV1({ name: 'JsonRpcApplicationError', code: Number(value.errorCode) })
     .errorCode === value.errorCode))));
 
-export function projectActionFailureCauseV1(error: unknown, phase: string = 'dispatch'): ActionFailureCauseV1 {
+export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-  if (diagnostic.errorCode === null) {
+  let stage: unknown;
+  try { stage = error && typeof error === 'object' && 'stage' in error ? error.stage : undefined; }
+  catch { /* Preserve the original failure if a diagnostic accessor throws. */ }
+  const parsedPhase = ActionFailurePhaseV1Schema.safeParse(phase ?? stage ?? 'dispatch');
+  const settledPhase = parsedPhase.success ? parsedPhase.data : 'dispatch';
+  const errorCode = readActionErrorCodeV1(error) ?? diagnostic.errorCode;
+  if (errorCode === null) {
     try {
       const immediate = error && typeof error === 'object' && 'cause' in error ? error.cause : undefined;
       const child = readUnexpectedActionErrorDiagnosticV1(immediate);
-      return { phase, errorClass: diagnostic.errorClass, errorCode: child.errorCode,
+      return { phase: settledPhase, errorClass: diagnostic.errorClass, errorCode: readActionErrorCodeV1(immediate) ?? child.errorCode,
         httpStatus: diagnostic.httpStatus ?? child.httpStatus };
     } catch { /* A hostile cause accessor cannot replace the original failure. */ }
   }
-  return { phase, errorClass: diagnostic.errorClass, errorCode: diagnostic.errorCode, httpStatus: diagnostic.httpStatus };
+  return { phase: settledPhase, errorClass: diagnostic.errorClass, errorCode, httpStatus: diagnostic.httpStatus };
 }
 
 export type ActionExecuteResult = Readonly<{
@@ -301,6 +322,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     ok: false,
     errorCode: result.errorCode,
     error: result.error,
+    ...(result.requestId === undefined ? {} : { requestId: result.requestId }),
     ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}),
     ...(result.details === undefined ? {} : { details: result.details }),
     ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
@@ -309,9 +331,10 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
   return projected.success ? projected.data : null;
 }
 
-export function projectActionExecuteFailure(result: ActionExecuteFailure): ActionExecuteFailure {
-  return parseActionExecuteFailure(result)
-    ?? { ok: false, errorCode: 'action_failed', error: 'action_failed' };
+export function projectActionExecuteFailure(result: ActionExecuteFailure, requestId?: string): ActionExecuteFailure {
+  const projected = parseActionExecuteFailure(result)
+    ?? { ok: false as const, errorCode: 'action_failed', error: 'action_failed' };
+  return requestId ? { ...projected, requestId } : projected;
 }
 
 /**
