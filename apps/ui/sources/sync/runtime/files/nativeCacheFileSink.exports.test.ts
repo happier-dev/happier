@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { saveWorkflowDocument } from '@/sync/domains/workflows/workflowDocumentFile';
 import { exportBugReportDiagnosticsBundle } from '@/components/settings/bugReports/bugReportExport';
 import { exportUsageTextDocument } from '@/components/settings/usage/usageExportFile';
-import { captureUsageViewPng, deliverUsageImageFile } from '@/components/settings/usage/usageAnalyticsExport';
+import { captureUsageViewPng, deliverUsageImageFileResult } from '@/components/settings/usage/usageImageFile';
 
 const platform = vi.hoisted(() => ({ OS: 'ios' }));
 vi.mock('react-native', async () => {
@@ -48,6 +48,11 @@ vi.mock('expo-modules-core', async (importOriginal) => ({
     requireOptionalNativeModule: (name: string) => name === 'HappierFileActions' ? {
         shareFile: async (uri: string, name: string, mimeType?: string, dialogTitle?: string) => {
             await sdk.share({ uri, name, mimeType, dialogTitle, bytes: fs.files.get(uri) });
+        },
+        // HappierFileActions.saveFile copies the bytes to the chosen Downloads target and resolves once written.
+        saveFile: async (uri: string, name: string) => {
+            await sdk.share({ uri, name, bytes: fs.files.get(uri) });
+            return { canceled: false };
         },
     } : null,
 }));
@@ -118,11 +123,11 @@ describe('native export consumers through the cache sharing owner', () => {
         fs.files.set(captureUri.startsWith('file://') ? captureUri : `file://${captureUri}`, bytes);
         sdk.share.mockImplementation((handoff: { bytes: number[] }) => { expect(handoff.bytes).toEqual(bytes); });
         const base64 = await captureUsageViewPng({});
-        expect(await deliverUsageImageFile({ mediaType: 'image/png', base64, fileName: 'recap.png' }, 'save')).toBe(true);
+        expect((await deliverUsageImageFileResult({ mediaType: 'image/png', base64, fileName: 'recap.png' }, 'save')).kind).toBe('delivered');
         const handoff = sdk.share.mock.calls.at(-1)![0];
         expect(handoff.uri).toContain('/happier-downloads/');
-        if (os === 'android') expect(handoff.mimeType).toBe('image/png');
-        expect(fs.files.has(handoff.uri)).toBe(os === 'android');
+        // Save completes into the saved target on both platforms, so the cache copy is released.
+        expect(fs.files.has(handoff.uri)).toBe(false);
         expect(fs.files.has(captureUri.startsWith('file://') ? captureUri : `file://${captureUri}`)).toBe(false);
         expect(sdk.releaseCapture).toHaveBeenCalledWith(captureUri);
     });
@@ -136,8 +141,8 @@ describe('native export consumers through the cache sharing owner', () => {
     it('cleans prepared native image bytes instead of sharing after authority loss during share availability', async () => {
         let current = true;
         sdk.availability.mockImplementation(() => { current = false; });
-        expect(await deliverUsageImageFile({ mediaType: 'image/png', fileName: 'recap.png', base64: 'iVBORw==' },
-            'share', { isCurrent: () => current })).toBe(false);
+        expect((await deliverUsageImageFileResult({ mediaType: 'image/png', fileName: 'recap.png', base64: 'iVBORw==' },
+            'share', { isCurrent: () => current })).kind).toBe('cancelled');
         expect(fs.files.size).toBe(0);
         expect(sdk.share.mock.calls).toEqual([]);
     });

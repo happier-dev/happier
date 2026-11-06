@@ -2,20 +2,17 @@ import { Platform } from 'react-native';
 import { log } from '@/log';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
-export { escapeUsageCsvField, buildUsageCsvDocument, formatUsageExportFileTimestamp } from '@happier-dev/protocol/usage/usageExport';
-
 /**
  * The one place usage exports become a file.
  *
- * CSV escaping, the timestamped file name, the native cache write and the
- * web download are the same mechanics for every usage surface, so the personal
- * analytics export and the Team resource export share them instead of each
- * growing its own. Nothing here knows what a usage row means: callers hand it
- * finished text and a name.
+ * The native cache write and the web download are the same mechanics for every
+ * usage surface (the `usage.export` Action's result, the plan calendar and the
+ * Team resource export). Nothing here knows what a usage row means: callers
+ * hand it finished text and a name.
  */
 
 /** Shares a written cache file, reporting whether the platform actually took it. */
-export async function shareUsageExportCacheFile(input: Readonly<{
+async function shareUsageExportCacheFile(input: Readonly<{
     content: string;
     fileName: string;
     mimeType?: string;
@@ -92,17 +89,4 @@ export async function exportUsageTextDocument(input: Readonly<{
         return downloadTextOnWeb(input.content, input.fileName, input.mimeType);
     }
     return await shareUsageExportCacheFile(input);
-}
-
-export async function exportUsageCsvDocument(input: Readonly<{
-    csv: string;
-    fileName: string;
-    isCurrent?: () => boolean;
-}>): Promise<boolean> {
-    return await exportUsageTextDocument({
-        content: input.csv,
-        fileName: input.fileName,
-        mimeType: 'text/csv',
-        isCurrent: input.isCurrent,
-    });
 }
