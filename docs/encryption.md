@@ -252,8 +252,12 @@ authority cache.
 
 Plugin Account Data's `prepareCollectionOperation` borrows the exact Home and
 credential's admitted socket identity for Collections, Account KV, sharing,
-private UI-query projection, and local identity tags. Rows, tags, and Data
-requests do not acquire fresh encryption currentness. Socket pushes and reconnect
+and private UI-query projection. Data requests do not acquire fresh encryption
+currentness. Local identity tags alone acquire fresh authority when their
+contract declares identity fields and the observed mode is Plain:
+a delayed Plain→E2EE push must not mint an unkeyed digest that can become a
+persistent row identity. E2EE tags borrow admission; the custody pin already
+refuses E2EE→Plain downgrade. Socket pushes and reconnect
 update or withdraw the existing observation; readers without that observation
 still admit through their own HTTP request. Exact Data absence witnesses and
 mutation CAS remain independent. The server enforces persisted Account mode,

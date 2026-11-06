@@ -13,7 +13,10 @@ import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { serveAccountHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { serveAccountHomes, createServedHomeAccountToken, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createAccountScopedCryptoMaterialSnapshotV1, derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
@@ -89,16 +92,19 @@ async function withRowReadClient(
     route: (request: ServedHomeRequest) => Response | Promise<Response | undefined> | undefined,
     run: (client: ActivePluginCollectionClientV1, home: Awaited<ReturnType<typeof serveAccountHomes>>) => Promise<void>,
     encryptionCurrentness?: () => AccountEncryptionCurrentnessResponse,
+    configuration?: Readonly<{ contract?: typeof rowReadContract; credentials?: AuthCredentials; accountMode?: 'plain' | 'e2ee' }>,
 ) {
+    const boundContract = configuration?.contract ?? rowReadContract;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://collection-row-reads.test', accountId: 'alice',
-        ...(encryptionCurrentness ? { encryptionCurrentness } : {}) }],
+        ...(encryptionCurrentness ? { encryptionCurrentness } : {}),
+        ...(configuration?.credentials ? { credentials: configuration.credentials, accountMode: configuration.accountMode ?? 'e2ee' } : {}) }],
         route: request => {
             if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {},
                 capabilities: { accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2,
                     currentProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
             }));
             return request.path === '/v1/plugins/data/contract'
-                ? Response.json({ access: 'writable', contract: rowReadContract }) : route(request);
+                ? Response.json({ access: 'writable', contract: boundContract }) : route(request);
         },
     });
     try {
@@ -113,14 +119,14 @@ async function withRowReadClient(
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Home must establish its real Account lifetime');
         const admitted = await createActivePluginCollectionClientForContractRef({ accountLifetime: lifetime,
-            ref: { ...ref, contractDigest: rowReadContract.contractDigest } });
+            ref: { ...ref, contractDigest: boundContract.contractDigest } });
         if (admitted.status !== 'ready') throw new Error('The real contract read must admit the Collection');
         await run(admitted.client, home);
     } finally { await home.dispose(); }
 }
 
 describe('Collection raw read acquisition after caller admission', () => {
-    it('borrows admitted identity for tags and Data operations and re-admits after a server mode refusal', async () => {
+    it('refreshes Plain identity tags while Data operations borrow admission and re-admit after a server mode refusal', async () => {
         let currentness: AccountEncryptionCurrentnessResponse = createPlainAccountEncryptionCurrentnessFixture();
         installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
         try {
@@ -170,16 +176,25 @@ describe('Collection raw read acquisition after caller admission', () => {
                 const requestedRef = { ...ref, contractDigest: rowReadContract.contractDigest };
                 await expect(createActivePluginCollectionClientForContractRef({ ref: requestedRef, fresh: false }))
                     .resolves.toMatchObject({ status: 'ready' });
+                let tagReads = 0;
+                let dataReads = 0;
                 for (let index = 0; index < 20; index++) {
+                    const beforeTag = currentnessCount();
                     await expect(client.identityTag({ field: 'id', components: [`row-${index}`] }))
                         .resolves.toMatchObject({ status: 'ready' });
+                    tagReads += currentnessCount() - beforeTag;
+                    expect.soft(currentnessCount() - beforeTag).toBe(1);
+                    const beforeData = currentnessCount();
                     await expect(client.get('same')).resolves.toEqual({ status: 'ready',
                         row: { rowId: 'same', revision: 1, value: { id: 'same' } }, absenceEpoch: 2 });
                     await expect(client.query({ indexId: 'by-id', order: 'asc' })).resolves.toMatchObject({ status: 'ready',
                         rows: [{ value: { id: 'same' } }], changeCursor: 9 });
+                    dataReads += currentnessCount() - beforeData;
+                    expect.soft(currentnessCount() - beforeData).toBe(0);
                 }
                 const ordinaryReads = currentnessCount() - warmReads;
-                expect(ordinaryReads).toBe(0);
+                console.info('ACCOUNT-CURRENTNESS-F1 cost', { mode: 'plain', identityTags: 20, dataOperations: 40, tagReads, dataReads });
+                expect(ordinaryReads).toBe(20);
                 expect(home.requests.filter(request => request.path === '/v1/plugins/data/get')).toHaveLength(20);
                 expect(home.requests.filter(request => request.path === '/v1/plugins/data/query')).toHaveLength(20);
                 const beforeWriterResolution = currentnessCount();
@@ -222,8 +237,81 @@ describe('Collection raw read acquisition after caller admission', () => {
                 await expect(client.query({ indexId: 'by-id', order: 'asc' }))
                     .resolves.toEqual({ status: 'unavailable', reason: 'account-scope-changed' });
                 expect(home.httpRequests).toHaveLength(beforeRetired);
-                expect(ordinaryReads).toBe(0);
+                expect(dataReads).toBe(0);
             }, () => currentness);
+        } finally { installDisconnectedServerSocketBoundary(); }
+    });
+
+    it('keys an identity tag after Plain to E2EE commits before its socket push arrives', async () => {
+        const secret = new Uint8Array(32).fill(41);
+        const material = { type: 'legacy' as const, secret };
+        const encrypted: AccountEncryptionCurrentnessResponse = { mode: 'e2ee', version: 2, updatedAt: 2,
+            signingKeyFingerprint: 'signing-key-2', contentKeyFingerprint:
+                convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
+            recipientEnvelopeReadiness: { status: 'available' } };
+        let currentness: AccountEncryptionCurrentnessResponse = createPlainAccountEncryptionCurrentnessFixture();
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        try {
+            await withRowReadClient(() => undefined, async (client, home) => {
+                const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+                if (!credentials) throw new Error('Expected restored Home credentials');
+                const binding = apiSocket.getAccountEncryptionObservationBinding(credentials);
+                if (!binding) throw new Error('Expected admitted socket observation');
+                await binding.read();
+                expect(binding.peek()?.mode).toBe('plain');
+                const request = { field: 'id', components: ['provider-private-key'] };
+                const plainTag = derivePluginCollectionIdentityTagV1({ pluginId, collectionId: rowReadContract.collectionId,
+                    accountEncryptionMode: 'plain', material: null, ...request });
+                const keyedTag = derivePluginCollectionIdentityTagV1({ pluginId, collectionId: rowReadContract.collectionId,
+                    accountEncryptionMode: 'e2ee', material, ...request });
+                expect(keyedTag).not.toBe(plainTag);
+                currentness = encrypted;
+                const before = home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
+                await expect(client.identityTag(request)).resolves.toEqual({ status: 'ready', tag: keyedTag });
+                expect(home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length - before).toBe(1);
+                expect(binding.peek()?.mode).toBe('plain');
+            }, () => currentness, { accountMode: 'plain',
+                credentials: { token: createServedHomeAccountToken('alice'), secret: Buffer.from(secret).toString('base64url'), custody: 'historical' } });
+        } finally { installDisconnectedServerSocketBoundary(); }
+    });
+
+    it.each([
+        { mode: 'plain', identityFields: false },
+        { mode: 'e2ee', identityFields: true },
+        { mode: 'e2ee', identityFields: false },
+    ] as const)('keeps admitted $mode tags (identity fields: $identityFields) and Data reads free of currentness GETs', async ({ mode, identityFields }) => {
+        const secret = new Uint8Array(32).fill(43);
+        const material = { type: 'legacy' as const, secret };
+        const currentness: AccountEncryptionCurrentnessResponse = mode === 'plain'
+            ? createPlainAccountEncryptionCurrentnessFixture()
+            : { mode, version: 1, updatedAt: 1, signingKeyFingerprint: 'signing-key-1', contentKeyFingerprint:
+                convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
+                recipientEnvelopeReadiness: { status: 'available' } };
+        const noIdentityContract = normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(rowReadDefinition.id,
+                defineAccountCollection({ ...rowReadDefinition, identityFields: [] }))) });
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        try {
+            await withRowReadClient(request => {
+                if (request.path === '/v1/plugins/data/get') return Response.json({ row: null, absenceEpoch: 0 });
+                if (request.path === '/v1/plugins/data/query') return Response.json({ rows: [], changeCursor: 1 });
+                return undefined;
+            }, async (client, home) => {
+                const currentnessCount = () => home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
+                const before = currentnessCount();
+                for (let index = 0; index < 20; index++) {
+                    await expect(client.identityTag({ field: 'id', components: [`row-${index}`] })).resolves.toMatchObject(identityFields
+                        ? { status: 'ready' } : { status: 'rejected', code: 'plugin_collection_invalid_value' });
+                    await expect(client.get(`row-${index}`)).resolves.toMatchObject({ status: 'ready', row: null });
+                    await expect(client.query({ indexId: 'by-id', order: 'asc' })).resolves.toMatchObject({ status: 'ready', rows: [] });
+                    expect(currentnessCount() - before).toBe(0);
+                }
+                console.info('ACCOUNT-CURRENTNESS-F1 cost', { mode, identityFields, identityTags: 20,
+                    dataOperations: 40, currentnessGETs: currentnessCount() - before });
+            }, () => currentness, { contract: identityFields ? rowReadContract : noIdentityContract,
+                ...(mode === 'e2ee' ? { credentials: { token: createServedHomeAccountToken('alice'), secret: Buffer.from(secret).toString('base64url') } } : {}) });
         } finally { installDisconnectedServerSocketBoundary(); }
     });
 

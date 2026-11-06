@@ -379,6 +379,7 @@ export async function prepareCollectionOperation(
     options: ActivePluginCollectionOperationOptionsV1 | undefined,
     accountLifetime?: ActiveServerAccountScopeLifetime,
     invocationSignal?: AbortSignal,
+    freshPlainIdentity = false,
 ): Promise<PreparedCollectionOperationOutcome> {
     if (options?.signal?.aborted || invocationSignal?.aborted) return unavailable('operation-cancelled');
     const lifetime = accountLifetime ?? captureActiveServerAccountScopeLifetime();
@@ -430,12 +431,14 @@ export async function prepareCollectionOperation(
 
         const credentials = capturedAuthority.context.credentials ?? { token: capturedAuthority.context.token };
         const currentness = await fetchAccountEncryptionIdentity(credentials, {
-            // Every plugin operation borrows its Account's admitted identity.
-            // Socket updates/reconnect own re-admission; the Data server still
-            // enforces persisted mode and each envelope is checked below.
             request: capturedAuthority.request,
             signal: controller.signal,
-            usage: 'identity',
+            // A tag can outlive a delayed Plain→E2EE push and later become
+            // server-visible identity. Never mint its unkeyed digest from a
+            // stale Plain observation. E2EE→Plain is already custody-pinned.
+            usage: freshPlainIdentity
+                && readAccountEncryptionObservationBinding(capturedAuthority.request, credentials)?.peek()?.mode === 'plain'
+                ? 'fresh-authority' : 'identity',
         });
         const currentnessAfterRead = isScopeAndServerCurrent(lifetime, serverSnapshot);
         if (currentnessAfterRead) {
@@ -801,9 +804,9 @@ export function createActivePluginCollectionClient<
 }>): ActivePluginCollectionClientV1<TValue> {
     const validate = compilePluginJsonSchema(params.contract.schema);
     const storedReadSchema = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(params.contract.schema));
-    const prepare = async (options?: ActivePluginCollectionOperationOptionsV1) => {
+    const prepare = async (options?: ActivePluginCollectionOperationOptionsV1, freshPlainIdentity = false) => {
         params.assertAdmitted?.();
-        const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal);
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal, freshPlainIdentity);
         if (prepared.status === 'ready') {
             try {
                 params.assertAdmitted?.();
@@ -1076,8 +1079,7 @@ export function createActivePluginCollectionClient<
         request: Readonly<{ field: string; components: readonly string[] }>,
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionIdentityTagOutcomeV1> => {
-        // Tags are pure derivations of the Account's admitted mode and material.
-        const prepared = await prepare(options);
+        const prepared = await prepare(options, params.contract.identityFields.length > 0);
         if (prepared.status === 'unavailable') return prepared;
         try {
             const resolved = resolvePluginCollectionIdentityTagV1({
