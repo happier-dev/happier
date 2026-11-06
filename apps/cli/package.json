@@ -193,6 +193,7 @@
     "@happier-dev/plugins-scm-sapling",
     "@happier-dev/plugins-sentry",
     "@happier-dev/plugins-triage",
+    "@happier-dev/plugins-vercel-ai-gateway",
     "@happier-dev/plugins-xai",
     "@happier-dev/plugins-zai",
     "libsodium-wrappers-sumo",
