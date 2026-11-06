@@ -516,13 +516,19 @@ export function botFaceNormal(
   return [-zx / l, -zy / l, 1 / l];
 }
 
-/* ═══ the mouth: one polyline per state (smile → tight line → "o" → grin) ═══ */
+/* ═══ the mouth: one polyline per state (smile → "…" → "o" → grin); working is three dots (lab R9) ═══ */
 export type BotFaceMood = 'quiet' | 'working' | 'needsYou' | 'done' | 'failed';
-export type BotFaceMouth = Readonly<{ w: number; d: number; o: number; y: number }>;
+export type BotFaceMouth = Readonly<{
+  w: number; d: number; o: number; y: number;
+  /** A dotted mouth: this many dots spread across the mouth's width, drawn as one-point strokes ("…", working). */
+  dots?: number;
+  /** Per-dot lift in mouth units (the mutter raises one dot at a time). */
+  lift?: readonly number[];
+}>;
 type Mouth = BotFaceMouth;
 export const BOT_FACE_MOUTHS: Readonly<Record<BotFaceMood, Mouth>> = {
   quiet: { w: 1, d: 1, o: 0, y: 0 },
-  working: { w: 0.66, d: 0.42, o: 0, y: -0.01 },
+  working: { w: 1.1, d: 0.42, o: 0, y: -0.01, dots: 3 },
   needsYou: { w: 1, d: 1, o: 1, y: -0.03 },
   done: { w: 1.14, d: 1.5, o: 0, y: 0 },
   failed: { w: 0.62, d: 0.12, o: 0, y: 0.035 },
@@ -567,11 +573,39 @@ export function botFaceMouthPoints(
 }
 export const botFaceMouthLine = (pts: [number, number][], o: number) =>
   pts.slice(0, o > 0.02 ? 16 : 11);
+/**
+ * The mouth as strokes, in model units: the one polyline of a smile, line, "o" or grin, or one single-point stroke per
+ * dot of a dotted mouth. A dot sits `dep × 0.55` below the mouth line and rises 9 mouth units per unit of `lift`.
+ * Every renderer and outline check walks these strokes, so dots never join into a bar.
+ */
+export function botFaceMouthStrokes(G: BotFaceGeometry, m: Mouth): [number, number][][] {
+  if (!m.dots) return [botFaceMouthLine(botFaceMouthPoints(G, m), m.o)];
+  const hw = (25.1 / U) * G.mouth.s * m.w,
+    dep = (14.5 / U) * G.mouth.s * m.d,
+    x0 = G.mouth.cx,
+    y0 = G.mouth.y + m.y + dep * 0.55;
+  const strokes: [number, number][][] = [];
+  for (let i = 0; i < m.dots; i++) {
+    strokes.push([[x0 - hw + (2 * hw * (i + 0.5)) / m.dots, y0 - (m.lift?.[i] ?? 0) * (9 / U) * G.mouth.s]]);
+  }
+  return strokes;
+}
+/** Distance from (x, y) to the nearest stroke of a mouth. */
+export function botFaceStrokesDistance(
+  x: number,
+  y: number,
+  strokes: readonly (readonly (readonly [number, number])[])[],
+): number {
+  let d = 1e9;
+  for (const stroke of strokes) d = Math.min(d, botFaceSegDistance(x, y, stroke));
+  return d;
+}
 export function botFaceSegDistance(
   x: number,
   y: number,
   line: readonly (readonly [number, number])[],
 ): number {
+  if (line.length === 1) return Math.hypot(x - line[0][0], y - line[0][1]);
   let d = 1e9;
   for (let i = 1; i < line.length; i++) {
     const ax = line[i - 1][0],
@@ -592,6 +626,21 @@ export function botFaceSegDistance(
 /** The mouth's half-width in model units for a renderer's weight `K`. */
 export const botFaceMouthWidth = (G: BotFaceGeometry, K: number) =>
   (3.4 / U) * G.mouth.s * K;
+/**
+ * Beads for a mouth's strokes: evenly spaced along a polyline (at least three), or one bead per dot, the dots spread
+ * about their middle to at least `minDotPitch` so they never merge at rail size (lab R9).
+ */
+export function botFaceStrokeBeads(
+  strokes: readonly (readonly (readonly [number, number])[])[],
+  gap: number,
+  minDotPitch: number,
+): [number, number][] {
+  if (strokes.length === 1) return botFaceBeads(strokes[0], gap);
+  const centres = strokes.map(stroke => stroke[0]);
+  const mid = (centres[0][0] + centres[centres.length - 1][0]) / 2;
+  const pitch = Math.max(centres.length > 1 ? Math.abs(centres[1][0] - centres[0][0]) : 0, minDotPitch);
+  return centres.map(([, y], i) => [mid + (i - (centres.length - 1) / 2) * pitch, y]);
+}
 /** Evenly spaced beads along a polyline (at least three). */
 export function botFaceBeads(
   pts: readonly (readonly [number, number])[],

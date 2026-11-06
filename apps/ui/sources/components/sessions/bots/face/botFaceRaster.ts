@@ -8,18 +8,20 @@
  * (R6 seams fix).
  */
 import {
-    BOT_FACE_COLOURS, PIXEL_BODY8, PIXEL_FACE12, PIXEL_FACE8, PIXEL_HEAD12, PIXEL_HEAD8,
+    BOT_FACE_COLOURS, PIXEL_BODY8, PIXEL_FACE12, PIXEL_FACE8, PIXEL_HEAD12, PIXEL_HEAD8, PIXEL_MUTTER12, PIXEL_MUTTER8,
     PIXEL_SPRITE_OF, PIXEL_SPRITES12, PIXEL_SPRITES8, botFaceGradient, type BotFaceTheme,
 } from './botFaceArt';
 import {
-    BOT_FACE_DEPTH, BOT_FACE_DONE_MS, BOT_FACE_NORMAL_STEP, BOT_FACE_RIM, botFaceGeometry, botFaceMorphAt, botFaceMorphGeometry, botFaceListPose, botFaceMouthLine, botFaceMouthPoints, botFaceMouthWidth, botFaceNormal, botFaceSd,
-    botFaceSegDistance, botFaceZ, type BotFaceGeometry, type BotFaceMood, type BotFacePose,
+    BOT_FACE_DEPTH, BOT_FACE_DONE_MS, BOT_FACE_NORMAL_STEP, BOT_FACE_RIM, botFaceGeometry, botFaceMorphAt, botFaceMorphGeometry, botFaceListPose, botFaceMouthStrokes, botFaceMouthWidth, botFaceNormal, botFaceSd,
+    botFaceStrokesDistance, botFaceZ, type BotFaceGeometry, type BotFaceMood, type BotFaceMutter, type BotFacePose,
 } from './botFaceGeometry';
 import { resolveBotFaceArt, type BotFaceIdentity } from './botFaceIdentity';
 import { deriveBotFaceSprite } from './botFaceSprite';
 import { botFaceMomentTurn, type BotFaceChannels } from './botFaceMotionTokens';
 
 /** `smooth`: the image is shaded below device resolution and the painter scales it with filtering, not pixel snapping. */
+/** The head turn the attention brain adds to a list face (R10 A), radians, on top of the moment's own turn. */
+export type BotFaceTurn = Readonly<{ yaw: number; pitch: number; roll: number }>;
 export type BotFaceRasterImage = Readonly<{ width: number; height: number; data: Uint8ClampedArray<ArrayBuffer>; smooth?: boolean }>;
 export type BotFaceRasterInput = Readonly<{
     style: 'dither' | 'solid' | 'pixel';
@@ -36,7 +38,9 @@ export type BotFaceRasterInput = Readonly<{
      * `from` → `to` by `u`, in a stage `pad` css px wider on each side so a hop never clips. At rest channels the stage
      * holds exactly the still face, and `tx` and the lean's foot pivot move the whole cell grid by whole pixels.
      */
-    moment?: Readonly<{ channels: BotFaceChannels; from: BotFaceMood; to: BotFaceMood; u: number; pad: number }>;
+    moment?: Readonly<{ channels: BotFaceChannels; from: BotFaceMood; to: BotFaceMood; u: number; pad: number; turn?: BotFaceTurn }>;
+    /** The working mouth's mutter step (lab R9): which of its three dots is raised. Absent: the still "…". */
+    mutter?: BotFaceMutter;
     /** Pixel's look inside a moment (R8 C): its face rows step one sprite pixel toward the turn. */
     look?: -1 | 0 | 1;
     monochrome?: boolean;
@@ -60,12 +64,12 @@ function rotMat(yaw: number, pitch: number, roll: number): number[] {
 }
 const rotN = (R: number[], n: readonly number[]): [number, number, number] => [R[0] * n[0] + R[3] * n[1] + R[6] * n[2], R[1] * n[0] + R[4] * n[1] + R[7] * n[2], R[2] * n[0] + R[5] * n[1] + R[8] * n[2]];
 
-type Slab = Readonly<{ G: BotFaceGeometry; R: number[]; sc: [number, number, number]; off: [number, number, number]; view: number; mouth: [number, number][]; turn: boolean }>;
+type Slab = Readonly<{ G: BotFaceGeometry; R: number[]; sc: [number, number, number]; off: [number, number, number]; view: number; mouth: [number, number][][]; turn: boolean }>;
 const listView = (G: BotFaceGeometry) => Math.max(1.12, G.ext * 1.08);
 function slab(G: BotFaceGeometry, pose: BotFacePose, hero: boolean): Slab {
     const view = hero ? Math.max(1.3, G.ext * 1.22) : listView(G);
     const br = 1 + pose.breath;
-    return { G, R: rotMat(pose.yaw + pose.spin, pose.pitch, pose.roll), sc: [pose.sx * br, pose.sy * br, br], off: [0, pose.ty - (pose.sy - 1) * G.bot, 0], view, mouth: botFaceMouthPoints(G, pose.mouth), turn: pose.spin !== 0 };
+    return { G, R: rotMat(pose.yaw + pose.spin, pose.pitch, pose.roll), sc: [pose.sx * br, pose.sy * br, br], off: [0, pose.ty - (pose.sy - 1) * G.bot, 0], view, mouth: botFaceMouthStrokes(G, pose.mouth), turn: pose.spin !== 0 };
 }
 /** A visible slab point (model units) and, off the front height field, its model normal (back face or wall). */
 type Surface = Readonly<{ p: readonly [number, number, number]; n: readonly [number, number, number] | null }>;
@@ -171,11 +175,15 @@ const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
  * The list pose a moment draws (lab R7 `drawRail7`): the resting list pose and mouth blended `from` → `to`, then the
  * channels laid on: lift (`ty`, a fraction of the face), stretch about the foot, lean in degrees.
  */
-function momentPose(G: BotFaceGeometry, m: NonNullable<BotFaceRasterInput['moment']>): BotFacePose {
-    const a = botFaceListPose(m.from), b = botFaceListPose(m.to), u = m.u, c = m.channels; const turn = botFaceMomentTurn(c);
-    const mouth = { w: lerp(a.mouth.w, b.mouth.w, u), d: lerp(a.mouth.d, b.mouth.d, u), o: lerp(a.mouth.o, b.mouth.o, u), y: lerp(a.mouth.y, b.mouth.y, u) };
-    return { ...a, yaw: lerp(a.yaw, b.yaw, u) + turn.yaw, pitch: lerp(a.pitch, b.pitch, u) + turn.pitch, mouth,
-        ty: c.ty * 2 * listView(G), sx: c.sx, sy: c.sy, roll: (c.rot * Math.PI) / 180 };
+function momentPose(G: BotFaceGeometry, m: NonNullable<BotFaceRasterInput['moment']>, mutter?: BotFaceMutter): BotFacePose {
+    const a = botFaceListPose(m.from, mutter), b = botFaceListPose(m.to, mutter), u = m.u, c = m.channels; const turn = botFaceMomentTurn(c);
+    // A dotted mouth does not morph: the hop's mouth lands on "…" from whichever mouth is nearer (lab R9).
+    const near = (u < 0.5 ? a : b).mouth;
+    const mouth = { w: lerp(a.mouth.w, b.mouth.w, u), d: lerp(a.mouth.d, b.mouth.d, u), o: lerp(a.mouth.o, b.mouth.o, u), y: lerp(a.mouth.y, b.mouth.y, u),
+        ...(near.dots ? { w: near.w, d: near.d, dots: near.dots, lift: near.lift } : {}) };
+    const look = m.turn ?? { yaw: 0, pitch: 0, roll: 0 };
+    return { ...a, yaw: lerp(a.yaw, b.yaw, u) + turn.yaw + look.yaw, pitch: lerp(a.pitch, b.pitch, u) + turn.pitch + look.pitch, mouth,
+        ty: c.ty * 2 * listView(G), sx: c.sx, sy: c.sy, roll: (c.rot * Math.PI) / 180 + look.roll };
 }
 /** Where the face box starts inside the image (image px), and the whole-pixel shift a moment's `tx` and lean add. */
 function frameOrigin(input: BotFaceRasterInput, G: BotFaceGeometry, scale: number, k: number): { pad: number; shift: number } {
@@ -215,7 +223,7 @@ function dither(input: BotFaceRasterInput): BotFaceRasterImage {
         const alb = albedoAt(stops, G, p[0], p[1], 0.22, 0.72); const n = rotN(S.R, hit.n ?? botFaceNormal(G, p[0], p[1]));
         const col = ceramic(alb, n).map(v => v * gain);
         let lum = clamp01(dot3(col, [0.3, 0.55, 0.15]));
-        if (p[2] > 0 && botFaceSegDistance(p[0], p[1], S.mouth) < mw) lum *= 0.25; // the carved groove, on the front only
+        if (p[2] > 0 && botFaceStrokesDistance(p[0], p[1], S.mouth) < mw) lum *= 0.25; // the carved groove, on the front only
         const by = (BAYER[(cy % 4) * 4 + (cx % 4)] + 0.5) / 16; const tone = clamp01(Math.floor(clamp01(lum * 1.15) * 2 + by) / 2);
         const c = lum < 0.04 ? alb.map(v => v * 0.58 * 0.78) : tone < 0.25 ? alb.map(v => v * 0.58) : tone < 0.75 ? alb.map(v => v * 0.98) : alb.map(v => v + (1 - v) * 0.4);
         const x1 = Math.min(img.width, (cx + 1) * pitch), y1 = Math.min(img.height, (cy + 1) * pitch);
@@ -234,7 +242,7 @@ type DitherCell = { alb: readonly [number, number, number]; n: readonly number[]
 function ditherList(input: BotFaceRasterInput): BotFaceRasterImage {
     const { identity, size, dpr, theme } = input; const body = resolveBotFaceArt(identity);
     const G = botFaceGeometry(identity.body, body, true);
-    const pose = input.moment ? momentPose(G, input.moment) : botFaceListPose(input.mood); const S = slab(G, pose, false);
+    const pose = input.moment ? momentPose(G, input.moment, input.mutter) : botFaceListPose(input.mood, input.mutter); const S = slab(G, pose, false);
     const img = image(size, dpr, input.moment?.pad); const box = Math.max(1, Math.round(size * dpr)); const k = box / (2 * S.view);
     const pitch = ditherPitch(size, dpr, false);
     const { pad, shift } = frameOrigin(input, G, dpr, k); const ox = pad + shift, oy = pad, inner = box / 2;
@@ -259,8 +267,15 @@ function ditherList(input: BotFaceRasterInput): BotFaceRasterImage {
         const wx = R[0] * m[0] + R[3] * m[1] + R[6] * m[2] + S.off[0], wy = R[1] * m[0] + R[4] * m[1] + R[7] * m[2] + S.off[1], wz = R[2] * m[0] + R[5] * m[1] + R[8] * m[2] + S.off[2];
         const f = CAM / (CAM - wz); return [inner + wx * f * k, inner + wy * f * k];
     };
-    const line = botFaceMouthLine(S.mouth, pose.mouth.o);
-    for (let i = 1; i < line.length; i++) for (let t = 0; t <= 1; t += 0.05) {
+    if (pose.mouth.dots) {
+        // "…" hinted (lab R9): single cells one empty cell apart, centred on the mouth, on its unlifted row; the row
+        // moves up a cell when a dot would have no body under it, and a raised dot sits one cell higher.
+        const rest = botFaceMouthStrokes(G, { ...pose.mouth, lift: undefined });
+        const mid = rest[(rest.length - 1) >> 1][0]; const [MX, MY] = project(mid[0], mid[1]);
+        const ccx = Math.floor(MX / pitch), ccy = Math.floor(MY / pitch); const offsets = rest.map((_, i) => 2 * (i - ((rest.length - 1) >> 1)));
+        const row = offsets.some(d => !at(ccx + d, ccy + 1)) ? ccy - 1 : ccy;
+        offsets.forEach((d, i) => { const c = at(ccx + d, row - (pose.mouth.lift?.[i] ? 1 : 0)); if (c && c.n[2] > 0.15) c.mouth = true; });
+    } else for (const line of S.mouth) for (let i = 1; i < line.length; i++) for (let t = 0; t <= 1; t += 0.05) {
         const [X, Y] = project(lerp(line[i - 1][0], line[i][0], t), lerp(line[i - 1][1], line[i][1], t));
         const c = at(Math.floor(X / pitch), Math.floor(Y / pitch)); if (c && c.n[2] > 0.15) c.mouth = true;
     }
@@ -284,7 +299,7 @@ function ditherList(input: BotFaceRasterInput): BotFaceRasterImage {
 function solid(input: BotFaceRasterInput): BotFaceRasterImage {
     const { identity, size, dpr, theme, hero } = input; const body = resolveBotFaceArt(identity);
     const G = heroGeometry(input, botFaceGeometry(identity.body, body, true), true);
-    const pose = hero?.pose ?? (input.moment ? momentPose(G, input.moment) : botFaceListPose(input.mood)); const S = slab(G, pose, !!hero);
+    const pose = hero?.pose ?? (input.moment ? momentPose(G, input.moment, input.mutter) : botFaceListPose(input.mood, input.mutter)); const S = slab(G, pose, !!hero);
     // Matte shading is smooth, so a hero shades one sample per point and the painter filters the upscale: per-pixel
     // shading at 2–3× device pixels cost ~4–9× more per frame for no visible gain (lane LB-UI measurement).
     const scale = hero ? Math.min(dpr, 1) : dpr;
@@ -295,7 +310,8 @@ function solid(input: BotFaceRasterInput): BotFaceRasterImage {
     // A list face is hinted (R8 A/B): a mouth of at least 1.5 css px, half the anti-alias ramp, a steeper key light with
     // a soft highlight, and a contact shade under the foot that stays on the floor while the body lifts.
     const list = !hero;
-    const mw = list ? Math.max(botFaceMouthWidth(G, 1.5), 0.75 / (size / (2 * S.view))) : botFaceMouthWidth(G, 1.25);
+    // A dot reads as a dot only a little rounder than the stroke (lab R9: 1.6 × the stroke's half-width).
+    const mw = (list ? Math.max(botFaceMouthWidth(G, 1.5), 0.75 / (size / (2 * S.view))) : botFaceMouthWidth(G, 1.25)) * (pose.mouth.dots ? 1.6 : 1);
     const stops = BOT_FACE_COLOURS[identity.colour].stops(theme); const smile = SMILE[theme].map(v => v / 255);
     const shadow = hero ? (theme === 'dark' ? 0.5 : 0.22) * (1 + pose.ty * 2.5) : theme === 'dark' ? 0.42 : 0.2;
     const floor = G.bot + (hero ? 0.07 : 0.04), spread = hero ? 0.78 : 0.7, depth = hero ? 0.11 : 0.07;
@@ -324,7 +340,7 @@ function solid(input: BotFaceRasterInput): BotFaceRasterImage {
                 const c = matte(albedoAt(stops, G, p[0], p[1], 0.34, 0.62), n, list ? 1.6 : 1); const spec = list ? clamp01(dot3(n, highlight)) ** 24 * 0.38 : 0;
                 r = (c[0] + spec) * pose.gain; g = (c[1] + spec) * pose.gain; b = (c[2] + spec) * pose.gain;
                 if (p[2] > 0 && n[2] > 0.15 && p[0] >= mouth.x0 && p[0] <= mouth.x1 && p[1] >= mouth.y0 && p[1] <= mouth.y1) {
-                    const m = smoothstep(mw * 1.05, mw * (list ? 0.9 : 0.8), botFaceSegDistance(p[0], p[1], S.mouth));
+                    const m = smoothstep(mw * 1.05, mw * (list ? 0.9 : 0.8), botFaceStrokesDistance(p[0], p[1], S.mouth));
                     r += (smile[0] - r) * m; g += (smile[1] - g) * m; b += (smile[2] - b) * m;
                 }
             }
@@ -335,9 +351,9 @@ function solid(input: BotFaceRasterInput): BotFaceRasterImage {
     return img;
 }
 /** The model-space box beyond which a point is farther than `reach` from the mouth line (the smile cannot touch it). */
-function mouthBox(line: readonly (readonly [number, number])[], reach: number): { x0: number; x1: number; y0: number; y1: number } {
+function mouthBox(strokes: readonly (readonly (readonly [number, number])[])[], reach: number): { x0: number; x1: number; y0: number; y1: number } {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const [x, y] of line) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    for (const line of strokes) for (const [x, y] of line) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
     return { x0: x0 - reach, x1: x1 + reach, y0: y0 - reach, y1: y1 + reach };
 }
 /** The screen-space box (model-view units) the posed slab can cover: its model box's eight corners, projected. */
@@ -359,19 +375,21 @@ function overlay(rows: Grid, r: number, s: string) {
     for (let i = 0; i < s.length; i++) { if (s[i] === 'X' || s[i] === 'F') a[i] = s[i]; else if (s[i] === 'o') a[i] = '.'; }
     rows[r] = a.join('');
 }
-function grid12(shape: string, mood: BotFaceMood, frame: number): Grid {
+const face12 = (mood: BotFaceMood, mutter?: BotFaceMutter) => (mood === 'working' && mutter != null ? PIXEL_MUTTER12[mutter] : PIXEL_FACE12[mood]);
+const face8 = (mood: BotFaceMood, mutter?: BotFaceMutter) => (mood === 'working' && mutter != null ? PIXEL_MUTTER8[mutter] : PIXEL_FACE8[mood]);
+function grid12(shape: string, mood: BotFaceMood, frame: number, mutter?: BotFaceMutter): Grid {
     const sp = PIXEL_SPRITES12[spriteKey(shape, PIXEL_SPRITES12)]; const W = sp.W, ox = sp.ox ?? 0;
     const n = Math.max(sp.below.length, (sp.over ?? [0]).length, (sp.above ?? [0]).length); const f = frame % n;
     const pad = (r: string) => '.'.repeat(ox) + r + '.'.repeat(Math.max(0, W - ox - r.length));
     const body = sp.alt && f % 2 ? sp.alt : sp.body;
-    const rows = [...PIXEL_HEAD12, ...PIXEL_FACE12[mood], ...body].map(pad);
+    const rows = [...PIXEL_HEAD12, ...face12(mood, mutter), ...body].map(pad);
     if (sp.over) { const ov = sp.over[f % sp.over.length]; for (const r in ov) overlay(rows, Number(r), ov[r]); }
     return [...(sp.above ? sp.above[f % sp.above.length] : []), ...rows, ...(sp.below[f % sp.below.length] ?? [])];
 }
-function grid8(shape: string, mood: BotFaceMood): Grid {
+function grid8(shape: string, mood: BotFaceMood, mutter?: BotFaceMutter): Grid {
     const sp = PIXEL_SPRITES8[spriteKey(shape, PIXEL_SPRITES8)]; const W = sp.W, ox = sp.ox ?? 0;
     const pad = (r: string) => '.'.repeat(ox) + r + '.'.repeat(Math.max(0, W - ox - r.length));
-    const rows = [...PIXEL_HEAD8, ...PIXEL_FACE8[mood], ...PIXEL_BODY8].map(pad);
+    const rows = [...PIXEL_HEAD8, ...face8(mood, mutter), ...PIXEL_BODY8].map(pad);
     if (sp.over) for (const r in sp.over) overlay(rows, Number(r), sp.over[r]);
     return [...(sp.above ?? []), ...rows, ...(sp.below ?? [])];
 }
@@ -385,7 +403,7 @@ function pixelLayout(input: BotFaceRasterInput, img: { width: number; height: nu
     const mood: BotFaceMood = input.mood === 'done' && (!hero || hero.rest || t > BOT_FACE_DONE_MS) && hero ? 'quiet' : input.mood;
     const micro = size <= 24 && !hero; let g: Grid; let px: number;
     if (identity.shape) {
-        const sprite = deriveBotFaceSprite(identity.shape, mood, micro ? 8 : 12);
+        const sprite = deriveBotFaceSprite(identity.shape, mood, micro ? 8 : 12, input.mutter);
         g = sprite.grid;
         const cols = Math.max(...g.map(row => row.length));
         px = hero ? Math.max(1, Math.floor(Math.min(img.width / cols, img.height / Math.max(g.length, 12)) * 0.8))
@@ -393,14 +411,14 @@ function pixelLayout(input: BotFaceRasterInput, img: { width: number; height: nu
         return { g, px, face: sprite.mouthRow, faceRows: sprite.mouthRows };
     }
     if (micro) {
-        g = grid8(identity.body, mood); const cols = Math.max(...g.map(r => r.length));
+        g = grid8(identity.body, mood, input.mutter); const cols = Math.max(...g.map(r => r.length));
         // R8 A: the micro sprite fills 94% of the rail box (R6: 80%).
         px = Math.max(1, Math.floor((size * dpr * 0.94) / Math.max(8, cols * 0.86, g.length * 0.8)));
         return { g, px, face: (PIXEL_SPRITES8[spriteKey(identity.body, PIXEL_SPRITES8)].above?.length ?? 0) + PIXEL_HEAD8.length, faceRows: 2 };
     }
     {
         const per = input.mood === 'working' ? 240 : 560; const frame = hero && !hero.rest ? Math.floor(t / per) % botFacePixelFrames(identity.body) : 0;
-        g = grid12(identity.body, mood, frame); const cols = Math.max(...g.map(r => r.length));
+        g = grid12(identity.body, mood, frame, input.mutter); const cols = Math.max(...g.map(r => r.length));
         px = hero ? Math.max(1, Math.floor(Math.min(img.width / cols, img.height / Math.max(g.length, 12)) * 0.8))
             : Math.max(1, Math.floor((size * dpr * 0.8) / Math.max(12, cols * 0.86, g.length * 0.8)));
     }

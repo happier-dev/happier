@@ -60,7 +60,7 @@ it("draws a Dither moment as the posed body moving through the still face's fixe
       ]);
     }
   // The hop's top lifts the body (a redrawn pose, not a moved picture), and every cell stays whole on the grid.
-  const hop = at(botFaceMotionChannels('working', 230, false));
+  const hop = at(botFaceMotionChannels('working', 230));
   const top = (img: typeof hop) => {
     for (let i = 0; i < img.width * img.height; i++)
       if (opaque(img, i)) return Math.floor(i / img.width);

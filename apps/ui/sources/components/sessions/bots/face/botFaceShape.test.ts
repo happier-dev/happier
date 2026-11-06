@@ -52,6 +52,25 @@ describe('custom face art', () => {
     expect(botFaceGeometry('other-label', { ...BOT_FACE_BODIES.crab }, false)).toBe(first);
   });
 
+  it('reuses live artwork fields without carrying them into a replacement artwork lifetime', () => {
+    const art = { ...shape, fill: [...shape.fill] };
+    const plain = botFaceGeometry('live', art, false);
+    const hinted = botFaceGeometry('live', art, true);
+    expect(botFaceGeometry('another-consumer', { ...art }, false)).toBe(plain);
+    expect(botFaceGeometry('another-consumer', art, true)).toBe(hinted);
+    // A newly loaded/replaced outline owns its own memo; the previous consumer's field is not process-owned.
+    const replacement = { ...art, fill: [...art.fill] };
+    const next = botFaceGeometry('replacement', replacement, false);
+    expect(next).not.toBe(plain);
+    expect(next.sdf).toEqual(plain.sdf);
+    const mouthChanged = botFaceGeometry('mouth', { ...art, mouth: [45, 56, 0.8] }, false);
+    expect(mouthChanged).not.toBe(plain);
+    expect(mouthChanged.mouth).not.toEqual(plain.mouth);
+    const centred = botFaceGeometry('centred', art, true, { ...plain, cy: plain.cy + 1 });
+    expect(centred).not.toBe(hinted);
+    expect(centred.cy).toBe(plain.cy + 1);
+  });
+
   it('keeps a custom outline during hero reactions instead of borrowing its fallback body’s limb morph', () => {
     const crab = resolveBotFaceIdentity('custom-morph', { body: 'crab', shape });
     const bag = { ...crab, body: 'bag' as const };

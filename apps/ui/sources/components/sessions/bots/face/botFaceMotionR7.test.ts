@@ -1,56 +1,19 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { botFaceMotionChannels, botFaceMotionPose } from './botFaceMotionTokens';
-import { noteBotFaceReaction, registerRestingBotFace } from './botFaceIdle';
 import { readSessionBotFaceFacts } from './sessionBotFaceFacts';
 import { BOT_FACE_MOUTHS } from './botFaceGeometry';
 import { drawBotFaceRaster } from './botFaceRaster';
 
 afterEach(() => vi.useRealTimers());
 
-it('starts the R7 breath at rest and reaches its asymmetric inhale after half a cycle', () => {
-  expect(botFaceMotionPose(null, 0, 24, true)).toMatchObject({ sx: 1, sy: 1 });
-  expect(botFaceMotionPose(null, 1600, 24, true)).toMatchObject({ sx: 0.986, sy: 1.035 });
-});
-
-it('does not schedule an idle gesture before the R7 twenty-second first delay', () => {
-  vi.useFakeTimers();
-  const idle = vi.fn();
-  const unregister = registerRestingBotFace(idle);
-  try {
-    vi.advanceTimersByTime(19999);
-    expect(idle).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    expect(idle).toHaveBeenCalledTimes(1);
-  } finally { unregister(); }
-});
-
 it('lands the hop and droop at their R7 poses, and retargets an interruption from the current pose', () => {
-  expect(botFaceMotionPose('working', 80, 24, false)).toMatchObject({ sx: 1.06, sy: 0.9 });
-  expect(botFaceMotionPose('working', 230, 24, false).y).toBeCloseTo(-2.4);
-  expect(botFaceMotionPose('working', 870, 24, false)).toEqual({ x: 0, y: 0, rotation: 0, sx: 1, sy: 1 });
-  expect(botFaceMotionPose('failed', 360, 24, false)).toMatchObject({ y: 0.96, sx: 1.03, sy: 0.94, rotation: -3 });
-  const current = botFaceMotionChannels('working', 150, false);
-  expect(botFaceMotionChannels('needsYou', 0, false, current)).toEqual(current);
-});
-
-it('keeps one idle clock, avoids repeating the Bot or gesture, and waits through the reaction quiet window', () => {
-  vi.useFakeTimers();
-  const random = vi.spyOn(Math, 'random').mockReturnValue(0);
-  const a = vi.fn(), b = vi.fn();
-  const removeA = registerRestingBotFace(a, 'a'), removeB = registerRestingBotFace(b, 'b');
-  try {
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(19000); noteBotFaceReaction();
-    vi.advanceTimersByTime(1000);
-    expect(a).not.toHaveBeenCalled(); expect(b).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(7000);
-    expect(a).toHaveBeenCalledExactlyOnceWith('smile');
-    vi.advanceTimersByTime(25000);
-    expect(b).toHaveBeenCalledExactlyOnceWith('glance');
-    expect(a).toHaveBeenCalledTimes(1);
-  } finally { removeA(); removeB(); random.mockRestore(); }
-  expect(vi.getTimerCount()).toBe(0);
+  expect(botFaceMotionPose('working', 80, 24)).toMatchObject({ sx: 1.06, sy: 0.9 });
+  expect(botFaceMotionPose('working', 230, 24).y).toBeCloseTo(-2.4);
+  expect(botFaceMotionPose('working', 870, 24)).toEqual({ x: 0, y: 0, rotation: 0, sx: 1, sy: 1 });
+  expect(botFaceMotionPose('failed', 360, 24)).toMatchObject({ y: 0.96, sx: 1.03, sy: 0.94, rotation: -3 });
+  const current = botFaceMotionChannels('working', 150);
+  expect(botFaceMotionChannels('needsYou', 0, current)).toEqual(current);
 });
 
 it('keeps the completed grin until the existing read cursor catches up, and consumes the typed failed outcome', () => {

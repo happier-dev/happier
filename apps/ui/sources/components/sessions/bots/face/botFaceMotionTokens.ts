@@ -1,4 +1,8 @@
-/** R7 artwork contract: .happier/design-lab/living-bots/DECISIONS-R7.md. */
+/**
+ * R7 artwork contract: .happier/design-lab/living-bots/DECISIONS-R7.md. R10 A (DECISIONS-R10.md §1, owner 2026-11-04):
+ * the per-Bot attention brain without eyes (`alive`) replaces R7's breath and its one-Bot-at-a-time idle scheduler;
+ * working is R9's mutter (DECISIONS-R9.md §2).
+ */
 export type BotFaceChannels = Readonly<{ tx: number; ty: number; sx: number; sy: number; rot: number }>;
 type Moment = Readonly<{
   mouthAtMs?: number; mouthBackAtMs?: number; markerAtMs?: number;
@@ -24,14 +28,31 @@ export const botFaceMotionTokens = {
    */
   perk: { mouthAtMs: 60, mouthBackAtMs: 520, settle: { duration: 260, dampingRatio: 0.6 },
     keys: [[70, { sy: 0.95, sx: 1.03 }, 'standard'], [130, { ty: -0.07, sy: 1.02, sx: 0.985 }, 'standard'], [120, { ty: 0, sy: 1, sx: 1 }, 'exit']] },
-  breath: { periodMs: 3200, sy: 0.035, sx: -0.014 },
   idle: {
     smile: { mouthAtMs: 0, mouthBackAtMs: 640, settle: { duration: 320, dampingRatio: 1 }, keys: [[140, { sy: 1.03, sx: 0.99 }, 'standard'], [500, {}, 'standard']] },
-    glance: { settle: { duration: 360, dampingRatio: 1 }, keys: [[280, { rot: -5, tx: -0.02 }, 'standard'], [700, {}, 'standard']] },
     wiggle: { settle: { duration: 240, dampingRatio: 0.7 }, keys: [[90, { rot: 3 }, 'standard'], [90, { rot: -3 }, 'standard'], [90, { rot: 1.5 }, 'standard']] },
     sigh: { settle: { duration: 360, dampingRatio: 1 }, keys: [[380, { sy: 1.04, sx: 0.985 }, 'standard'], [420, { sy: 0.965, sx: 1.02 }, 'standard']] },
   },
-  scheduler: { firstAfterMs: 20_000, everyMs: [25_000, 55_000], quietAfterReactionMs: 8_000 },
+  /** R9: the working "…" mouth's dots rise one after another (200 ms each), then rest on "…" until the period ends. */
+  mutter: { periodMs: 1400, stepMs: 200 },
+  /** R10 A, Lively only. Sign convention: yaw positive turns toward the page, pitch positive bows. Radians, ms. */
+  alive: {
+    look: { everyMs: [1800, 4600], centreShare: 0.4, yaw: 0.3, pitch: 0.1, rollPerYaw: -0.16, firstWithinMs: [400, 2600] },
+    body: { hz: 1.3, damping: 0.62 },
+    pointer: { reachPx: 260, yaw: 0.32, pitch: 0.18, tauMs: 120, attendTauMs: 300, workingShare: 0.35 },
+    working: { pitch: 0.06, nodEveryPeriods: [3, 5], nodV: 0.7 },
+    /** Cocked toward the page: drawn in the needs-you list pose in every mode; Lively adds the nods. */
+    needsYou: { roll: 0.12, pitch: -0.08, nodEveryMs: [2600, 4600], nodV: 0.9 },
+    /** Keyboard focus on its pin or row: eyes forward, chin up. */
+    focus: { pitch: -0.04 },
+    /** Heroes (48 px and up): a finer turn step and a breath of 1.2% over 3.4 s (oba). */
+    heroTurnStep: 0.04, heroBreath: { periodMs: 3400, sy: 0.012 },
+    failed: { shakeMs: 700, shakeYaw: 0.22, pitch: 0.1, lookSlow: 2 },
+    done: { lookSlow: 1.4 },
+    gesture: { everyMs: [14_000, 40_000], firstWithinMs: [6000, 28_000] },
+    /** One drawing per 0.05 rad of turn; roll in 0.04 rad (it follows yaw at rest, so finer steps only add drawings). The clock steps moving faces at 30 Hz (MonoCode's pulse). */
+    turnStep: 0.05, rollStep: 0.04, tickMs: 33,
+  },
 } as const;
 export type BotFaceIdleGesture = keyof typeof botFaceMotionTokens.idle;
 export type BotFaceReaction = 'working' | 'needsYou' | 'done' | 'failed' | 'perk' | BotFaceIdleGesture;
@@ -76,12 +97,9 @@ function spring(moment: Moment, elapsed: number): number {
   const w = 5.8 / (z * duration), wd = w * Math.sqrt(1 - z * z);
   return Math.exp(-z * w * elapsed) * (Math.cos(wd * elapsed) + z * w / wd * Math.sin(wd * elapsed));
 }
-export function botFaceMotionChannels(kind: BotFaceReaction | null, elapsed: number, breathing: boolean, from = BOT_FACE_REST): BotFaceChannels {
+export function botFaceMotionChannels(kind: BotFaceReaction | null, elapsed: number, from = BOT_FACE_REST): BotFaceChannels {
   'worklet';
-  if (!kind) {
-    const u = breathing ? 0.5 - 0.5 * Math.cos(2 * Math.PI * elapsed / botFaceMotionTokens.breath.periodMs) : 0;
-    return { ...BOT_FACE_REST, sx: 1 + botFaceMotionTokens.breath.sx * u, sy: 1 + botFaceMotionTokens.breath.sy * u };
-  }
+  if (!kind) return BOT_FACE_REST;
   const moment = moments[kind];
   let value = from, at = 0;
   for (const [duration, target, curve] of moment.keys) {
@@ -97,10 +115,10 @@ export function botFaceMotionChannels(kind: BotFaceReaction | null, elapsed: num
   return { tx: value.tx * k, ty: value.ty * k, sx: 1 + (value.sx - 1) * k, sy: 1 + (value.sy - 1) * k, rot: value.rot * k };
 }
 /** Cached face artwork moves about its foot; Pixel keeps its sprite grid instead of stretching. */
-export function botFaceMotionPose(kind: BotFaceReaction | null, elapsed: number, size: number, breathing: boolean,
+export function botFaceMotionPose(kind: BotFaceReaction | null, elapsed: number, size: number,
   from = BOT_FACE_REST, pixel = false, spritePixel = 1) {
   'worklet';
-  const p = botFaceMotionChannels(kind, elapsed, breathing, from);
+  const p = botFaceMotionChannels(kind, elapsed, from);
   const translation = size >= 48 ? botFaceMotionTokens.heroTranslate : 1;
   let x = p.tx * size * translation, y = p.ty * size * translation;
   if (pixel) {

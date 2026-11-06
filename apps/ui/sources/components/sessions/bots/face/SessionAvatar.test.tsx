@@ -15,11 +15,14 @@ vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/m
 // The face's paint adapter is the platform boundary; the web one paints into the stubbed canvas below.
 vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 
+// Load the real store/UI graph before the test's platform interaction window begins.
+const { SessionAvatar } = await import('./SessionAvatar');
+const { BotFace } = await import('./BotFace');
+
 describe('SessionAvatar', () => {
     afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
 
     it('repaints saved shape changes without changing the fallback body or colour, and restores the fallback when cleared', async () => {
-        const { SessionAvatar } = await import('./SessionAvatar');
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         const paints: Uint8ClampedArray[] = [];
         const canvas = { createNodeMock: (node: { type: unknown }) => node.type === 'canvas' ? {
@@ -44,8 +47,6 @@ describe('SessionAvatar', () => {
     });
 
     it('draws a Bot its saved face and keeps every other Session on its generic avatar', async () => {
-        const { SessionAvatar } = await import('./SessionAvatar');
-        const { BotFace } = await import('./BotFace');
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         const canvas = { createNodeMock: (node: { type: unknown }) => node.type === 'canvas' ? { getContext: () => ({ putImageData() {} }) } : null };
         type Metadata = ReturnType<typeof createSessionFixture>['metadata'];

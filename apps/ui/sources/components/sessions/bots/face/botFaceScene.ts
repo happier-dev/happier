@@ -19,19 +19,19 @@ import {
   type BotFaceTheme,
 } from './botFaceArt';
 import {
-  BOT_FACE_MOUTHS,
   BOT_FACE_UNIT,
-  botFaceBeads,
   botFaceGeometry,
   botFaceHash,
+  botFaceMoodMouth,
   botFaceMoonGeometry,
-  botFaceMouthLine,
-  botFaceMouthPoints,
+  botFaceMouthStrokes,
   botFaceMouthWidth,
   botFaceNormal,
   botFaceSd,
-  botFaceSegDistance,
+  botFaceStrokeBeads,
+  botFaceStrokesDistance,
   type BotFaceMood,
+  type BotFaceMutter,
   type BotFacePose,
 } from './botFaceGeometry';
 import { resolveBotFaceArt, type BotFaceIdentity } from './botFaceIdentity';
@@ -50,6 +50,8 @@ export type BotFaceSceneInput = Readonly<{
    * transform. Absent: both, in one scene.
    */
   layer?: 'body' | 'smile';
+  /** The working mouth's mutter step (lab R9). Absent: the still "…". */
+  mutter?: BotFaceMutter;
   monochrome?: boolean;
 }>;
 
@@ -97,8 +99,8 @@ function dots(input: BotFaceSceneInput): PlanetScene {
   const k = size / (2 * listView);
   const p = ((2 * listView) / cells) * 0.86;
   const lim = Math.ceil((G.ext * 1.1) / p) + 1;
-  const mouth = BOT_FACE_MOUTHS[input.mood];
-  const line = botFaceMouthLine(botFaceMouthPoints(G, mouth), mouth.o);
+  const mouth = botFaceMoodMouth(input.mood, input.mutter);
+  const line = botFaceMouthStrokes(G, mouth);
   const cut = Math.max(botFaceMouthWidth(G, 1.6), p * 0.62);
   const raw: [number, number, number, readonly number[]][] = [];
   const bodyOnly = input.layer !== 'smile';
@@ -107,7 +109,7 @@ function dots(input: BotFaceSceneInput): PlanetScene {
       const x = (i + (j & 1 ? 0.5 : 0)) * p,
         y = j * p * 0.866;
       const d = botFaceSd(G, x, y);
-      if (!bodyOnly || d > -0.02 || botFaceSegDistance(x, y, line) < cut) continue;
+      if (!bodyOnly || d > -0.02 || botFaceStrokesDistance(x, y, line) < cut) continue;
       const tt = clamp01(
         ((y - G.top) / (G.bot - G.top)) * 0.9 - x * 0.05 + 0.05,
       );
@@ -125,7 +127,8 @@ function dots(input: BotFaceSceneInput): PlanetScene {
       ]);
     }
   const rb = p * 0.5 * (size <= 24 && list ? 0.9 : 0.86) * (list ? 1.12 : 1);
-  const beads = input.layer === 'body' ? [] : botFaceBeads(line, rb * 1.55);
+  // "…": the dots stand at least 2.7 bead radii apart, so they never merge into a bar (lab R9).
+  const beads = input.layer === 'body' ? [] : botFaceStrokeBeads(line, rb * 1.55, rb * 2.7);
   const socket = botFaceGradient(stops, 0.86).map(
     (v) => v * (theme === 'dark' || list ? 0.5 : 0.62),
   );
@@ -162,7 +165,7 @@ function planet(input: BotFaceSceneInput): PlanetScene {
   // R6: Planet always uses the Brand moon, including saved custom/generated faces.
   const G = botFaceMoonGeometry();
   const pose = hero?.pose;
-  const mood = pose?.mouth ?? BOT_FACE_MOUTHS[input.mood];
+  const mood = pose?.mouth ?? botFaceMoodMouth(input.mood, input.mutter);
   const view = hero
     ? Math.max(1.3, G.ext * 1.22)
     : Math.max(1.12, G.ext * 1.08);
@@ -194,7 +197,7 @@ function planet(input: BotFaceSceneInput): PlanetScene {
     light: planetLightForProgress(0.84 + 0.16 * botFaceHash(identity.seed, 5)),
     gain: hero ? (pose?.gain ?? 1) : 1,
   });
-  const line = botFaceMouthLine(botFaceMouthPoints(G, mood), mood.o);
+  const line = botFaceMouthStrokes(G, mood);
   const toModel = (x: number, y: number): [number, number] => [
     (x - size / 2) / k / sc,
     (y - size / 2 - oy * k) / k / sc,
@@ -215,7 +218,7 @@ function planet(input: BotFaceSceneInput): PlanetScene {
     const [x, y] = toModel(dot.x, dot.y);
     return (
       botFaceSd(G, x, y) < -pitch * 0.2 &&
-      botFaceSegDistance(x, y, line) > clear
+      botFaceStrokesDistance(x, y, line) > clear
     );
   });
   const body: PlanetSceneDot[] = kept.map((dot) => {
@@ -231,9 +234,11 @@ function planet(input: BotFaceSceneInput): PlanetScene {
     : theme === 'dark'
       ? [20, 34, 98]
       : [64, 70, 168];
-  const rW = mw * k * sc;
-  const rS = rW + Math.max(0.6, (theme === 'dark' ? 0.32 : 0.5) * mw * k * (hero ? 1 : 1.3));
-  const beads = botFaceBeads(line, (rW * 0.55) / (k * sc));
+  // "…": beads 1.5× the stroke's, at least 2.3 socket radii apart, or they vanish into the Brand lattice (lab R9).
+  const dz = mood.dots ? 1.5 : 1;
+  const rW = mw * k * sc * dz;
+  const rS = rW + dz * Math.max(0.6, (theme === 'dark' ? 0.32 : 0.5) * mw * k * (hero ? 1 : 1.3));
+  const beads = botFaceStrokeBeads(line, (rW * 0.55) / (k * sc), (rS * 2.3) / (k * sc));
   let index = body.length;
   for (const [col, r] of [
     [deep, rS],

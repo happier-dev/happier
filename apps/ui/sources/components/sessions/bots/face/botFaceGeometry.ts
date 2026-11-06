@@ -1,18 +1,28 @@
 /** Rendering-only hinting, morphs and poses; portable outline math is shared with Action admission. */
 import { BOT_FACE_BODIES, BOT_FACE_MOON, BOT_FACE_MORPH_ART, BOT_FACE_MORPHS, hintBody, type BotFaceBodyArt, type BotFaceBodyId, type BotFaceMorphId } from './botFaceArt';
 import type { BotFaceMouth as Mouth } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
-import { BOT_FACE_UNIT, BOT_FACE_FIELD_EXTENT, BOT_FACE_RIM, BOT_FACE_WALL, BOT_FACE_DEPTH, BOT_FACE_NORMAL_STEP, BOT_FACE_MOUTHS, botFaceSd, botFaceZ, botFaceNormal, botFaceMouthPoints, botFaceMouthLine, botFaceSegDistance, botFaceMouthWidth, botFaceBeads, createBotFaceGeometry, botFaceArtHash, type BotFaceGeometry, type BotFaceMood } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
-export { BOT_FACE_UNIT, BOT_FACE_FIELD_EXTENT, BOT_FACE_RIM, BOT_FACE_WALL, BOT_FACE_DEPTH, BOT_FACE_NORMAL_STEP, BOT_FACE_MOUTHS, botFaceSd, botFaceZ, botFaceNormal, botFaceMouthPoints, botFaceMouthLine, botFaceSegDistance, botFaceMouthWidth, botFaceBeads, type BotFaceGeometry, type BotFaceMood };
-/** One geometry per artwork content and hinting, independent of Session and caller labels. */
-const GEOMETRY = new Map<string, BotFaceGeometry>();
+import { botFaceMotionTokens } from './botFaceMotionTokens';
+import { BOT_FACE_UNIT, BOT_FACE_FIELD_EXTENT, BOT_FACE_RIM, BOT_FACE_WALL, BOT_FACE_DEPTH, BOT_FACE_NORMAL_STEP, BOT_FACE_MOUTHS, botFaceSd, botFaceZ, botFaceNormal, botFaceMouthPoints, botFaceMouthLine, botFaceSegDistance, botFaceMouthWidth, botFaceBeads, botFaceMouthStrokes, botFaceStrokesDistance, botFaceStrokeBeads, createBotFaceGeometry, botFaceArtHash, type BotFaceGeometry, type BotFaceMood } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
+export { BOT_FACE_UNIT, BOT_FACE_FIELD_EXTENT, BOT_FACE_RIM, BOT_FACE_WALL, BOT_FACE_DEPTH, BOT_FACE_NORMAL_STEP, BOT_FACE_MOUTHS, botFaceSd, botFaceZ, botFaceNormal, botFaceMouthPoints, botFaceMouthLine, botFaceSegDistance, botFaceMouthWidth, botFaceBeads, botFaceMouthStrokes, botFaceStrokesDistance, botFaceStrokeBeads, type BotFaceGeometry, type BotFaceMood };
+/** The mutter's step: which of the working mouth's three dots is raised (lab R9), or none (the still "…"). */
+export type BotFaceMutter = 0 | 1 | 2;
+/** A mood's mouth; working takes the mutter's raised dot when one is given. */
+export function botFaceMoodMouth(mood: BotFaceMood, mutter?: BotFaceMutter | null): Mouth {
+  const mouth = BOT_FACE_MOUTHS[mood];
+  return mutter == null || !mouth.dots ? mouth : { ...mouth, lift: [0, 1, 2].map(i => (i === mutter ? 1 : 0)) };
+}
+/** Fields live with their artwork's outline, shared by consumers of that live art rather than retained per edit. */
+const GEOMETRY = new WeakMap<BotFaceBodyArt['fill'], Map<string, BotFaceGeometry>>();
 export function botFaceGeometry(_key: string, body: BotFaceBodyArt, hinted: boolean, centreOf?: BotFaceGeometry): BotFaceGeometry {
   const artKey = botFaceArtHash(body);
   const id = `${artKey}${hinted ? '~s' : ''}${centreOf ? `@${centreOf.cy}` : ''}`;
-  const known = GEOMETRY.get(id);
+  let variants = GEOMETRY.get(body.fill);
+  if (!variants) { variants = new Map(); GEOMETRY.set(body.fill, variants); }
+  const known = variants.get(id);
   if (known) return known;
   const centre = centreOf ?? (hinted ? botFaceGeometry('', body, false) : undefined);
   const geometry = createBotFaceGeometry(hinted ? hintBody(body) : body, centre);
-  GEOMETRY.set(id, geometry);
+  variants.set(id, geometry);
   return geometry;
 }
 export const botFaceMoonGeometry = () => botFaceGeometry('moon', BOT_FACE_MOON, false);
@@ -83,18 +93,20 @@ function keyframes(
   return keys[keys.length - 1][1];
 }
 /** The list pose: still, a fixed gentle three-quarter turn per mood (lab `still`). */
-export function botFaceListPose(mood: BotFaceMood): BotFacePose {
+export function botFaceListPose(mood: BotFaceMood, mutter?: BotFaceMutter | null): BotFacePose {
+  // Needs you is cocked toward the page (R10 A §1: roll 0.12, pitch −0.08) in every motion mode.
+  const cocked = mood === 'needsYou' ? botFaceMotionTokens.alive.needsYou : null;
   return {
     yaw: mood === 'needsYou' ? 0.1 : 0.24,
-    pitch: mood === 'working' ? 0.16 : 0.08,
-    roll: 0,
+    pitch: (mood === 'working' ? 0.16 : 0.08) + (cocked?.pitch ?? 0),
+    roll: cocked?.roll ?? 0,
     ty: 0,
     sx: 1,
     sy: 1,
     breath: 0,
     gain: 1,
     spin: 0,
-    mouth: BOT_FACE_MOUTHS[mood],
+    mouth: botFaceMoodMouth(mood, mutter),
   };
 }
 /**

@@ -455,7 +455,7 @@ export const PIXEL_HEAD12 = [
 ];
 export const PIXEL_FACE12 = {
   quiet: ['XX.XXXXXX.XX', 'XXX......XXX', 'XXXXXXXXXXXX'],
-  working: ['XXXXXXXXXXXX', 'XXXX....XXXX', 'XXXXXXXXXXXX'],
+  working: ['XXXXXXXXXXXX', 'XX..X..X..XX', 'XXXXXXXXXXXX'],
   needsYou: ['XXXXX..XXXXX', 'XXXX.XX.XXXX', 'XXXXX..XXXXX'],
   done: ['X.XXXXXXXX.X', 'XX........XX', 'XXX......XXX'],
   failed: ['XXXXXXXXXXXX', 'XXXXXXXXXXXX', 'XXXX....XXXX'],
@@ -463,11 +463,25 @@ export const PIXEL_FACE12 = {
 export const PIXEL_HEAD8 = ['.XX..XX.', 'XXX..XXX', 'XXXXXXXX'];
 export const PIXEL_FACE8 = {
   quiet: ['X.XXXX.X', 'XX....XX'],
-  working: ['XXXXXXXX', 'XX....XX'],
+  working: ['XXXXXXXX', 'X.X.X.XX'],
   needsYou: ['XXX..XXX', 'XXX..XXX'],
   done: ['X.XXXX.X', 'X......X'],
   failed: ['XXXXXXXX', 'XXX..XXX'],
 };
+/**
+ * The mutter's three steps of the working "…" (lab R9): one dot raised a sprite pixel at a time. An 8-wide sprite cannot
+ * centre three single holes, so its dots sit half a sprite pixel left of centre.
+ */
+export const PIXEL_MUTTER12: readonly (readonly string[])[] = [
+  ['XX..XXXXXXXX', 'XXXXX..X..XX', 'XXXXXXXXXXXX'],
+  ['XXXXX..XXXXX', 'XX..XXXX..XX', 'XXXXXXXXXXXX'],
+  ['XXXXXXXX..XX', 'XX..X..XXXXX', 'XXXXXXXXXXXX'],
+];
+export const PIXEL_MUTTER8: readonly (readonly string[])[] = [
+  ['X.XXXXXX', 'XXX.X.XX'],
+  ['XXX.XXXX', 'X.XXX.XX'],
+  ['XXXXX.XX', 'X.X.XXXX'],
+];
 export const PIXEL_BODY8 = ['XXXXXXXX'];
 
 type Sprite12 = Readonly<{

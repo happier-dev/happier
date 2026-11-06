@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSetting, useSettingsSelector } from '@/sync/domains/state/storage';
 
-import { BotFace } from './BotFace';
+import { BotFace, type BotFaceProps } from './BotFace';
 import type { BotFaceMood } from './botFaceGeometry';
 import { resolveBotFaceIdentity, type BotFaceStyle } from './botFaceIdentity';
 import type { SessionBotFaceFacts } from './sessionBotFaceFacts';
@@ -20,13 +20,15 @@ export const SessionBotFace = React.memo(function SessionBotFace(
     style?: BotFaceStyle;
     monochrome?: boolean;
     visible?: boolean;
-    motion?: boolean;
+    motion?: BotFaceProps['motion'];
     marker?: React.ReactNode;
     testID?: string;
     accessibilityLabel?: string;
   }>,
 ) {
-  const defaultStyle = useSetting('botFaceStyle');
+  const explicitStyle = props.style ?? props.facts.face?.style;
+  const style = useSettingsSelector(settings => explicitStyle ?? settings.botFaceStyle,
+    explicitStyle ? [] : ['botFaceStyle']);
   const motionMode = useSetting('botMotion');
   const { seed, face } = props.facts;
   const identity = React.useMemo(
@@ -36,7 +38,7 @@ export const SessionBotFace = React.memo(function SessionBotFace(
   return (
     <BotFace
       identity={identity}
-      style={props.style ?? face?.style ?? defaultStyle}
+      style={style}
       size={props.size}
       mood={props.mood && props.mood !== 'quiet' ? props.mood : props.facts.restingMood ?? 'quiet'}
       monochrome={props.monochrome}

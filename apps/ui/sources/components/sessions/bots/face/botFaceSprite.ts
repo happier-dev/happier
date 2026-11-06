@@ -1,8 +1,8 @@
 import type { BotFaceBodyArt } from './botFaceArt';
-import { BOT_FACE_MOUTHS, botFaceGeometry, botFaceMouthLine, botFaceMouthPoints, botFaceSd, type BotFaceMood } from './botFaceGeometry';
+import { botFaceGeometry, botFaceMoodMouth, botFaceMouthStrokes, botFaceSd, type BotFaceMood, type BotFaceMutter } from './botFaceGeometry';
 
 /** R8 outline fallback only. Roster bodies keep their hand-drawn sprites. */
-export function deriveBotFaceSprite(art: BotFaceBodyArt, mood: BotFaceMood, width: 8 | 12) {
+export function deriveBotFaceSprite(art: BotFaceBodyArt, mood: BotFaceMood, width: 8 | 12, mutter?: BotFaceMutter) {
   const G = botFaceGeometry('', art, true);
   const x0 = -G.hw, cell = 2 * G.hw / width, y0 = G.top;
   const rows = Math.max(3, Math.round((G.bot - G.top) / cell));
@@ -18,14 +18,20 @@ export function deriveBotFaceSprite(art: BotFaceBodyArt, mood: BotFaceMood, widt
     }
     grid.push(pixels);
   }
-  const mouth = BOT_FACE_MOUTHS[mood];
-  const line = botFaceMouthLine(botFaceMouthPoints(G, mouth), mouth.o);
+  const mouth = botFaceMoodMouth(mood, mutter);
   const carve = new Set<string>();
-  for (let i = 1; i < line.length; i++) for (let step = 0; step <= 10; step++) {
-    const t = step / 10;
-    const x = line[i - 1][0] + (line[i][0] - line[i - 1][0]) * t;
-    const y = line[i - 1][1] + (line[i][1] - line[i - 1][1]) * t;
-    carve.add(`${Math.floor((y - y0) / cell)}|${Math.floor((x - x0) / cell)}`);
+  // A line carves the cells it crosses; a dot carves its one cell, a raised dot the cell above where it rests.
+  for (const [i, line] of botFaceMouthStrokes(G, { ...mouth, lift: undefined }).entries()) {
+    if (line.length === 1) {
+      carve.add(`${Math.floor((line[0][1] - y0) / cell) - (mouth.lift?.[i] ? 1 : 0)}|${Math.floor((line[0][0] - x0) / cell)}`);
+      continue;
+    }
+    for (let j = 1; j < line.length; j++) for (let step = 0; step <= 10; step++) {
+      const t = step / 10;
+      const x = line[j - 1][0] + (line[j][0] - line[j - 1][0]) * t;
+      const y = line[j - 1][1] + (line[j][1] - line[j - 1][1]) * t;
+      carve.add(`${Math.floor((y - y0) / cell)}|${Math.floor((x - x0) / cell)}`);
+    }
   }
   let first = rows, last = 0;
   for (const key of carve) {
