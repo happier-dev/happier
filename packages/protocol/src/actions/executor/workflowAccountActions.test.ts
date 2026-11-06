@@ -29,7 +29,10 @@ function executor(invalidStoredHeader = false, readFailure?: unknown,
     list: unexpected, create: unexpected, update: unexpected, delete: unexpected,
     ...artifactStore,
   } });
-  const runs = createWorkflowAccountRunActionOwner({ definitions, storage: { execute: unexpected },
+  const runs = createWorkflowAccountRunActionOwner({ definitions, storage: { execute: async () => {
+    if (readFailure !== undefined) throw readFailure;
+    return unexpected();
+  } },
     resolveAccountId: async () => 'account', resolveEncryption: async () => ({ kind: 'available',
       witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     normalizeAbsolutePath: unexpected, randomBytes: unexpected });
@@ -37,6 +40,12 @@ function executor(invalidStoredHeader = false, readFailure?: unknown,
 }
 
 describe('workflow Action refusal classification', () => {
+  it('preserves a wait transport failure cause through the strict Workflow failure consumer', async () => {
+    const actions = executor(false, Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }));
+    const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null };
+    const result = await actions({ actionId: 'workflow.run.wait', input: { runId: 'run-1' }, context: { surface: 'cli' } });
+    expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable', failureCause });
+  });
   it('preserves the missing daemon runtime cause through the strict Workflow failure consumer', async () => {
     const actions = executor(false, Object.assign(new Error('Daemon runtime unavailable'), {
       code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE',
@@ -123,7 +132,8 @@ describe('workflow Action refusal classification', () => {
     });
     const actions = createActionExecutor({ workflowAction: executor(false, error) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'api' }))
-      .resolves.toEqual({ ok: false, effectAttempted: false, errorCode: 'workflow_http_error', error: error.message, details });
+      .resolves.toEqual({ ok: false, effectAttempted: false, errorCode: 'workflow_http_error', error: error.message, details,
+        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: 400 } });
   });
   it('does not infer no effect from a server failure or a lost response', () => {
     for (const response of [{ status: 503 }, undefined]) {

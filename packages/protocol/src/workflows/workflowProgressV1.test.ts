@@ -251,6 +251,13 @@ describe('workflow progress v1', () => {
     expect(applyWorkflowInvocationFactV1({ ...current, result: undefined, reason: undefined }, {
       result: null, reason: 'input_failed', reasonMessage: 'visible',
     })).toMatchObject({ result: null, reason: { code: 'input_failed', message: 'visible' } });
+    const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    expect(applyWorkflowInvocationFactV1({ ...current, result: undefined, reason: undefined }, {
+      reason: 'storage_unavailable', failureCause,
+    })).toMatchObject({ reason: { code: 'storage_unavailable', failureCause } });
+    expect(applyWorkflowInvocationFactV1({ ...current, reason: { code: 'storage_unavailable' } }, {
+      reason: 'storage_unavailable', failureCause,
+    })).toMatchObject({ reason: { code: 'storage_unavailable', failureCause } });
   });
   it('keeps review intent private and requires a row content token', () => {
     expect(WorkflowInvocationLifecycleV1Schema.safeParse('waiting_for_review').success).toBe(true);

@@ -338,6 +338,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       ...(progress.reason ? { reason: progress.reason.code } : {}),
       ...(progress.reason?.message !== undefined ? { reasonMessage: progress.reason.message } : {}),
       ...(progress.reason?.details ? { reasonDetails: progress.reason.details } : {}),
+      ...(progress.reason?.failureCause ? { failureCause: progress.reason.failureCause } : {}),
       ...(progress.reason?.runtimeIssueV1 ? { runtimeIssueV1: progress.reason.runtimeIssueV1 } : {}),
       ...(progress.validationIssues ? { validationIssues: progress.validationIssues } : {}),
       ...(progress.execution ? { execution: progress.execution } : {}),
@@ -646,7 +647,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     if (!current || !persisted) throw new Error('workflow_invocation_intent_missing');
     if (current.lifecycle === 'waiting_for_review' && fact.interaction !== undefined) return current;
     const { key: _key, lifecycle: _lifecycle, review, ...ownedFact } = fact;
-    const { reason: _reason, reasonMessage: _reasonMessage, reasonDetails: _reasonDetails, runtimeIssueV1: _runtimeIssueV1, ...withoutInvalidResultReason } = ownedFact;
+    const { reason: _reason, reasonMessage: _reasonMessage, reasonDetails: _reasonDetails, failureCause: _failureCause, runtimeIssueV1: _runtimeIssueV1, ...withoutInvalidResultReason } = ownedFact;
     const publishedResultWins = fact.lifecycle === 'waiting_for_review' && fact.reason === 'invalid_result_contract'
       && persisted.progress.review?.resultSource?.kind === 'published' && persisted.progress.result !== undefined;
     // The structural root reports the current orchestration failure, rather
@@ -737,6 +738,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         && (fact.reason === undefined || refreshed.reason === fact.reason)
         && (fact.reasonMessage === undefined || refreshed.reasonMessage === fact.reasonMessage)
         && (fact.reasonDetails === undefined || sameStrictJsonValue(refreshed.reasonDetails, fact.reasonDetails))
+        && (fact.failureCause === undefined || sameStrictJsonValue(refreshed.failureCause, fact.failureCause))
         && (fact.runtimeIssueV1 === undefined || sameStrictJsonValue(refreshed.runtimeIssueV1, fact.runtimeIssueV1))
         && (!updatesRootReason || sameStrictJsonValue(this.persisted.get(fact.key)?.progress.reason, progress.reason))
         && (effectiveFact.execution === undefined || sameStrictJsonValue(refreshed.execution, effectiveFact.execution))

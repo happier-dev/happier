@@ -243,12 +243,24 @@ async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 're
     memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt };
   const execution = { kind: 'action' as const, actionId: 'machines.command.run', actionRequestId: 'command-request',
     localInputId: 'command-request', input: { command: 'fixed command' } };
-  return { store, boundary, key, intent, binding, execution, sealMode, rootId,
+  return { store, boundary, key, intent, binding, execution, sealMode, rootId, encryption,
     open: () => openWorkflowProgressStoredEnvelopeV1({ ...encryption.runCrypto, binding,
       envelope: parseWorkflowStoredContentEnvelopeV1(boundary.rowById(intent.recordId)!.contentEnvelope) }) };
 }
 
 describe('production workflow coordinator', () => {
+  it.each(['plain', 'e2ee'] as const)('retains the Action failure cause through persisted progress and store reload (%s)', async mode => {
+    const fixture = await commandOutputAdmissionFixture(mode);
+    const failureCause = { phase: 'machines.command.run', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const result = { exitCode: -1, stdout: '', stderr: '' };
+    await fixture.store.commitFact({ key: fixture.key, lifecycle: 'failed', reason: 'outcome_unknown', failureCause, result });
+    expect(fixture.open()).toMatchObject({ kind: 'available', content: { reason: { code: 'outcome_unknown', failureCause }, result } });
+    const reloaded = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: fixture.rootId, revision: fixture.boundary.run().revision, encryption: fixture.encryption,
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: fixture.rootId, nextSequence: '2',
+        frontier: { nextBlockOrdinal: 0, paused: false } }, storage: fixture.boundary });
+    expect(await reloaded.readByLogicalInvocation(fixture.intent.recordId)).toMatchObject({ reason: 'outcome_unknown', failureCause, result });
+  });
   it.each(['healthy', 'slow_timeout', 'never_answers'] as const)('keeps renewing a claimed Workflow during slow native admission (%s)', async scenario => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(0);

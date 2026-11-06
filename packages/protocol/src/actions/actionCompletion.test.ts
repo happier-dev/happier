@@ -3,9 +3,16 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 
 import { getActionSpec } from './actionSpecs.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { readActionCompletionRunObservationV1 } from './actionCompletion.js';
+import { readActionCompletionRunObservationV1, prepareActionCompletionV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
+  it('preserves the source failure cause separately from failed Action details', () => {
+    const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const details = { reason: 'connection_lost' };
+    expect(prepareActionCompletionV1(undefined, { ok: false, errorCode: 'storage_unavailable',
+      error: 'unavailable', details, failureCause })).toEqual({ kind: 'failed', errorCode: 'storage_unavailable',
+      value: details, failureCause });
+  });
   it('observes settled walkthrough output independently of a healthy retained process', () => {
     const output = {
       success: true, sourceKey: 'comparison-1', summaryMarkdown: undefined,

@@ -8,7 +8,7 @@ import { validateExecutionRunProfileResult } from '../execution/runs/resultContr
 import { normalizePluginJsonSchema } from '../plugins/actions/protocolComposableSchema.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
-import type { ActionExecuteResult } from './actionExecutionResult.js';
+import type { ActionExecuteResult, ActionFailureCauseV1 } from './actionExecutionResult.js';
 import type { ExecutionRunGetResponse } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunStartRunCreationSchema, type ExecutionRunStartRunCreation } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunOutputObservationSchema, type ExecutionRunOutputObservation } from '../reviews/reviewNarration.js';
@@ -149,7 +149,7 @@ export type ActionCompletionStateV1 = z.infer<typeof ActionCompletionStateV1Sche
 
 export type ActionCompletionResult =
   | Readonly<{ kind: 'completed'; value: JsonValue }>
-  | Readonly<{ kind: 'failed'; errorCode: string; value?: JsonValue }>
+  | Readonly<{ kind: 'failed'; errorCode: string; value?: JsonValue; failureCause?: ActionFailureCauseV1 }>
   | Readonly<{ kind: 'cancelled'; errorCode: 'cancelled'; value?: JsonValue }>
   | Readonly<{ kind: 'outcome_uncertain'; errorCode: 'outcome_uncertain' }>;
 
@@ -171,7 +171,8 @@ export function prepareActionCompletionV1(
   | Readonly<{ kind: 'awaiting'; state: ActionCompletionStateV1 }> {
   if (!executed.ok) {
     const details = StrictJsonValueSchema.safeParse(executed.details);
-    return { kind: 'failed', errorCode: executed.errorCode, ...(details.success ? { value: details.data } : {}) };
+    return { kind: 'failed', errorCode: executed.errorCode, ...(details.success ? { value: details.data } : {}),
+      ...(executed.failureCause === undefined ? {} : { failureCause: executed.failureCause }) };
   }
   const output = StrictJsonValueSchema.safeParse(executed.result);
   if (!output.success) return { kind: 'failed', errorCode: 'invalid_action_output' };
@@ -234,7 +235,8 @@ export async function resumeActionCompletionV1(params: Readonly<{
       const validated = validateExecutionRunProfileResult(value.data, { kind: 'json', schema: contract.data.terminalOutputSchema });
       if (!validated.ok) return { kind: 'failed', errorCode: 'invalid_action_output' };
       const failure = observations.find(({ operation }) => operation.state === 'failed')?.operation;
-      if (failure) return { kind: 'failed', errorCode: failure.error!.errorCode, value: validated.value };
+      if (failure) return { kind: 'failed', errorCode: failure.error!.errorCode, value: validated.value,
+        ...(failure.error!.failureCause === undefined ? {} : { failureCause: failure.error!.failureCause }) };
       if (observations.some(({ operation }) => operation.state === 'cancelled')) {
         return { kind: 'cancelled', errorCode: 'cancelled', value: validated.value };
       }

@@ -112,8 +112,9 @@ describe('generic Action completion seam', () => {
     if (prepared.kind !== 'awaiting') throw new Error('Missing finite acceptance correspondence');
     let release!: () => void;
     const exit = new Promise<void>(resolve => { release = resolve; });
+    const failureCause = { phase: 'projects.script.run', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } as const;
     const failedOperation = { ...operation, revision: 2, state: 'failed', startedAt: 2, settledAt: 3,
-      error: { errorCode: 'process_exit_nonzero', error: 'Process failed' } };
+      error: { errorCode: 'process_exit_nonzero', error: 'Process failed', failureCause } };
     const completing = resumeActionCompletionV1({ actionId: 'projects.script.run', completion: freezeActionCompletionContractV1(finite),
       state: prepared.state, resolveDeclaration: () => finite,
       observeRun: async () => { throw new Error('Finite command must not create an Execution Run'); },
@@ -124,7 +125,7 @@ describe('generic Action completion seam', () => {
     await Promise.resolve();
     expect(settled).toBe(false);
     release();
-    expect(await completing).toMatchObject({ kind: 'failed', errorCode: 'process_exit_nonzero', value: { operation: failedOperation } });
+    expect(await completing).toMatchObject({ kind: 'failed', errorCode: 'process_exit_nonzero', failureCause, value: { operation: failedOperation } });
     expect(await resumeActionCompletionV1({ actionId: 'projects.script.run', completion: freezeActionCompletionContractV1(finite),
       state: prepared.state, resolveDeclaration: () => finite,
       observeRun: async () => { throw new Error('No Execution Run'); },

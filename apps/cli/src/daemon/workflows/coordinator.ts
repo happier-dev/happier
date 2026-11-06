@@ -93,6 +93,7 @@ export type WorkflowCoordinatorInvocation = Readonly<{
   reason?: string;
   reasonMessage?: string;
   reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details'];
+  failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'];
   runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1'];
   validationIssues?: WorkflowProgressEnvelopeV1['validationIssues'];
   execution?: WorkflowProgressEnvelopeV1['execution'];
@@ -148,6 +149,7 @@ export type WorkflowCoordinatorStore = Readonly<{
     reason?: string;
     reasonMessage?: string;
     reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details'];
+    failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'];
     runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1'];
     validationIssues?: WorkflowProgressEnvelopeV1['validationIssues'];
     execution?: WorkflowProgressEnvelopeV1['execution'];
@@ -1823,8 +1825,10 @@ async function executeActionBlock(
       blockKind: 'action', path: { blockId: leaf.id, scope }, attempt: 0, lifecycle: 'pending', memberOrdinal,
       ...(parentKey ? { parentKey } : {}) });
   }
-  const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false, result?: WorkflowJsonValue) => {
-    await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code, ...(result === undefined ? {} : { result }) });
+  const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false,
+    result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause']) => {
+    await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
+      ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }) });
     throw new WorkflowLeafFailure(state, code, collectable);
   };
   let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
@@ -1914,16 +1918,20 @@ async function executeActionBlock(
       try { return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result; }
       catch { return undefined; }
     });
-    if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) return await fail('outcome_uncertain', 'outcome_uncertain');
+    if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) {
+      return await fail('outcome_uncertain', 'outcome_uncertain', false, undefined, invoked && !invoked.ok ? invoked.failureCause : undefined);
+    }
     if (!invoked.ok && isActionOutcomeUnknownErrorCodeV1(invoked.errorCode)) {
       // Retaining the native diagnosis does not establish whether its effect occurred.
       const failure = prepareActionCompletionV1(undefined, invoked);
-      return await fail(invoked.errorCode, 'outcome_uncertain', false, failure.kind === 'failed' && 'value' in failure ? failure.value : undefined);
+      return await fail(invoked.errorCode, 'outcome_uncertain', false,
+        failure.kind === 'failed' && 'value' in failure ? failure.value : undefined, invoked.failureCause);
     }
     const consent = readWorkflowProjectSetupConsentHold(actionId, invoked.ok ? invoked.result : invoked);
     if (consent) {
       row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: consent.code,
-        execution: { ...execution, output: consent } });
+        execution: { ...execution, output: consent },
+        ...(!invoked.ok && invoked.failureCause !== undefined ? { failureCause: invoked.failureCause } : {}) });
       throw new WorkflowLeafFailure('interrupted', consent.code);
     }
     const approval = invoked.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(invoked.result) : null;
@@ -1995,14 +2003,16 @@ async function executeActionBlock(
     && completed.errorCode === 'command_cancelled' && completed.value !== undefined
     && classifyWorkflowAbort(context.signal) === 'cancelled' && row.execution?.kind === 'action') {
     await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
-      reason: completed.errorCode, execution: { ...row.execution, output: completed.value }, result: completed.value });
+      reason: completed.errorCode, execution: { ...row.execution, output: completed.value }, result: completed.value,
+      ...(completed.failureCause === undefined ? {} : { failureCause: completed.failureCause }) });
   }
   assertWorkflowAbortSignal(context);
   const completionConsent = completed.kind === 'failed'
     ? readWorkflowProjectSetupConsentHold(actionId, completed.value) : null;
   if (completionConsent && row.execution?.kind === 'action') {
     row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: completionConsent.code,
-      execution: { ...row.execution, output: completed.kind === 'failed' ? completed.value : undefined } });
+      execution: { ...row.execution, output: completed.kind === 'failed' ? completed.value : undefined },
+      ...(completed.kind === 'failed' && completed.failureCause !== undefined ? { failureCause: completed.failureCause } : {}) });
     throw new WorkflowLeafFailure('interrupted', completionConsent.code);
   }
   if (completed.kind === 'cancelled') {
@@ -2019,7 +2029,7 @@ async function executeActionBlock(
         && (completionState.awaitedOperations !== undefined
           || declaration?.awaits === 'execution_runs' && declaration.launched(completionState.output).failed.length === 0)));
     return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable,
-      completed.kind === 'failed' ? completed.value : undefined);
+      completed.kind === 'failed' ? completed.value : undefined, completed.kind === 'failed' ? completed.failureCause : undefined);
   }
   const outputSchema = frozen.actionContract.outputSchema;
   if (!isWorkflowJsonObject(outputSchema)) return await fail('schema_mismatch');

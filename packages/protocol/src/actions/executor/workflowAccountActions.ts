@@ -6,6 +6,7 @@ import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
 import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { projectConfirmedActionHttpRefusal } from './actionFailureEnvelope.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -21,7 +22,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   operation: string;
   durationMs: number;
   emit: (diagnostic: WorkflowActionFailureDiagnosticV1) => void;
-}>, preEffect = false): WorkflowActionFailureV1 {
+}>, preEffect = false, phase = diagnostic?.operation ?? 'dispatch'): WorkflowActionFailureV1 {
   const thrown = error !== null && typeof error === 'object' ? error : null;
   // The exact-Home Session reader uses errorCode, not code. Only its semantic
   // not_found/forbidden refusals prove an unavailable execution target;
@@ -62,15 +63,22 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     : sessionSnapshotUnavailable ? { code: 'target_unavailable', reason: 'session_unavailable' }
     : rawCode === 'account_role_overrides_unavailable' ? { reason: rawCode }
     : error !== null && typeof error === 'object' && 'details' in error ? error.details : undefined;
+  const parsedCause = ActionFailureCauseV1Schema.safeParse(thrown && 'failureCause' in thrown ? thrown.failureCause : undefined);
+  const sourceCause = parsedCause.success ? parsedCause.data : undefined;
+  const projectedCause = sourceCause ?? projectActionFailureCauseV1(error, phase);
+  const failureCause = sourceCause !== undefined || projectedCause.errorCode !== null || projectedCause.httpStatus !== null
+    ? projectedCause : undefined;
+  const causeFields = failureCause === undefined ? {} : { failureCause };
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,
     error: error instanceof Error ? error.message : code,
+    ...causeFields,
     ...(details !== undefined ? { details } : code === 'target_unavailable'
       ? { details: { code: 'target_unavailable', reason: 'selection_unavailable' } } : {}),
   });
   const result: WorkflowActionFailureV1 = failure.success ? failure.data
-    : { ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' };
+    : { ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable', ...causeFields };
   if ((result.errorCode === 'storage_unavailable' || result.errorCode === 'run_access_denied'
     || (rawCode === 'account_role_overrides_unavailable' && result.errorCode === 'content_unavailable')) && diagnostic) {
     let originalCode: string | null = null;
@@ -284,7 +292,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
     } catch (error) {
       return normalizeWorkflowActionThrownError(error, deps.onFailureDiagnostic ? {
         operation: rawArgs.actionId, durationMs: Date.now() - startedAtMs, emit: deps.onFailureDiagnostic,
-      } : undefined, preparing || getActionSpec(rawArgs.actionId).sideEffectClass === 'read');
+      } : undefined, preparing || getActionSpec(rawArgs.actionId).sideEffectClass === 'read', rawArgs.actionId);
     }
   };
 }

@@ -69,6 +69,37 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it.each(['native_effect_failed', 'action_failed'] as const)('preserves a scalar Action %s cause without changing its result payload', async errorCode => {
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.apply', input: {
+      homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
+      targets: { kind: 'literal', value: [{ homeId: 'home', machineId: workspace.machineId,
+        desiredRevision: 0, recipePlans: [], sources: [
+        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+        { kind: 'direct', setup: {} },
+      ] }] },
+    } };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    let effects = 0;
+    const failureCause = { phase: 'machines.setup.apply', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const details = { phase: 'native_effect' };
+    const executor = createTestActionExecutor({ machineSetupApply: async () => {
+      effects++;
+      // The native boundary supplies a closed diagnosis independently of result details.
+      return { ok: false, errorCode, error: errorCode, failureCause, details };
+    } });
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
+        observeRun: async () => { throw new Error('Scalar Action has no awaited Run'); } } });
+    const input = { runId: 'scalar-unknown', definition: definition([leaf]), inputs: {}, executionTarget,
+      authorization, materializedLeaves: [frozen(leaf)] };
+    const lifecycle = errorCode === 'action_failed' ? 'outcome_uncertain' : 'failed';
+    expect(await coordinator.run(input)).toMatchObject({ state: lifecycle, reason: errorCode === 'action_failed' ? 'outcome_uncertain' : errorCode });
+    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle, failureCause,
+      ...(errorCode === 'action_failed' ? {} : { result: details }) });
+    expect(effects).toBe(1);
+  });
+
   it.each([
     ['projects.script.run', false],
     ['projects.compute.exec', false],

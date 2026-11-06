@@ -64,6 +64,13 @@ uses those exact references when sharing a candidate before changing a source
 to Team ownership. Load matching Protocol, controller and UI readers together;
 the Home storage acknowledgment retains its existing shape.
 
+Workflow Action failures and persisted invocation `reason` may retain the same
+optional canonical `failureCause`. Completion preserves that cause separately
+from result/details payloads; older stored rows without it remain readable.
+Load matching Protocol, Workflow daemon and client readers together because
+older strict development readers reject the additional field. No migration or
+protocol epoch changes.
+
 ## Local Services observation lifetime (unreleased 0.3)
 
 The existing closed inventory-watch request accepts optional `observationOnly`.
