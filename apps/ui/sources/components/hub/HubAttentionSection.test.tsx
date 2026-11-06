@@ -75,6 +75,8 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { push: (route: unknown) => state.push?.(route) } }).module;
@@ -239,10 +241,10 @@ describe('HubAttentionSection', () => {
             expect(screen.findByTestId('settings-overview-attention.service:happier.example/subscription/acct-ok.action')).not.toBeNull();
         } finally { stringify.mockRestore(); await screen.unmount(); }
     });
-    it('keeps Home attention usable when its selected Agents machine has unknown presence', async () => {
+    it.each([['Home', HubAttentionSection], ['Settings', SettingsAttentionSection]] as const)('keeps %s reconnect in place when its selected Agents machine has unknown presence', async (_name, Section) => {
         state.loginState = 'logged_out';
         state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-1', 'needs_reauth')] };
-        const { screen, push } = await renderSection();
+        const { screen, push } = await renderSection(Section);
         const scope = storage.getState().settingsScope;
         if (!scope) throw new Error('The attention fixture Account must be restored');
 
@@ -252,8 +254,19 @@ describe('HubAttentionSection', () => {
             .toHaveLength(0);
         const serviceAction = screen.findByTestId('settings-overview-attention.service:happier.example/subscription/acct-1.action');
         expect(serviceAction).not.toBeNull();
-        serviceAction!.props.onPress();
-        expect(push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ accountId: 'acct-1' }) }));
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
+        const trigger = { getBoundingClientRect: () => ({ x: 10, y: 20, width: 120, height: 40 }) };
+        await act(async () => { serviceAction!.props.onPress({ currentTarget: trigger }); });
+        expect(Modal.show).toHaveBeenCalledTimes(1);
+        expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+            chrome: expect.objectContaining({ testID: 'connect-sheet' }),
+            props: expect.objectContaining({ request: expect.objectContaining({
+                intent: 'reconnect', service: SERVICE, account: { service: SERVICE, accountId: 'acct-1' },
+                anchor: expect.objectContaining({ kind: 'view', ref: { current: trigger } }),
+            }) }),
+        }));
+        expect(push).not.toHaveBeenCalled();
 
         await act(async () => { captureMachinePresenceObservation(scope)(['machine-1']); });
         await flushHookEffects({ cycles: 2 });
@@ -299,10 +312,7 @@ describe('HubAttentionSection', () => {
 
         actions.find((node) => node.props.testID === testIDs[0])!.props.onPress();
         actions.find((node) => node.props.testID === testIDs[1])!.props.onPress();
-        expect(push).toHaveBeenNthCalledWith(1, '/(app)/settings/agents/claude');
-        expect(push).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            params: expect.objectContaining({ pluginId: SERVICE.pluginId, localId: SERVICE.localId, accountId: 'acct-1' }),
-        }));
+        expect(push).toHaveBeenCalledExactlyOnceWith('/(app)/settings/agents/claude');
     });
 
     it('names the expired account a row is about', async () => {

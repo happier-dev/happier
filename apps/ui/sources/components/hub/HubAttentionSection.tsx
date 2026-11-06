@@ -16,13 +16,14 @@ import { useAgentAdministrationCatalog } from '@/components/settings/agents/coll
 import { usePluginAdministrationSummary } from '@/components/settings/plugins/model/pluginAdministrationSummary';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { resolveConnectedServiceRegistryEntryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
-import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn, projectSignInFacts } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
@@ -53,7 +54,7 @@ export type AttentionItem = Readonly<{
     mark: React.ReactNode;
     title: string;
     actionLabel: string;
-    onAction: () => void;
+    onAction: (event?: unknown) => void;
 }>;
 
 /** The same pending-Session census as Home's status line and Inbox badge; never reclassified here. */
@@ -108,7 +109,6 @@ function useAgentsNeedingSignIn(): AttentionItem[] {
  * two of a service can be told apart. Personal labels are only read while there is a row to name.
  */
 function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
-    const router = useRouter();
     const { theme } = useUnistyles();
     // The sign-in need, not the Profile: refresh flaps and quota fields move the Profile far more often.
     const selectFacts = React.useMemo(() => {
@@ -144,13 +144,17 @@ function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
                 : <Icon name="key" size={MARK_SIZE} color={theme.colors.text.secondary} />,
             title: joinHappierFacts(t('settingsOverview.serviceSignInExpired', { service }), accountName),
             actionLabel: t('settingsOverview.signInAgain'),
-            onAction: () => router.push(buildConnectedAccountSettingsRoute(
-                account.service,
-                account.accountId ? { kind: 'account', accountId: account.accountId } : null,
-                { add: !account.accountId },
-            ) as never),
+            onAction: (event?: unknown) => {
+                const anchor = resolvePressTriggerAnchor(event);
+                fireAndForget(presentConnectSheet({
+                    service: account.service,
+                    intent: account.accountId ? 'reconnect' : 'add',
+                    ...(account.accountId ? { account: { service: account.service, accountId: account.accountId } } : {}),
+                    ...(anchor ? { anchor } : {}),
+                }), { tag: 'HubAttentionSection.reconnect' });
+            },
         };
-    }), [labelsByKey, localizePluginText, needs, presentIdentity, profile, router, theme]);
+    }), [labelsByKey, localizePluginText, needs, presentIdentity, profile, theme]);
 }
 
 /**
