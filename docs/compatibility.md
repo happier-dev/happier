@@ -12,6 +12,20 @@ envelope remains closed. No persisted format, route, error code, ABI or epoch is
 added.
 
 
+## Continuation Session read authorization (unreleased 0.3)
+
+Continuation inspection, batch inspection and transition brief preview require
+`session.read` scope for the exact Session. Home resolves the requester's existing
+`readTranscript` access once before forwarding; the daemon binds the decoded
+request's Session to that proof. Machine Use alone grants no Session access, and
+Session read proof cannot authorize a mutation. Requester-owned and read-shared
+Sessions remain eligible on shared Machines.
+
+Protocol, Home, daemon/CLI and UI load this development contract together. Older
+consumers reject the unknown proof; current Home rejects unscoped callers. There
+is no permissive fallback, persistence change or new access-control owner.
+
+
 ## Shared-Machine native Agent sign-in status (unreleased 0.3)
 
 Machine Use can read the existing sign-in status RPC. The daemon omits identity

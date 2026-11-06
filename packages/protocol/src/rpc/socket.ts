@@ -296,6 +296,7 @@ export type SocketRpcTransportResponseEnvelopeV1 =
   z.infer<typeof SocketRpcTransportResponseEnvelopeV1Schema>;
 
 export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
+  SESSION_READ: 'session.read',
   SESSION_WRITE: 'session.write',
   SESSION_ACTION: 'session.action',
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
@@ -310,6 +311,11 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
 
 export type SocketRpcAuthorizationContextKind =
   (typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS)[keyof typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS];
+
+export type SocketRpcSessionReadAuthorizationContext = Readonly<{
+  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ;
+  sessionId: string;
+}>;
 
 export type SocketRpcSessionWriteAuthorizationContext = Readonly<{
   kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE;
@@ -427,6 +433,7 @@ export const ACTION_API_SERVER_ORIGIN: SocketRpcActionApiServerOriginAuthorizati
  * the broader union but must never be accepted by this parser.
  */
 export type SocketRpcSessionAuthorizationContext =
+  | SocketRpcSessionReadAuthorizationContext
   | SocketRpcSessionWriteAuthorizationContext
   | SocketRpcSessionActionAuthorizationContext
   | SocketRpcSessionPermissionRespondAuthorizationContext;
@@ -460,7 +467,9 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
   machineScope?: true;
   /** Token calls are admitted only when the canonical row declares an Action. */
   actionId?: ActionId;
-  serverMintedContext?: 'session.permission.respond' | 'session.presentation.origin';
+  serverMintedContext?: 'session.read' | 'session.permission.respond' | 'session.presentation.origin';
+  /** Decoded request field bound to the server-admitted Session at the daemon. */
+  sessionIdParam?: 'sourceSessionId';
   /**
    * True when the mutation must execute on the Session owner's daemon. A shared
    * collaborator holding the required capability needs no personal AccessKey for
@@ -643,9 +652,9 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.SESSION_AGENT_TRANSITION, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW, authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT, authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH, authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
+    { method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW, authority: 'readTranscript', serverMintedContext: 'session.read', routeToSessionOwnerDaemon: false },
   ] as const satisfies readonly SocketRpcSessionWriteClassificationV1[])
     .map((row) => [row.method, Object.freeze(row)] as const),
 );
@@ -810,13 +819,16 @@ export function parseSocketRpcAuthorizationContext(value: unknown): SocketRpcSes
     const parsed = SocketRpcSessionActionAuthorizationContextSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   }
-  if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE) {
+  if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ
+    || candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE) {
+    const isRead = candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ;
     if (!Object.hasOwn(candidate, 'kind') || !Object.hasOwn(candidate, 'sessionId')
-      || Object.keys(candidate).some((key) => key !== 'kind' && key !== 'sessionId' && key !== 'authority')) return null;
-    if ('authority' in candidate && (!Object.hasOwn(candidate, 'authority') || candidate.authority !== 'sessionOwner')) return null;
+      || Object.keys(candidate).some((key) => key !== 'kind' && key !== 'sessionId' && (isRead || key !== 'authority'))) return null;
+    if ('authority' in candidate && (isRead || !Object.hasOwn(candidate, 'authority') || candidate.authority !== 'sessionOwner')) return null;
     if (typeof candidate.sessionId !== 'string') return null;
     const sessionId = candidate.sessionId.trim();
     if (!sessionId || sessionId.length > SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH) return null;
+    if (isRead) return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ, sessionId };
     return {
       kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
       sessionId,

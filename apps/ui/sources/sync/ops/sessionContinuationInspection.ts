@@ -69,6 +69,7 @@ export async function inspectSessionContinuationOnMachine(
             machineId: input.machineId,
             serverId: input.serverId,
             method: RPC_METHODS.SESSION_CONTINUATION_INSPECT,
+            authorization: { kind: 'session.read', sessionId: input.sessionId },
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });
@@ -104,6 +105,7 @@ export async function inspectSessionContinuationsOnMachine(
             machineId: input.machineId,
             serverId: input.serverId,
             method: RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH,
+            authorization: { kind: 'session.read', sessionId: input.sessionId },
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });

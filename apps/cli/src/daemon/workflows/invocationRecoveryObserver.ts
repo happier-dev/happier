@@ -245,6 +245,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
         ...(params.signal ? { signal: params.signal } : {}) };
       const inspected = SessionContinuationInspectionV1Schema.safeParse(await callExactMachineRpc({ ...request,
         method: RPC_METHODS.SESSION_CONTINUATION_INSPECT,
+        authorization: { kind: 'session.read', sessionId: execution.sessionId },
         request: { v: 1, sourceSessionId: execution.sessionId, selection: { v: 1, agentId } },
       }));
       if (!inspected.success || inspected.data.type !== 'available') return evidence;

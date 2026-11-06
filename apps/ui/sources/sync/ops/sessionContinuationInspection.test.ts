@@ -40,6 +40,7 @@ describe('inspectSessionContinuationOnMachine', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             method: 'session.continuation.inspect',
+            authorization: { kind: 'session.read', sessionId: 'session-1' },
             payload: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
         });
     });
@@ -120,6 +121,7 @@ describe('inspectSessionContinuationsOnMachine', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             method: 'session.continuation.inspectBatch',
+            authorization: { kind: 'session.read', sessionId: 'session-1' },
             payload: {
                 v: 1,
                 sourceSessionId: 'session-1',

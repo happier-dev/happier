@@ -6,6 +6,12 @@ import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS, parseSocketRpcAuthor
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 
 import { db } from "@/storage/db";
+import { inTx } from '@/storage/inTx';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createEnvReset } from "../testkit/env";
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from "../testkit/socketHarness";
@@ -96,16 +102,48 @@ describe("rpcHandler", () => {
     afterAll(async () => { if (harness) await harness.close(); });
 
     it.each([RPC_METHODS.SESSION_CONTINUATION_INSPECT, RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH,
-        RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW])('forwards machine-owned continuation reads without a Session write proof: %s', async operation => {
+        RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW])('requires exact Session read access for continuation on a shared Machine: %s', async operation => {
+        await db.account.updateMany({ where: { id: { in: [accountId, ownerId] } }, data: { encryptionMode: 'plain' } });
+        await db.machine.update({ where: { id: machineId }, data: { accountId: ownerId, active: true,
+            installationId: 'continuation-installation', metadata: encodePlainMachineStoredContent({ host: 'test',
+                platform: 'linux', happyCliVersion: '0.3.0', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: ownerId, machineId,
+            principal: { kind: 'account', accountId }, level: 'view' }))).toMatchObject({ kind: 'saved', readiness: 'ready' });
+        expect(await resolveMachineAdmission({ actorAccountId: accountId, machineId, rpcMethod: operation }))
+            .toMatchObject({ kind: 'admitted', role: 'use' });
+        const foreignSession = await db.session.create({ data: { accountId: ownerId, tag: randomUUID(), metadata: '{}' } });
         const method = `${machineId}:${operation}`;
         const result = { type: 'available' };
         const target = createTarget('continuation-daemon', result);
-        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
-        const caller = createAuthenticatedFakeSocket();
+        const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+            declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+        Object.assign(target.socket, { data: { clientType: 'machine-scoped', machineId,
+            verifiedMachineInstallationId: 'continuation-installation', accountStoredContentCompatibility } });
+        const { io } = createIo({ [`rpc:${ownerId}:${method}`]: [[target.socket]] });
+        const caller = createAuthenticatedFakeSocket({ data: { accountStoredContentCompatibility } });
         rpcHandler(accountId, caller as unknown as Socket, { io });
+        for (const authorization of [undefined, { kind: 'session.read', sessionId: foreignSession.id }]) {
+            const refused = vi.fn();
+            await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' },
+                ...(authorization ? { authorization } : {}) }, refused);
+            expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(target.emitWithAck).not.toHaveBeenCalled();
+        }
         const callback = vi.fn();
-        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' } }, callback);
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' },
+            authorization: { kind: 'session.read', sessionId } }, callback);
         expect(callback).toHaveBeenCalledWith({ ok: true, result });
+        expect(target.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            authorization: { kind: 'session.read', sessionId },
+            machineAdmission: expect.objectContaining({ actorAccountId: accountId, custodianAccountId: ownerId, role: 'use' }),
+        }));
+        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
+            sharedWithUserId: accountId, accessLevel: 'view' } });
+        const readOnly = vi.fn();
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' },
+            authorization: { kind: 'session.read', sessionId: foreignSession.id } }, readOnly);
+        expect(readOnly).toHaveBeenCalledWith({ ok: true, result });
     });
 
     it("waits briefly for a late session-scoped room member before forwarding the RPC", async () => {

@@ -53,8 +53,8 @@ export type PreviewSessionAgentTransitionBriefOnMachineInput = Readonly<{
 /**
  * Rebuilds what the target Agent was handed at one transition boundary.
  *
- * Read-only and effect-free. It carries no authorization envelope because it is
- * not a Session write — the same standing as `session.continuation.inspect`.
+ * Read-only and effect-free. The Home authorizes this exact Session read before
+ * forwarding; the daemon binds that proof to the decoded request.
  */
 export async function previewSessionAgentTransitionBriefOnMachine(
     input: PreviewSessionAgentTransitionBriefOnMachineInput,
@@ -78,6 +78,7 @@ export async function previewSessionAgentTransitionBriefOnMachine(
             machineId: input.machineId,
             serverId: input.serverId,
             method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW,
+            authorization: { kind: 'session.read', sessionId: input.sessionId },
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });

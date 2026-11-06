@@ -436,12 +436,31 @@ describe('authorizeMachineRpcRequest', () => {
       .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
   });
 
+  it.each([RPC_METHODS.SESSION_CONTINUATION_INSPECT, RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH,
+    RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW])('binds continuation read authority to the decrypted Session: %s', async method => {
+    const sessionField = method === RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW ? 'sessionId' : 'sourceSessionId';
+    const request = { method: `machine-1:${method}`, params: { [sessionField]: 'own-session' } };
+    expect(await authorizeMachineRpcRequest(request)).toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
+    expect(await authorizeMachineRpcRequest({ ...request, authorization: { kind: 'session.write', sessionId: 'own-session' } }))
+      .toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
+    expect(await authorizeMachineRpcRequest({ ...request, authorization: { kind: 'session.read', sessionId: 'other-session' } }))
+      .toMatchObject({ ok: false, admissionPredicate: 'session_target' });
+    expect(await authorizeMachineRpcRequest({ ...request, authorization: { kind: 'session.read', sessionId: 'own-session' } }))
+      .toEqual({ ok: true });
+  });
+
   it('allows machine RPC methods that do not require session-write authorization', async () => {
     await expect(authorizeMachineRpcRequest({
       method: `machine-1:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET}`,
       params: { sessionId: 'sess_1' },
       authorization: undefined,
     })).resolves.toEqual({ ok: true });
+  });
+
+  it('never spends a Session read proof on a mutation', async () => {
+    expect(await authorizeMachineRpcRequest({ method: `machine-1:${RPC_METHODS.STOP_SESSION}`,
+      params: { sessionId: 'own-session' }, authorization: { kind: 'session.read', sessionId: 'own-session' } }))
+      .toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
   });
 
   it('rejects session-write RPCs without authorization', async () => {

@@ -518,7 +518,7 @@ function readSessionIdFromParams(params: unknown, method: string): string | null
     ? Reflect.get(params, 'parentSessionId')
     : unscopedMethod === RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY
       ? replay && typeof replay === 'object' ? Reflect.get(replay, 'previousSessionId') : undefined
-      : Reflect.get(params, 'sessionId');
+      : Reflect.get(params, resolveSocketRpcSessionAuthorization(method)?.sessionIdParam ?? 'sessionId');
   return typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
 }
 
@@ -920,6 +920,14 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   }
   if (isSocketRpcMachineReadServerOriginAuthorizationContext(request.authorization)) return { ok: true };
   const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
+  if (sessionRule?.serverMintedContext === 'session.read') {
+    const authorization = parseSocketRpcAuthorizationContext(request.authorization);
+    if (authorization?.kind !== 'session.read') return forbidden('session_authorization');
+    const requestedSessionId = readSessionIdFromParams(request.params, request.method);
+    return requestedSessionId && requestedSessionId === authorization.sessionId
+      ? { ok: true }
+      : forbidden('session_target');
+  }
   if (sessionRule?.machineScope === true && request.machineAdmission !== undefined) {
     // The exact installation and current Home admission were verified above.
     // Dual-scope Run methods use that Machine custody, not a fabricated Session
@@ -952,7 +960,7 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   }
 
   const authorization = parseSocketRpcAuthorizationContext(request.authorization);
-  if (!authorization) return forbidden('session_authorization');
+  if (!authorization || authorization.kind === 'session.read') return forbidden('session_authorization');
 
   if (!requestedSessionId || requestedSessionId !== authorization.sessionId) {
     return forbidden('session_target');

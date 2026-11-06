@@ -1609,9 +1609,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 );
                 const sessionId = sessionAuthorization.routeToSessionOwnerDaemon
                     ? (separatorIndex > 0 ? method.slice(0, separatorIndex) : null)
-                    : suppliedAuthorization?.kind === "session.write"
-                        ? suppliedAuthorization.sessionId
-                        : null;
+                    : sessionAuthorization.serverMintedContext === "session.read"
+                        ? suppliedAuthorization?.kind === "session.read" ? suppliedAuthorization.sessionId : null
+                        : suppliedAuthorization?.kind === "session.write" ? suppliedAuthorization.sessionId : null;
                 if (
                     !sessionId
                     || (
@@ -1692,7 +1692,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         requesterApprovalMachine = { machineId, sessionId, accountId: session.accountId };
                     }
                 }
-                authorization = sessionAuthorization.serverMintedContext === "session.presentation.origin"
+                authorization = sessionAuthorization.serverMintedContext === "session.read"
+                    ? { kind: "session.read", sessionId }
+                    : sessionAuthorization.serverMintedContext === "session.presentation.origin"
                     ? {
                         kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.CURRENT_SESSION_PRESENTATION_ORIGIN,
                         sessionId,

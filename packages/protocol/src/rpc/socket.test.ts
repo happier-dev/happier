@@ -79,6 +79,16 @@ it('preserves the predecessor Session-write shape and rejects additional authori
   expect(socketProtocol.parseSocketRpcAuthorizationContext(Object.create(authorization))).toBeNull();
 });
 
+it('keeps Session-read proof separate from write and owner authority', () => {
+  const authorization = { kind: 'session.read', sessionId: ' session-a ' };
+  expect(socketProtocol.parseSocketRpcAuthorizationContext(authorization))
+    .toEqual({ kind: 'session.read', sessionId: 'session-a' });
+  for (const invalid of [{ ...authorization, authority: 'sessionOwner' }, { ...authorization, accountId: 'other' },
+    { ...authorization, sessionId: '' }, Object.create(authorization)]) {
+    expect(socketProtocol.parseSocketRpcAuthorizationContext(invalid)).toBeNull();
+  }
+});
+
 it('retains only the literal server-proven Session-owner authority in the closed Session-write carrier', () => {
   const authorization = { kind: 'session.write', sessionId: ' session-a ', authority: 'sessionOwner' };
   expect(socketProtocol.parseSocketRpcAuthorizationContext(authorization))
