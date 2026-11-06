@@ -622,8 +622,23 @@ publish private Domain content before child admission. The finite Deploy receipt
 does not authorize generic Artifact publication afterward. Native failures retain
 the canonical typed Home refusal and HTTP status through Domain settlement.
 
-The shared UI API sends `set` and `remove` to `deployments.bindings.set`; the
-deployment editor migration is pending its UI base producer commit.
+In 0.3 development, the accepted add controller also reads facts for its exact
+Domain capture through the existing secret-launch admission endpoint before
+requesting a connector token. That facts-only request carries the installed
+controller signature and the Domain effect, including its reviewed child proof
+when invoked by a template. Home consumes the accepted Domain job and captured
+target identity; it neither grants target secret use to the controller nor
+repeats Source or Team admission. Home refusals retain their typed phase and
+HTTP status through the Domain Action result.
+Signed `verification_purpose` refusals retain that required fact and a remedy to
+update Home and the Machine before retrying; the projection exposes no operands
+or signed carrier content.
+When no active Domain members can supply a route, the same typed failure names
+`activeDomainMembers` and asks the caller to deploy the app on that Machine
+before adding the Domain.
+
+The shared UI API and deployment editor send `set` and `remove` to
+`deployments.bindings.set`.
 `prepareDeploymentBindingsForHost` owns applying the patch, preparing the private
 Environment candidate and sealing its admitted secret uses. UI and agent callers
 of that shared API do not publish those private candidates themselves.
