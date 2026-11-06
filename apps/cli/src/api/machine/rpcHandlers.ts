@@ -1,6 +1,7 @@
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { randomUUID } from 'node:crypto';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { FILESYSTEM_TRANSFER_ACTION_IDS, type FilesystemTransferActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -1114,8 +1115,17 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager });
 
   const executionRunCpu = createProcessCpuSampler();
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {
-    const markers = await listExecutionRunMarkers();
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async (_raw, context) => {
+    const admission = context?.machineAdmission;
+    const serverId = params.deps?.currentServerId ?? configuration.activeServerId;
+    // The registry filters private attribution before publishing marker fields.
+    // Only the authenticated receiving admission establishes the requester.
+    const markers = await listExecutionRunMarkers(admission?.role === 'use' ? {
+      requester: { serverId, accountId: admission.actorAccountId, machineId: admission.machineId,
+        installationId: admission.installationId },
+      homeServerIdentityId: await (params.deps?.resolveHostHomeServerIdentityId?.()
+        ?? resolveServerProfileHomeIdentityId(serverId)),
+    } : undefined);
 
     let processIndex = new Map<number, DaemonExecutionRunProcessInfo>();
     try {

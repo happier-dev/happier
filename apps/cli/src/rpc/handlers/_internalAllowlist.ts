@@ -97,11 +97,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'same-session-cross-agent-continuation',
     },
     {
-        method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
-        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
-        ownerPacket: 'PMS-5',
-    },
-    {
         method: RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE,
         rationale: 'Exact-Machine daemon-owned Run currentness proof for Home broker admission; no Run mirror or credential authority.',
         ownerPacket: 'teams-lane-10',

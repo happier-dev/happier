@@ -108,6 +108,7 @@ vi.mock('@/configuration', () => ({
     happyHomeDir: '/tmp/happier-test-home',
     logsDir: '/tmp',
     publicReleaseRing: 'stable',
+    organizationPolicy: { status: 'absent' },
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     isDaemonProcess: false,
     replaySeedMaxChars: 50_000,
@@ -1582,16 +1583,17 @@ describe('registerMachineRpcHandlers', () => {
 
   it('registers daemon execution run listing handler', async () => {
     let effectiveCores = 0.5;
-    const registered = new Map<string, (params: any) => Promise<any>>();
+    const resolveHostHomeServerIdentityId = vi.fn(async () => 'srv_marker_home');
+    const registered = new Map<string, (params: any, context?: Partial<RpcHandlerContext>) => Promise<any>>();
     const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+      registerHandler: (method: string, handler: (params: any, context?: Partial<RpcHandlerContext>) => Promise<any>) => {
         registered.set(method, handler);
       },
     } as any;
 
     registerMachineRpcHandlers({
       rpcHandlerManager,
-      deps: { readMachineEffectiveCores: () => effectiveCores },
+      deps: { readMachineEffectiveCores: () => effectiveCores, currentServerId: 'marker-home', resolveHostHomeServerIdentityId },
       handlers: {
         spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
         stopSession: async () => true,
@@ -1604,7 +1606,7 @@ describe('registerMachineRpcHandlers', () => {
 
     const runId = `run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
-      await writeExecutionRunMarker({
+      const marker = {
         pid: process.pid,
         happySessionId: 'sess-1',
         runId,
@@ -1615,7 +1617,8 @@ describe('registerMachineRpcHandlers', () => {
         status: 'running',
         startedAtMs: Date.now(),
         updatedAtMs: Date.now(),
-      });
+      } satisfies Parameters<typeof writeExecutionRunMarker>[0];
+      await writeExecutionRunMarker(marker);
 
       const handler = registered.get((RPC_METHODS as any).DAEMON_EXECUTION_RUNS_LIST);
       expect(handler).toBeDefined();
@@ -1630,6 +1633,43 @@ describe('registerMachineRpcHandlers', () => {
       const entry = (res.runs as any[]).find((r) => r?.runId === runId);
       expect(entry?.process?.cmd).toBeUndefined();
       expect(entry?.process?.cpu).toBeUndefined();
+      const requester = { actorAccountId: 'marker-requester', custodianAccountId: 'marker-owner',
+        machineId: 'marker-machine', installationId: 'marker-installation', role: 'use' as const,
+        encryptionMode: 'plain' as const };
+      // Legacy unattributed markers belong to the custodian, never a Use member.
+      expect((await handler!({}, { machineAdmission: requester })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(false);
+      await writeExecutionRunMarker({ ...marker,
+        requesterWorkAttributionV1: { serverId: 'marker-home', accountId: requester.actorAccountId,
+          machineId: requester.machineId, installationId: requester.installationId } });
+      const ownRun = (await handler!({}, { machineAdmission: requester })).runs.find(
+        (run: { runId: string }) => run.runId === runId);
+      expect(ownRun).toBeDefined();
+      expect(ownRun).not.toHaveProperty('requesterWorkAttributionV1');
+      await writeExecutionRunMarker({ ...marker,
+        requesterWorkAttributionV1: { serverId: 'srv_marker_home', accountId: requester.actorAccountId,
+          machineId: requester.machineId, installationId: requester.installationId } });
+      const homeReadsBefore = resolveHostHomeServerIdentityId.mock.calls.length;
+      expect((await handler!({}, { machineAdmission: requester })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(true);
+      expect(resolveHostHomeServerIdentityId.mock.calls.length - homeReadsBefore).toBe(1);
+      await writeExecutionRunMarker({ ...marker,
+        requesterWorkAttributionV1: { serverId: 'another-marker-home', accountId: requester.actorAccountId,
+          machineId: requester.machineId, installationId: requester.installationId } });
+      expect((await handler!({}, { machineAdmission: requester })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(false);
+      await writeExecutionRunMarker({ ...marker,
+        requesterWorkAttributionV1: { serverId: 'marker-home', accountId: requester.actorAccountId,
+          machineId: requester.machineId, installationId: requester.installationId } });
+      expect((await handler!({}, { machineAdmission: { ...requester, actorAccountId: 'other-requester' } })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(false);
+      expect((await handler!({ requesterWorkAttributionV1: { accountId: requester.actorAccountId } },
+        { machineAdmission: { ...requester, actorAccountId: 'other-requester' } })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(false);
+      expect((await handler!({}, { machineAdmission: { ...requester, installationId: 'another-installation' } })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(false);
+      expect((await handler!({}, { machineAdmission: { ...requester, role: 'manage' } })).runs.some(
+        (run: { runId: string }) => run.runId === runId)).toBe(true);
       if (process.platform === 'linux' || process.platform === 'darwin') {
         expect(entry?.process?.pid).toBe(process.pid);
         expect(entry?.process?.memory).toBeGreaterThan(0);

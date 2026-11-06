@@ -31,6 +31,7 @@ import type { LiveWorkItemV1, LiveWorkProducerV1 } from './lifecycle/managedActi
 import { resolveExecutionRunLifecycle } from '@/agent/runtime/bridges/executionRun/resolveExecutionRunLifecycle';
 import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { notifyDaemonSessionActivityChanged } from './controlClient';
 import { resolveExecutionRunFollowOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 
@@ -862,8 +863,22 @@ export async function listExecutionRunMarkersForRehydration(): Promise<Execution
   return await listExecutionRunMarkersRaw();
 }
 
-export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
-  return (await listExecutionRunMarkersRaw()).map(projectExecutionRunMarkerForPublication);
+export async function listExecutionRunMarkers(scope?: Readonly<{
+  requester: RequesterWorkAttributionV1;
+  homeServerIdentityId: string | null;
+}>): Promise<ExecutionRunMarker[]> {
+  const markers = await listExecutionRunMarkersRaw();
+  const visibleMarkers = scope ? markers.filter(marker => {
+    const requester = scope.requester;
+    const attribution = marker.requesterWorkAttributionV1;
+    return attribution?.accountId === requester.accountId
+      && attribution.machineId === requester.machineId
+      && attribution.installationId === requester.installationId
+      && areServerProfileIdentifiersEquivalent(attribution.serverId, requester.serverId,
+        identifier => identifier === requester.serverId || identifier === scope.homeServerIdentityId
+          ? scope.homeServerIdentityId : null);
+  }) : markers;
+  return visibleMarkers.map(projectExecutionRunMarkerForPublication);
 }
 
 export async function gcExecutionRunMarkers(params: Readonly<{

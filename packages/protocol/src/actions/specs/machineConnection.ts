@@ -1,6 +1,8 @@
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
+import { DaemonExecutionRunListResponseSchema } from '../../daemon/executionRuns.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -30,6 +32,7 @@ export const MachineMetadataUpdateInputSchema = lazyZodSchema(() => z.strictObje
   }).check(z.refine(value => Object.keys(value).length > 0)),
 }));
 export const MachineStopDaemonInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
+export const MachineRunsListInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
 export const MachineRemoveInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
 export const MachineCapabilityInstallInputSchema = lazyZodSchema(() => z.strictObject({
   ...machineTarget,
@@ -56,11 +59,13 @@ export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
   'machines.metadata.update': MachineMetadataUpdateInputSchema,
   'machines.daemon.stop': MachineStopDaemonInputSchema,
   'machines.remove': MachineRemoveInputSchema,
+  'machines.runs.list': MachineRunsListInputSchema,
   'machines.capabilities.install': MachineCapabilityInstallInputSchema,
   'machines.replacement.set': MachineReplacementSetInputSchema,
   'machines.replacement.clear': MachineReplacementClearInputSchema,
 } as const;
 export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
+  'machines.runs.list': DaemonExecutionRunListResponseSchema,
   'machines.metadata.update': lazyZodSchema(() => z.strictObject({ version: z.number().check(z.int(), z.nonnegative()) })),
   'machines.daemon.stop': lazyZodSchema(() => z.strictObject({ message: z.string() })),
   'machines.remove': lazyZodSchema(() => z.union([
@@ -136,6 +141,17 @@ const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: tr
 // SSH and setup-command Actions run in the client's SSH bridge / web command; the CLI adds Machines through its own native installer (58d §D3).
 const setupClientSurfaces = { ...clientSurfaces, cli: false } as const;
 export const MACHINE_CONNECTION_ACTION_SPECS = [
+  {
+    id: 'machines.runs.list', approval: {result: 'none'}, title: 'List machine run markers',
+    description: 'Read existing daemon run and process markers. Manage sees the Machine inventory; Use sees only its attributed work. Requester Session Run reads remain separate.',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: true },
+    bindings: { mcpToolName: 'machines_runs_list', rpcMethod: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST },
+    cli: { commands: [{ path: ['machines', 'runs', 'list'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.runs.list'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.runs.list'],
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  },
   {
     id: 'machines.metadata.update', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'required'}, title: 'Update machine details',
     description: 'Change the machine name or Windows session launch mode through versioned Machine metadata.',

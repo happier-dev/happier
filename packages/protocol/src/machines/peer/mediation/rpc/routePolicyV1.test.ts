@@ -487,7 +487,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
-    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toMatchObject({ sharedMachineAccess: 'manage' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toMatchObject({ sharedMachineAccess: 'use', actionSpecId: 'machines.runs.list' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });

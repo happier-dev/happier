@@ -114,6 +114,25 @@ does not grant access. Foreign requesters receive the existing not-found refusal
 for ID operations and cannot see the Run in lists. This rule adds no migration,
 backfill, version flag or special handling for earlier 0.3 development builds.
 
+The separate `machines.runs.list` Action reads the existing process marker
+registry through `daemon.executionRuns.list`. Manage sees the Machine-wide
+inventory, including fallback marker details. Use sees only markers whose stored
+Home, Account, Machine and installation attribution matches the receiving Home
+and authenticated Machine admission; unattributed or invalid records never establish Use visibility.
+Requester Session Run reads retain their separate scope. The Action, Home policy
+and daemon filter load together in unreleased 0.3; an older development daemon
+does not implement the Use projection. This adds no RPC payload or persistence
+format, migration or version flag.
+
+The unreleased `machines.capabilities.detect` Action refreshes only the existing
+Tools Check-again operand and returns refresh status with an existing typed
+failure cause. It accepts a Machine target, never a caller-authored detection
+request, and discloses no detector facts. UI facts remain in the incumbent pushed
+capability cache; agents read the approved `machines.agents.list` projection.
+`machines.add.local.cancel` cancels enrollment through the answering App's
+retained task and existing SystemTaskRunner custody, including a pending native
+start. It creates no separate task registry or persistence format.
+
 The inspected 0.2 source at `512915f3ccf4a29a8454b74ad9db6ca72079d916`
 routes Run starts within one Account (`apps/server/sources/app/api/socket/resolveRpcCallTarget.ts:26`). Its only
 cross-Account RPC exception is the approval family, which excludes Run start

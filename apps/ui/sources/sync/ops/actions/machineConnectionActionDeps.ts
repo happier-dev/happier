@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { startPairingForHome } from '@/auth/pairing/startPairingForHome';
@@ -26,11 +27,20 @@ import { machineRevokeWithProviderCleanup, machineReplaceInAccount, machineClear
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machinePageAction'> {
     return {
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
+            if (actionId === MACHINE_RUN_MARKERS_LIST_ACTION_ID) {
+                return readMachineActionRpcResult(await machineRpcWithServerScope({ machineId: input.machineId,
+                    serverId, accountId: options.account?.accountId ?? context.runtimeAccountId,
+                    method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
+                    payload: {}, ...(context.signal ? { signal: context.signal } : {}) }));
+            }
             if (!serverId || !areServerProfileIdentifiersEquivalent(serverId, getActiveServerId())) {
                 return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
             }

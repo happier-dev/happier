@@ -812,8 +812,6 @@ const VOICE_CLIENT_CREDENTIAL_METHODS = [
 ] as const;
 
 const MACHINE_MANAGEMENT_METHODS = new Set<string>([
-  // This inventory includes every Session process on the Machine, unlike requester-scoped Run reads.
-  RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
   RPC_METHODS.SKILLS_MACHINE_INSTALL,
   RPC_METHODS.SKILLS_MACHINE_UNINSTALL,
   RPC_METHODS.STOP_DAEMON,

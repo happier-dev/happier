@@ -79,6 +79,52 @@ afterEach(async () => {
 });
 const kill = { machineId: 'm', tree: true, targets: [{ ref: 'r', expect: { level: 'proven' as const, owner: { kind: 'session' as const, sessionId: 's' } } }] };
 describe('machine process Actions through the captured UI Home', () => {
+    it('offers the Machine marker inventory to agents through the same scoped Action used by the UI', async () => {
+        rpc.machine.mockResolvedValue({ runs: [] });
+        const executor = createDefaultActionExecutor();
+        for (const surface of ['ui', 'agent'] as const) {
+            expect(await executor.execute('machines.runs.list', { serverId, machineId: 'marker-machine' }, {
+                surface, serverId, expectedAccountId: 'owner',
+            })).toEqual({ ok: true, result: { runs: [] } });
+        }
+        const { machineExecutionRunsList } = await import('@/sync/ops/machineExecutionRuns');
+        expect(await machineExecutionRunsList('marker-machine', { serverId, accountId: 'owner' }))
+            .toEqual({ ok: true, runs: [] });
+        expect(rpc.machine.mock.calls.map(([request]) => ({ method: request.method,
+            serverId: request.serverId, accountId: request.accountId, machineId: request.machineId }))).toEqual([
+            { method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, serverId, accountId: 'owner', machineId: 'marker-machine' },
+            { method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, serverId, accountId: 'owner', machineId: 'marker-machine' },
+            { method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, serverId, accountId: 'owner', machineId: 'marker-machine' },
+        ]);
+        expect(homes.artifacts(savedHomeId).list()).toHaveLength(0);
+    });
+
+    it('settles the Machine marker inventory when its UI request owner cancels', async () => {
+        const entered = createDeferred<void>();
+        rpc.machine.mockImplementation(({ signal }: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+            entered.resolve();
+            const aborted = () => reject(Object.assign(new Error('aborted'), { code: 'MACHINE_RPC_ABORTED' }));
+            if (signal?.aborted) aborted();
+            else signal?.addEventListener('abort', aborted, { once: true });
+        }));
+        const { machineExecutionRunsList } = await import('@/sync/ops/machineExecutionRuns');
+        const controller = new AbortController();
+        const result = machineExecutionRunsList('marker-machine', { serverId, accountId: 'owner', signal: controller.signal });
+        await entered.promise;
+        controller.abort();
+        expect(await result).toMatchObject({ ok: false });
+    });
+
+    it('retains the Machine marker inventory Home when another Account is focused', async () => {
+        await homes.addHome({ name: 'Unrelated Home', serverUrl: 'https://unrelated-markers.test',
+            accountId: 'unrelated-owner', currentAccount: true });
+        rpc.machine.mockResolvedValue({ runs: [] });
+        const { machineExecutionRunsList } = await import('@/sync/ops/machineExecutionRuns');
+        expect(await machineExecutionRunsList('marker-machine', { serverId, accountId: 'owner' }))
+            .toEqual({ ok: true, runs: [] });
+        expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, accountId: 'owner', machineId: 'marker-machine' }));
+    });
+
     it('retains a newly delivered warning when an already-demanded Guard view still has stale absence', async () => {
         const watching = createDeferred<void>();
         const freshRead = createDeferred<void>();

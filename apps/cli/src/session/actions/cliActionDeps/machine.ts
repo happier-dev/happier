@@ -1,4 +1,5 @@
 import type { CliActionDepsParams } from './types';
+import { MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
 import axios from 'axios';
 import { MachineCapabilityInstallInputSchema, MachineCapabilityInstallOutputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
@@ -91,6 +92,13 @@ export function createCliMachineActionDeps(
       },
     }),
     machinePageAction: async ({ actionId, input, context }) => {
+      if (actionId === MACHINE_RUN_MARKERS_LIST_ACTION_ID) {
+        return await callMachineAction({ machineId: input.machineId, serverId: input.serverId,
+          method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, request: {}, context,
+          effectActionId: actionId, authority: context.authority, exactMachine: true,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+      }
       if (actionId === 'machines.capabilities.install') {
         const { machineId, serverId, capabilityId, method } = MachineCapabilityInstallInputSchema.parse(input);
         if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {

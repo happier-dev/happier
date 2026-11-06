@@ -68,6 +68,7 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
     it('keeps public Action RPC methods out of the internal-only allowlist', () => {
         const expected = [
             RPC_METHODS.SESSION_SPAWN_NEW,
+            RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
@@ -83,7 +84,6 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
 
     it('classifies PMS-5 direct-eligible daemon read methods as internal-only', () => {
         const expected = [
-            RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,

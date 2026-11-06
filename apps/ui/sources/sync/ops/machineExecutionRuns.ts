@@ -1,8 +1,8 @@
-import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { DaemonExecutionRunEntry, DaemonExecutionRunListResponse } from '@happier-dev/protocol/daemon/executionRuns';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+let actionExecute: FrontDoorActionExecute | undefined;
 
 export type MachineExecutionRunsListResult =
     | { ok: true; runs: readonly DaemonExecutionRunEntry[] }
@@ -13,18 +13,17 @@ export async function machineExecutionRunsList(
     opts?: Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal }>,
 ): Promise<MachineExecutionRunsListResult> {
     try {
-        const response = await machineRpcWithServerScope<unknown, {}>({
-            machineId,
-            serverId: opts?.serverId,
-            accountId: opts?.accountId,
-            method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
-            payload: {},
+        if (!actionExecute) actionExecute = (await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')).createFrontDoorActionExecute();
+        const outcome = await actionExecute('machines.runs.list', {
+            machineId, ...(opts?.serverId ? { serverId: opts.serverId } : {}),
+        }, {
+            surface: 'ui', ...(opts?.serverId ? { serverId: opts.serverId } : {}),
+            ...(opts?.accountId ? { expectedAccountId: opts.accountId } : {}),
             ...(opts?.signal ? { signal: opts.signal } : {}),
         });
-        if (!response || typeof response !== 'object' || !Array.isArray((response as any).runs)) {
-            return { ok: false, error: 'Unsupported response from machine RPC' };
-        }
-        return { ok: true, runs: (response as any).runs ?? [] };
+        if (!outcome.ok) return { ok: false, error: outcome.error, errorCode: outcome.errorCode };
+        // The Action executor has validated the published output schema.
+        return { ok: true, runs: (outcome.result as DaemonExecutionRunListResponse).runs };
     } catch (error) {
         return {
             ok: false,

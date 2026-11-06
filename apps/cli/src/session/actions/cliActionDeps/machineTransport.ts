@@ -87,6 +87,8 @@ export function createCliMachineActionTransport(
   // Resource handlers require current Machine admission even on this daemon.
   // Derive every Action method from the canonical families; watches share that ingress.
   const authenticatedMachineIngressMethods = new Set<string>([
+    // Marker disclosure uses the caller stamped by Machine admission, including on this daemon.
+    getActionSpec('machines.runs.list').bindings!.rpcMethod!,
     ...[
       ...ACTION_ID_FAMILIES_V1.machine_agent_isolation,
       ...ACTION_ID_FAMILIES_V1.machine_admin_access,
