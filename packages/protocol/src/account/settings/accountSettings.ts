@@ -139,7 +139,7 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
   actions: {
     // Product-courtesy defaults: in-session agents may coordinate and inspect by default,
     // while destructive/accounting/user-approval controls remain explicit opt-ins.
-    'session.stop': { disabledSurfaces: ['session_agent'] },
+    'session.stop': { disabledSurfaces: ['session_agent', 'mcp', 'cli'] },
     'session.archive': { disabledSurfaces: ['session_agent'] },
     'session.unarchive': { disabledSurfaces: ['session_agent'] },
     'session.permission.respond': { disabledSurfaces: ['session_agent'] },
@@ -233,6 +233,35 @@ function hasOnlyEmptyActionSettingsFieldsV1(override: Readonly<Record<string, un
   );
 }
 
+// Previous default disabledSurfaces for session.stop, before mcp and cli joined the default
+// lockdown. A stored override that EXACTLY equals this historical default (every other field
+// empty) evolves to the current default; user-customized overrides are never touched, mirroring
+// the lockdown migration philosophy above.
+const LEGACY_DEFAULT_SESSION_STOP_DISABLED_SURFACES_V1 = Object.freeze(['session_agent'] as const);
+
+function isLegacyDefaultSessionStopOverrideV1(override: unknown): boolean {
+  if (!override || typeof override !== 'object' || Array.isArray(override)) return false;
+  const record = override as Record<string, unknown>;
+  const disabledSurfaces = Array.isArray(record.disabledSurfaces) ? record.disabledSurfaces : [];
+  if (disabledSurfaces.length !== LEGACY_DEFAULT_SESSION_STOP_DISABLED_SURFACES_V1.length) return false;
+  for (const surface of disabledSurfaces) {
+    if (!(LEGACY_DEFAULT_SESSION_STOP_DISABLED_SURFACES_V1 as readonly unknown[]).includes(surface)) return false;
+  }
+  // Every other field must still equal the historical all-empty default shape.
+  return hasOnlyEmptyActionSettingsFieldsV1({ ...record, disabledSurfaces: [] });
+}
+
+function migrateLegacyDefaultSessionStopOverrideV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
+  if (!isLegacyDefaultSessionStopOverrideV1((settings.actions as any)['session.stop'])) return settings;
+  return {
+    ...settings,
+    actions: {
+      ...(settings.actions as any),
+      'session.stop': DEFAULT_ACTIONS_SETTINGS_V1.actions['session.stop'],
+    },
+  };
+}
+
 function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
   const actions = { ...(settings.actions as any) } as ActionsSettingsV1['actions'];
   let changed = false;
@@ -263,7 +292,8 @@ function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): Act
       (actions as any)[id] = next;
     }
   }
-  return changed ? { ...settings, actions } : settings;
+  const next = changed ? { ...settings, actions } : settings;
+  return migrateLegacyDefaultSessionStopOverrideV1(next);
 }
 
 const BackendEnabledByTargetKeySchema = lazySchema(() => z.record(z.string(), z.boolean()).catch({}));

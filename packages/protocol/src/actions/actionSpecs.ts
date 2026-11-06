@@ -2315,7 +2315,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
     id: 'session.stop',
     title: 'Stop session',
-    description: 'Request that the local daemon stops the specified session.',
+    description: 'Request that the local daemon stops the specified session. Stopping a session with a turn in flight kills that turn, so unattended callers such as scripts and MCP tools should take care.',
     safety: 'safe',
     approval: APPROVAL_RESULT_NONE,
     placements: [],

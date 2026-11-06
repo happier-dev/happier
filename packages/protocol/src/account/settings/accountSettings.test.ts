@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { accountSettingsParse, isExpoPushNotificationChannelEnabled } from './accountSettings.js';
+import {
+  accountSettingsParse,
+  DEFAULT_ACTIONS_SETTINGS_V1,
+  isExpoPushNotificationChannelEnabled,
+} from './accountSettings.js';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
 import { isActionEnabledByActionsSettings } from '../../actions/actionSettings.js';
 
@@ -640,9 +644,11 @@ describe('accountSettings', () => {
     const parsed = accountSettingsParse({});
     const settings = parsed.actionsSettingsV1;
 
-    // External/CLI control plane remains enabled by default.
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'mcp' } as any)).toBe(true);
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'cli' } as any)).toBe(true);
+    // Unattended surfaces (MCP tools, CLI scripts) can kill an in-flight turn, so session.stop
+    // stays disabled for them by default; the action itself is not globally disabled.
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'mcp' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'cli' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings)).toBe(true);
 
     // Destructive/product-courtesy controls remain opt-in.
     expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
@@ -666,6 +672,11 @@ describe('accountSettings', () => {
     expect(isActionEnabledByActionsSettings('session.usageLimit.waitResume.enable' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.usageLimit.waitResume.cancel' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.usageLimit.checkNow' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
+  });
+
+  it('defaults session.stop surface lockdown to session_agent, mcp, and cli', () => {
+    expect(DEFAULT_ACTIONS_SETTINGS_V1.actions['session.stop' as any]?.disabledSurfaces)
+      .toEqual(['session_agent', 'mcp', 'cli']);
   });
 
   it('defaults session-agent spawn override policy to allowing explicit overrides', () => {
@@ -752,6 +763,7 @@ describe('accountSettings', () => {
     const settings = parsed.actionsSettingsV1;
 
     expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'mcp' } as any)).toBe(false);
     expect(isActionEnabledByActionsSettings('session.title.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.message.send' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.permission_mode.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
@@ -810,6 +822,52 @@ describe('accountSettings', () => {
     expect(isActionEnabledByActionsSettings('session.message.send' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(true);
     expect(parsed.actionsSettingsV1.actions['session.message.send' as any]?.approvalRequiredSurfaces).toEqual(['cli']);
     expect(isActionEnabledByActionsSettings('session.stop' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(false);
+  });
+
+  it('migrates a stored session.stop override that exactly matches the previous default to the tightened default', () => {
+    const parsed = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.stop': { disabledSurfaces: ['session_agent'] },
+        },
+      },
+    });
+
+    expect(parsed.actionsSettingsV1.actions['session.stop' as any]?.disabledSurfaces)
+      .toEqual(['session_agent', 'mcp', 'cli']);
+  });
+
+  it('leaves user-customized session.stop overrides untouched by the default migration', () => {
+    const explicitEmpty = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.stop': { disabledSurfaces: [] },
+        },
+      },
+    });
+    expect(explicitEmpty.actionsSettingsV1.actions['session.stop' as any]?.disabledSurfaces).toEqual([]);
+
+    const uiOnly = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.stop': { disabledSurfaces: ['ui_button'] },
+        },
+      },
+    });
+    expect(uiOnly.actionsSettingsV1.actions['session.stop' as any]?.disabledSurfaces).toEqual(['ui_button']);
+
+    const withExtraFields = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.stop': { disabledSurfaces: ['session_agent'], approvalRequiredSurfaces: ['mcp'] },
+        },
+      },
+    });
+    expect(withExtraFields.actionsSettingsV1.actions['session.stop' as any]?.disabledSurfaces).toEqual(['session_agent']);
   });
 });
 
