@@ -284,12 +284,8 @@ export function createProviderDraftProbeService(input: Readonly<{
           observationAuthorizationFingerprint: prepared.observationAuthorizationFingerprint,
         } : { ok: false, error: error(request, 'provider_probe_authorization_invalid') };
       },
-      // This finite read is already admitted; the generic catalog port also
-      // serves persisted observations, while this store is request-local.
-      revalidate: async () => ({ ok: true }),
       authorizeDestination: async (endpoint, _probeRequest, destination) =>
-        getAccountSettingsSnapshot()
-          && destination.origin === new URL(endpoint.normalizedUrl).origin
+        destination.origin === new URL(endpoint.normalizedUrl).origin
           && destination.scope === endpoint.endpointScope
           ? { ok: true }
           : { ok: false, error: error(request, 'provider_authorization_changed') },

@@ -93,7 +93,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   openTeamDirect?: Parameters<typeof resolveRuntimeProviderCredential>[0]['openTeamDirect'];
-}>): ProviderProbeAuthorizationPort<ProviderProbeHostAuthorizationTicket, ProviderProbeHostCredentialReference> {
+}>): Required<ProviderProbeAuthorizationPort<ProviderProbeHostAuthorizationTicket, ProviderProbeHostCredentialReference>> {
   const getAccountSettingsSnapshot = createAccountBoundProviderSnapshotReader(
     input.getAccountSettingsSnapshot,
   );

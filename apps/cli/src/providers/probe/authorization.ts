@@ -134,7 +134,8 @@ export type ProviderProbeAuthorizationPort<TTicket, TCredentialRef> = Readonly<{
     request: ProviderProbeAuthorizationRequest,
     scope?: ProviderProbeOperationScope,
   ): Promise<ProviderProbeAuthorizationResult<TTicket, TCredentialRef>>;
-  revalidate(
+  /** Already-admitted finite operations with request-local state omit this hook. */
+  revalidate?(
     ticket: TTicket,
     request: ProviderProbeAuthorizationRequest,
     scope?: ProviderProbeOperationScope,

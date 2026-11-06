@@ -292,12 +292,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
     try {
       await dependencies.runtimeStore.update(async (state) => {
         for (const authorization of authorizations) {
-          const validation = await dependencies.authorization.revalidate(
+          const validation = await dependencies.authorization.revalidate?.(
             authorization.ticket,
             authorization.request,
             operationScope,
           );
-          if (!validation.ok) throw new ProviderProbeCommitAuthorizationError(validation.error);
+          if (validation?.ok === false) throw new ProviderProbeCommitAuthorizationError(validation.error);
         }
         return transform(state);
       });
@@ -319,12 +319,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
     try {
       await dependencies.runtimeStore.updateTransientEndpointHealth(async (endpointHealth) => {
         for (const authorization of authorizations) {
-          const validation = await dependencies.authorization.revalidate(
+          const validation = await dependencies.authorization.revalidate?.(
             authorization.ticket,
             authorization.request,
             operationScope,
           );
-          if (!validation.ok) throw new ProviderProbeCommitAuthorizationError(validation.error);
+          if (validation?.ok === false) throw new ProviderProbeCommitAuthorizationError(validation.error);
         }
         return transform([...endpointHealth]);
       }, options);
@@ -411,12 +411,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           if (authorization.credentialRef !== null) {
             throw new TypeError('Managed Provider catalog authorization must be credential-free');
           }
-          const initialValidation = await dependencies.authorization.revalidate(
+          const initialValidation = await dependencies.authorization.revalidate?.(
             authorization.ticket,
             request.request,
             operationScope,
           );
-          if (!initialValidation.ok) return { status: 'error', error: initialValidation.error };
+          if (initialValidation?.ok === false) return { status: 'error', error: initialValidation.error };
           authorizations.push({
             ...request,
             ticket: authorization.ticket,
@@ -435,12 +435,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         }
         const revalidateAll = async () => {
           for (const authorization of authorizations) {
-            const validation = await dependencies.authorization.revalidate(
+            const validation = await dependencies.authorization.revalidate?.(
               authorization.ticket,
               authorization.request,
               operationScope,
             );
-            if (!validation.ok) return validation;
+            if (validation?.ok === false) return validation;
           }
           return { ok: true as const };
         };
@@ -710,12 +710,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         };
         const authorization = await dependencies.authorization.authorize(authorizationRequest, operationScope);
         if (!authorization.ok) return { status: 'error', error: authorization.error };
-        const secretResolutionValidation = await dependencies.authorization.revalidate(
+        const secretResolutionValidation = await dependencies.authorization.revalidate?.(
           authorization.ticket,
           authorizationRequest,
           operationScope,
         );
-        if (!secretResolutionValidation.ok) {
+        if (secretResolutionValidation?.ok === false) {
           return { status: 'error', error: secretResolutionValidation.error };
         }
         const endpointFingerprint = createProviderEndpointFingerprintV1({
@@ -940,12 +940,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         if (!fallbackAuthorization || !fallbackEndpoint) {
           throw new TypeError('Provider catalog fallback does not match an authorized failed probe endpoint');
         }
-        const validation = await dependencies.authorization.revalidate(
+        const validation = await dependencies.authorization.revalidate?.(
           fallbackAuthorization.ticket,
           fallbackAuthorization.request,
           operationScope,
         );
-        if (!validation.ok) return { status: 'error', error: validation.error };
+        if (validation?.ok === false) return { status: 'error', error: validation.error };
         const fallback = await observeProviderOperationPhase(operationScope?.lifetime, 'catalog_dispatch', () => dependencies.localCatalogFallback!.run({
           descriptor: catalogFallback,
           endpointUrl: fallbackEndpoint.normalizedUrl,

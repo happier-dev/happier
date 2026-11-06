@@ -11,7 +11,7 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
@@ -209,9 +209,7 @@ export function createCliMachineActionTransport(
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId
-      && (listActionSpecs().find(spec => spec.id === managedBinding.actionId)?.bindings?.rpcMethod === input.method
-        || (input.method === 'machines.agentIsolation.preview' || input.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
-          && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
+      && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId);
     const admittedProcessRead = admittedLocalRequester && input.processEnvironmentRead !== undefined
       && [RPC_METHODS.MACHINES_PROCESSES_LIST, RPC_METHODS.MACHINES_PROCESSES_GET, RPC_METHODS.MACHINES_PROCESSES_CHECK]
         .some(method => method === input.method);

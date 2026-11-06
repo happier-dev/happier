@@ -520,9 +520,12 @@ describe('draft provider probe service', () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a different Account scope before dispatch', async () => {
-    let currentSnapshot = { ...snapshot(), scopeKey: 'home-a-account-a' };
-    const transport = vi.fn();
+  it.each([false, true])('keeps an admitted read but refuses fresh credential acquisition after an Account switch (credential=%s)', async withCredential => {
+    // Personal-secret fixtures have no Home settings owner. The bound reader
+    // pins that unscoped snapshot by identity until credential acquisition.
+    let currentSnapshot = { ...snapshot(), scopeKey: withCredential ? undefined : 'home-a-account-a' };
+    const transport = vi.fn(async () => ({ status: 200, headers: {},
+      body: Buffer.from(JSON.stringify({ data: [{ id: 'admitted-model' }] }), 'utf8') }));
     const service = createProviderDraftProbeService({
       machineId: 'machine-a', getAccountSettingsSnapshot: () => currentSnapshot,
       resolveAddresses: async () => ['1.1.1.1'],
@@ -533,10 +536,17 @@ describe('draft provider probe service', () => {
         }, transport,
       }),
     });
-    await expect(service.probe(request())).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_authorization_changed' },
-    });
-    expect(transport).not.toHaveBeenCalled();
+    if (withCredential) {
+      await expect(service.probe(request(true))).resolves.toMatchObject({
+        status: 'error', error: { code: 'provider_authorization_changed' },
+      });
+      expect(transport).not.toHaveBeenCalled();
+    } else {
+      await expect(service.probe(request())).resolves.toMatchObject({
+        status: 'success', models: [{ id: 'admitted-model' }],
+      });
+      expect(transport).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('refuses a cross-origin redirect without disclosing the selected secret to its destination', async () => {
