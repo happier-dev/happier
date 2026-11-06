@@ -122,7 +122,7 @@ describe('evidence-derived Work allocation', () => {
     expect(allocateUsageOutcomes({ contributions, evidence: [], branchEvidence: [
       { ...branchEvidence[0], attributionScope: 'shared_worktree' },
     ] }).branchAllocations[0]).toMatchObject({ branch: null, reason: 'uncertain_writers' });
-    expect(UsageWorkProjectionSchema.safeParse({ ...result, branches: [] }).success).toBe(false);
+    expect(UsageWorkProjectionSchema.safeParse({ ...result, branches: [{ ...result.branches[0], invented: true }] }).success).toBe(false);
   });
   it('does not let a different query turn change an admitted allocation', () => {
     const admitted = evidence('s', 't', 1);
@@ -141,6 +141,8 @@ describe('evidence-derived Work allocation', () => {
       ['a', 1], ['b', 2], ['c', 1], ['d', null],
     ]);
     expect(result.outcomes.map(row => row.contributionIds)).toEqual([['a', 'c'], ['b']]);
+    // Output shape does not rerun the allocator to impose its presentation order.
+    expect(UsageWorkProjectionSchema.safeParse({ ...result, outcomes: [...result.outcomes].reverse() }).success).toBe(true);
     for (const key of ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const) {
       expect(result.allocations.reduce((sum, row) => sum + (row.contribution.cost[key] ?? 0), 0))
         .toBe(contributions.reduce((sum, row) => sum + (row.cost[key] ?? 0), 0));

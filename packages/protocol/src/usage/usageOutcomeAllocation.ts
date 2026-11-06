@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ScmPullRequestWorkEvidenceSchema, ScmPullRequestSummarySchema, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '../scm/pullRequests.js';
 import { UsageAnalyticsContributionSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
-import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { ScmBranchWorkEvidenceSchema, ScmBranchWorkIdentitySchema, type ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageBucketBounds } from './usageCalendar.js';
 
@@ -52,15 +52,7 @@ export const UsageWorkProjectionSchema = lazyZodSchema(() => z.strictObject({
     evidence: z.array(ScmBranchWorkEvidenceSchema),
   })),
   branches: z.array(UsageWorkBranchSchema),
-}).check(z.superRefine((projection, context) => {
-  try {
-    const canonical = allocateUsageOutcomes({ contributions: projection.allocations.map(row => row.contribution),
-      evidence: projection.allocations.flatMap(row => row.evidence),
-      branchEvidence: projection.branchAllocations.flatMap(row => row.evidence) });
-    if (sameStrictJsonValue(projection, canonical)) return;
-  } catch { /* Invalid contribution identities are rejected at this public boundary. */ }
-  context.addIssue({ code: 'custom', message: 'Work must identify the canonical witnessed allocation' });
-})));
+}));
 
 /** Private witnessed attribution; contribution count is not authorship or elapsed work. */
 export const UsageMergedOutcomeSummarySchema = lazyZodSchema(() => z.strictObject({
