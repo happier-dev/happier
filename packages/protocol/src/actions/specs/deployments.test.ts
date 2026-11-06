@@ -16,6 +16,64 @@ import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthoriza
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 
 describe('Deployment Action front door', () => {
+  it('approves retained Domain removal through durable review without prepared-content input', async () => {
+    const input = { serverId: 'home', environmentId: 'production', domainId: 'domain',
+      expectedRevision: 4, expectedDomainRevision: 2, requestKey: 'remove-domain' };
+    const removed = { ok: true, environmentId: 'production', revision: 5, domain: {
+      v: 1, id: 'domain', environmentId: 'production', targetLinkId: 'runtime', revision: 3,
+      state: 'removing', contentArtifactId: 'retained-domain-content', contentHeaderVersion: 1,
+      contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 2,
+    } };
+    let stored: ApprovalRequestV2 | null = null;
+    const effects: unknown[] = [];
+    const executor = createActionExecutor({
+      // Artifact storage and the installed host are external boundaries. Review,
+      // decision, transition and replay run through the real Action owners.
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => ({ ok: true,
+        environment: { v: 1, id: 'production', serverId: 'home', projectSourceId: 'source', revision: 4,
+          owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard',
+          deployerMode: 'managers', controllerMachineId: 'controller', runtimeTargetLinkId: 'runtime',
+          contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+          capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+            manageBindings: true, manageTargets: true, delete: true },
+          createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [],
+      })),
+      deploymentAction: async (actionId, admitted) => { effects.push({ actionId, input: admitted }); return removed; },
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+        return { artifactId: 'domain-removal-review' };
+      },
+      approvalsGet: async () => structuredClone(stored),
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!stored) throw new Error('Missing stored Domain removal review');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        stored = structuredClone(next);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const context = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner', actionRequestId: 'remove-domain' } as const;
+    expect(await executor.execute('deployments.domains.remove', input, context)).toMatchObject({
+      ok: true, result: { kind: 'approval_request_created' },
+    });
+    expect(ApprovalRequestV2Schema.parse(stored).actionArgs).toEqual(input);
+    expect(effects).toEqual([]);
+    const decided = await executor.execute('approval.request.decide', {
+      artifactId: 'domain-removal-review', decision: 'approve',
+    }, { ...context, surface: 'ui', authority: 'present_user' });
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true,
+      result: { status: 'executed', execution: { ok: true, result: removed } },
+    });
+    expect(effects).toEqual([{ actionId: 'deployments.domains.remove', input }]);
+    expect(getActionSpec('deployments.environments.update').inputHints?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'contentArtifactId', required: true }),
+      expect.objectContaining({ path: 'contentHeaderVersion', required: true }),
+      expect.objectContaining({ path: 'contentBodyVersion', required: true }),
+    ]));
+  });
   it.each(['prepared', 'durableAsk'] as const)('rechecks the reviewed template facts before effects through %s', async path => {
     const input = { mode: 'apply', serverId: 'home', machineId: 'target', projectSourceId: 'source',
       templateRef: { sourceId: 'apps', itemId: 'database', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },

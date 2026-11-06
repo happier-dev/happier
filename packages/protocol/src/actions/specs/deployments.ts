@@ -1,7 +1,7 @@
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
   id: TId;
@@ -114,7 +114,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === 'deployments.domains.add' ? [
         { path: 'content', title: 'Authored Domain routing', widget: 'json' as const },
       ] : []),
-      ...(read || id === 'deployments.deploy' || id === 'deployments.cancel' || id === 'deployments.environments.controller.set' ? [] : [
+      ...(read || id === 'deployments.deploy' || id === 'deployments.cancel' || id === 'deployments.environments.controller.set' || isDeploymentDomainRemoveActionIdV1(id) ? [] : [
         { path: 'contentArtifactId', title: 'Prepared content', widget: 'text' as const, required: preparedContentRequired },
         { path: 'contentHeaderVersion', title: 'Content header revision', widget: 'number' as const, required: preparedContentRequired },
         { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: preparedContentRequired },

@@ -31,6 +31,9 @@ export type DeploymentRootOperationV1 = 'deploy' | 'rollback' | 'promote' | 'tea
 export function isDeploymentPromoteActionIdV1(value: string): value is 'deployments.promote' {
   return value === 'deployments.promote';
 }
+export function isDeploymentDomainRemoveActionIdV1(value: string): value is 'deployments.domains.remove' {
+  return value === 'deployments.domains.remove';
+}
 export type DeploymentDomainChildActionIdV1 = 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
 export function isDeploymentDomainChildActionIdV1(value: string): value is DeploymentDomainChildActionIdV1 {
   return value === 'deployments.domains.add' || value === 'deployments.domains.remove' || value === 'deployments.domains.verify';
