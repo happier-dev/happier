@@ -48,6 +48,15 @@ export function createBotTemplateEditorBuffer(opening: Pick<BotTemplateEditorSna
     return {
         getSnapshot: () => snapshot,
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        /** External redrafts replace only clean saved content; dirty text keeps its original CAS. */
+        reconcile: (opening: Pick<BotTemplateEditorSnapshot, 'draft' | 'revision'>) => {
+            if (snapshot.status !== 'saved' || opening.revision.headerVersion < snapshot.revision.headerVersion
+                || opening.revision.bodyVersion < snapshot.revision.bodyVersion
+                || (opening.revision.headerVersion === snapshot.revision.headerVersion
+                    && opening.revision.bodyVersion === snapshot.revision.bodyVersion)) return;
+            savedDraft = opening.draft;
+            publish({ ...snapshot, ...opening, errorCode: undefined });
+        },
         editRelease: (releaseOptions: BotTemplateEditorSnapshot['releaseOptions']) => publish({ ...snapshot, releaseOptions }),
         editNeedAuthoring: (change: Partial<BotTemplateNeedAuthoring>) => publish({ ...snapshot, needAuthoring: { ...snapshot.needAuthoring, ...change } }),
         resetNeedAuthoring: () => publish({ ...snapshot, needAuthoring: emptyNeedAuthoring }),

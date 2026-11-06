@@ -4,6 +4,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readUiBotTemplateAuthorDraft } from '@/sync/ops/actions/botTemplateActionDeps';
 import { createBotTemplateEditorBuffer, type BotTemplateEditorBuffer, type BotTemplateEditorSnapshot, type BotTemplateSave } from './botTemplateEditorBuffer';
+import { subscribeBotTemplateArtifactChanges } from './botTemplateArtifactChanges';
+import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 const buffers = new Map<string, Promise<BotTemplateEditorBuffer>>();
 
@@ -13,20 +15,29 @@ export function useBotTemplateEditor(artifactId: string, serverId: string) {
     const [attempt, retry] = React.useReducer(value => value + 1, 0);
     const key = binding ? JSON.stringify([binding.scope.serverId, binding.scope.accountId, artifactId]) : null;
     const [read, setRead] = React.useState<Readonly<{ key: string; buffer: BotTemplateEditorBuffer | null; failed: boolean; errorCode?: string }> | null>(null);
+    React.useEffect(() => binding && execution.ready
+        ? subscribeBotTemplateArtifactChanges(binding, retry, artifactId) : undefined, [binding, execution.ready, artifactId]);
     React.useEffect(() => {
         if (!key || !binding || !execution.ready) return;
         let mounted = true;
         let pending = buffers.get(key);
+        const retained = Boolean(pending);
         if (!pending) {
             pending = (async () => {
                 const opening = await readUiBotTemplateAuthorDraft({ serverId, artifactId, expectedAccountId: binding.scope.accountId });
                 return createBotTemplateEditorBuffer(opening);
             })();
             buffers.set(key, pending);
-            binding.onRetire(() => { if (buffers.get(key) === pending) buffers.delete(key); });
+            readServerAccountScopeOwnerLifetime(binding).onRetire(() => { if (buffers.get(key) === pending) buffers.delete(key); });
             void pending.catch(() => { if (buffers.get(key) === pending) buffers.delete(key); });
         }
-        void pending.then(buffer => { if (mounted) setRead({ key, buffer, failed: false }); }, error => {
+        void pending.then(async buffer => {
+            if (retained && buffer.getSnapshot().status === 'saved') {
+                const opening = await readUiBotTemplateAuthorDraft({ serverId, artifactId, expectedAccountId: binding.scope.accountId });
+                if (mounted && binding.isCurrent()) buffer.reconcile(opening);
+            }
+            if (mounted && binding.isCurrent()) setRead({ key, buffer, failed: false });
+        }).catch(error => {
             const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
             if (mounted) setRead({ key, buffer: null, failed: true, errorCode: typeof code === 'string' ? code : undefined });
         });

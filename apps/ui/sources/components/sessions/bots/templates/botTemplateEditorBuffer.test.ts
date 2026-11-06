@@ -11,6 +11,25 @@ const draft: BotTemplateDraftV1 = {
 };
 
 describe('template editor committed edits', () => {
+    it('never replaces local edits or rolls back a newer saved revision when an external read settles', async () => {
+        const buffer = createBotTemplateEditorBuffer({ draft, revision: { headerVersion: 1, bodyVersion: 1 } });
+        const external = { ...draft, content: { ...draft.content, firstTask: 'New Bot task' } };
+        buffer.reconcile({ draft: external, revision: { headerVersion: 2, bodyVersion: 2 } });
+        const saved = buffer.getSnapshot();
+        buffer.reconcile({ draft, revision: { headerVersion: 1, bodyVersion: 1 } });
+        expect(buffer.getSnapshot()).toBe(saved);
+        buffer.edit(current => ({ ...current, content: { ...current.content, firstTask: 'Local task' } }));
+        const edited = buffer.getSnapshot();
+        buffer.reconcile({ draft: external, revision: { headerVersion: 3, bodyVersion: 3 } });
+        expect(buffer.getSnapshot()).toBe(edited);
+        const save = vi.fn<BotTemplateSave>(async () => ({ ok: false, code: 'version_mismatch' }));
+        await buffer.commit(save);
+        expect(save.mock.calls[0]?.[0]).toMatchObject({ revision: { headerVersion: 2, bodyVersion: 2 },
+            draft: { content: { firstTask: 'Local task' } } });
+        const conflict = buffer.getSnapshot();
+        buffer.reconcile({ draft: external, revision: { headerVersion: 3, bodyVersion: 3 } });
+        expect(buffer.getSnapshot()).toBe(conflict);
+    });
     it('keeps unfinished need inputs in the shared buffer without saving them as template content', async () => {
         const buffer = createBotTemplateEditorBuffer({ draft, revision: { headerVersion: 1, bodyVersion: 1 } });
         const save = vi.fn<BotTemplateSave>(async () => ({ ok: true, revision: { headerVersion: 2, bodyVersion: 2 } }));
