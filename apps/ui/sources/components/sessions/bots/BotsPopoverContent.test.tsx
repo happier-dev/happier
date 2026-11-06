@@ -382,8 +382,9 @@ describe('Bots roster', () => {
         ...(index === 0 ? { managedSessions: { total: 1, working: 0, stalled: 0, needsYou: 0, finished: 0, attentionPrimary: null } } : {}) }));
     population.push(createSessionListRenderableSessionFixture({ id: 'measured-child',
       metadata: { path: '/project' }, manager: { sessionId: 'measured-bot-0' } }));
-    population.push(...Array.from({ length: 983 }, (_, index) =>
-      createSessionListRenderableSessionFixture({ id: perfFixtureId(4, 'session', index), metadata: { path: '/project' } })));
+    const unrelatedPopulation = Array.from({ length: 983 }, (_, index) =>
+      createSessionListRenderableSessionFixture({ id: perfFixtureId(4, 'session', index), metadata: { path: '/project' } }));
+    population.push(...unrelatedPopulation);
     replaceCollapsedGroupKeys({});
     storage.getState().applyServerScopedSessionListRows(serverId, population, { source: 'ordinary', mode: 'replace' });
     storage.getState().applySessions([createSessionFixture({
@@ -400,6 +401,23 @@ describe('Bots roster', () => {
       } }),
     ])), { ownKeys(target) { rowMapEnumerations += 1; return Reflect.ownKeys(target); } });
     storage.setState(state => ({ sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [homeKey]: countedRows } }));
+    let relationshipInventoryEnumerations = 0;
+    let unrelatedRelationReads = 0;
+    const unrelatedIds = new Set(unrelatedPopulation.map(row => row.id));
+    const relations = storage.getState().sessionRelationsByServerId;
+    const countedRelations = new Proxy(relations[homeKey]!, {
+      ownKeys(target) {
+        relationshipInventoryEnumerations += 1;
+        return Reflect.ownKeys(target);
+      },
+      get(target, property, receiver) {
+        if (typeof property === 'string' && unrelatedIds.has(property)) unrelatedRelationReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    // Observe the real published inventory without changing its values or publishing new facts.
+    // This sees keys/values/entries, spreads, for-in and keyed reads without classifying call stacks.
+    Object.defineProperty(relations, homeKey, { value: countedRelations, enumerable: true, configurable: true, writable: true });
     let commits = 0;
     const { BotsPopoverContent } = await import('./BotsPopoverContent');
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
@@ -408,12 +426,19 @@ describe('Bots roster', () => {
       </React.Profiler>
     </InjectedAuthProvider>);
     await flushHookEffects({ cycles: 3 });
+    relationshipInventoryEnumerations = 0;
+    unrelatedRelationReads = 0;
     await pressNativeBoundary(screen, 'session-row-reports-disclosure:measured-bot-0');
     await flushHookEffects({ cycles: 3 });
     expect(screen.findByTestId('session-list-item-measured-child')).not.toBeNull();
+    // Opening the real disclosure rebuilds topology without a Session/list producer write.
+    expect(relationshipInventoryEnumerations).toBeGreaterThan(0);
+    expect(unrelatedRelationReads).toBeGreaterThan(0);
     const mountedRows = population.filter(row => screen.findByTestId(`session-list-item-${row.id}`) !== null).length;
     rowMapEnumerations = 0;
     metadataReads = 0;
+    relationshipInventoryEnumerations = 0;
+    unrelatedRelationReads = 0;
     commits = 0;
     // Isolate this synchronous arrival batch from valid age-clock and bootstrap arrivals.
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -421,28 +446,6 @@ describe('Bots roster', () => {
     onTestFinished(() => { vi.useRealTimers(); });
     let notifications = 0;
     const stopCountingNotifications = storage.subscribe(() => { notifications += 1; });
-    // Count real topology inventory walks, not legitimate row-map copies at message ingress.
-    // Keep enumeration real; classify the subtree owner by its stack, as timerCensus does
-    // for clock owners. Other real store readers and producer row copies are not subtree work.
-    let subtreeEnumerations = 0;
-    let otherInventoryEnumerations = 0;
-    const values = Object.values;
-    const entries = Object.entries;
-    const countTopologyInventory = (input: unknown) => {
-      const state = storage.getState();
-      if (input === state.sessions || input === state.sessionRelationsByServerId[homeKey]) {
-        if (new Error().stack?.includes('/components/sessions/work/reportSubtree.ts:')) subtreeEnumerations += 1;
-        else otherInventoryEnumerations += 1;
-      }
-    };
-    const valuesSpy = vi.spyOn(Object, 'values').mockImplementation(input => {
-      countTopologyInventory(input);
-      return values(input);
-    });
-    const entriesSpy = vi.spyOn(Object, 'entries').mockImplementation(input => {
-      countTopologyInventory(input);
-      return entries(input);
-    });
     const beforeArrivals = storage.getState();
     try {
       act(() => {
@@ -455,16 +458,15 @@ describe('Bots roster', () => {
         }
       });
     } finally {
-      valuesSpy.mockRestore();
-      entriesSpy.mockRestore();
       stopCountingNotifications();
       vi.useRealTimers();
     }
     expect(storage.getState().sessions['measured-bot-0']?.seq).toBe(10);
     expect(storage.getState().sessions).not.toBe(beforeArrivals.sessions);
     expect(storage.getState().sessionRelationsByServerId).toBe(beforeArrivals.sessionRelationsByServerId);
-    const unrelated = { notifications, commits, subtreeEnumerations, otherInventoryEnumerations, rowMapEnumerations, metadataReads };
-    expect(unrelated.subtreeEnumerations).toBe(0);
+    const unrelated = { notifications, commits, relationshipInventoryEnumerations, unrelatedRelationReads, rowMapEnumerations, metadataReads };
+    expect(unrelated.relationshipInventoryEnumerations).toBe(0);
+    expect(unrelated.unrelatedRelationReads).toBe(0);
     commits = 0;
     const updated = population.map(row => row.id === 'measured-bot-0'
       ? { ...row, updatedAt: now + 1, metadata: { ...row.metadata!, name: 'Measured Bot updated' } }
@@ -533,7 +535,6 @@ describe('Bots roster', () => {
     const closed = { rowMapEnumerations, metadataReads };
     console.info('PERF_D4_BOTS_COUNTS', JSON.stringify({ candidates: population.length, mountedRows, unrelated, ownBotCommits, closed }));
     expect(unrelated.notifications).toBeGreaterThanOrEqual(20);
-    expect(unrelated.subtreeEnumerations).toBe(0);
   });
 
   it('orders Bots needs-you, then working, then most recent, and says nothing about an idle Bot beyond its age', async () => {

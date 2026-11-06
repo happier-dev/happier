@@ -35,8 +35,13 @@ it('admits Start into the shared scope before a Details renderer mounts while or
         <ModalProvider>{null}</ModalProvider>
     </AppPaneProvider>);
     const tab = createSessionBoardDetailsTab();
+    const file = { key: 'file:README.md', kind: 'file', title: 'README.md',
+        resource: { kind: 'file' as const, path: 'README.md' } };
     let retire: (() => void) | undefined;
     try {
+        expect(pane.scopeState).toBeNull();
+        await act(async () => expect(open(scopeId, file, { present: false }, 'heldScopeOnly')).toBe(false));
+        expect(pane.scopeState).toBeNull();
         await act(async () => expect(open(scopeId, tab, { start: true }, 'heldScopeOnly')).toBe(true));
         expect(pane.scopeState?.details.activeTabKey).toBe(tab.key);
         await act(async () => pane.closeDetailsTab(tab.key));
@@ -44,8 +49,6 @@ it('admits Start into the shared scope before a Details renderer mounts while or
         await act(async () => expect(open(scopeId, tab, { start: true }, 'heldScopeOnly')).toBe(true));
         await act(async () => pane.closeDetailsTab(tab.key));
         expect(pane.scopeState?.details.tabs).toHaveLength(0);
-        const file = { key: 'file:README.md', kind: 'file', title: 'README.md',
-            resource: { kind: 'file' as const, path: 'README.md' } };
         await act(async () => expect(open(scopeId, file, { present: false }, 'heldScopeOnly')).toBe(true));
         expect(pane.scopeState?.details.activeTabKey).toBe(file.key);
         await act(async () => pane.closeDetailsTab(file.key));
