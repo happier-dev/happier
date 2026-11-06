@@ -601,6 +601,9 @@ jobs:
         with:
           xcode_version: "27.1"
 
+      - name: Reclaim iOS runner disk
+        uses: ./.github/actions/reclaim-ios-runner-disk
+
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
           RELEASE_MESSAGE: ${{ inputs.release_message }}

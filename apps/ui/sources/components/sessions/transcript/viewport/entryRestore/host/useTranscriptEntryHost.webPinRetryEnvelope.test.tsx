@@ -128,6 +128,7 @@ function createEnvelopeHarness(params: Readonly<{
         entryRestoreOwner: createEntryRestoreOwner(),
         entrySliceWindowRef: { current: null },
         executeViewportCommand: vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialBottomPositionOwner: params.initialBottomPositionOwner,
         initialFillAbortRef: { current: null },

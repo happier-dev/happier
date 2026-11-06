@@ -34,12 +34,15 @@ describe('RowActionRevealSlot cost on hover-capable web', () => {
         costState.changeListeners.length = 0;
     });
 
-    it('shares one reduced-motion subscription across every rendered slot', async () => {
+    it('runs no JS animation and shares one reduced-motion subscription across every rendered slot', async () => {
         const restoreWindow = installRowActionRevealSlotCostMatchMedia(costState);
         try {
             await renderRowActionRevealSlotRows();
 
-            expect(costState.animatedValues).toBe(ROW_ACTION_REVEAL_SLOT_COST_ROW_COUNT);
+            // Issue #864: the fade is a CSS transition. Animated ran one JS-driven timing per slot
+            // of every mounted row, on mount too, re-rendering each through React per frame.
+            expect(costState.animatedValues).toBe(0);
+            expect(costState.timings).toBe(0);
             expect(costState.changeListeners).toHaveLength(1);
         } finally {
             restoreWindow();

@@ -3,6 +3,7 @@ import { importLegacySessionOrganization as importLegacySessionOrganizationApi }
 import type { ImportLegacySessionOrganizationRequest } from '@happier-dev/protocol';
 
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 import { prepareSessionOrganizationDisplayEnvelopeForWrite } from './sessionOrganizationDisplayEnvelope';
 
 export type LegacySessionTagAssignmentImport = Readonly<{
@@ -16,6 +17,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
     serverUrl?: string;
     request: ImportLegacySessionOrganizationRequest;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const request: ImportLegacySessionOrganizationRequest = {
         ...params.request,
         folders: await Promise.all(params.request.folders.map(async (folder) => ({
@@ -59,5 +61,6 @@ export async function importLegacySessionOrganization(params: Readonly<{
             includeLabels: true,
             includeAllTagAssignments: true,
         },
+        shouldContinue: isAccountCurrent,
     });
 }

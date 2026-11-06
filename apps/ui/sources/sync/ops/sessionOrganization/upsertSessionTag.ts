@@ -8,6 +8,7 @@ import {
     openSessionOrganizationTagDisplay,
     prepareSessionOrganizationDisplayEnvelopeForWrite,
 } from './sessionOrganizationDisplayEnvelope';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 type ConcreteSessionOrganizationTagRequest = CreateOrUpdateSessionOrganizationTagRequest & {
     tagId: string;
@@ -29,6 +30,7 @@ export async function upsertSessionTag(params: Readonly<{
     serverUrl?: string;
     request: CreateOrUpdateSessionOrganizationTagRequest;
 }>): Promise<SessionOrganizationTag> {
+    const isAccountCurrent = captureOrganizationAccount();
     const request: ConcreteSessionOrganizationTagRequest = {
         ...params.request,
         tagId: params.request.tagId ?? createSessionOrganizationOpaqueId({
@@ -66,8 +68,10 @@ export async function upsertSessionTag(params: Readonly<{
             credentials: params.credentials,
             tag: response.tag,
         });
-        const reconcileRecordId = getStorage().getState().upsertSessionOrganizationTagOptimistic(params.serverId, tag);
-        getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
+        if (isAccountCurrent()) {
+            const reconcileRecordId = getStorage().getState().upsertSessionOrganizationTagOptimistic(params.serverId, tag);
+            getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
+        }
         return tag;
     } catch (error) {
         getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);

@@ -10,7 +10,7 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
     serverId: string;
     serverUrl?: string;
     request?: Partial<SessionOrganizationSnapshotRequest>;
-    shouldContinue?: () => boolean;
+    shouldContinue: () => boolean;
 }>): Promise<void> {
     const requestedServerId = params.serverId.trim();
     const resolveCurrentServerId = () => (
@@ -27,12 +27,12 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
             serverUrl: params.serverUrl,
             request: params.request,
         });
-        if (params.shouldContinue && !params.shouldContinue()) return;
+        if (!params.shouldContinue()) return;
         const snapshot = await openSessionOrganizationSnapshotDisplayEnvelopes({
             credentials: params.credentials,
             snapshot: response.snapshot,
         });
-        if (params.shouldContinue && !params.shouldContinue()) return;
+        if (!params.shouldContinue()) return;
         currentServerId = resolveCurrentServerId();
         if (currentServerId !== initialServerId) {
             getStorage().getState().setSessionOrganizationLoading(initialServerId, false);
@@ -52,7 +52,7 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
         );
         throw error;
     } finally {
-        if (!params.shouldContinue || params.shouldContinue()) {
+        if (params.shouldContinue()) {
             getStorage().getState().setSessionOrganizationLoading(initialServerId, false);
             if (currentServerId !== initialServerId) {
                 getStorage().getState().setSessionOrganizationLoading(currentServerId, false);

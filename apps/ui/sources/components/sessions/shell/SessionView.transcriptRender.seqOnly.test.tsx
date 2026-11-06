@@ -1264,6 +1264,36 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.unmount();
     });
 
+    // Web retains every visit in the stack for Back/Forward. A retained visit of the session the
+    // reader just reopened matches the pathname, but another screen owns it: it mounted a second
+    // full surface per earlier visit (issue #864, live 2026-11-05: 827 hidden fibers per copy).
+    it('mounts no surface for an unfocused history entry of the session a later entry is showing', async () => {
+        sessionScreenFocusState.current = false;
+        routerPathnameState.current = '/session/s1';
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(<SessionView id="s1" />, { wrapper: AppPaneProviderWrapper });
+        await flushHookEffects();
+
+        expect(screen.findAllByType('ChatList' as any)).toHaveLength(0);
+        expect(isSessionVisible('s1')).toBe(false);
+
+        await screen.unmount();
+    });
+
+    it('keeps the surface under a sub-route of its own session', async () => {
+        sessionScreenFocusState.current = false;
+        routerPathnameState.current = '/session/s1/files';
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(<SessionView id="s1" />, { wrapper: AppPaneProviderWrapper });
+        await flushHookEffects();
+
+        expect(screen.findAllByType('ChatList' as any)).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
     it('tracks route-anchored painted sessions as visible under the accepted session server for realtime routing', async () => {
         sessionScreenFocusState.current = false;
         routerPathnameState.current = '/new';

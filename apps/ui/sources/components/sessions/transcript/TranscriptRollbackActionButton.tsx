@@ -13,6 +13,7 @@ import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orches
 import { t } from '@/text';
 import type { SessionRollbackTarget } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
+import { RowActionDeferredIcon } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 
 export const TranscriptRollbackActionButton = React.memo((props: {
     sessionId: string;
@@ -130,7 +131,9 @@ export const TranscriptRollbackActionButton = React.memo((props: {
             {isRollingBack ? (
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
-                <Icon name="arrow-arc-left" size={14} color={theme.colors.text.secondary} />
+                <RowActionDeferredIcon size={14}>
+                    <Icon name="arrow-arc-left" size={14} color={theme.colors.text.secondary} />
+                </RowActionDeferredIcon>
             )}
         </Pressable>
     );

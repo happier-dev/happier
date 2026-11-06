@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Animated, Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { MOTION_STANDARD_BEZIER, motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 export type RowActionRevealSlotProps = Readonly<{
@@ -87,41 +87,31 @@ function RowActionRevealSlotStatic(props: RowActionRevealSlotProps): React.React
     );
 }
 
+const WEB_REVEAL_TRANSITION_STYLE = {
+    transitionProperty: 'opacity',
+    transitionDuration: `${motionTokens.durationMs.fast}ms`,
+    transitionTimingFunction: `cubic-bezier(${MOTION_STANDARD_BEZIER.join(', ')})`,
+} as unknown as ViewStyle;
+
+const WEB_REVEAL_REDUCED_MOTION_STYLE = {
+    transitionDuration: '0ms',
+} as unknown as ViewStyle;
+
+/**
+ * The fade is a CSS transition: `Animated` on web runs on the JS driver, one timing per slot of every
+ * mounted row (on mount too, towards the value it already held), re-rendering each through React per
+ * frame while a session switch was waiting on the same thread (issue #864).
+ */
 function RowActionRevealSlotAnimated(props: RowActionRevealSlotProps): React.ReactElement {
     const { revealed, onFocus, onBlur } = useRowActionRevealFocus(props);
     const reducedMotion = useReducedMotionPreference();
-    const target = revealed ? 1 : 0;
-    const opacityRef = React.useRef<Animated.Value | null>(null);
-    if (opacityRef.current == null) {
-        opacityRef.current = new Animated.Value(target);
-    }
-    const opacity = opacityRef.current;
-
-    React.useEffect(() => {
-        if (reducedMotion) {
-            opacity.setValue(target);
-            return;
-        }
-        const animation = Animated.timing(opacity, {
-            toValue: target,
-            duration: motionTokens.durationMs.fast,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: false,
-        });
-        // Settle on the exact target once the run completes, so a reveal that is
-        // interrupted mid-fade cannot leave a half-faded action behind.
-        animation.start((result?: { finished?: boolean }) => {
-            if (result?.finished !== false) opacity.setValue(target);
-        });
-        return () => {
-            animation.stop();
-        };
-    }, [opacity, reducedMotion, target]);
-
     const pointerEvents = revealed ? ('auto' as const) : ('none' as const);
+    // Latched so the icons stay through the fade-out instead of vanishing as it starts.
+    const [iconsMounted, setIconsMounted] = React.useState(revealed);
+    if (revealed && !iconsMounted) setIconsMounted(true);
 
     return (
-        <Animated.View
+        <View
             testID={props.testID}
             onFocus={onFocus}
             onBlur={onBlur}
@@ -130,12 +120,30 @@ function RowActionRevealSlotAnimated(props: RowActionRevealSlotProps): React.Rea
                 props.reserveWidth != null ? { width: props.reserveWidth } : null,
                 props.style,
                 { pointerEvents },
-                { opacity },
+                WEB_REVEAL_TRANSITION_STYLE,
+                reducedMotion ? WEB_REVEAL_REDUCED_MOTION_STYLE : null,
+                { opacity: revealed ? 1 : 0 },
             ]}
         >
-            {props.children}
-        </Animated.View>
+            <RowActionIconsMountedContext.Provider value={iconsMounted}>
+                {props.children}
+            </RowActionIconsMountedContext.Provider>
+        </View>
     );
+}
+
+const RowActionIconsMountedContext = React.createContext(true);
+
+/**
+ * An action's icon, mounted once its slot has been revealed. The action itself stays mounted, labelled
+ * and focusable while hidden (the slot's contract); only the pixels nobody can see yet wait, in a box
+ * of the icon's size so revealing never shifts the row. The icons were 44 of a message row's ~160
+ * fibers on every row of every session switch (issue #864).
+ */
+export function RowActionDeferredIcon(props: Readonly<{ size: number; children: React.ReactNode }>): React.ReactElement {
+    const iconsMounted = React.useContext(RowActionIconsMountedContext);
+    if (iconsMounted) return <>{props.children}</>;
+    return <View testID="row-action-deferred-icon" style={{ width: props.size, height: props.size }} />;
 }
 
 const styles = StyleSheet.create(() => ({

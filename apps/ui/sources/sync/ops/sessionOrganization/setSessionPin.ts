@@ -5,6 +5,7 @@ import { setSessionPin as setSessionPinApi } from '@/sync/api/session/sessionOrg
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function setSessionPin(params: Readonly<{
     credentials: AuthCredentials;
@@ -14,6 +15,7 @@ export async function setSessionPin(params: Readonly<{
     pinned: boolean;
     sortKey?: string | null;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const optimisticPin = params.pinned
         ? { sessionId: params.sessionId, sortKey: params.sortKey ?? null, pinnedAt: Date.now() }
         : null;
@@ -26,6 +28,7 @@ export async function setSessionPin(params: Readonly<{
             request: { pinned: params.pinned, sortKey: params.sortKey },
         });
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        if (!isAccountCurrent()) return;
         const reconcileRecordId = getStorage().getState().setSessionPinOptimistic(params.serverId, params.sessionId, response.pin);
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {

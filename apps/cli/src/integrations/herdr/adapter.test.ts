@@ -242,3 +242,34 @@ describe('Herdr terminal host creation', () => {
     });
   });
 });
+
+describe('Herdr terminal host liveness', () => {
+  it('reports foreground process identities of a live pane', async () => {
+    await withHerdrApi(async (api) => {
+      api.panes.add('managed');
+      const liveness = await adapterFor(api.socketPath).evaluateLiveness({
+        kind: 'herdr', sessionName: 'work', socketPath: api.socketPath,
+        terminalId: 'terminal_1', paneId: 'managed',
+        attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
+      });
+      expect(liveness).toMatchObject({
+        paneAlive: true,
+        panePid: 42,
+        paneForegroundProcesses: [{ pid: 101, argv: ['/bin/bash'] }, { pid: 202, argv: ['/managed/claude', '--session', 'x'] }],
+      });
+    }, {
+      response: (method) => {
+        if (method !== 'pane.process_info') return undefined;
+        return {
+          process_info: {
+            shell_pid: 42,
+            foreground_processes: [
+              { pid: 101, argv: ['/bin/bash'] },
+              { pid: 202, argv: ['/managed/claude', '--session', 'x'] },
+            ],
+          },
+        };
+      },
+    });
+  });
+});

@@ -8,6 +8,7 @@ import {
     openSessionOrganizationFolderDisplay,
     prepareSessionOrganizationDisplayEnvelopeForWrite,
 } from './sessionOrganizationDisplayEnvelope';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 type ConcreteSessionOrganizationFolderRequest = CreateOrUpdateSessionOrganizationFolderRequest & {
     folderId: string;
@@ -29,6 +30,7 @@ export async function upsertSessionFolder(params: Readonly<{
     serverUrl?: string;
     request: CreateOrUpdateSessionOrganizationFolderRequest;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const request: ConcreteSessionOrganizationFolderRequest = {
         ...params.request,
         folderId: params.request.folderId ?? createSessionOrganizationOpaqueId({
@@ -68,6 +70,7 @@ export async function upsertSessionFolder(params: Readonly<{
             credentials: params.credentials,
             folder: response.folder,
         });
+        if (!isAccountCurrent()) return;
         const reconcileRecordId = getStorage().getState().upsertSessionOrganizationFolderOptimistic(params.serverId, folder);
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {

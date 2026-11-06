@@ -1602,9 +1602,14 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         ? props.surfaceFocusedOverride
         : routeFocused;
     const anchorPathname = useSurfaceAnchorPathname(pathname);
+    // Web retains every visit for Back/Forward, so a stack can hold several entries of one session.
+    // The pathname anchors a surface under an overlay or under its own sub-route, but on the session
+    // root another entry is focused and owns it: an unfocused entry there is only history, and
+    // rendering it mounted one more hidden surface per earlier visit (issue #864).
     const isRouteAnchor = typeof props.routeAnchorOverride === 'boolean'
         ? props.routeAnchorOverride
-        : isOwnedSessionRoutePathname(anchorPathname, sessionId);
+        : isOwnedSessionRoutePathname(anchorPathname, sessionId)
+            && (surfaceFocused || !isOwnedSessionRootPathname(pathname, sessionId));
     const shouldRenderSessionSurface = surfaceFocused || isRouteAnchor;
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
     const directSessionRuntime = useDirectSessionRuntime({

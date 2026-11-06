@@ -1400,6 +1400,14 @@ terminal binding, and host-failure reporting to its runtime, including deferred 
 after a server connection failure. The shared session initializer still reports the
 session to the daemon; its temporary plain/requested-tmux launch metadata is not a
 terminal fallback. Ordinary daemon tmux fallbacks retain their warning.
+In development source, the Claude liveness monitor can prove native exit in an
+independent host after matching a positive PID/argv observation to the actual
+provider invocation and retaining its process-instance fingerprint. Foreground
+omission is not exit evidence: a foreground job list is not a descendant census.
+The existing process-custody reader qualifies death, then the existing lifecycle
+owner reconciles provider tasks before expected or unexpected exit disposition.
+Owned processes retain their IPC exit authority. Adopted hosts without the launch
+invocation, shell shims, and unavailable identity observations remain unqualified.
 Hosted clients of supported Codex App Server and OpenCode server runtimes use the same ownership:
 their shared attached-terminal supervisor persists and reports the actual presenter.
 In development source, the tmux host adapter uses the requested `TMUX_TMPDIR` for

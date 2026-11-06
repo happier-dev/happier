@@ -9,6 +9,8 @@ import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/
 import { buildSessionMessagePinAtPressTime, type MessagePinAvailability } from './resolveMessagePinAvailability';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 
+import { RowActionDeferredIcon } from './RowActionRevealSlot';
+
 export function MessagePinButton(props: Readonly<{
     availability: MessagePinAvailability;
     onTogglePin?: (pin: PersistedSessionMessagePinV1) => void;
@@ -49,11 +51,13 @@ export function MessagePinButton(props: Readonly<{
                 pressed ? styles.buttonPressed : null,
             ]}
         >
-            {pinned ? (
-                <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
-            ) : (
-                <PinIcon size={ICON_SIZE.xs} color={iconColor} />
-            )}
+            <RowActionDeferredIcon size={ICON_SIZE.xs}>
+                {pinned ? (
+                    <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
+                ) : (
+                    <PinIcon size={ICON_SIZE.xs} color={iconColor} />
+                )}
+            </RowActionDeferredIcon>
         </Pressable>
     );
 }

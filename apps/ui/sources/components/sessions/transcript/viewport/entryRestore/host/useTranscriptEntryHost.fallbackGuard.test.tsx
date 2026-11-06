@@ -125,6 +125,7 @@ function createStableMembers(overrides?: {
         entryRestoreOwner: overrides?.entryRestoreOwner ?? createEntryRestoreOwner(),
         entrySliceWindowRef: { current: null },
         executeViewportCommand: overrides?.executeViewportCommand ?? vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialBottomPositionOwner: 'app' as const,
         initialFillAbortRef: { current: null },

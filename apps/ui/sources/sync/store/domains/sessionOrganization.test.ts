@@ -390,4 +390,43 @@ describe('createSessionOrganizationDomain', () => {
             [buildSessionOrganizationServerKey('srv-b', 's1')]: { sessionId: 's1', standing: true, updatedAt: 2 },
         });
     });
+
+    it('does not restore a cleared organization through an optimistic edit still in flight', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            pins: [{ sessionId: 'previous-account-session', sortKey: null, pinnedAt: 1 }],
+        }));
+        const recordId = harness.get().setSessionPinOptimistic('srv-a', 'other-session', { sessionId: 'other-session', sortKey: null, pinnedAt: 2 });
+
+        harness.get().clearSessionOrganizationForServer('srv-a');
+        harness.get().rollbackSessionOrganizationOptimistic(recordId);
+
+        expect(harness.get().sessionOrganizationPinsBySessionKey).toEqual({});
+        expect(harness.get().sessionOrganizationOptimisticRecords).toEqual({});
+    });
+
+    it('publishes nothing when clearing a Home that holds no organization', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-b', emptySnapshot());
+        let notifications = 0;
+        harness.subscribe(() => { notifications += 1; });
+
+        harness.get().clearSessionOrganizationForServer('srv-a');
+
+        expect(notifications).toBe(0);
+    });
+
+    it('clears every Home at once', () => {
+        const harness = createHarness();
+        const pin = { sessionId: 's1', sortKey: null, pinnedAt: 1 };
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ pins: [pin], version: 50 }));
+        harness.get().applySessionOrganizationSnapshot('srv-b', emptySnapshot({ pins: [pin], version: 7 }));
+        harness.get().setSessionPinOptimistic('srv-b', 's2', { ...pin, sessionId: 's2' });
+
+        harness.get().clearSessionOrganizationForAllServers();
+
+        expect(harness.get().sessionOrganizationPinsBySessionKey).toEqual({});
+        expect(harness.get().sessionOrganizationSnapshotVersionByServerId).toEqual({});
+        expect(harness.get().sessionOrganizationOptimisticRecords).toEqual({});
+    });
 });

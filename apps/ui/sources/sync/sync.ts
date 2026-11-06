@@ -238,7 +238,7 @@ import { migratePendingTerminalConnectScopes } from './domains/pending/pendingTe
 import { migratePendingNotificationActionScopes } from './domains/pending/pendingNotificationAction';
 import { migratePendingNotificationNavScopes } from './domains/pending/pendingNotificationNav';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
-import { setActiveServerSessionListCache } from './store/sessionListCache';
+import { clearServerScopedEntries, setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { t } from '@/text';
@@ -1010,6 +1010,8 @@ class Sync {
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
     private serverScopeGeneration = 0;
+    /** Which Account the store's retained per-Home data came from; see `admitAccountToActiveHome`. */
+    private retainedAccountIdByHomeId = new Map<string, string>();
     private activePendingQueueOwnerContextBySession = new Map<string, {
         snapshot: ReturnType<typeof getActiveServerSnapshot>;
         credentials: AuthCredentials;
@@ -1318,7 +1320,10 @@ class Sync {
             // first request is still running. Backoff sleeps occur outside the
             // permit because InvalidateSync invokes this wrapper per attempt.
             const limitSnapshotSyncAttempt = (command: () => Promise<void>) => (
-                () => this.snapshotSyncAttemptLimiter.run(command)
+                () => this.snapshotSyncAttemptLimiter.run(async () => {
+                    // Signed out: a queued refresh has no Account to read for.
+                    if (this.credentials) await command();
+                })
             );
 
             this.sessionsSync = new InvalidateSync(limitSnapshotSyncAttempt(async () => {
@@ -1988,6 +1993,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = accountId;
+        this.admitAccountToActiveHome(accountId);
         setWarmCacheAccountScope(this.serverID);
         this.activateAccountSettingsScope(accountId);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
@@ -2025,6 +2031,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = accountId;
+        this.admitAccountToActiveHome(accountId);
         setWarmCacheAccountScope(this.serverID);
         this.activateAccountSettingsScope(accountId);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
@@ -2039,6 +2046,55 @@ class Sync {
         this.hydrateWarmCachesForActiveServer();
         this.syncJsThreadLagTelemetryRuntime();
         await this.#init();
+    }
+
+    /**
+     * Session rows, Machine lists and Session Organization stay in the store across a Home switch so
+     * that returning repaints at once, and their keys name the Home. Their content, and the
+     * organization version the snapshot guard compares, belong to one Account, so a different Account
+     * on that Home must not inherit them. A Home this process has not admitted yet counts as different:
+     * whatever it holds came from an unverified Account, and the warm cache repaints right after.
+     */
+    private admitAccountToActiveHome(accountId: string): void {
+        const homeId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        if (!homeId) return;
+        let retainedAccountId: string | undefined;
+        for (const [knownHomeId, knownAccountId] of this.retainedAccountIdByHomeId) {
+            if (!areServerProfileIdentifiersEquivalent(knownHomeId, homeId)) continue;
+            retainedAccountId = knownAccountId;
+            this.retainedAccountIdByHomeId.delete(knownHomeId);
+        }
+        this.retainedAccountIdByHomeId.set(homeId, accountId);
+        if (retainedAccountId === accountId) return;
+
+        const state = storage.getState();
+        state.clearSessionOrganizationForServer(homeId);
+        for (const knownHomeId of Object.keys(state.sessionOrganizationSnapshotVersionByServerId)) {
+            if (knownHomeId !== homeId && areServerProfileIdentifiersEquivalent(knownHomeId, homeId)) {
+                state.clearSessionOrganizationForServer(knownHomeId);
+            }
+        }
+        storage.setState((current) => {
+            const sessionListViewDataByServerId = clearServerScopedEntries(current.sessionListViewDataByServerId, homeId);
+            const machineListByServerId = clearServerScopedEntries(current.machineListByServerId, homeId);
+            const machineListStatusByServerId = clearServerScopedEntries(current.machineListStatusByServerId, homeId);
+            if (sessionListViewDataByServerId === current.sessionListViewDataByServerId
+                && machineListByServerId === current.machineListByServerId
+                && machineListStatusByServerId === current.machineListStatusByServerId) return current;
+            return { ...current, sessionListViewDataByServerId, machineListByServerId, machineListStatusByServerId };
+        });
+    }
+
+    /** Logout removes every Home's credentials, so nothing retained for any Home has an owner left. */
+    public retireAccountDataForEveryHome(): void {
+        this.retainedAccountIdByHomeId.clear();
+        storage.getState().clearSessionOrganizationForAllServers();
+        storage.setState((current) => ({
+            ...current,
+            sessionListViewDataByServerId: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+        }));
     }
 
     private hydrateWarmCachesForActiveServer(): void {
@@ -2227,6 +2283,10 @@ class Sync {
 
     public disconnectServer(): void {
         this.resetServerScopedRuntimeState();
+        // Back to the state before the first sign-in. Kept, a refresh still queued here would read
+        // as the Account that just left, under a generation the next sign-in does not bump.
+        // @ts-expect-error `credentials` is declared definite because 76 readers run signed in only.
+        this.credentials = undefined;
         clearWarmCacheAccountScope();
     }
 
@@ -4177,6 +4237,8 @@ class Sync {
                     .catch(() => undefined);
             } else {
                 await organizationSnapshotRefresh;
+                // The key below was captured for this run's Account; the store may hold the next one's.
+                if (!shouldContinue()) return;
             }
         }
         const organizationProjection = isAppend || isRequiredScope
@@ -7760,6 +7822,8 @@ class Sync {
               refreshedByCatchUp: { ...refreshedByCatchUp },
           });
 
+          if (!this.credentials) return finish('aborted');
+
           const canWriteCursor = (): boolean => {
               if (shouldContinue()) {
                   return true;
@@ -7980,6 +8044,7 @@ class Sync {
                             if (!serverId) {
                                 throw new Error('Cannot refresh session organization without an active server');
                             }
+                            const refreshGeneration = this.serverScopeGeneration;
                             await fetchAndApplySessionOrganizationSnapshot({
                                 credentials: this.credentials,
                                 serverId,
@@ -7996,6 +8061,7 @@ class Sync {
                                     tagIds: plan.tagIds,
                                     orderScopes: plan.orderScopes,
                                 },
+                                shouldContinue: () => this.serverScopeGeneration === refreshGeneration,
                             });
                         },
                         convergePendingForSession: (sessionId) => this.fetchPendingMessages(sessionId),
@@ -8105,6 +8171,8 @@ class Sync {
     }
 
     private handleUpdate = async (update: unknown) => {
+          // Signed out: this update belongs to the Account that left.
+          if (!this.credentials) return;
           const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
           const { shouldContinue } = createSyncGenerationGuard({
               getCurrentGeneration: () => this.serverScopeGeneration,
@@ -8177,6 +8245,7 @@ class Sync {
     }
 
     private handleEphemeralUpdate = (update: unknown) => {
+        if (!this.credentials) return;
         if (parseSessionDraftSocketWake(update)) {
             const capturedScope = getActiveServerAccountScope();
             if (!capturedScope) return;
@@ -8658,6 +8727,11 @@ export async function syncSwitchServer(credentials: AuthCredentials | null): Pro
     }
 
     await sync.switchServer(credentials);
+}
+
+export async function syncLogout(): Promise<void> {
+    await syncSwitchServer(null);
+    sync.retireAccountDataForEveryHome();
 }
 
 async function syncInit(credentials: AuthCredentials, restore: boolean) {

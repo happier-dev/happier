@@ -113,7 +113,7 @@ function warmCacheStorage(): MMKV {
 
 function seedOrganizationWarmCache(serverId: string, pinnedSessionIds?: readonly string[]): void {
     warmCacheStorage().set(
-        `session-organization-warm-cache-v1:${serverId}:${ACCOUNT_ID}`,
+        `session-organization-warm-cache-v2:${serverId}:${ACCOUNT_ID}`,
         JSON.stringify(organizationSnapshot({ pinnedSessionIds })),
     );
 }
@@ -206,10 +206,10 @@ describe('session organization warm cache', () => {
         // The refreshed organization has to survive this process, or the next boot is back on
         // the blocking path.
         await vi.waitFor(() => {
-            const pending = warmCacheStorage().getString(`session-organization-warm-cache-v1:${serverId}:${ACCOUNT_ID}`);
+            const pending = warmCacheStorage().getString(`session-organization-warm-cache-v2:${serverId}:${ACCOUNT_ID}`);
             expect(JSON.parse(String(pending)).version).toBe(9);
         });
-        const persisted = warmCacheStorage().getString(`session-organization-warm-cache-v1:${serverId}:${ACCOUNT_ID}`);
+        const persisted = warmCacheStorage().getString(`session-organization-warm-cache-v2:${serverId}:${ACCOUNT_ID}`);
         expect(JSON.parse(String(persisted))).toMatchObject({
             version: 9,
             pins: [expect.objectContaining({ sessionId: 's_pinned' })],

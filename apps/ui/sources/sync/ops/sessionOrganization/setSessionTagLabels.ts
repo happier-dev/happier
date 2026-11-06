@@ -10,6 +10,7 @@ import type { SessionOrganizationTag } from '@happier-dev/protocol';
 import { setSessionTagAssignments } from './setSessionTagAssignments';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 import { upsertSessionTag } from './upsertSessionTag';
 
 function readCurrentServerTags(serverId: string): SessionOrganizationTag[] {
@@ -59,6 +60,7 @@ export async function setSessionTagLabels(params: Readonly<{
     sessionId: string;
     tags: readonly string[];
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const labels = normalizeSessionTagLabels(params.tags);
     if (labels.length === 0) {
         await setSessionTagAssignments({
@@ -83,7 +85,10 @@ export async function setSessionTagLabels(params: Readonly<{
                 includeTags: true,
                 includeLabels: false,
             },
+            shouldContinue: isAccountCurrent,
         });
+        // What the store holds now is the next Account's; nothing more is written from it.
+        if (!isAccountCurrent()) return;
         currentTags = readCurrentServerTags(params.serverId);
     }
 

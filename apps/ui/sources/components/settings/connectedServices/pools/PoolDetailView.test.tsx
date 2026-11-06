@@ -369,6 +369,11 @@ async function renderPoolDetail() {
     const { PoolDetailView } = await import('./PoolDetailView');
     const screen = await renderScreen(<PoolDetailView />);
     await flushAsyncHandlers();
+    // Provider pool settings load on first render (they sit behind the agent catalog's import chain).
+    await act(async () => {
+        await vi.dynamicImportSettled();
+    });
+    await flushAsyncHandlers();
     return screen;
 }
 

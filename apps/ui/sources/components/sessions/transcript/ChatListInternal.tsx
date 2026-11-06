@@ -1188,6 +1188,8 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         return { limit: Math.max(1, Math.trunc(configuredLimit)) };
     }, []);
     const [firstListPaintObserved, setFirstListPaintObserved] = React.useState(false);
+    const firstListPaintObservedRef = React.useRef(false);
+    useCommittedTranscriptRef(firstListPaintObservedRef, firstListPaintObserved);
     const [nativeViewportPaintObserved, setNativeViewportPaintObservedState] = React.useState(false);
     const nativeViewportPaintObservedRef = React.useRef(false);
     const updateNativeViewportPaintObserved = React.useCallback((observed: boolean) => {
@@ -2109,6 +2111,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     }, [isOlderPaginationNearEdge, resolveWebScrollMetrics]);
     const entryHost = useTranscriptEntryHost({
         activeTargetWindowTargetRef,
+        firstListPaintObservedRef,
         anchorLookupExhaustedRef,
         anchorLookupInFlightRef,
         anchorLookupLoadCountRef,

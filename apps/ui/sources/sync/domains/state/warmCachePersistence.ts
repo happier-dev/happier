@@ -27,7 +27,14 @@ function isWebRuntime(): boolean {
 
 const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v1';
 const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
-const SESSION_ORGANIZATION_WARM_CACHE_PREFIX = 'session-organization-warm-cache-v1';
+const SESSION_ORGANIZATION_WARM_CACHE_PREFIX = 'session-organization-warm-cache-v2';
+/**
+ * Builds that wrote v1 could store one Account's organization under the next Account's key on the
+ * same Home, so a v1 entry cannot be trusted to belong to the Account in its key. Every entry is a
+ * projection of the server's snapshot, so `discardUnprovenWarmCacheEntries` deletes them and the
+ * next refresh repopulates. Only deleted, never read.
+ */
+const UNPROVEN_SESSION_ORGANIZATION_WARM_CACHE_PREFIX = 'session-organization-warm-cache-v1';
 /**
  * Superseded by `SESSION_ORGANIZATION_WARM_CACHE_PREFIX`, which carries the pinned ids as part
  * of the whole organization snapshot. Only deleted here, never read; drop this constant once no
@@ -67,7 +74,7 @@ function sharedDefaultStorageId(storageScope: string | null): string {
 const LEGACY_PLAINTEXT_WARM_CACHE_PREFIXES: readonly string[] = [
     SESSION_LIST_WARM_CACHE_PREFIX,
     MACHINE_DISPLAY_WARM_CACHE_PREFIX,
-    SESSION_ORGANIZATION_WARM_CACHE_PREFIX,
+    UNPROVEN_SESSION_ORGANIZATION_WARM_CACHE_PREFIX,
     LEGACY_SESSION_LIST_PINNED_IDS_WARM_CACHE_PREFIX,
 ];
 
@@ -181,6 +188,16 @@ function resolveWarmCacheStoragePlacement(
  * The warm-cache store, or `null` when this runtime cannot produce one — see
  * `resolveWarmCacheStoragePlacement` for which runtimes those are and why.
  */
+function discardUnprovenWarmCacheEntries(storage: MMKV): void {
+    try {
+        for (const key of storage.getAllKeys()) {
+            if (key.startsWith(`${UNPROVEN_SESSION_ORGANIZATION_WARM_CACHE_PREFIX}:`)) storage.delete(key);
+        }
+    } catch {
+        // These keys are never read, so a failed delete costs bytes until the next boot and nothing else.
+    }
+}
+
 function getWarmCacheStorage(): MMKV | null {
     if (warmCacheStorage) return warmCacheStorage;
     if (warmCacheStorageUnopenable) return null;
@@ -192,6 +209,7 @@ function getWarmCacheStorage(): MMKV | null {
 
     try {
         warmCacheStorage = new MMKV(placement);
+        discardUnprovenWarmCacheEntries(warmCacheStorage);
     } catch {
         // A store we cannot open stays unopened for this process: retrying per read would turn one
         // unusable cache into a throw on every session-list update.

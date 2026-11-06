@@ -105,6 +105,7 @@ export type SessionOrganizationDomain = {
     commitSessionOrganizationOptimistic: (recordId: string) => void;
     confirmSessionAttentionStandingOptimistic: (recordId: string, sessionId: string, standing: SessionAttentionStanding | null) => void;
     clearSessionOrganizationForServer: (serverId: string) => void;
+    clearSessionOrganizationForAllServers: () => void;
     applySessionFolderAssignments: (serverId: string, assignments: readonly SessionFolderAssignment[]) => void;
     setSessionFolderAssignmentsLoading: (serverId: string, loading: boolean) => void;
     setSessionFolderAssignmentOptimistic: (serverId: string, sessionId: string, folderId: string | null) => string | null;
@@ -1016,13 +1017,10 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         clearSessionOrganizationForServer: (serverId) => {
             set((state) => {
                 const folderAssignments = removeServerRecordEntries(state.sessionOrganizationFolderAssignmentsBySessionKey, serverId);
-                return {
-                    sessionOrganizationSnapshotVersionByServerId: Object.fromEntries(
-                        Object.entries(state.sessionOrganizationSnapshotVersionByServerId).filter(([key]) => key !== serverId),
-                    ),
-                    sessionOrganizationSchemaVersionByServerId: Object.fromEntries(
-                        Object.entries(state.sessionOrganizationSchemaVersionByServerId).filter(([key]) => key !== serverId),
-                    ),
+                const hasOptimisticRecord = Object.values(state.sessionOrganizationOptimisticRecords).some((record) => record.serverId === serverId);
+                const next = {
+                    sessionOrganizationSnapshotVersionByServerId: setRecordValue(state.sessionOrganizationSnapshotVersionByServerId, serverId, undefined),
+                    sessionOrganizationSchemaVersionByServerId: setRecordValue(state.sessionOrganizationSchemaVersionByServerId, serverId, undefined),
                     sessionOrganizationPinsBySessionKey: removeServerRecordEntries(state.sessionOrganizationPinsBySessionKey, serverId),
                     sessionOrganizationAttentionStandingsBySessionKey: removeServerRecordEntries(state.sessionOrganizationAttentionStandingsBySessionKey, serverId),
                     sessionOrganizationAppearancesBySessionKey: removeServerRecordEntries(state.sessionOrganizationAppearancesBySessionKey, serverId),
@@ -1034,17 +1032,38 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     sessionOrganizationTagAssignmentsBySessionKey: removeServerRecordEntries(state.sessionOrganizationTagAssignmentsBySessionKey, serverId),
                     sessionOrganizationOrderEntriesByScopeKey: removeServerRecordEntries(state.sessionOrganizationOrderEntriesByScopeKey, serverId),
                     sessionOrganizationLabelsByLabelKey: removeServerRecordEntries(state.sessionOrganizationLabelsByLabelKey, serverId),
-                    sessionOrganizationLoadingByServerId: Object.fromEntries(
-                        Object.entries(state.sessionOrganizationLoadingByServerId).filter(([key]) => key !== serverId),
-                    ),
-                    sessionOrganizationErrorByServerId: Object.fromEntries(
-                        Object.entries(state.sessionOrganizationErrorByServerId).filter(([key]) => key !== serverId),
-                    ),
-                    sessionFolderAssignmentsLoadingByServerId: Object.fromEntries(
-                        Object.entries(state.sessionFolderAssignmentsLoadingByServerId).filter(([key]) => key !== serverId),
-                    ),
-                } as Partial<S>;
+                    sessionOrganizationLoadingByServerId: setRecordValue(state.sessionOrganizationLoadingByServerId, serverId, undefined),
+                    sessionOrganizationErrorByServerId: setRecordValue(state.sessionOrganizationErrorByServerId, serverId, undefined),
+                    sessionFolderAssignmentsLoadingByServerId: setRecordValue(state.sessionFolderAssignmentsLoadingByServerId, serverId, undefined),
+                    // An edit still in flight must not roll the cleared values back in.
+                    sessionOrganizationOptimisticRecords: hasOptimisticRecord
+                        ? Object.fromEntries(Object.entries(state.sessionOrganizationOptimisticRecords).filter(([, record]) => record.serverId !== serverId))
+                        : state.sessionOrganizationOptimisticRecords,
+                };
+                const unchanged = (Object.keys(next) as (keyof typeof next)[]).every((key) => next[key] === state[key]);
+                return unchanged ? state : next as Partial<S>;
             });
+        },
+        clearSessionOrganizationForAllServers: () => {
+            set(() => ({
+                sessionOrganizationSnapshotVersionByServerId: {},
+                sessionOrganizationSchemaVersionByServerId: {},
+                sessionOrganizationPinsBySessionKey: {},
+                sessionOrganizationAttentionStandingsBySessionKey: {},
+                sessionOrganizationAppearancesBySessionKey: {},
+                sessionOrganizationSessionAppearancesSupportedByServerId: {},
+                sessionOrganizationFoldersByFolderKey: {},
+                sessionOrganizationFolderAssignmentsBySessionKey: {},
+                sessionFolderAssignmentsBySessionKey: {},
+                sessionOrganizationTagsByTagKey: {},
+                sessionOrganizationTagAssignmentsBySessionKey: {},
+                sessionOrganizationOrderEntriesByScopeKey: {},
+                sessionOrganizationLabelsByLabelKey: {},
+                sessionOrganizationLoadingByServerId: {},
+                sessionOrganizationErrorByServerId: {},
+                sessionFolderAssignmentsLoadingByServerId: {},
+                sessionOrganizationOptimisticRecords: {},
+            } as Partial<S>));
         },
         applySessionFolderAssignments: applyFolderAssignments,
         setSessionFolderAssignmentsLoading: (serverId, loading) => {

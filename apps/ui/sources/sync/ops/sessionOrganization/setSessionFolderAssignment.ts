@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionFolderAssignment as setSessionFolderAssignmentApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function setSessionFolderAssignment(params: Readonly<{
     credentials: AuthCredentials;
@@ -9,6 +10,7 @@ export async function setSessionFolderAssignment(params: Readonly<{
     sessionId: string;
     folderId: string | null;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const recordId = getStorage().getState().setSessionOrganizationFolderAssignmentOptimistic(
         params.serverId,
         params.sessionId,
@@ -22,6 +24,7 @@ export async function setSessionFolderAssignment(params: Readonly<{
             request: { folderId: params.folderId },
         });
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        if (!isAccountCurrent()) return;
         getStorage().getState().applySessionFolderAssignments(params.serverId, [response]);
     } catch (error) {
         getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);

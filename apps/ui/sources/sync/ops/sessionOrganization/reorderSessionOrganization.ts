@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { reorderSessionOrganization as reorderSessionOrganizationApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function reorderSessionOrganization(params: Readonly<{
     credentials: AuthCredentials;
@@ -9,6 +10,7 @@ export async function reorderSessionOrganization(params: Readonly<{
     serverUrl?: string;
     request: ReorderSessionOrganizationRequest;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const optimisticEntries = params.request.entries.map((entry) => ({
         scopeKind: params.request.scopeKind,
         scopeKey: params.request.scopeKey,
@@ -28,6 +30,7 @@ export async function reorderSessionOrganization(params: Readonly<{
             request: params.request,
         });
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        if (!isAccountCurrent()) return;
         const reconcileRecordId = getStorage().getState().applySessionOrganizationOrderScopeOptimistic(params.serverId, {
             scopeKind: params.request.scopeKind,
             scopeKey: params.request.scopeKey,

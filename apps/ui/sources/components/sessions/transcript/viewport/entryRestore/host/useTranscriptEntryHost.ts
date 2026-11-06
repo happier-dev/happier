@@ -166,6 +166,11 @@ type TranscriptEntryHostDeps = Readonly<{
     isViewportAnchorSeqLoaded(seq: number, items: readonly ChatTranscriptListItem[]): boolean;
     /** The older pager's own prefetch-threshold answer for the current physical viewport. */
     isViewportNearOlderEdge(): boolean;
+    /**
+     * The renderer reported its first load: rows laid out and the initial scroll placement finished
+     * (Legend `onLoad`). Before it, the DOM viewport is not the reader's settled position.
+     */
+    firstListPaintObservedRef: Readonly<{ current: boolean }>;
     jumpToSeq: number | null | undefined;
     jumpToSeqActiveRef: MutableRef<boolean>;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
@@ -1303,6 +1308,25 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                     transcriptInitialFillBudgetMs: sync.getSyncTuning().transcriptInitialFillBudgetMs,
                     transcriptInitialFillMaxNoProgressLoads: sync.getSyncTuning().transcriptInitialFillMaxNoProgressLoads,
                 });
+                // Sufficiency is a question about the tail reader at its settled initial end
+                // placement. The latch can hand this fill the first page before that exists: the
+                // DOM is not laid out yet (renderer content 7,164 px against a 297 / 297 px DOM
+                // viewport) or is laid out but still at scrollTop 0. Read there, the reader looks
+                // underfilled or at the older edge, and a cold open fetched, decrypted and
+                // prepended an older page the reader never asked for (issue #864; 0.3 live
+                // 2026-11-03: 300 messages per cold open instead of 150). The renderer's load
+                // signal is that settlement: Legend reports it once its containers laid out AND
+                // its initial scroll finished. The wait is bounded by one budget window, after
+                // which the geometry is read as it is, so a renderer that never reports load
+                // still fills. It is not fill progress, so the fill's own bounds start after it.
+                const placementWaitDeadlineMs = Date.now() + budgetMs;
+                while (
+                    !webFillSignal.aborted
+                    && deps.firstListPaintObservedRef.current !== true
+                    && Date.now() < placementWaitDeadlineMs
+                ) {
+                    await new Promise((resolve) => setTimeout(resolve, WEB_FILL_TRANSIENT_RETRY_MS));
+                }
                 const startedAtMs = Date.now();
                 // The no-progress counter alone does NOT bound this: a transcript whose pages
                 // each add a couple of px of displayable height resets it every iteration and

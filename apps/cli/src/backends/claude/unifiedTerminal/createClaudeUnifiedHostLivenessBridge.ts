@@ -1,6 +1,9 @@
 import type { TerminalHostAdapter, TerminalHostHandle, TerminalHostLiveness } from '@/integrations/terminalHost/_types';
 import { sanitizeTerminalHostDiagnosticText } from '@/integrations/terminalHost/sanitizeTerminalHostDiagnosticText';
 import { delayUnrefAbortable } from '@/utils/time';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+import { readTerminalClientProcessState, terminalClientArgvMatchesInvocation } from '@/terminal/runtime/terminalClientCustody';
+import type { OwnedTerminalProcessIdentity } from '@/terminal/runtime/ownedTerminalProcess';
 
 import { ClaudeUnifiedTerminalHostDeadError } from './createClaudeUnifiedController';
 import type { ClaudeUnifiedStartableDisposable } from './_types';
@@ -54,6 +57,10 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
   }>) => void | Promise<void>) | undefined;
   onHostExited?: ((liveness: TerminalHostLiveness) => void | Promise<void>) | undefined;
   isExpectedHostExit?: ((liveness: TerminalHostLiveness) => boolean) | undefined;
+  providerInvocation?: Readonly<{ command: string; args: readonly string[] }> | undefined;
+  onProviderGone?: ((params: Readonly<{
+    liveness: TerminalHostLiveness;
+  }>) => void | Promise<void>) | undefined;
   telemetry?: ClaudeUnifiedTelemetrySink | undefined;
   pollIntervalMs?: number | undefined;
   confirmDeadPollIntervalMs?: number | undefined;
@@ -89,6 +96,7 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
   let pendingDeadLiveness: TerminalHostLiveness | null = null;
   let probeFailureStreakStartedAtMs: number | null = null;
   let probeFailureStarvationEscalated = false;
+  let providerIdentity: OwnedTerminalProcessIdentity | null = null;
   let startupGracePreviouslyActive = opts.startupGraceActive?.() === true;
 
   const reportHostExited = async (liveness: TerminalHostLiveness): Promise<void> => {
@@ -154,6 +162,27 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
       startupGracePreviouslyActive = opts.startupGraceActive?.() === true;
       if (disposed || abortSignal.aborted) return;
       const probeInconclusive = probeFailed || liveness.probeInconclusive === true;
+      const providerInvocation = opts.providerInvocation;
+      if (opts.onProviderGone && providerInvocation) {
+        if (!providerIdentity && !probeInconclusive) {
+          const candidates = liveness.paneForegroundProcesses?.filter(process =>
+            terminalClientArgvMatchesInvocation(process.argv, providerInvocation));
+          const candidate = candidates?.length === 1 ? candidates[0] : undefined;
+          const fingerprint = candidate ? readProcessInstanceFingerprintSync(candidate.pid) : null;
+          if (candidate && fingerprint) providerIdentity = { pid: candidate.pid, processInstanceFingerprint: fingerprint };
+        }
+        if (providerIdentity) {
+          const state = await readTerminalClientProcessState(providerIdentity);
+          if (disposed || abortSignal.aborted) return;
+          if (state === 'dead') {
+            // A foreground snapshot may omit a live provider. Only the identified OS
+            // instance's exit proves termination; unknown identity/state never does.
+            reported = true;
+            await opts.onProviderGone({ liveness });
+            return;
+          }
+        }
+      }
       if (!liveness.paneAlive) {
         const graceActive = opts.startupGraceActive?.() ?? true;
         if (graceActive && startupGraceMs > 0 && nowMs() - startedAtMs < startupGraceMs) {
