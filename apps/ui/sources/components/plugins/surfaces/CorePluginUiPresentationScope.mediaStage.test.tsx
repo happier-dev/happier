@@ -13,14 +13,15 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock().module;
 });
 
+import { StoredImage } from '@happier-dev/plugin-ui';
+import { PluginUiProvider } from '@happier-dev/plugin-ui/advanced';
+import { CorePluginUiPresentationScope } from './CorePluginUiPresentationScope';
+import { MediaStage } from '@/components/ui/media/stage/MediaStage';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { ModalProvider, useModal } from '@/modal';
+
 describe('mounted same-realm media stage', () => {
     it('uses the admitted PNG result for StoredImage stage backing', async () => {
-        const { StoredImage } = await import('@happier-dev/plugin-ui');
-        const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
-        const { CorePluginUiPresentationScope } = await import('./CorePluginUiPresentationScope');
-        const { MediaStage } = await import('@/components/ui/media/stage/MediaStage');
-        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
-        const { ModalProvider, useModal } = await import('@/modal');
         const context = createSurfaceContext();
         // Reading admitted bytes is the plugin host API boundary; all presentation owners stay real.
         const hostApi = createHostApiStub(context, { readStoredImage: async () => ({

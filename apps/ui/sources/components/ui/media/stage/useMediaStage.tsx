@@ -8,7 +8,7 @@ import {
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalPortalTarget, type ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
-import { MediaStage } from './MediaStage';
+import { MediaStage } from './MediaStageHost';
 import { freezeMediaStageGallery, type MediaStageItem, type MediaStageProps } from './mediaStageItems';
 
 type MediaStageModalProps = MediaStageProps & CustomModalInjectedProps & Readonly<{

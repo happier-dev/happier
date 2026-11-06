@@ -1,3 +1,5 @@
+// @happier-test-preparation source
+// Builds authored UI entries with installed tooling; no workspace publication outputs are consumed.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -378,5 +380,47 @@ test('sync consumers and lazy presence never pull the sync implementation into t
     } finally {
         if (server) await server.end();
         rmSync(cache, { recursive: true, force: true });
+    }
+});
+
+test('compiled web clipboard hook starts its platform write in the gesture and honors cancellation', async () => {
+    const { build } = require('esbuild');
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/hooks/ui/useClipboardWrite.web.ts')],
+        bundle: true, format: 'cjs', platform: 'browser', packages: 'external',
+        write: false, metafile: true, logLevel: 'silent',
+    });
+    assert.deepEqual(Object.keys(result.metafile.inputs).filter(file =>
+        /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file)), []);
+    const React = require('react');
+    const { act, create } = require('react-test-renderer');
+    const writes = [];
+    // Browser and native clipboard modules are platform boundaries; all hook and effect code is real.
+    const sandbox = {
+        module: { exports: {} }, navigator: { clipboard: { writeText: async text => { writes.push(text); } } },
+        require: name => name === 'react-native' ? { Platform: { OS: 'web' } }
+            : name === 'expo-clipboard' ? {} : require(name),
+        console,
+    };
+    sandbox.exports = sandbox.module.exports;
+    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
+    const { useClipboardWrite } = sandbox.module.exports;
+    let write;
+    const Probe = () => { write = useClipboardWrite(); return null; };
+    const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    let screen;
+    try {
+        await act(async () => { screen = create(React.createElement(Probe)); });
+        const copied = write('compiled gesture');
+        assert.deepEqual(writes, ['compiled gesture'], 'the browser write must start before the caller can await');
+        assert.equal(await copied, true);
+        const cancellation = new AbortController();
+        cancellation.abort();
+        assert.equal(await write('canceled gesture', { signal: cancellation.signal }), false);
+        assert.deepEqual(writes, ['compiled gesture'], 'an already canceled copy has no platform effect');
+    } finally {
+        if (screen) await act(async () => screen.unmount());
+        globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     }
 });

@@ -10,6 +10,10 @@ import { renderScreen } from '@/dev/testkit';
 
 installNavigationCommonModuleMocks();
 
+// Cold module transformation belongs to collection; each test measures the mounted bar.
+const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+
 const DASHBOARDS = [
   { id: 'overview', name: 'Overview', isDefault: true },
   { id: 'release', name: 'Release', isDefault: false },
@@ -60,9 +64,6 @@ const overflow = (screen: Screen, testID: string) =>
 
 describe('WidgetAreaLayoutBar', () => {
   it('names a lone layout as the page title with its menu, never a strip of one tab', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
-    const { DropdownMenu } =
-      await import('@/components/ui/forms/dropdown/DropdownMenu');
     const onCreate = vi.fn();
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
@@ -84,7 +85,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('remeasures compact tabs after a rename or deletion and restores the strip when it fits', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const props = { selectedId: 'overview', onSelect: () => {}, onCreate: null,
       actions: null, labels: LABELS, testID: 'bar' };
     const screen = await renderScreen(<WidgetAreaLayoutBar {...props} layouts={DASHBOARDS} />);
@@ -106,9 +106,6 @@ describe('WidgetAreaLayoutBar', () => {
     await screen.unmount();
   });
   it('separates host presets from the viewer layouts in the compact selector', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
-    const { DropdownMenu } =
-      await import('@/components/ui/forms/dropdown/DropdownMenu');
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
         layouts={[
@@ -133,7 +130,6 @@ describe('WidgetAreaLayoutBar', () => {
     await screen.unmount();
   });
   it("draws one underlined tab strip for every area owner: a Project's dashboards and a core page's icon views are the same tabs", async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const { HappierTabs } = await import('@happier-dev/plugin-ui/presentation');
     const shared = {
       selectedId: 'overview',
@@ -173,9 +169,6 @@ describe('WidgetAreaLayoutBar', () => {
     expect(usage.findByTestId('usage.create')).not.toBeNull();
   });
   it('keeps the edited dot and accessible status in wide tabs, the compact trigger and its menu, then clears them after Reset', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
-    const { DropdownMenu } =
-      await import('@/components/ui/forms/dropdown/DropdownMenu');
     const props = {
       labels: LABELS,
       layouts: DASHBOARDS.map((dashboard) => ({
@@ -219,7 +212,6 @@ describe('WidgetAreaLayoutBar', () => {
     ).toBeUndefined();
   });
   it('switches dashboards through the one selector without acting on any document', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const onSelect = vi.fn();
     const onCreate = vi.fn();
     const screen = await renderScreen(
@@ -240,9 +232,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('acts on the exact selected document and refuses the default delete with the owner reason', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
-    const { DropdownMenu } =
-      await import('@/components/ui/forms/dropdown/DropdownMenu');
     const share = vi.fn();
     const rename = vi.fn();
     const moveAfter = vi.fn();
@@ -309,7 +298,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('becomes the current-name menu when its measured tabs do not fit, and the tabs again once the bar has the room', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
         layouts={DASHBOARDS}
@@ -349,7 +337,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('keeps the tabs when the scroller reports a transient width while the bar settles, and never sticks on the menu', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
         layouts={DASHBOARDS.slice(0, 2)}
@@ -370,7 +357,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('keeps the tab row by dropping the view icons first, and only then becomes the current-name menu', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
         labels={LABELS}
@@ -410,7 +396,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('holds the strip invisible, with its space, until the first fit is known, and then paints the final form once', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
     const screen = await renderScreen(
       <WidgetAreaLayoutBar
         labels={LABELS}
@@ -441,9 +426,6 @@ describe('WidgetAreaLayoutBar', () => {
   });
 
   it('becomes the current-name menu on a narrow pane, with Create at its end', async () => {
-    const { WidgetAreaLayoutBar } = await import('./WidgetAreaLayoutBar');
-    const { DropdownMenu } =
-      await import('@/components/ui/forms/dropdown/DropdownMenu');
     const onSelect = vi.fn();
     const onCreate = vi.fn();
     const screen = await renderScreen(

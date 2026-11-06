@@ -1,6 +1,13 @@
+import {
+    PluginUiMarkdown, PluginUiPrivateDiffViewer, CodeBlockView, ProseDiffViewer, QRCode,
+    PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport,
+    PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt,
+    ExecutableParticipantPickerPresentation,
+} from './pluginUiPrivateContent';
+import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
+import { usePluginVoiceAttempt } from './pluginVoiceContext';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 import * as React from 'react';
-import { PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, usePluginVoiceAttempt } from './PluginVoicePresence';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
@@ -21,7 +28,6 @@ import {
     type ViewStyle,
 } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 
 import {
     normalizeHappierCodeLanguage,
@@ -34,24 +40,11 @@ import {
     type HappierSurfaceProps,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { PluginUiMarkdown, type PluginMarkdownWorkspace } from './PluginUiMarkdown';
-import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
-import { QRCode } from '@/components/qr/QRCode';
-import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
-import { ProseDiffViewer } from '@/components/ui/code/diff/prose/ProseDiffViewer';
-import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
-import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
-import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
-import { SceneArt } from '@/components/ui/surfaces/SceneArt';
-import { VoiceStatusCell } from '@/components/voice/presence/VoiceStatusCell';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
 import { SetupBlockGrid } from '@/components/ui/setupBlocks/SetupBlockGrid';
-import { PluginDictationButton } from './PluginDictationButton';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps, SetupBlockTileProps, SetupBlockGridProps } from '@happier-dev/plugin-ui';
 import { STORED_IMAGE_HOST } from '@/components/ui/media/StoredImagePicture';
 import type {
@@ -82,12 +75,10 @@ import type { HappierDisclosureCaretDensity, HappierPageChrome, HappierStateSize
 import type { DetailsPaneSlotBinding } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import type { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeaderSlot';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { useSetting } from '@/sync/store/settingsReadHooks';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { resolveAppLocalDateTimePicker } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
-import { ExecutableParticipantPickerPresentation } from '@/components/sessions/authoring/ExecutableParticipantPickerPresentation';
 import type { ExecutableParticipantPickerProps } from '@happier-dev/plugin-ui/components';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
@@ -314,42 +305,6 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
         externallyLabelled: props.externallyLabelled,
         testID: props.testID,
     });
-}
-
-/**
- * Thin plugin-surface adapter over the incumbent app DiffViewer. It deliberately
- * owns no parser, cache, or review state: current user settings and the existing
- * inline virtualization policy remain the only decisions.
- */
-function PluginUiPrivateDiffViewer(props: Extract<HappierDiffViewerRequest, { unifiedDiff: string }>): React.ReactElement {
-    const configuredWrapLines = useSetting('wrapLinesInDiffs');
-    const configuredLineNumbers = useSetting('showLineNumbers');
-    const thresholds = useInlineDiffVirtualizationThresholds();
-    const { height: windowHeight } = usePresentationWindowDimensions();
-    const virtualized = resolveInlineDiffVirtualization({
-        unifiedDiff: props.unifiedDiff,
-        oldText: null,
-        newText: null,
-        lineThreshold: thresholds.lineThreshold,
-        byteThreshold: thresholds.byteThreshold,
-    });
-
-    return (
-        <View style={virtualized
-            ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight))
-            : undefined}
-        >
-            <DiffViewer
-                mode="unified"
-                unifiedDiff={props.unifiedDiff}
-                filePath={props.filePath}
-                wrapLines={configuredWrapLines !== false}
-                showLineNumbers={configuredLineNumbers !== false}
-                virtualized={virtualized}
-                testID={props.testID}
-            />
-        </View>
-    );
 }
 
 /**

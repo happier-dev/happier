@@ -257,3 +257,40 @@ test('native pane, fixture and builtin widget hosts keep their bodies synchronou
         }
     }
 });
+
+test('web clipboard controls do not load native Action approval or execution', () => {
+    const origin = join(repoRoot, 'apps/ui/sources/components/ui/lists/Item.tsx');
+    const entry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'web');
+    assert.equal(entry?.type, 'sourceFile');
+    const { required } = collectUiWebGraph([relative(repoRoot, entry.filePath)]);
+    const actionModules = [...required].filter(file => /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file));
+    console.log(JSON.stringify({ feature: 'web clipboard', staticUiModules: required.size, nativeActionModules: actionModules.length }));
+    assert.deepEqual(actionModules, [], 'web copy must retain the click-stack clipboard path without native Action custody');
+    const nativeEntry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'ios');
+    assert.equal(nativeEntry?.type, 'sourceFile');
+    assert.equal(nativeEntry.filePath, join(repoRoot, 'apps/ui/sources/hooks/ui/useClipboardWrite.ts'),
+        'native controls retain the mounted Account and approval owner');
+});
+
+test('collection presentation loads rich content only when its presenter is used', () => {
+    const { graph, required } = collectUiWebGraph([
+        'apps/ui/sources/components/ui/lists/collection/CoreCollectionScope.tsx',
+    ]);
+    const content = [
+        '/plugins/surfaces/PluginUiMarkdown.tsx',
+        '/ui/code/blocks/CodeBlockView.tsx',
+        '/ui/code/diff/DiffViewer.tsx',
+        '/ui/code/diff/prose/ProseDiffViewer.tsx',
+        '/plugins/surfaces/PluginVoicePresence.tsx',
+        '/plugins/surfaces/PluginDictationButton.tsx',
+        '/ui/media/stage/MediaStage.tsx',
+    ];
+    const matchesContent = (file, suffix) => file.replace(/\.web(?=\.[^.]+$)/, '').endsWith(suffix);
+    const eager = [...required].filter(file => content.some(suffix => matchesContent(file, suffix)));
+    console.log(JSON.stringify({ feature: 'collection presentation', staticUiModules: required.size,
+        staticUiSourceBytes: [...required].reduce((sum, file) => sum + statSync(file).size, 0),
+        eagerPresenters: eager.map(file => relative(repoRoot, file)) }));
+    assert.deepEqual(eager, [], 'a collection scope must not download unopened rich-content presenters');
+    for (const suffix of content) assert.ok([...graph.keys()].some(file => matchesContent(file, suffix)),
+        `real presentation demand must retain ${suffix}`);
+});
