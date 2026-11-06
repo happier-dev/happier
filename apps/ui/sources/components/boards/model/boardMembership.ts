@@ -23,13 +23,27 @@ export type BoardMember = Readonly<{
 
 export type BoardMembership = Readonly<{
     members: readonly BoardMember[];
-    /** Every chosen section and the filter have answered; until then nothing may be pruned. */
+    /** Every chosen source proves its membership; pending or undetermined candidates prevent pruning. */
     complete: boolean;
     /** Hidden sourced Sessions remain live for layout pruning and return to their place when unlinked. */
     representedSessionKeys?: readonly string[];
     /** Visit-local source projection shared by membership and cards, never persisted in the Board. */
     taskItems?: ReadonlyMap<string, PluginWorkItemV1 | null>;
+    refreshTaskItems?: () => void;
+    /** The Work Items owner answered with incomplete source coverage. */
+    taskItemsComplete?: boolean;
 }>;
+
+/** Answered filter candidates whose membership remains unknown, never a negative match. */
+export type BoardUndeterminedMembership = Readonly<{
+    count: number;
+    reasons: readonly Readonly<{
+        kind: 'session' | 'workflow_run';
+        reason: 'project_association_unavailable' | 'filter_facts_unavailable';
+        count: number;
+    }>[];
+}>;
+export const NO_UNDETERMINED_BOARD_MEMBERSHIP: BoardUndeterminedMembership = Object.freeze({ count: 0, reasons: Object.freeze([]) });
 
 /**
  * The live inputs of a board's source, each from its existing owner: Needs you from the Inbox model,
@@ -42,21 +56,32 @@ export type BoardMembershipSources = Readonly<{
     sections: Readonly<Partial<Record<WorkBoardSectionV1, readonly BoardItemRefV1[] | null>>>;
     /** An answered page is still incomplete while its canonical source has more pages or has failed. */
     sectionComplete?: Readonly<Partial<Record<WorkBoardSectionV1, boolean>>>;
+    /** Readiness is separate from authoritative membership for layout pruning. */
+    sectionSettled?: Readonly<Partial<Record<WorkBoardSectionV1, boolean>>>;
     /** Mounting a Home does not imply that an Account-scoped source serves it. */
     isSourceAvailable?: (ref: BoardItemRefV1) => boolean;
     filtered: readonly BoardItemRefV1[] | null | undefined;
     /** False while some Home has not answered the filter yet; the answered Homes' Sessions still show. */
     filterComplete?: boolean;
+    filterSettled?: boolean;
+    filterUndetermined?: BoardUndeterminedMembership;
+    taskItemsComplete?: boolean;
+    taskItemsSettled?: boolean;
     /** Live links from the admitted plugin projection; unresolved tasks represent no Sessions. */
     linkedSessionsForTask?: (ref: Extract<BoardItemRefV1, { kind: 'task' }>) => readonly BoardItemRefV1[] | null;
 }>;
 
 /** What is on a board now: sections in their fixed order, then the filter, then what was added by hand. */
-export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembershipSources): BoardMembership {
+export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembershipSources): BoardMembership & Readonly<{
+    /** All selected readers have answered; zero members is empty only when undetermined is also zero. */
+    settled: boolean;
+    undetermined: BoardUndeterminedMembership;
+}> {
     const pickedKeys = new Set(board.source.picked.map(buildWorkBoardItemKeyV1));
     const chosenSections = new Set(board.source.sections ?? []);
     const byKey = new Map<string, BoardMember>();
-    let complete = true;
+    let complete = sources.taskItemsComplete !== false;
+    let settled = sources.taskItemsSettled !== false;
     const available = (ref: BoardItemRefV1) => sources.isHomeMounted(ref.qualifiedId.serverId)
         && sources.isSourceAvailable?.(ref) !== false;
     const add = (ref: BoardItemRefV1, sourced: boolean) => {
@@ -73,6 +98,7 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
     for (const section of WORK_BOARD_SECTIONS_V1) {
         if (!chosenSections.has(section)) continue;
         const refs = sources.sections[section];
+        if (!refs || sources.sectionSettled?.[section] === false) settled = false;
         if (sources.sectionComplete?.[section] === false) complete = false;
         if (!refs) {
             complete = false;
@@ -81,6 +107,7 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
         refs.forEach((ref) => add(ref, true));
     }
     if (board.source.filter) {
+        if (!sources.filtered || sources.filterSettled === false) settled = false;
         if (!sources.filtered || sources.filterComplete === false) complete = false;
         sources.filtered?.forEach((ref) => add(ref, true));
     }
@@ -99,7 +126,27 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
         }
     }
     const members = [...byKey.values()].filter(member => member.ref.kind !== 'session' || member.picked || !represented.has(member.key));
-    return { members, complete, ...(represented.size > 0 ? { representedSessionKeys: [...represented] } : {}) };
+    const undetermined = board.source.filter ? sources.filterUndetermined ?? NO_UNDETERMINED_BOARD_MEMBERSHIP : NO_UNDETERMINED_BOARD_MEMBERSHIP;
+    return { members, complete: complete && undetermined.count === 0, settled, undetermined,
+        taskItemsComplete: sources.taskItemsComplete,
+        ...(represented.size > 0 ? { representedSessionKeys: [...represented] } : {}) };
+}
+
+/** One visit's membership producer. Source phases and equal page carriers do not replace unchanged
+ * members; a changed fact replaces only its own member, preserving the canvas's retained identity. */
+export function createBoardMembershipProjection() {
+    let previous: readonly BoardMember[] = [];
+    return (board: WorkBoardV1, sources: BoardMembershipSources) => {
+        const next = projectBoardMembership(board, sources);
+        const byKey = new Map(previous.map(member => [member.key, member]));
+        const members = next.members.map(member => {
+            const retained = byKey.get(member.key);
+            return retained && retained.picked === member.picked && retained.sourced === member.sourced
+                && retained.available === member.available ? retained : member;
+        });
+        if (members.length !== previous.length || members.some((member, index) => member !== previous[index])) previous = members;
+        return { ...next, members: previous };
+    };
 }
 
 /**

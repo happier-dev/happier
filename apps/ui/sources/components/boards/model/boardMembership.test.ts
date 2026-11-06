@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     buildWorkBoardItemKeyV1,
     createWorkBoardV1,
-    normalizeSessionListFilterV1,
     type BoardItemRefV1,
     type WorkBoardV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/boards/workBoardV1';
+import {
+    normalizeSessionListFilterV1} from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import { projectBoardMembership, resolveBoardPruneMembership } from './boardMembership';
 
@@ -20,6 +21,24 @@ function board(source: WorkBoardV1['source'], positions: WorkBoardV1['positionsB
 const mounted = (serverIds: readonly string[]) => (serverId: string) => serverIds.includes(serverId);
 
 describe('projectBoardMembership', () => {
+    it('separates source settlement from an empty projection and pruning completeness', () => {
+        const filteredBoard = board({ picked: [], filter: normalizeSessionListFilterV1({ homeServerIds: ['home-a'] }) });
+        const sources = { isHomeMounted: mounted(['home-a']), sections: {}, filterComplete: false };
+        expect(projectBoardMembership(filteredBoard, { ...sources, filtered: null })).toMatchObject({ members: [], settled: false });
+        expect(projectBoardMembership(filteredBoard, { ...sources, filtered: [], filterSettled: false })).toMatchObject({ members: [], settled: false });
+        expect(projectBoardMembership(filteredBoard, { ...sources, filtered: [], filterSettled: true })).toMatchObject({ members: [], complete: false, settled: true });
+        expect(projectBoardMembership(filteredBoard, { ...sources, filtered: [session('home-a', 's1')], filterSettled: true }))
+            .toMatchObject({ members: [{ ref: session('home-a', 's1') }], settled: true });
+        const unknownKey = buildWorkBoardItemKeyV1(session('home-a', 'unknown'));
+        const positioned = { ...filteredBoard, positionsByItemRef: { [unknownKey]: { x: 0, y: 0 } } };
+        const undetermined = { count: 1, reasons: [{ kind: 'session' as const, reason: 'project_association_unavailable' as const, count: 1 }] };
+        const partial = projectBoardMembership(positioned, { ...sources, filtered: [session('home-a', 's1')],
+            filterComplete: true, filterSettled: true, filterUndetermined: undetermined });
+        expect(partial).toMatchObject({ settled: true, complete: false, undetermined });
+        expect(partial.members.map(member => member.ref)).toEqual([session('home-a', 's1')]);
+        expect(resolveBoardPruneMembership(positioned, partial, sources.isHomeMounted).liveItemKeys).toContain(unknownKey);
+    });
+
     it('represents sourced linked Sessions by an available task but keeps explicit picks and qualified neighbors', () => {
         const task = { kind: 'task', qualifiedId: { serverId: 'home-a', id: 'task-1' }, pluginId: 'com.acme.tasks' } as const;
         const sources = {
