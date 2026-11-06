@@ -1,7 +1,7 @@
 import { settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
 import { projectApprovalExecutionFailureV2 } from '../../approvals/approvalExecutionFailure.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
-import { type ActionId } from '../actionIds.js';
+import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { requiresExactDaemonApprovalReplay, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
@@ -80,6 +80,11 @@ export function buildActionExecuteResultFromRecordedApprovalExecution(request: A
   const operationCredentialUses = request.v === 2 || !('actionId' in request)
     ? request.execution.operationCredentialUses : undefined;
   if (request.execution.ok) {
+    const actionId = ActionIdSchema.safeParse('actionId' in request ? request.actionId : undefined);
+    if (actionId.success && getActionSpec(actionId.data).approvalResultCustody === 'live_only') {
+      return { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held',
+        ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
+    }
     return { ok: true, result: request.execution.result,
       ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
   }

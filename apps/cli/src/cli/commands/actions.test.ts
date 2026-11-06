@@ -398,7 +398,7 @@ describe('actions root command', () => {
     let onApprovalRequested: Parameters<typeof createCliActionExecutorHarness>[0]['onApprovalRequested'];
     const effect = vi.fn(async () => result);
     const { executor } = createCliActionExecutorHarness({ token: 'synthetic-account', sessionId: '', mode: 'plain', ctx: null,
-      onApprovalRequested: (artifactId, signal) => onApprovalRequested?.(artifactId, signal) }, {
+      onApprovalRequested: (artifactId, signal, decide) => onApprovalRequested?.(artifactId, signal, decide) }, {
       // Account HTTP/Artifact persistence and device credential provenance are boundaries.
       accountApiTokensCreateAction: effect,
       isActionApprovalRequired: id => id === 'account.apiTokens.create',

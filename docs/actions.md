@@ -6292,9 +6292,13 @@ In 0.3 development, CLI Actions with live-only results return the typed
 requested. The CLI presents that id and prompts for a decision, or approves with
 `--yes`. The captured executor runs an approved deferred request through the
 ordinary decision-to-execution path, independently of the original CLI
-connection. A later `approval.request.get` collects the typed observation-safe
+connection. A later `approval.request.get` collects the observation-safe
 execution receipt; private result fields are returned only to the live person
-deciding. Actions requiring live-only input keep their existing retained-input
+deciding. The shared CLI approval consumer preserves the deciding call's typed
+live result when its receipt arrives first. A receipt-only caller receives
+`approval_result_held` for a successful Action with live-only result custody,
+instead of treating that observation as the Action's typed result.
+Actions requiring live-only input keep their existing retained-input
 custody instead of persisting that input for deferred replay.
 
 In 0.3 development, a standalone CLI approval whose live invocation owns the

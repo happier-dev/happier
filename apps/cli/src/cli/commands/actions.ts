@@ -1,6 +1,7 @@
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { showHelp } from '../actions/discoveryHelp';
 import { randomUUID } from 'node:crypto';
+import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 import { actionSpecToActionDefinitionV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -405,7 +406,8 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
       ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
       : deps.readCredentialsFn,
     externalActionClient: true as const,
-    onApprovalRequested: async (artifactId: string, confirmationSignal: AbortSignal): Promise<ActionExecuteResult> => {
+    onApprovalRequested: async (artifactId: string, confirmationSignal: AbortSignal,
+      decide: Parameters<CliApprovalRequestedHandler>[2]): Promise<ActionExecuteResult> => {
       console.error(`Waiting for approval: ${artifactId}`);
       let approve = hasInvokeOption(args, INVOKE_YES_FLAG);
       if (!approve) {
@@ -415,8 +417,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
           if (confirmationSignal.aborted) throw error;
         }
       }
-      const decision = await executor.execute('approval.request.decide', { artifactId, decision: approve ? 'approve' : 'reject' },
-        { ...context, signal: confirmationSignal, actionRequestId: randomUUID() });
+      const decision = await decide(approve ? 'approve' : 'reject');
       return !approve && decision.ok
         ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } : decision;
     },

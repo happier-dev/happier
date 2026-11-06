@@ -26,6 +26,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
 import {
   callMachineRpc as callMachineRpcRuntime,
 } from '@/session/transport/rpc/machineRpc';
@@ -56,9 +57,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
   callMachineRpc?: typeof callMachineRpcRuntime;
   actionExecutor?: Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>;
   signal?: AbortSignal;
-  onApprovalRequested?: (artifactId: string, signal: AbortSignal,
-    decide: (decision: 'approve' | 'reject') => Promise<ActionExecuteResult>) =>
-      void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
+  onApprovalRequested?: CliApprovalRequestedHandler;
 }>): ConnectedAccountDaemonClient {
   const machineId = params.machineId?.trim();
   if (params.machineId !== undefined && !machineId) {
@@ -95,9 +94,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
       const host = owner.connectedAccountAuthenticationHost;
       if (!host) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
       const executorOptions = { credentials: params.credentials, savedSecretOperationContext,
-        ...(params.onApprovalRequested ? { onApprovalRequested: (artifactId: string, confirmationSignal: AbortSignal) =>
-          params.onApprovalRequested!(artifactId, confirmationSignal, decision =>
-            executeAction('approval.request.decide', { artifactId, decision }, confirmationSignal)) } : {}),
+        ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
         ...(machineId ? { machineId } : {}) };
       const nativeExecutor = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutorFromCredentials({
         ...executorOptions, connectedAccountAuthenticationHost: host }));

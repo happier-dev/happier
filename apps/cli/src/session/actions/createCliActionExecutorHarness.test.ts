@@ -6,6 +6,7 @@ import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import fastify from 'fastify';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -14,7 +15,7 @@ import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/accou
 import type { ActionExecutorDeps, ApprovalRequestV1 } from '@happier-dev/protocol';
 import * as persistence from '@/persistence';
 
-import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
@@ -32,6 +33,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { registerAccountHomeHttp } from './widgetApproval.testkit';
 
 // Socket.IO is the external transport boundary. The socket factory, managed
 // supervisor, Account observer and approval coordinator all remain real.
@@ -89,6 +93,73 @@ async function expectPromiseStillPending(promise: Promise<unknown>): Promise<voi
 }
 
 describe('createCliActionExecutorHarness', () => {
+  it('returns the same-host live result when its recorded receipt arrives before the decision callback', async () => {
+    const home = 'https://approval-home.example.test';
+    const app = fastify();
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: home });
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+    const features = registerAccountHomeHttp(app, { accountId: 'owner', serverId: 'srv_home' });
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(features));
+    const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
+      machineId: 'machine', serverId: 'home', serverApiUrl: home,
+      // This is the OS/installation identity boundary; currentness logic stays real.
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: 'srv_home' }) });
+    const actionId = 'connectedServices.authentication.beginConnect';
+    const input = { service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'oauth' };
+    const live = { status: 'awaitingOAuth', attemptId: 'attempt', callbackUrl: 'https://callback.example.test/',
+      authorizationUrl: 'https://authorize.example.test/' };
+    let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: input, summary: 'Connect',
+      approval: { flow: 'deferred', result: 'required' },
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'srv_home', accountId: 'owner', machineId: 'machine', actionId, requestId: 'connect-request' } });
+    let releaseDecision!: () => void;
+    const heldDecision = new Promise<void>(resolve => { releaseDecision = resolve; });
+    let receiptRead = false;
+    let effects = 0;
+    let reportDecision!: (result: import('@happier-dev/protocol').ActionExecuteResult) => void;
+    const decided = new Promise<import('@happier-dev/protocol').ActionExecuteResult>(resolve => { reportDecision = resolve; });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner' };
+    const harness = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'home', serverIdentityId: 'srv_home', serverHttpBaseUrl: home }, { ...createUnavailableActionTransportDeps(),
+      isApprovalExecutionOriginCurrent: currentness,
+      // Artifact persistence and the native authentication transport are boundaries.
+      approvalsGet: async () => { if (request.status === 'executed') receiptRead = true; return request; },
+      approvalsUpdate: async args => {
+        request = ApprovalRequestV2Schema.parse(args.request);
+        for (const socket of wire.sockets) socket.update({ t: 'account-change' });
+        return { ok: true };
+      },
+      connectedServiceAction: async () => { effects++; return live; },
+    });
+    const result = consumeDeferredCliApprovalResult({ ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'connect', actionId,
+    } }, { onApprovalRequested: async (_id, _signal, decide) => {
+      const decision = await decide('approve');
+      reportDecision(decision);
+      await heldDecision;
+      return decision;
+    }, execute: harness.executor.execute, token: credentials.token, serverHttpBaseUrl: home, context });
+    void result.catch(() => undefined);
+    try {
+      const decision = await decided;
+      expect(decision.ok ? 'ok' : decision.errorCode).toBe('ok');
+      expect(decision).toMatchObject({ ok: true, result: { liveExecution: { ok: true, result: live } } });
+      await vi.waitFor(() => expect(receiptRead).toBe(true));
+      releaseDecision();
+      expect(await result).toEqual({ ok: true, result: live });
+      const collected = await consumeDeferredCliApprovalResult({ ok: true, result: {
+        kind: 'approval_request_created', artifactId: 'connect', actionId,
+      } }, { onApprovalRequested: (_id, signal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      }), execute: harness.executor.execute, token: credentials.token, serverHttpBaseUrl: home, context });
+      expect(collected).toMatchObject({ ok: false, errorCode: 'approval_result_held' });
+      expect(effects).toBe(1);
+      expect(JSON.stringify(request)).not.toContain(live.authorizationUrl);
+    } finally { releaseDecision(); await result.catch(() => undefined); restoreHttp(); featureHttp.mockRestore(); await app.close(); }
+  });
+
   it.each(['live', 'recorded', 'notification', 'refused', 'rejected'] as const)(
     'consumes one forwarded approval without resubmitting its Action (%s)', async delivery => {
       const pending = { kind: 'approval_request_created', artifactId: 'forwarded-approval', actionId: 'browser.diagnostics.snapshot' };
@@ -115,7 +186,6 @@ describe('createCliActionExecutorHarness', () => {
         { surface: 'cli' })).toEqual(delivery === 'notification' ? { ok: true, result: pending }
           : delivery === 'refused' || delivery === 'rejected' ? failure : { ok: true, result: receipt });
       expect(notification).toHaveBeenCalledOnce();
-      expect(notification).toHaveBeenCalledWith('forwarded-approval', expect.any(AbortSignal));
       expect(native).toHaveBeenCalledOnce();
       expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
     });

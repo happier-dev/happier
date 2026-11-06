@@ -18,12 +18,12 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
 import { createActionSettingsProvider, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { observeAccountChanges } from '@/api/observeAccountChanges';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createCliActionDeps } from './createCliActionDeps';
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
-import { getSharedBlockingApprovalCoordinator, readRecordedApprovalDecision } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { consumeDeferredCliApprovalResult, subscribeCliApprovalChanges, type CliApprovalRequestedHandler } from './approvals/deferredResult';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createLiveCliApprovalOrigin } from './approvals/liveOrigin';
@@ -37,101 +37,7 @@ type ApprovalResolveBlockingDecisionArgs = Parameters<NonNullable<ActionExecutor
 type ApprovalUpdateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsUpdate']>>[0];
 type ApprovalCreateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0];
 
-type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSignal) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
-
-function subscribeCliApprovalChanges(options: Readonly<{ token: string; serverHttpBaseUrl: string; artifactId: string }>) {
-  return (onChange: () => void, onError: (error: unknown) => void) => observeAccountChanges({
-    token: options.token, serverUrl: options.serverHttpBaseUrl, entityId: options.artifactId,
-  }, { onChange, onError });
-}
-
-function readRecordedCliApprovalResult(request: ApprovalRequestPublicRead): ActionExecuteResult | null {
-  const decision = readRecordedApprovalDecision(request);
-  if (!decision) return null;
-  if (decision.decision === 'approve') return buildActionExecuteResultFromRecordedApprovalExecution(decision.request);
-  const errorCode = decision.decision === 'reject' ? 'approval_rejected' : 'approval_canceled';
-  return { ok: false, errorCode, error: errorCode };
-}
-
-/** Consume the existing approval decision; the original Action is never submitted again. */
-export async function consumeDeferredCliApprovalResult(result: ActionExecuteResult, options: Readonly<{
-  onApprovalRequested?: CliApprovalRequestedHandler;
-  execute: ReturnType<typeof createActionExecutor>['execute'];
-  context?: ActionExecutorContext;
-  token: string;
-  serverHttpBaseUrl: string;
-}>): Promise<ActionExecuteResult> {
-  if (!result.ok || !options.onApprovalRequested) return result;
-  const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-  if (!pending.success) return result;
-  const lifetime = new AbortController();
-  const signal = options.context?.signal ? AbortSignal.any([options.context.signal, lifetime.signal]) : lifetime.signal;
-  const readReceipt = async () => {
-    const observed = await options.execute('approval.request.get', { artifactId: pending.data.artifactId },
-      { ...options.context, signal, actionRequestId: randomUUID() });
-    if (!observed.ok) return observed;
-    const receipt = ApprovalRequestGetResultV1Schema.safeParse(observed.result);
-    return receipt.success ? { ok: true as const, request: receipt.data.request }
-      : { ok: false as const, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
-  };
-  let subscription: ReturnType<ReturnType<typeof subscribeCliApprovalChanges>> | undefined;
-  let stopped = false;
-  let abortObservation: (() => void) | undefined;
-  try {
-    const notification = Promise.resolve().then(() => options.onApprovalRequested!(pending.data.artifactId, signal));
-    const observation = new Promise<ActionExecuteResult>((resolve, reject) => {
-      let reading = false;
-      let invalidated = false;
-      const invalidate = () => {
-        invalidated = true;
-        if (reading || stopped) return;
-        reading = true;
-        void (async () => {
-          try {
-            while (invalidated && !stopped) {
-              invalidated = false;
-              const receipt = await readReceipt();
-              if (stopped) return;
-              if (!receipt.ok) { resolve(receipt); return; }
-              const execution = readRecordedCliApprovalResult(receipt.request);
-              if (execution) { resolve(execution); return; }
-            }
-          } finally {
-            reading = false;
-          }
-        })().catch(reject);
-      };
-      abortObservation = () => reject(signal.reason ?? new Error('approval_wait_aborted'));
-      signal.addEventListener('abort', abortObservation, { once: true });
-      if (signal.aborted) { abortObservation(); return; }
-      // Observe receipts only. Registering a live decision waiter here would
-      // claim the daemon's approved execution instead of collecting its result.
-      subscription = subscribeCliApprovalChanges({ token: options.token,
-        serverHttpBaseUrl: options.serverHttpBaseUrl, artifactId: pending.data.artifactId })(invalidate, reject);
-      invalidate();
-    });
-    const settled = await Promise.race([
-      notification.then(decision => ({ kind: 'notification' as const, decision })),
-      observation.then(execution => ({ kind: 'observation' as const, execution })),
-    ]);
-    if (settled.kind === 'observation') return settled.execution;
-    const decision = settled.decision;
-    // Some hosts only present the approval id and leave the decision elsewhere.
-    if (!decision) return result;
-    if (!decision.ok) return decision;
-    if (decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
-      const live = ActionExecuteResultSchema.safeParse(decision.result.liveExecution);
-      if (live.success) return live.data;
-    }
-    const receipt = await readReceipt();
-    return receipt.ok ? readRecordedCliApprovalResult(receipt.request) ?? result : receipt;
-  } finally {
-    stopped = true;
-    if (abortObservation) signal.removeEventListener('abort', abortObservation);
-    lifetime.abort();
-    await subscription?.dispose();
-  }
-}
+export { consumeDeferredCliApprovalResult } from './approvals/deferredResult';
 
 /** Admission can defer Ask only when the receiving Account policy retains it. */
 export function isOriginalCliApprovalPreservedAtAccount(actionId: ActionSettingsActionId, input: unknown,
@@ -287,7 +193,10 @@ export function createCliActionExecutorHarness(
           // An external decision may settle while this terminal is prompting.
           // End that prompt with the wait; a prompt/decision failure must also
           // release the observer instead of leaving an invisible local waiter.
-          const notification = Promise.resolve().then(() => params.onApprovalRequested?.(args.artifactId, signal));
+          const notification = Promise.resolve().then(() => params.onApprovalRequested?.(args.artifactId, signal,
+            decision => executor.execute('approval.request.decide', { artifactId: args.artifactId, decision },
+              resolveContext({ surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, signal },
+                'approval.request.decide'))));
           return await Promise.race([pending, notification.then(() => pending)]);
         } catch (error) {
           observerLifetime.abort();

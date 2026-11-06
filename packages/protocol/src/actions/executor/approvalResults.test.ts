@@ -4,8 +4,27 @@ import { describe, expect, it } from 'vitest';
 
 import { buildActionExecuteResultFromRecordedApprovalExecution, projectSettledApprovalExecution } from './approvalResults.js';
 import { ApprovalRequestPublicReadSchema } from '../../approvals/approvalRequestPublicRead.js';
+import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 
 describe('recorded target Action results', () => {
+  it('names unavailable live-only custody instead of returning a redacted receipt as Action output', () => {
+    const actionId = 'connectedServices.authentication.beginConnect';
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: {}, summary: 'Connect',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId, requestId: 'connect' },
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 2, ok: true, result: { redacted: true } } });
+    expect(buildActionExecuteResultFromRecordedApprovalExecution(request))
+      .toMatchObject({ ok: false, errorCode: 'approval_result_held' });
+    const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(request));
+    expect(buildActionExecuteResultFromRecordedApprovalExecution(publicRead))
+      .toMatchObject({ ok: false, errorCode: 'approval_result_held' });
+    expect(buildActionExecuteResultFromRecordedApprovalExecution({ ...request, status: 'failed',
+      execution: { executedAtMs: 2, ok: false, errorCode: 'connected_account_service_unavailable', error: 'unavailable' } }))
+      .toMatchObject({ ok: false, errorCode: 'connected_account_service_unavailable' });
+  });
+
   it.each([true, false])('retains credential-use evidence from a public target receipt (ok: %s)', ok => {
     const operationCredentialUses = [{ v: 1, kind: 'connected_account', label: 'Personal GitHub',
       owner: { kind: 'account', accountId: 'alice' }, service: { pluginId: 'example.service', localId: 'github' },
