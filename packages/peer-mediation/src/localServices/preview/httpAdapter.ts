@@ -49,6 +49,13 @@ export type OpenLocalServicePreviewTunnel = (input: Readonly<{
     preview: LocalServicePreviewResourceV1;
 }>) => Promise<LocalServicePreviewTunnelStream>;
 
+/** The admitted viewer learns only the refused port, never the sharing policy's contents. */
+export function createLocalServicePreviewPortPolicyRefusal(port: number): Readonly<{
+    error: 'preview_access_denied'; reasonCode: 'destination_port_not_allowed'; port: number;
+}> {
+    return { error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port };
+}
+
 export type ProxyLocalServicePreviewHttpRequestResult =
     | Readonly<{ ok: true }>
     | Readonly<{
