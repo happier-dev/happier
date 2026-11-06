@@ -2471,7 +2471,7 @@ function resolveRemoteStackStartInvocation(target, {
       // choice to the server host that builds and serves its own UI.
       ...(runtimeMode === 'source-snapshot' && normalizedServices.server && sourceUi === 'export' ? ['--ui=export'] : []),
       ...(runtimeMode === 'source-snapshot' && sourceStartRequestId ? [`--source-start-request-id=${sourceStartRequestId}`] : []),
-      ...(runtimeMode === 'source-snapshot' && (reuseSourceRuntime || refreshSourceRuntime) ? ['--restart'] : []),
+      ...(runtimeMode === 'source-snapshot' ? ['--restart'] : []),
       ...(runtimeMode === 'source-snapshot' && reuseSourceRuntime && !refreshSourceRuntime ? ['--reuse-source-runtime',
         ...(preparedSourceReload ? ['--prepared-source-reload'] : []),
         ...(normalizedServices.server && sourceUi === 'export' && sourceUiLaunch?.uiDir

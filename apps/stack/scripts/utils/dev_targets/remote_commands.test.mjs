@@ -2931,6 +2931,10 @@ test('source snapshot remote commands retain the QA stack home and start source 
     const command = target.platform === 'windows' ? Buffer.from(invocation.split(' ').at(-1), 'base64').toString('utf16le') : invocation;
     assert.match(command, /stack start/);
     assert.match(command, /--runtime=.*source/);
+    assert.match(command, /--restart/,
+      'an initial remote source launch must activate current source before native readiness can admit it');
+    assert.doesNotMatch(command, /--reuse-source-runtime/,
+      'only recovery may satisfy readiness from the previously selected source');
     assert.match(command, /--no-dev-targets/);
     assert.match(command, /--no-browser/);
     assert.match(command, /--no-server/);

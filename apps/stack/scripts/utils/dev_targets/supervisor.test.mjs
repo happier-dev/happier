@@ -7,6 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { randomBytes } from 'node:crypto';
 
 import {
   planRequiresRemoteCliWorkspacePreparation,
@@ -34,6 +35,155 @@ import { waitForBackgroundStackReadiness } from '../../stack/run_script_with_sta
 
 const successfulDependencyBootstrap = async () => ({ code: 0 });
 const repoDir = fileURLToPath(new URL('../../../../../', import.meta.url));
+
+test('signed-out source background startup returns before daemon preparation or readiness waits', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-signed-out-background-' });
+  let daemonObservations = 0;
+  let preparationObservations = 0;
+  await waitForBackgroundStackReadiness({
+    stackName: 'signed-out-background', scriptPath: 'dev.mjs',
+    env: { HAPPIER_STACK_STORAGE_DIR: fixture.root },
+    runtimeStatePath: fixture.path('stack.runtime.json'),
+    internalServerUrl: ['http:', '', '127.0.0.1:3005'].join('/'),
+    waitForServerReadyImpl: async () => {},
+    isDaemonPreparationActiveImpl: async () => {
+      preparationObservations++;
+      throw new Error('signed-out startup entered daemon preparation');
+    },
+    checkDaemonStateImpl: async () => {
+      daemonObservations++;
+      throw new Error('signed-out startup entered daemon readiness');
+    },
+  });
+  assert.equal(preparationObservations, 0);
+  assert.equal(daemonObservations, 0);
+});
+
+for (const ready of [true, false]) {
+test(`remote background startup consumes native daemon ${ready ? 'readiness' : 'failure'} without controller sign-in`, { timeout: 10_000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-native-background-daemon-' });
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  let requests = 0;
+  const server = (await import('node:http')).createServer((request, response) => {
+    requests++;
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const runtimeStatePath = fixture.path('stack.runtime.json');
+  const expectedRuntimeState = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: 'native-background', ownerPid: process.pid, runtimeMode: 'source-snapshot',
+    placement: { server: 'nl3', daemon: 'nl3' }, remoteTargets: { nl3: {
+      services: { server: true, daemon: true }, status: 'starting',
+      serviceStatus: { server: 'running', daemon: 'starting' },
+    } },
+  });
+  let observations = 0;
+  let observeWaiting;
+  const waiting = new Promise(resolve => { observeWaiting = resolve; });
+  const starting = waitForBackgroundStackReadiness({ stackName: 'native-background', scriptPath: 'run.mjs',
+    args: ['--runtime=source'], env: { HAPPIER_STACK_STORAGE_DIR: fixture.root },
+    runtimeStatePath, expectedRuntimeState, timeoutMs: 1_000,
+    internalServerUrl: ['http:', '', `127.0.0.1:${server.address().port}`].join('/'),
+    // Runner liveness is the OS boundary; its next observation proves the wait
+    // consumed the pending native publication rather than returning early.
+    isRunnerAlive: () => { if (++observations === 2) observeWaiting(); return true; },
+  });
+  assert.equal(await Promise.race([starting.then(() => 'completed'), waiting.then(() => 'waiting')]), 'waiting');
+  // The remote source owner remains starting while its admitted preparation runs.
+  // Its result must still be consumed after the observer's readiness checkpoint.
+  clock += 31 * 60_000;
+  const identity = { selected: 'fixture-source', loaded: 'fixture-source' };
+  await recordStackRuntimeUpdate(runtimeStatePath, { sourceRuntimeIdentities: { daemon: identity },
+    remoteTargets: { nl3: ready
+      ? { serviceStatus: { daemon: 'running' }, sourceRuntimeIdentities: { daemon: identity } }
+      : { status: 'degraded', serviceStatus: { daemon: 'degraded' },
+        reason: 'daemon-readiness-failed', phase: 'daemon-readiness', error: 'native daemon readiness refused' } } });
+  if (ready) await starting;
+  else await assert.rejects(starting, error => error.code === 'daemon-readiness-failed'
+    && error.phase === 'daemon-readiness' && error.message === 'native daemon readiness refused');
+  assert.equal(requests, 0, 'native readiness must not trigger a second controller HTTP probe');
+});
+}
+
+for (const ready of [true, false]) {
+test(`remote source server preparation outlives the background checkpoint and consumes ${ready ? 'readiness' : 'failure'}`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-native-server-preparation-' });
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  const runtimeStatePath = fixture.path('stack.runtime.json');
+  const expectedRuntimeState = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: 'native-server-preparation', ownerPid: process.pid, runtimeMode: 'source-snapshot',
+    placement: { server: 'nl3', daemon: 'disabled' }, remoteTargets: { nl3: {
+      services: { server: true, daemon: false }, status: 'starting', serviceStatus: { server: 'starting' },
+    } },
+  });
+  let observations = 0;
+  let observePreparing;
+  const preparing = new Promise(resolve => { observePreparing = resolve; });
+  const starting = waitForBackgroundStackReadiness({ stackName: 'native-server-preparation', scriptPath: 'run.mjs',
+    args: ['--runtime=source', '--no-daemon'], env: { HAPPIER_STACK_STORAGE_DIR: fixture.root },
+    runtimeStatePath, expectedRuntimeState, timeoutMs: 1_000,
+    internalServerUrl: 'http://127.0.0.1:3005',
+    waitForServerReadyImpl: async () => { assert.fail('native publication owns remote readiness'); },
+    // The OS liveness boundary advances the clock while native preparation is still active.
+    isRunnerAlive: () => {
+      if (++observations === 2) clock += 31 * 60_000;
+      if (observations === 3) observePreparing();
+      return true;
+    },
+  });
+  const outcome = starting.then(() => 'completed', error => error.code);
+  assert.equal(await Promise.race([outcome, preparing.then(() => 'preparing')]), 'preparing');
+  await recordStackRuntimeUpdate(runtimeStatePath, { remoteTargets: { nl3: ready
+    ? { status: 'running', serviceStatus: { server: 'running' } }
+    : { status: 'degraded', serviceStatus: { server: 'degraded' }, reason: 'server-readiness-failed',
+      phase: 'server-readiness', error: 'native server preparation refused' } } });
+  if (ready) await starting;
+  else await assert.rejects(starting, error => error.code === 'server-readiness-failed' && error.phase === 'server-readiness');
+});
+}
+
+test('source background readiness does not borrow the build lock acquisition timeout', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-background-preparation-lifetime-' });
+  const cliHomeDir = fixture.path('cli');
+  const serverDir = join(cliHomeDir, 'servers', 'fixture-scope');
+  await mkdir(serverDir, { recursive: true });
+  await writeFile(join(serverDir, 'access.key'), randomBytes(32));
+  const runtimeStatePath = fixture.path('stack.runtime.json');
+  await writeFile(runtimeStatePath, JSON.stringify({ processes: { daemonPid: process.pid } }));
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let firstObservation;
+  const observed = new Promise(resolve => { firstObservation = resolve; });
+  let daemonObservations = 0;
+  const starting = waitForBackgroundStackReadiness({
+    stackName: 'background-preparation', scriptPath: 'dev.mjs', runtimeStatePath,
+    env: { HAPPIER_STACK_STORAGE_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_ACTIVE_SERVER_ID: 'fixture-scope' },
+    internalServerUrl: ['http:', '', '127.0.0.1:3005'].join('/'),
+    waitForServerReadyImpl: async () => {},
+    // Build-process observation and daemon ping are genuine OS boundaries.
+    isDaemonPreparationActiveImpl: async () => ({ active: true, ownerId: 'fixture-build' }),
+    checkDaemonStateImpl: async () => {
+      if (++daemonObservations === 1) {
+        firstObservation();
+        return { status: 'not-running' };
+      }
+      return { status: 'running', pid: process.pid };
+    },
+  });
+  await observed;
+  await new Promise(resolve => setImmediate(resolve));
+  clock += 31 * 60_000;
+  t.mock.timers.tick(250);
+  await starting;
+  assert.equal(daemonObservations, 2, 'the same admitted build may finish after its lock acquisition window');
+});
+
 
 test('superseded source worker terminates its controller without retries or retiring its successor', { timeout: 10_000 }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-superseded-controller-' });

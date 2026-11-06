@@ -24,7 +24,7 @@ import {
 } from '../utils/proc/cliDistBuildLock.mjs';
 import { coercePort } from '../utils/server/port.mjs';
 import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
-import { waitForHappierHealthOk } from '../utils/server/server.mjs';
+import { waitForServerReady } from '../utils/server/server.mjs';
 import { resolveStackOwnedListenPid } from '../utils/server/listener_ownership.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import { resolveDevServerConnection } from '../utils/dev/resolveDevServerConnection.mjs';
@@ -49,6 +49,7 @@ import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
+import { readBackgroundServicePublication } from './background_server_publication.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
@@ -106,24 +107,30 @@ function shouldAwaitRequestedDaemonForBackgroundStart({
   args = [],
   env = {},
   internalServerUrl = '',
-  runtimeBackedStart = false,
+  runtimeState = null,
+  serverReadiness = null,
 } = {}) {
   if (scriptPath !== 'run.mjs' && scriptPath !== 'dev.mjs') return false;
   if (!resolveStackDaemonStartRequested({ env, noDaemon: args.includes('--no-daemon') })) return false;
-  if (isAuthFlowEnabled(env)) return false;
-  if (!runtimeBackedStart) return true;
-
+  // A separate native host must publish its connection before login can use
+  // it. Its sign-in requirement settles readiness without a running daemon.
+  if (resolveRuntimeRemoteServiceObservation(runtimeState, 'daemon').target) return true;
+  if (serverReadiness?.status === 'sign-in-required' || isAuthFlowEnabled(env)) return false;
   const stackBaseDir = resolveStackEnvPath(stackName, env).baseDir;
   const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
   return daemonStartGate({ env, cliHomeDir, serverUrl: internalServerUrl }).ok;
 }
 
-async function waitForCanonicalServerHealth(baseUrl, options = {}) {
-  const ready = await waitForHappierHealthOk(baseUrl, options);
-  if (!ready) {
-    throw createStackReadinessPendingError(
-      `Timed out waiting for Happier server health at ${baseUrl}`,
-    );
+async function waitForCanonicalServerReadiness(baseUrl, options = {}) {
+  try {
+    return await waitForServerReady(baseUrl, options);
+  } catch (error) {
+    // Preserve the background launcher's existing pending result for an
+    // exhausted readiness budget; identity refusals stay terminal.
+    if (error?.message === `Timed out waiting for server at ${baseUrl}`) {
+      throw createStackReadinessPendingError(error.message);
+    }
+    throw error;
   }
 }
 
@@ -141,59 +148,58 @@ export async function waitForBackgroundStackReadiness({
   args = [],
   env,
   runtimeStatePath,
+  expectedRuntimeState = null,
   internalServerUrl,
-  runtimeBackedStart = false,
   expectedDaemonDistClosureFingerprint = null,
   sourceDaemonLaunchAttempt = null,
   timeoutMs = DEFAULT_BACKGROUND_READY_TIMEOUT_MS,
-  preparationTimeoutMs = DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
   checkDaemonStateImpl = checkDaemonStatePingAware,
   isRunnerAlive = null,
-  waitForServerReadyImpl = waitForCanonicalServerHealth,
+  waitForServerReadyImpl = waitForCanonicalServerReadiness,
   isDaemonPreparationActiveImpl = isSourceDaemonPreparationActive,
 } = {}) {
   const readyTimeoutMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
     ? Number(timeoutMs)
     : DEFAULT_BACKGROUND_READY_TIMEOUT_MS;
-  const daemonPreparationTimeoutMs =
-    Number.isFinite(Number(preparationTimeoutMs)) && Number(preparationTimeoutMs) > 0
-      ? Number(preparationTimeoutMs)
-      : DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS;
   const readinessServerUrl = resolveBackgroundReadinessServerUrl({
     scriptPath,
     args,
     env,
     localServerUrl: internalServerUrl,
   });
-  await waitForServerReadyImpl(readinessServerUrl, {
-    timeoutMs: readyTimeoutMs,
-    intervalMs: 300,
-  });
-
-  if (!shouldAwaitRequestedDaemonForBackgroundStart({
-    stackName,
-    scriptPath,
-    args,
-    env,
-    internalServerUrl: readinessServerUrl,
-    runtimeBackedStart,
-  })) return;
-
-  // Server startup, source CLI preparation, and daemon publication are sequential, independently
-  // bounded phases. The build lock can appear after the first daemon observation or hand off
-  // between valid owners, so suspend publication while the finite preparation window is active.
-  let daemonReadyStartedAt = Date.now();
-  let preparationOverallStartedAt = null;
-  let preparationOwnerStartedAt = null;
-  let preparationOwnerId = null;
-  let preparationObserved = false;
-  let preparationCompleted = false;
+  const serverReadyDeadline = Date.now() + readyTimeoutMs;
   const stackBaseDir = resolveStackEnvPath(stackName, env).baseDir;
   const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
+  const serverConnection = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs'
+    ? resolveDevServerConnection({ ...parseArgs(args), env, resolvedLocalUrls: {
+      internalServerUrl: readinessServerUrl, publicServerUrl: readinessServerUrl,
+      defaultPublicUrl: readinessServerUrl,
+    } })
+    : { startServer: true };
+  let serverPublished = !expectedRuntimeState || !serverConnection.startServer;
+  let serverReadiness;
+  let awaitDaemon = false;
+  if (serverPublished) {
+    serverReadiness = await waitForServerReadyImpl(readinessServerUrl, {
+      timeoutMs: readyTimeoutMs, intervalMs: 300, env, cliHomeDir,
+    });
+    awaitDaemon = shouldAwaitRequestedDaemonForBackgroundStart({
+      stackName, scriptPath, args, env, internalServerUrl: readinessServerUrl,
+      serverReadiness,
+    });
+    if (!awaitDaemon) return serverReadiness;
+  }
+
+  // Build admission owns preparation's lifetime. Only begin the daemon
+  // publication window after preparation settles; its lock acquisition
+  // timeout is not a deadline for an admitted build.
+  let daemonReadyStartedAt = Date.now();
+  let preparationObserved = false;
+  let preparationCompleted = false;
   const expectedFingerprint = String(expectedDaemonDistClosureFingerprint ?? '').trim().toLowerCase();
   const observesSourcePreparation = !expectedFingerprint;
   // Runtime-backed launches bring an immutable expected fingerprint. Source launches instead
-  // correlate the authenticated daemon fingerprint/process incarnation with this runner's
+  // correlate the authenticated daemon process incarnation with this runner's
   // runtime publication, and a true restart must retire the captured incumbent incarnation.
   const sourceLaunchAdmission =
     observesSourcePreparation && sourceDaemonLaunchAttempt && typeof sourceDaemonLaunchAttempt === 'object'
@@ -216,42 +222,50 @@ export async function waitForBackgroundStackReadiness({
   let lastObservation = null;
   while (true) {
     if (typeof isRunnerAlive === 'function' && !isRunnerAlive()) {
-      throw new Error(`[stack] ${stackName}: runner exited before requested daemon readiness was published.`);
+      throw new Error(`[stack] ${stackName}: runner exited before ${serverPublished ? 'requested daemon readiness' : 'server ownership'} was published.`);
     }
 
     const now = Date.now();
     let runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
+    if (!serverPublished) {
+      // The native supervisor owns remote authentication and loaded identity.
+      // Consume that publication instead of probing with the controller's home.
+      const publication = readBackgroundServicePublication(runtimeState, expectedRuntimeState);
+      if (publication.status === 'failed') throw publication.error;
+      if (publication.status === 'pending') {
+        const remainingMs = observesSourcePreparation
+          && resolveRuntimeRemoteServiceObservation(runtimeState, 'server').status === 'starting'
+          ? readyTimeoutMs : serverReadyDeadline - Date.now();
+        if (remainingMs <= 0) throw createStackReadinessPendingError(
+          `[stack] ${stackName}: owned-server readiness publication is still pending.`,
+        );
+        await delay(Math.min(250, remainingMs));
+        continue;
+      }
+      serverPublished = true;
+      if (!publication.remote) serverReadiness = await waitForServerReadyImpl(readinessServerUrl, {
+        timeoutMs: Math.max(1, serverReadyDeadline - Date.now()), intervalMs: 300, env, cliHomeDir,
+      });
+      awaitDaemon = shouldAwaitRequestedDaemonForBackgroundStart({
+        stackName, scriptPath, args, env, internalServerUrl: readinessServerUrl, runtimeState,
+        serverReadiness,
+      });
+      if (!awaitDaemon) return serverReadiness;
+      daemonReadyStartedAt = Date.now();
+    }
     const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtimeState, 'daemon');
     const preparationObservation =
       observesSourcePreparation
-      && !remoteDaemon.target
       && !preparationCompleted
-      && await isDaemonPreparationActiveImpl({ env });
+      && (remoteDaemon.target
+        ? remoteDaemon.status === 'starting'
+        : await isDaemonPreparationActiveImpl({ env }));
     const preparationActive = typeof preparationObservation === 'object'
       ? preparationObservation?.active === true
       : preparationObservation === true;
-    const observedPreparationOwnerId = typeof preparationObservation === 'object'
-      ? String(preparationObservation?.ownerId ?? '').trim() || null
-      : null;
     if (preparationActive) {
       preparationObserved = true;
-      preparationOverallStartedAt ??= now;
-      if (preparationOwnerStartedAt === null || observedPreparationOwnerId !== preparationOwnerId) {
-        preparationOwnerStartedAt = now;
-        preparationOwnerId = observedPreparationOwnerId;
-      }
-      const ownerExpired = now - preparationOwnerStartedAt >= daemonPreparationTimeoutMs;
-      // The canonical lock timeout bounds acquisition, not the acquired build callback. Permit
-      // an observed incumbent plus the startup's successor build, while retaining one finite
-      // acquisition-plus-build ceiling even if unrelated owners continue handing off the lock.
-      const overallExpired =
-        now - preparationOverallStartedAt >= daemonPreparationTimeoutMs * 2;
-      if (ownerExpired || overallExpired) {
-        throw createStackReadinessPendingError(
-          `[stack] ${stackName}: CLI preparation did not complete before timeout ` +
-            `(${JSON.stringify(lastObservation)}).`,
-        );
-      }
+      daemonReadyStartedAt = now;
     } else if (preparationObserved && !preparationCompleted) {
       preparationCompleted = true;
       daemonReadyStartedAt = now;
@@ -261,14 +275,14 @@ export async function waitForBackgroundStackReadiness({
 
     const remainingMs = Math.max(
       100,
-      preparationActive
-        ? Math.min(
-          daemonPreparationTimeoutMs - (now - preparationOwnerStartedAt),
-          daemonPreparationTimeoutMs * 2 - (now - preparationOverallStartedAt),
-        )
-        : readyTimeoutMs - (now - daemonReadyStartedAt),
+      readyTimeoutMs - (now - daemonReadyStartedAt),
     );
     if (remoteDaemon.target) {
+      const publication = readBackgroundServicePublication(runtimeState, expectedRuntimeState, 'daemon');
+      if (publication.status === 'failed') throw publication.error;
+      if (publication.status === 'published' && publication.readiness === 'sign-in-required') {
+        return { status: publication.readiness };
+      }
       const target = runtimeState.remoteTargets?.[remoteDaemon.target];
       const identity = runtimeState.sourceRuntimeIdentities?.daemon;
       const remoteIdentity = target?.sourceRuntimeIdentities?.daemon;
@@ -893,7 +907,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
         if (wantsRestart && !wantsJson) {
-          if (scriptPath === 'run.mjs' && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
+          if (scriptPath === 'run.mjs' && !args.includes('--reuse-source-runtime') && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
               && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD !== '1') {
             const prepared = await prepareSourceRuntimeReload({ stackName, stackBaseDir: baseDir,
               repoDir: env.HAPPIER_STACK_REPO_DIR, args, env });
@@ -1258,7 +1272,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                 env: childEnv,
                 runtimeStatePath,
                 internalServerUrl,
-                runtimeBackedStart: Boolean(runtimeLaunchContext.snapshot),
+                expectedRuntimeState,
                 expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
                 sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
                   runtimeSnapshotId,
@@ -1445,7 +1459,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               env,
               runtimeStatePath,
               internalServerUrl,
-              runtimeBackedStart: Boolean(runtimeLaunchContext.snapshot),
+              expectedRuntimeState,
               expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
               sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
                 runtimeSnapshotId,
