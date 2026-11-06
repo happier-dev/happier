@@ -1990,6 +1990,11 @@
       "types": "./dist/actions/specs/machine/reboot.d.ts",
       "default": "./dist/actions/specs/machine/reboot.js"
     },
+    "./actions/specs/machine/serviceAdoption": {
+      "happier-source": "./src/actions/specs/machine/serviceAdoption.ts",
+      "types": "./dist/actions/specs/machine/serviceAdoption.d.ts",
+      "default": "./dist/actions/specs/machine/serviceAdoption.js"
+    },
     "./actions/specs/machine/services": {
       "happier-source": "./src/actions/specs/machine/services.ts",
       "types": "./dist/actions/specs/machine/services.d.ts",
@@ -4789,6 +4794,11 @@
       "happier-source": "./src/deployments/deploymentReadsV1.ts",
       "types": "./dist/deployments/deploymentReadsV1.d.ts",
       "default": "./dist/deployments/deploymentReadsV1.js"
+    },
+    "./deployments/deploymentReceiptEventsV1": {
+      "happier-source": "./src/deployments/deploymentReceiptEventsV1.ts",
+      "types": "./dist/deployments/deploymentReceiptEventsV1.d.ts",
+      "default": "./dist/deployments/deploymentReceiptEventsV1.js"
     },
     "./deployments/deploymentReceiptResultV1": {
       "happier-source": "./src/deployments/deploymentReceiptResultV1.ts",
