@@ -239,7 +239,7 @@ export const ManagedMachineActionInputSchemasV1 = {
 export const ManagedMachineActionOutputSchemasV1 = {
 'machines.environment.apply': MachineEnvironmentApplyResultV1Schema,
 
-  'machines.provisioners.list': MachineProvisionersListResultV1Schema,
+  'machines.provisioners.list': lazyZodSchema(() => z.lazy(() => MachineProvisionersListResultV1Schema)),
   'machines.provisioners.check': lazyZodSchema(() => z.lazy(() => MachineProvisionerCheckResultV1Schema)),
   'machines.provisioners.options': lazyZodSchema(() => z.lazy(() => MachineProvisionerOptionsResultV1Schema)),
   'machines.managed.acquire': ManagedAcceptedV1Schema,
