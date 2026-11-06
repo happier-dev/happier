@@ -6,6 +6,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 import { createSessionPaneScopeId } from './sessionPaneScopeId';
 import type { RightSidebarRailAction } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 installSessionDetailsPanelCommonModuleMocks();
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -14,12 +15,72 @@ const runtime = installSessionPaneRuntimeTestHarness({
 });
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { AppPaneScopeHost } = await import('@/components/appShell/panes/AppPaneScopeHost');
-const { SessionRightPanel, SessionActionRail, SessionRightSidebarProvider } = await import('./SessionRightPanel');
+const { SessionRightPanel, SessionPageTabs, SessionActionRail, SessionRightSidebarProvider, useSessionRightSidebarPresentation } = await import('./SessionRightPanel');
 const { SessionTranscriptNavigationPane } = await import('./SessionTranscriptNavigationPane');
 const { SessionBrowseFilesSurface } = await import('./surfaces/SessionBrowseFilesSurface');
 const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
 const { RightSidebarActionRail } = await import('@/components/appShell/rightSidebar/RightSidebarActionRail');
 const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
+const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
+const { RightSidebarIconTabBar } = await import('@/components/appShell/rightSidebar/RightSidebarIconTabBar');
+const { RightSidebarPaneHeader } = await import('@/components/appShell/rightSidebar/RightSidebarPaneHeader');
+const { RightSidebarActionsContext } = await import('@/components/appShell/rightSidebar/rightSidebarActions');
+const { Modal } = await import('@/modal');
+
+it.each(['page', 'page-chat', 'header', 'screen-header', 'presentation', 'published-main', 'published-side', 'back', 'close'] as const)(
+    'admits the mounted %s control before changing its Session column', async control => {
+        storage.getState().applyLocalSettings({ paneArrangement: 'editor', uiMultiPanePanelsEnabled: true }, { persist: false });
+        const scopeId = createSessionPaneScopeId('s1', runtime.serverId);
+        const panelPresentation = control === 'screen-header' ? 'screen' : 'pane';
+        const selectsSide = control === 'header' || control === 'screen-header' || control === 'published-side';
+        const published = React.createRef<import('@/components/appShell/rightSidebar/rightSidebarActions').RightSidebarActions | null>();
+        let presentation: ReturnType<typeof useSessionRightSidebarPresentation>;
+        function PresentationControl() { presentation = useSessionRightSidebarPresentation(); return null; }
+        const wrap = (content: React.ReactElement) => <RightSidebarActionsContext.Provider value={published}>
+            <SessionRightSidebarProvider sessionId="s1" scopeId={scopeId} presentation={panelPresentation}>
+                <SessionPageTabs /><SessionRightPanel sessionId="s1" scopeId={scopeId} presentation={panelPresentation} />
+                <SessionActionRail /><PresentationControl />{content}
+            </SessionRightSidebarProvider>
+        </RightSidebarActionsContext.Provider>;
+        const screen = await renderScreen(<runtime.Wrapper><AppPaneScopeHost scopeId={scopeId} arrangement="honour"
+            main={<div>Chat</div>} wrapScopeContent={wrap} /></runtime.Wrapper>);
+        try {
+            await act(async () => {
+                if (control === 'back' || control === 'page-chat') runtime.pane.setMainTab('navigation');
+                if (control === 'close') runtime.pane.openRight({ tabId: 'info' });
+                storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                    actions: { 'shell.column.set': { enabled: false } } }) });
+            });
+            const before = runtime.pane.scopeState;
+            const select = () => {
+                switch (control) {
+                    case 'page': screen.findByType(SegmentedTabBar).props.onSelectTab('navigation'); break;
+                    case 'page-chat': screen.findByType(SegmentedTabBar).props.onSelectTab('chat'); break;
+                    case 'header':
+                    case 'screen-header': screen.findByType(RightSidebarIconTabBar).props.onSelectTab('files'); break;
+                    case 'presentation': presentation.selectTab('navigation'); break;
+                    case 'published-main': published.current!.main!.selectTab('navigation'); break;
+                    case 'published-side': published.current!.selectTab('files'); break;
+                    case 'back': presentation.backToTranscript(); break;
+                    case 'close': screen.findAllByType(RightSidebarPaneHeader)
+                        .find(header => header.props.testID === 'session-rightpanel-header')!.props.onClose(); break;
+                }
+            };
+            await act(async () => { select(); });
+            expect(runtime.pane.scopeState).toEqual(before);
+            await expect.poll(() => vi.mocked(Modal.alert).mock.calls.length).toBeGreaterThan(0);
+            await act(async () => {
+                storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) });
+                select();
+            });
+            await expect.poll(() => selectsSide
+                ? runtime.pane.scopeState?.right.activeTabId
+                : control === 'close' ? runtime.pane.scopeState?.right.isOpen
+                    : runtime.pane.scopeState?.mainTabId).toBe(selectsSide
+                ? 'files' : control === 'close' ? false : control === 'back' || control === 'page-chat' ? null : 'navigation');
+        } finally { await screen.unmount(); }
+    },
+);
 
 it('opens and closes People through the mounted rail without a Session Machine', async () => {
     storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: runtime.serverId,

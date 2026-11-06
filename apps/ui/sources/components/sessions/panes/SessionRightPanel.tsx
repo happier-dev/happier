@@ -334,7 +334,6 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         : null;
     const hasMainPages = placementContext.presentation === 'desktop' && placementContext.arrangement === 'editor';
     const mainTabId = hasMainPages ? scopeState?.mainTabId ?? null : null;
-    const backToTranscript = React.useCallback(() => pane.setMainTab(null), [pane.setMainTab]);
     const setMainHidden = mainColumn?.setHidden;
     const showMain = React.useCallback(() => setMainHidden?.(false), [setMainHidden]);
     const resolveBoardPrimaryHost = props.resolveBoardPrimaryHost ?? NO_BOARD_PRIMARY_MOUNT;
@@ -506,6 +505,20 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
             phonePageTabs: storage.getState().settings.mobileWorkspaceExperienceV1 !== 'classic' }),
     }));
 
+    const executeNavigation = useMountedScopeActionCommand(navigationScope);
+    const selectTab = React.useCallback((tabId: RightTabId, column?: 'main' | 'side') => {
+        const tab = column ? null : rightPanelTabs.find(candidate => candidate.id === tabId);
+        const target = column ?? (tab ? resolveRightSidebarTabPlacement(tab, placementContext) : null);
+        if (!target) return;
+        void executeNavigation('shell.column.set', { column: target, visible: true, tab: tabId },
+            { kind: 'shell.column', column: target, read: () => navigation.readColumn(target) });
+    }, [executeNavigation, navigation.readColumn, placementContext, rightPanelTabs]);
+    const backToTranscript = React.useCallback(() => selectTab('chat', 'main'), [selectTab]);
+    const closeRight = React.useCallback(() => {
+        void executeNavigation('shell.column.set', { column: 'side', visible: false },
+            { kind: 'shell.column', column: 'side', read: () => navigation.readColumn('side') });
+    }, [executeNavigation, navigation.readColumn]);
+
     return useRetainedShallow({
         scopeId: props.scopeId,
         sessionId: props.sessionId,
@@ -538,7 +551,9 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         openServiceInBrowser,
         openFileInDetails,
         openFileInDetailsPinned,
-        setActiveTab,
+        selectTab,
+        closeRight,
+        executeNavigation,
         navigation,
     });
 }
@@ -550,7 +565,7 @@ export function useSessionRightSidebarPresentation() {
         placement: model.mainTabId ? 'main' as const : 'side' as const,
         sessionColumnTab: model.rightPanelTabs.find(tab => tab.id === model.mainTabId) ?? null,
         backToTranscript: model.backToTranscript,
-        selectTab: model.setActiveTab,
+        selectTab: model.selectTab,
     };
 }
 
@@ -599,7 +614,7 @@ export const SessionPageTabs = React.memo(function SessionPageTabs() {
                     icon: <Icon name="sliders-horizontal" size={ICON_SIZE.sm} color={glyphColor} />,
                     testID: 'session-page-tabs.more.customize', onPress: customize }] }}
             activeTabId={activeTabId}
-            onSelectTab={id => model.setActiveTab(id, 'main')}
+            onSelectTab={id => model.selectTab(id, 'main')}
             accessibilityLabel={t('navigationPlacement.topTabs')}
             testIDPrefix="session-page-tabs"
         />
@@ -646,8 +661,8 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     const rightTabSelection = bodyTab ? { kind: 'available' as const, tab: bodyTab } : model.rightTabSelection;
     const activeTab = props.bodyTabId ? props.surfacePlacement === 'hidden' ? null : props.bodyTabId : model.activeTab;
     const inSessionColumn = props.surfacePlacement === 'main';
-    const closeNavigationPane = props.onRequestClose ?? (inSessionColumn ? model.backToTranscript : pane.closeRight);
-    const setActiveTab = (tabId: string) => model.setActiveTab(tabId, inSessionColumn ? 'main' : 'side');
+    const closeNavigationPane = props.onRequestClose ?? (inSessionColumn ? model.backToTranscript : model.closeRight);
+    const selectTab = (tabId: string) => model.selectTab(tabId, inSessionColumn ? 'main' : 'side');
     // Presented inside the session column (Editor first, lab AR1 EFv): a sub-page of the session, with
     // Back to its transcript and the session's own mark and name in the band it covers.
     const presentation = useSessionRightSidebarPresentation();
@@ -690,7 +705,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                     <RightSidebarIconTabBar
                         tabs={bodyTabs}
                         activeTabId={activeTab ?? ''}
-                        onSelectTab={setActiveTab}
+                        onSelectTab={selectTab}
                         testIDPrefix={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-tab') ?? undefined}
                     />
                 </View>
@@ -931,12 +946,12 @@ export const SessionActionRail = React.memo(() => {
     const main = model.navigation.readColumn('main');
     const sideActions = {
         tabs: side.tabs ?? [], items: side.items, activeTab: side.activeTab,
-        selectTab: (id: string) => side.selectTab?.(id),
+        selectTab: (id: string) => model.selectTab(id, 'side'),
         main: { tabs: main.tabs ?? [], items: main.items, activeTab: main.activeTab,
-            selectTab: (id: string) => main.selectTab?.(id) },
+            selectTab: (id: string) => model.selectTab(id, 'main') },
     };
     usePublishRightSidebarActions(sideActions);
-    const executeNavigation = useMountedScopeActionCommand(model.collaborationAddress?.serverId ?? null);
+    const executeNavigation = model.executeNavigation;
     const { terminal, computer } = model;
     // The Work tab's badge is the Work projection's outstanding count (D-S4): the same number the
     // header strip shows, read from the one owner the Session host mounted — never a second count.
