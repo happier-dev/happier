@@ -7,7 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
@@ -257,8 +257,6 @@ function UsageModelPriceRow(
             input: formatUsageCost(price.rates.inputUsdPerMillion, 'USD'),
             output: formatUsageCost(price.rates.outputUsdPerMillion, 'USD'),
           }), detailStyle: styles.rates } : {})}
-          rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-          showChevron={false}
         />
       )}
     >
