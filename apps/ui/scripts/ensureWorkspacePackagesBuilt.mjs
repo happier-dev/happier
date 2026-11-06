@@ -126,12 +126,13 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
     const { readSourcePluginUiBuildInputs } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
     const packages = await readWorkspacePackages(repoRoot);
     const cli = JSON.parse(await readFile(resolve(repoRoot, 'apps/cli/package.json'), 'utf8'));
-    const groups = await Promise.all([
-      readSourcePluginUiBuildInputs({ repoDir: repoRoot, compiler: true, packages, includeDirectories: true }),
-      ...(cli.bundledDependencies ?? []).filter(name => name.startsWith('@happier-dev/plugins-'))
-        .map(name => readSourcePluginUiBuildInputs({ repoDir: repoRoot,
-          pluginDirectory: name.slice('@happier-dev/plugins-'.length), packages, includeDirectories: true })),
-    ]);
+    // Discovery shares Expo's esbuild service; retain only one graph in flight.
+    const groups = [await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
+      compiler: true, packages, includeDirectories: true })];
+    for (const name of (cli.bundledDependencies ?? []).filter(name => name.startsWith('@happier-dev/plugins-'))) {
+      groups.push(await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
+        pluginDirectory: name.slice('@happier-dev/plugins-'.length), packages, includeDirectories: true }));
+    }
     return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json'].map(path => resolve(repoRoot, path)));
   })().catch(error => { inputsPromise = null; throw error; });
   const onChange = ({ eventsQueue }) => {
