@@ -75,6 +75,8 @@ export type ArtifactLockedReason =
     | 'invalid_stored_content';
 
 export interface DecryptedArtifactBase {
+    /** In-memory Home of an authenticated read, never a private header's profile alias or persisted authority. */
+    sourceServerId?: string;
     /** Server-visible coarse kind; absence retains unknown classification across warm reloads. */
     kind?: ArtifactCoarseKindV1 | null;
     kindHint?: string | null;

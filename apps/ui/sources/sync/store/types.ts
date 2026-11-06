@@ -2,7 +2,7 @@ import type { SessionPublicationSource } from '../domains/session/sessionRuntime
 import type { SessionModelOptionsContext } from '@/sync/domains/models/modelOptions';
 import type { TodoState } from '@/sync/domains/todos/todoOps';
 
-import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
+import type { ArtifactsDomain } from './domains/artifacts';
 import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
@@ -239,17 +239,7 @@ export interface TodosDomainSlice {
     applyTodos: (todoState: TodoState) => void;
 }
 
-export interface ArtifactsDomainSlice {
-    artifacts: Record<string, DecryptedArtifact>;
-    artifactSkillRevisions: Record<string, string>;
-    artifactInventoryUnreadyCount: number;
-    artifactsLoaded: boolean;
-    artifactsStorageRevision: number;
-    applyArtifacts: (artifacts: DecryptedArtifact[], inventoryReadStartedWith?: Readonly<Record<string, DecryptedArtifact>>) => void;
-    addArtifact: (artifact: DecryptedArtifact) => void;
-    updateArtifact: (artifact: DecryptedArtifact) => void;
-    deleteArtifact: (artifactId: string) => void;
-}
+export type ArtifactsDomainSlice = ArtifactsDomain;
 
 /**
  * The one Account-scoped map of workflow Run bodies, keyed by `runId`. Every
