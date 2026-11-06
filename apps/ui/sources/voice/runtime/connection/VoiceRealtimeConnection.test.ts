@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec, zodSchemaToJsonSchemaObject, type VoiceRealtimeJsonValue } from '@happier-dev/protocol';
-import { describeActionForVoiceTool } from '@happier-dev/plugin-sdk/voice/client';
+import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
 import { createOpenAiToolSessionUpdate } from '../../../../../../packages/plugins/openai/src/ui/voice/protocol';
 import { TestVoiceWebRtcPeer as FakeWebRtcPeer, installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } from '@/dev/testkit/harness/voiceWebRtcHarness';
 import { createWebSocketPcmMedia, encodePcm16LeBase64 } from './WebSocketPcmMedia';
