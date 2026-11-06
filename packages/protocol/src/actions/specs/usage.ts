@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { UsageQueryBatchInputSchema } from '../../inputs/usageQuery.js';
 import { UsageQueryBatchResultSchema } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageExportInputSchema, UsageFileResultSchema } from '../../usage/usageExport.js';
@@ -31,7 +32,8 @@ const publicRecapFields = [{ path: 'source', title: 'Public source', widget: 'js
 const recapDeliveryField = { path: 'intent', title: 'Delivery', widget: 'select', required: true,
   options: ['copy', 'save', 'share'].map(value => ({ value, label: value })) } satisfies InputFieldHint;
 
-export const USAGE_ACTION_SPECS = [
+function createUsageActionSpecs() {
+  return [
   { ...common, id: 'usage.recap.deliver', approval: {result: 'none'}, title: 'Copy, save or share a usage recap',
     approvalPolicy: { uiConfirmation: 'direct' },
     safety: 'danger', sideEffectClass: 'external', executionPlacement: 'client',
@@ -83,3 +85,6 @@ export const USAGE_ACTION_SPECS = [
       { path: 'format', title: 'Format', widget: 'select', required: true, options: [{ value: 'json', label: 'JSON' }, { value: 'csv', label: 'CSV' }, { value: 'text', label: 'Text' }] },
       { path: 'fields', title: 'Selected facts', widget: 'text_list', listSeparator: 'newline', required: true }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const USAGE_ACTION_SPECS: ReturnType<typeof createUsageActionSpecs> = lazyActionSpecArray(createUsageActionSpecs);

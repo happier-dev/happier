@@ -1,3 +1,4 @@
+import { USAGE_ANALYTICS_COST_MODES } from './usageVocabularyV1.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -34,7 +35,7 @@ export const UsageObservationTokensSchema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsageObservationTokens = z.infer<typeof UsageObservationTokensSchema>;
 
-export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(['auto', 'reported', 'estimated', 'api_equivalent']));
+export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(USAGE_ANALYTICS_COST_MODES));
 
 export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
   reportedUsd: NonNegativeNumberSchema,

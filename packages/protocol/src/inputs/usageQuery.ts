@@ -1,3 +1,4 @@
+import { USAGE_ANALYTICS_COST_MODES } from '../usage/usageVocabularyV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -218,7 +219,7 @@ export const USAGE_QUERY_INPUT_FIELDS: readonly InputFieldHint[] = [
   { path: 'sources', title: 'Sources', widget: 'multiselect', optionsSourceId: 'usage.filters.sources', placeholder: 'All sources', contextMode: 'follow', required: false },
   { path: 'session', title: 'Session', widget: 'select', inputType: { hostType: 'usageQuery', field: 'session' }, contextMode: 'follow', visibleWhenContextSlot: 'session' },
   { path: 'costBasis', title: 'Cost basis', widget: 'select', contextMode: 'follow',
-    options: UsageAnalyticsQueryRequestSchema.shape.costMode._zod.def.innerType.options.map(value => ({ value,
+    options: USAGE_ANALYTICS_COST_MODES.map(value => ({ value,
       label: { auto: 'Automatic', reported: 'Reported', estimated: 'Estimated', api_equivalent: 'API equivalent' }[value] })) },
   { path: 'metric', title: 'Metric', widget: 'select', contextMode: 'own', options: [
     { value: 'tokens', label: 'Tokens' }, { value: 'cost', label: 'Cost' },
