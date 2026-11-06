@@ -21,7 +21,7 @@ import {
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { bindHomeDomainHttpRequestV1, classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import type { DeploymentEnvironmentContentPreparation } from './prepareEnvironmentContentForHost';
+import type { DeploymentEnvironmentContentPreparation, DeploymentEnvironmentContentPreparationResult } from './prepareEnvironmentContentForHost';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
@@ -67,7 +67,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       | Promise<Readonly<Record<string, string>> | null>;
   dispatchReceipt(request: DeploymentReceiptDispatchV1): Promise<DeploymentReceiptResultV1 | ActionExecuteFailure>;
   admitTeardown?(input: DeploymentTeardownInputV1, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
-  prepareEnvironment?(request: DeploymentEnvironmentContentPreparation): Promise<ActionExecuteFailure | null>;
+  prepareEnvironment?(request: DeploymentEnvironmentContentPreparation): Promise<DeploymentEnvironmentContentPreparationResult>;
   prepareBindings?(request: DeploymentBindingPreparationRequestV1):
     Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure>;
 }>): Pick<ActionExecutorDeps, 'deploymentAction' | 'resolveEnvironmentApprovalScope'> & Readonly<{
@@ -140,6 +140,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const unsupported = await params.admitTeardown(DeploymentTeardownInputV1Schema.parse(input), context);
         if (unsupported) return unsupported;
       }
+      let authoredEnvironmentInputDigest: string | undefined;
       if (actionId === 'deployments.environments.create' || actionId === 'deployments.environments.update') {
         const preparedInput = actionId === 'deployments.environments.create'
           ? DeploymentEnvironmentCreateInputV1Schema.parse(input) : DeploymentActionInputSchemasV1[actionId].parse(input);
@@ -176,8 +177,12 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         }
         if (needsContentAdmission) {
           if (!params.prepareEnvironment) return failure('client_required');
-          const deniedContent = await params.prepareEnvironment({ actionId, input: preparedInput, context });
-          if (deniedContent) return deniedContent;
+          const preparedContent = await params.prepareEnvironment({ actionId, input: preparedInput, context });
+          if (preparedContent && 'errorCode' in preparedContent) return preparedContent;
+          if (preparedContent) {
+            input = preparedContent.input;
+            authoredEnvironmentInputDigest = preparedContent.authoredInputDigest;
+          }
         }
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
@@ -202,6 +207,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       let body = bound.body;
       if (actionId === 'deployments.environments.update' && preparedUpdateBindings) {
         body = { ...transportInput, preparedBindings: preparedUpdateBindings };
+      }
+      if (actionId === 'deployments.environments.update' && authoredEnvironmentInputDigest) {
+        body = { ...transportInput, ...(preparedUpdateBindings ? { preparedBindings: preparedUpdateBindings } : {}),
+          authoredInputDigest: authoredEnvironmentInputDigest };
       }
       if (actionId === 'deployments.cancel') body = { ...transportInput, kind: 'cancel' };
       if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote' || actionId === 'deployments.teardown') {

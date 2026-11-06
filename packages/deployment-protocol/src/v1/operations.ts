@@ -11,6 +11,7 @@ export type DeploymentBindingsSetStorageInputV1 = z.infer<typeof DeploymentBindi
 
 /** Update remains the sole placement front door; binding custody commits in that same CAS. */
 export const DeploymentEnvironmentUpdateStorageInputV1Schema = z.extend(DeploymentEnvironmentUpdateInputV1Schema, {
+    authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
     preparedBindings: z.optional(z.strictObject({
         grants: z.array(MachineSecretGrantV1Schema),
         referencedSavedSecretRevisions: DeploymentBindingsPreparedInputV1Schema.shape.referencedSavedSecretRevisions,

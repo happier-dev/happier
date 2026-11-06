@@ -33,16 +33,30 @@ export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.di
 ]));
 export type DeploymentRestoreNativeAdmissionV1 = z.infer<typeof DeploymentRestoreNativeAdmissionV1Schema>;
 export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ environmentId: id }), DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
+  z.strictObject({ environmentId: id }),
+  z.strictObject({ environmentId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    authoredMetadataDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) }),
+  DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
 ]));
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
 // arm would consume typed native facts and change the original envelope digest.
 defineStoredReadProjection(DeploymentNativeAdmissionV1Schema, () => DeploymentNativeAdmissionV1Schema);
 export type DeploymentNativeAdmissionV1 = z.infer<typeof DeploymentNativeAdmissionV1Schema>;
+export function isDeploymentEnvironmentUpdateNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined):
+  value is Extract<DeploymentNativeAdmissionV1, { authoredMetadataDigest: string }> {
+  return value !== undefined && !('kind' in value) && 'authoredMetadataDigest' in value;
+}
 export function isDeploymentDomainNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentDomainNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'domain';
 }
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown) {
+  if (actionId === 'deployments.environments.update') {
+    const value = readRecord(input);
+    if (readRecord(value.patch).ingress === undefined) return undefined;
+    return DeploymentNativeAdmissionV1Schema.parse({ environmentId: value.environmentId,
+      inputDigest: computeDeploymentEnvironmentUpdateInputDigestV1(value),
+      authoredMetadataDigest: computeDeploymentEnvironmentUpdateMetadataDigestV1(value) });
+  }
   if (actionId === 'deployments.backups.restore') {
     const value = DeploymentBackupRestoreInputV1Schema.parse(input);
     const { serverId: _serverId, ...admitted } = value;
@@ -80,6 +94,28 @@ export const DeploymentCandidatePublicationV1Schema = lazyZodSchema(() => z.stri
 function publicationArtifactId(digest: string): string {
   // Variant b avoids the reserved version-8/variant-a Account-scoped namespace.
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-b${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+/** Ingress preparation retains the reviewed CAS and patch while replacing private references. */
+export function computeDeploymentEnvironmentUpdateMetadataDigestV1(input: Readonly<Record<string, unknown>>): string {
+  const { contentArtifactId: _artifact, contentHeaderVersion: _header, contentBodyVersion: _body,
+    authoredInputDigest: _digest, preparedBindings: _bindings, ...metadata } = input;
+  return computeCanonicalDomainSeparatedDigest('happier-deployment-environment-update-metadata-v1',
+    [createCanonicalJsonSigningInput(metadata)]);
+}
+export function computeDeploymentEnvironmentUpdateInputDigestV1(input: Readonly<Record<string, unknown>>): string {
+  const { authoredInputDigest: _digest, preparedBindings: _bindings, ...reviewed } = input;
+  return computeCanonicalDomainSeparatedDigest('happier-deployment-environment-update-input-v1',
+    [createCanonicalJsonSigningInput(reviewed)]);
+}
+/** The original signed invocation owns one create-only Environment candidate. */
+export function createDeploymentEnvironmentContentArtifactIdV1(input: Readonly<{
+  accountId: string; serverIdentityId: string; actionId: string; requestId: string;
+  requestEnvelopeDigest: string; deploymentNativeAdmission: Readonly<{ environmentId: string }>;
+}>): string {
+  return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-environment-publication-v1',
+    [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
+      input.deploymentNativeAdmission.environmentId]));
 }
 
 /** Preserve the admitted routing metadata when private content becomes an Artifact reference. */

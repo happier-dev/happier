@@ -99,7 +99,8 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       || input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId)
     && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
     && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope)
-    && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore')
+    && (binding.actionId === 'deployments.environments.update' && nativeAdmission !== undefined
+        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore')
       ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
       : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'
         ? binding.environmentId : binding.deploymentCandidatePublication?.environmentId) === nativeAdmission?.environmentId);

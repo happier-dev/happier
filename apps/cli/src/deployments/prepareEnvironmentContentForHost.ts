@@ -14,12 +14,21 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
+import { createDeploymentArtifactForHost } from './createArtifactForHost';
+import { projectDeploymentFailure } from './deploymentFailure';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { createDeploymentEnvironmentContentArtifactIdV1,
+    isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 export type DeploymentEnvironmentContentPreparation = Readonly<{
     actionId: 'deployments.environments.create' | 'deployments.environments.update';
     input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentUpdateInputV1;
     context: ActionExecutorContext;
 }>;
+export type DeploymentEnvironmentContentPreparationResult = ActionExecuteFailure | Readonly<{
+    input: DeploymentEnvironmentUpdateInputV1;
+    authoredInputDigest?: string;
+}> | null;
 
 /** Create/edit and deploy share P41's source policy; storage never parses Compose. */
 export function createPrepareEnvironmentContentForHost(host: Readonly<{
@@ -31,7 +40,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
         Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>) {
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
-    return async (request: DeploymentEnvironmentContentPreparation): Promise<ActionExecuteFailure | null> => {
+    return async (request: DeploymentEnvironmentContentPreparation): Promise<DeploymentEnvironmentContentPreparationResult> => {
         try {
             request.context.signal?.throwIfAborted();
             const open = (id: string) => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read(id, {
@@ -57,7 +66,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 return loaded;
             };
             const artifact = await open(request.input.contentArtifactId);
-            const candidate = readDeploymentEnvironmentArtifactV1(request.input, artifact);
+            let candidate = readDeploymentEnvironmentArtifactV1(request.input, artifact);
             if (!candidate.ok) return { ok: false, errorCode: candidate.error, error: candidate.error };
             // Dedicated writers own bindings and backup configuration, including
             // in E2EE mode where the server cannot inspect these leaves.
@@ -77,16 +86,28 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 });
             }
             let previousDefinition: DeploymentEnvironmentDefinitionV1 | undefined;
+            let preparedIngress: Readonly<{ input: DeploymentEnvironmentUpdateInputV1;
+                owner: Awaited<ReturnType<typeof readMetadata>>['environment']['owner'] }> | undefined;
             if (request.actionId === 'deployments.environments.update' && 'environmentId' in request.input) {
                 const loaded = await readMetadata(request.input.environmentId);
                 if (loaded.environment.id !== request.input.environmentId || loaded.environment.revision !== request.input.expectedRevision)
                     return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' };
-                const previous = readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
+                const currentReference = request.input.contentArtifactId === loaded.environment.contentArtifactId
+                    && request.input.contentHeaderVersion === loaded.environment.contentHeaderVersion
+                    && request.input.contentBodyVersion === loaded.environment.contentBodyVersion;
+                const previous = currentReference ? candidate
+                    : readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
                 if (!previous.ok) return { ok: false, errorCode: previous.error, error: previous.error };
                 previousDefinition = previous.content.definition;
                 const ingress = request.input.patch?.ingress;
-                if (!isDeepStrictEqual(candidate.content.ingress, ingress === undefined ? previous.content.ingress : ingress ?? undefined))
-                    return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                const desiredIngress = ingress === undefined ? previous.content.ingress : ingress ?? undefined;
+                if (!isDeepStrictEqual(candidate.content.ingress, desiredIngress)) {
+                    if (!currentReference || ingress === undefined) return { ok: false, errorCode: 'deployment_invalid',
+                        error: 'deployment_invalid (deployment.environment.ingress_content_mismatch)',
+                        details: { requiredFact: 'preparedEnvironmentIngress' } };
+                    candidate = { ...candidate, content: { ...previous.content, ingress: desiredIngress } };
+                    preparedIngress = { input: request.input, owner: loaded.environment.owner };
+                }
                 // This check owns opened content in both Account modes. An E2EE
                 // server cannot inspect this private leaf on the client's behalf.
                 if (!isDeepStrictEqual(previous.content.template, candidate.content.template)
@@ -102,11 +123,38 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 await admitStoredComposeDefinition(candidate.content.definition);
             }
             request.context.signal?.throwIfAborted();
+            if (preparedIngress) {
+                const prepared = preparedIngress;
+                const content = candidate.content;
+                const binding = request.context.externalActionExecutionAuthorization?.binding;
+                const native = binding?.deploymentNativeAdmission;
+                if (binding && (binding.actionId !== request.actionId || !isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
+                    || native.environmentId !== prepared.input.environmentId)) return { ok: false,
+                    errorCode: 'action_forbidden', error: 'action_forbidden (deployment.environment.ingress_admission_missing)',
+                    details: { requiredFact: 'admittedEnvironmentIngress' } };
+                const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({
+                    artifacts, owner: prepared.owner, publication: 'create',
+                    assertCurrent: async () => { request.context.signal?.throwIfAborted(); },
+                    content: { ...(binding && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? {
+                        artifactId: createDeploymentEnvironmentContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native }),
+                    } : {}), header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name },
+                        body: JSON.stringify(content), signal: request.context.signal,
+                        beforeWrite: async () => { request.context.signal?.throwIfAborted(); },
+                        authorizationHeaders: async transport => {
+                            const headers = await host.resolveRequestHeaders(request.context, request.actionId, transport);
+                            if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                            return headers;
+                        } },
+                }));
+                return { input: { ...prepared.input, contentArtifactId: created.artifactId,
+                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion },
+                    ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
+            }
             return null;
         } catch (error) {
             const code = request.context.signal?.aborted ? 'cancelled'
                 : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable';
-            return { ok: false, errorCode: code, error: code };
+            return projectDeploymentFailure(code, error);
         }
     };
 }

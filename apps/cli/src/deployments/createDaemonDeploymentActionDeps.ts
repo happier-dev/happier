@@ -584,7 +584,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             await assertHttpAuthority(context); return null;
         },
         resolveRequestHeaders: headers,
-        prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, resolveRequestHeaders: headers }),
+        prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, accountArtifacts: artifacts, resolveRequestHeaders: headers }),
         prepareBindings: createPrepareDeploymentBindingsForHost(host),
         async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
             if (await dataTeardown.admit(input, context)) return null;

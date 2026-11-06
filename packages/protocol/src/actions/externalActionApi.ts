@@ -2,7 +2,8 @@ import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGener
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
 import { BotTemplateRequesterAuthorshipV1Schema } from '../bots/templates/botTemplateV1.js';
-import { projectDeploymentNativeAdmissionV1, DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+import { projectDeploymentNativeAdmissionV1, DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1,
+  isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
@@ -891,14 +892,14 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
   const native = input.actionId === 'deployments.deploy' || input.actionId === 'deployments.rollback'
     || input.actionId === 'deployments.promote' || input.actionId === 'deployments.teardown'
     || input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore'
-    || isDeploymentDomainChildActionIdV1(input.actionId);
+    || isDeploymentDomainChildActionIdV1(input.actionId) || input.actionId === 'deployments.environments.update';
   const operationRead = input.actionId === 'action.operations.get';
   if (!native && !operationRead) {
     if (input.envelope.v === 2 && input.envelope.deploymentNativeAdmission) throw new TypeError('Unexpected native deployment admission');
     return undefined;
   }
   const admission = input.envelope.v === 1 ? projectDeploymentNativeAdmissionV1(input.actionId, input.envelope.input)
-    : operationRead && input.envelope.deploymentNativeAdmission === undefined ? undefined
+    : (operationRead || input.actionId === 'deployments.environments.update') && input.envelope.deploymentNativeAdmission === undefined ? undefined
       : DeploymentNativeAdmissionV1Schema.parse(input.envelope.deploymentNativeAdmission);
   if (isDeploymentDomainChildActionIdV1(input.actionId)
     ? !isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== input.actionId
@@ -908,6 +909,10 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
   }
   if ((input.actionId === 'deployments.backups.restore') !== (admission !== undefined && 'kind' in admission && admission.kind === 'restore')) {
     throw new TypeError('Native deployment restore admission mismatch');
+  }
+  if (input.actionId === 'deployments.environments.update' ? admission !== undefined
+    && !isDeploymentEnvironmentUpdateNativeAdmissionV1(admission) : isDeploymentEnvironmentUpdateNativeAdmissionV1(admission)) {
+    throw new TypeError('Native Environment update admission mismatch');
   }
   return admission;
 }
@@ -1107,7 +1112,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
     deploymentChildRoot: z.optional(z.literal(true)),
     deploymentCandidatePublication: z.optional(DeploymentCandidatePublicationV1Schema),
-    deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema])),
+    deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
@@ -1129,8 +1134,11 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['templateRequesterSetupAdmission'], message: 'Template requester admission binds its exact Machine and admitted setup role.' });
   }
   const native = value.deploymentNativeAdmission;
-  if (isDeploymentDomainChildActionIdV1(value.actionId) || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore'
-    ? !native || native.actionId !== value.actionId || native.environmentId !== value.environmentId
+  if (isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
+    ? value.actionId !== 'deployments.environments.update' || native.environmentId !== value.environmentId
+      || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    : isDeploymentDomainChildActionIdV1(value.actionId) || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore'
+    ? !native || !('kind' in native) || native.actionId !== value.actionId || native.environmentId !== value.environmentId
       || (value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore') && (native.kind !== (value.actionId === 'deployments.restart' ? 'restart' : 'restore') || native.machineId !== value.machineId
         || native.installationId !== value.installationId || value.target.kind !== 'machine' || value.target.machineId !== native.machineId)
     : native !== undefined) {
@@ -1188,6 +1196,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
     && !isDeploymentEnvironmentMetadataReadActionIdV1(value.actionId)
+    && !(value.actionId === 'deployments.environments.update' && isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
     && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'
       || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(value.actionId) || value.actionId === 'deployments.receipts.observe')))
     || value.target.kind !== 'machine')) {
@@ -1621,3 +1630,5 @@ export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 
 export { DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+export { createDeploymentEnvironmentContentArtifactIdV1, computeDeploymentEnvironmentUpdateInputDigestV1,
+  computeDeploymentEnvironmentUpdateMetadataDigestV1, isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';

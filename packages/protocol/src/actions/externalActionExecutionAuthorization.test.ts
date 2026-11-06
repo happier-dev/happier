@@ -1,3 +1,5 @@
+import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
+  projectDeploymentNativeAdmissionV1 } from './externalActionApi.js';
 import { encodeReviewedActionChildHttpProofV1, decodeReviewedActionChildHttpProofV1 } from './externalActionExecutionAuthorization.js';
 import { expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -307,4 +309,34 @@ it('authenticates the exact reviewed-child operand proof on the existing Machine
     expect(verifyExternalActionMachineRpcRequestV1({ ...request, reviewedChild: { ...reviewedChild, ...patch },
       publicKey: key.publicKey, signature })).toBe(false);
   }
+});
+
+it.each(['plain', 'e2ee'] as const)('binds ingress preparation to the admitted Environment (%s)', mode => {
+  const actionId = 'deployments.environments.update';
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const input = { serverId: 'srv_ingress', environmentId: 'environment', expectedRevision: 1,
+    contentArtifactId: 'current-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+    patch: { ingress: { kind: 'cloudflareTunnel' } } };
+  const envelope = mode === 'plain' ? { v: 1, requestId: 'ingress-root', target, input } as const
+    : sealExternalActionRequestV2({ binding: { serverIdentityId: 'srv_ingress', accountId: 'actor', actionId,
+      requestId: 'ingress-root', target, authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+  expect(native).toMatchObject({ environmentId: input.environmentId, inputDigest: expect.any(String),
+    authoredMetadataDigest: expect.any(String) });
+  const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'ingress-proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'srv_ingress', machineId: target.machineId, installationId: 'installation', actionId,
+    requestId: envelope.requestId, target, accountEncryptionMode: mode, environmentId: input.environmentId,
+    deploymentNativeAdmission: native, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  expect(binding.deploymentCandidatePublication).toBeUndefined();
+  expect(isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
+  for (const replacement of [{ ...input, expectedRevision: 2 }, { ...input, patch: { ingress: null } }]) {
+    expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding,
+      deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, replacement) },
+    { actionId, machineId: target.machineId, envelope })).toBe(false);
+  }
+  const { patch: _patch, ...ordinaryUpdate } = input;
+  expect(projectDeploymentNativeAdmissionV1(actionId, ordinaryUpdate)).toBeUndefined();
 });
