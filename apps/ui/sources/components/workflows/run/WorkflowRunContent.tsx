@@ -1195,7 +1195,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         context={{ workflowCustodyState: props.run.workflowCustodyState,
                             cancelRequested: props.cancelRequested, machineReachable: props.machineReachable,
                             machineName: props.machineName ?? props.run.machineId }}
-                        inAttentionWindow={(props.run.attentionRequired === true || attentionRows.length > 0) && !isTerminalWorkflowRunState(props.run.state)}
+                        // Amber only when the outcome is the hold itself; a Paused or Running Run whose hold
+                        // Needs you lists keeps its own calm mark (FIN-DESIGN-REVIEW L2).
+                        inAttentionWindow={workflowRunOutcomeIsAttention({
+                            state: props.run.state,
+                            workflowCustodyState: props.run.workflowCustodyState,
+                            cancelRequested: props.cancelRequested,
+                            inAttentionWindow: props.run.attentionRequired === true || attentionRows.length > 0,
+                        })}
                         testID={`${testIDPrefix}-outcome-mark`}
                     />
                     <Text testID={`${testIDPrefix}-outcome`} style={styles.outcomeSentence}>

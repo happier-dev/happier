@@ -471,6 +471,27 @@ describe('WorkflowRunContent', () => {
     expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
       .map((button) => button.props.testID)).toEqual(['workflow-run-cancel']);
   });
+  it('keeps the Paused mark calm while Needs you carries the hold (FIN-DESIGN-REVIEW L2)', async () => {
+    const pausedRun = createWorkflowRunSummaryFixture({
+      state: 'paused',
+      availability: { cancel: true, pause: false, resumeBoundary: true },
+    });
+    const markColor = (screen: Awaited<ReturnType<typeof renderContent>>) => screen
+      .findByTestId('workflow-run-outcome-mark')?.findAll((node) => typeof node.props.color === 'string')[0]?.props.color;
+    const calm = markColor(await renderContent({ run: pausedRun, onResume: vi.fn(), selectedInvocationId: null }));
+    const held = await renderContent({
+      run: { ...pausedRun, attentionRequired: true },
+      onResume: vi.fn(),
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', lifecycle: 'waiting_for_review' }),
+      ],
+      invocationProgressById: openedLeafProgress('held'),
+      selectedInvocationId: null,
+    });
+    expect(held.findByTestId('workflow-run-needs-you')).not.toBeNull();
+    expect(calm).toBeDefined();
+    expect(markColor(held)).toBe(calm);
+  });
   it('retires stale holds when the Run settles after Stop', async () => {
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({
