@@ -230,7 +230,7 @@ export function addWorkflowConditionRow(
   ]);
 }
 
-/** A group left with one rule reads as that rule again; a lone rule removes to no condition at all. */
+/** Positive groups collapse to their remaining rule; negative groups keep their polarity. */
 export function removeWorkflowConditionRow(
   condition: WorkflowCondition,
   index: number,
@@ -238,7 +238,7 @@ export function removeWorkflowConditionRow(
   const { mode, rows } = readWorkflowConditionGroup(condition);
   const remaining = rows.filter((_, candidate) => candidate !== index);
   if (remaining.length === 0) return undefined;
-  return remaining.length === 1
+  return remaining.length === 1 && mode !== 'none' && mode !== 'not_all'
     ? remaining[0]
     : writeWorkflowConditionGroup(mode, remaining);
 }

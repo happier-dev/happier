@@ -121,10 +121,11 @@ export function InlineTextField(props: Readonly<{
             style={[props.style, contentHeight === null ? null : { height: contentHeight }, resting ? RESTING_FIELD_STYLE : null]}
         />
     );
-    if (!resting) return field;
+    if (props.restingLines === undefined) return field;
+    // Keep the input's parent and child slot stable through focus and empty-value transitions.
     return (
         <View style={RESTING_FRAME_STYLE}>
-            <Text
+            {resting ? <Text
                 testID={editor.testID ? `${editor.testID}-resting` : undefined}
                 numberOfLines={props.restingLines}
                 aria-hidden
@@ -132,7 +133,7 @@ export function InlineTextField(props: Readonly<{
                 style={props.style}
             >
                 {editor.value}
-            </Text>
+            </Text> : null}
             {field}
         </View>
     );

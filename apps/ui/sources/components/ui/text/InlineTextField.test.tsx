@@ -49,10 +49,35 @@ describe('InlineTextField web geometry', () => {
         const screen = await renderScreen(<InlineTextField editor={{ value: long, placeholder: 'Name',
             accessibilityLabel: 'Name', onChangeText: () => {}, testID: 'title' }} style={{ fontSize: 24 }} restingLines={2} />);
         const resting = () => screen.findHostByTestId('title-resting');
+        const input = screen.findHostByTestId('title')!;
         expect(resting()?.props.numberOfLines).toBe(2);
         // The field itself still carries the whole title, so a click places the caret and readers hear all of it.
         expect(screen.findHostByTestId('title')!.props.value).toBe(long);
         await act(async () => screen.findHostByTestId('title')!.props.onFocus());
         expect(resting()).toBeNull();
+        expect(screen.findHostByTestId('title') === input).toBe(true);
+        await act(async () => input.props.onChangeText('A renamed title '));
+        expect(screen.findHostByTestId('title') === input).toBe(true);
+        expect(input.props.value).toBe('A renamed title ');
+        await act(async () => input.props.onBlur());
+        expect(screen.findHostByTestId('title') === input).toBe(true);
+        expect(resting()?.props.numberOfLines).toBe(2);
+    });
+
+    it('keeps the same input when an initially empty clamped title receives its first value', async () => {
+        const { InlineTextField } = await import('./InlineTextField');
+        function Title() {
+            const [value, setValue] = React.useState('');
+            return <InlineTextField editor={{ value, placeholder: 'Name', accessibilityLabel: 'Name',
+                onChangeText: setValue, testID: 'title' }} style={{}} restingLines={2} />;
+        }
+        const screen = await renderScreen(<Title />);
+        const input = screen.findHostByTestId('title')!;
+        await act(async () => input.props.onFocus());
+        await act(async () => input.props.onChangeText('First title'));
+        await act(async () => input.props.onBlur());
+        expect(screen.findHostByTestId('title') === input).toBe(true);
+        expect(input.props.value).toBe('First title');
+        expect(screen.findHostByTestId('title-resting')?.props.children).toBe('First title');
     });
 });

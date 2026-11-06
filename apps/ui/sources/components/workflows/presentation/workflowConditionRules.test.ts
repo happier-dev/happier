@@ -254,4 +254,17 @@ describe('several rules', () => {
     ).toEqual(isNo);
     expect(removeWorkflowConditionRow(isNo, 0)).toBeUndefined();
   });
+
+  it.each(['any', 'all'] as const)('keeps the negation when removing from a negated %s group', (kind) => {
+    const condition: WorkflowCondition = {
+      kind: 'not',
+      condition: { kind, conditions: [isNo, other] },
+    };
+    const remaining = removeWorkflowConditionRow(condition, 1);
+    expect(remaining).toEqual({
+      kind: 'not',
+      condition: { kind, conditions: [isNo] },
+    });
+    expect(removeWorkflowConditionRow(remaining!, 0)).toBeUndefined();
+  });
 });
