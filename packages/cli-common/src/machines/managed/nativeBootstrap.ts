@@ -6,9 +6,43 @@ import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileRe
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
+import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { buildRemoteHappierInvocationCommand } from '../../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
+
+type NativeGuestHome = NonNullable<Extract<ManagedBootstrapCarrierV1, { kind: 'native' }>['guestHome']>;
+
+/** Enrollment and retained Start use the same namespace. */
+export function buildManagedNativeGuestCommand(command: string, guestHome?: Pick<NativeGuestHome, 'homeDir' | 'happyHomeDir'>): string {
+    return guestHome
+        ? `export HOME=${safeBashSingleQuote(guestHome.homeDir)} HAPPIER_HOME_DIR=${safeBashSingleQuote(guestHome.happyHomeDir)}; cd ${safeBashSingleQuote(guestHome.homeDir)} && ${command}`
+        : command;
+}
+
+/** Reuse the installed identity; starting a retained guest never installs or pairs. */
+export async function startManagedNativeGuestDaemon(input: Readonly<{
+    native: ManagedNativeBootstrapIO; binaryPath: string; channel: 'stable' | 'preview' | 'dev';
+    guestHome?: NativeGuestHome; signal?: AbortSignal; timeoutMs?: number;
+}>): Promise<void> {
+    input.signal?.throwIfAborted();
+    const detachedCommand = `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: input.binaryPath,
+        args: ['daemon', 'start', '--json'], channel: input.channel })}`;
+    const configured = await input.native.exec({
+        command: buildManagedNativeGuestCommand(input.guestHome
+            ? `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: input.binaryPath,
+                args: ['daemon', 'start-sync'], channel: input.channel })}` : detachedCommand, input.guestHome),
+        signal: input.signal, timeoutMs: input.timeoutMs,
+        ...(input.guestHome ? { processConfig: {
+            environment: { HOME: input.guestHome.homeDir, HAPPIER_HOME_DIR: input.guestHome.happyHomeDir },
+            detachedDaemonStartArgv: ['sh', '-c', buildManagedNativeGuestCommand(detachedCommand, input.guestHome)],
+        } } : {}),
+    });
+    if (configured.status !== 0) throw new SystemTaskExecutionError('native_boot_unconfirmed', 'The native daemon startup was not confirmed.');
+    input.signal?.throwIfAborted();
+}
 
 /** Adapt the provider's native byte/exec roles to the one shared enrollment recipe. */
-export function createManagedNativeBootstrapIO(correlation: ManagedEnrollmentCorrelationV1, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
+export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollmentCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
     return {
         exec: async request => {
             const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {

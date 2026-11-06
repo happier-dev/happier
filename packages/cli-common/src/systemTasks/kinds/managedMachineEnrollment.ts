@@ -13,7 +13,6 @@ import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/mach
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedMachineBootstrapPromptV1Schema, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { parseSshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
-import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { buildRemoteHappierInvocationCommand, buildDedicatedDaemonInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
 import { normalizeRemoteReleaseArch, normalizeRemoteReleaseOs, resolveRemoteInstalledFirstPartyBinaryPath } from '../ssh/remoteFirstPartyInstallPath.js';
 import { installRemoteCli as installSharedRemoteCli } from '../ssh/installRemoteCli.js';
@@ -24,6 +23,7 @@ import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../execu
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { parseSshKnownHostLine } from './sshKnownHostLine.js';
+import { buildManagedNativeGuestCommand, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 
 export type ManagedNativeBootstrapIO = Readonly<{
   exec(input: Readonly<{ command: string; input?: string; signal?: AbortSignal; timeoutMs?: number | null;
@@ -176,9 +176,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     throw new SystemTaskExecutionError('resource_mismatch', 'Native bootstrap transport does not address the retained resource.');
   }
   const native = deps.native;
-  const wrapNativeCommand = (command: string) => nativeGuestHome
-    ? `export HOME=${safeBashSingleQuote(nativeGuestHome.homeDir)} HAPPIER_HOME_DIR=${safeBashSingleQuote(nativeGuestHome.happyHomeDir)}; cd ${safeBashSingleQuote(nativeGuestHome.homeDir)} && ${command}`
-    : command;
+  const wrapNativeCommand = (command: string) => buildManagedNativeGuestCommand(command, nativeGuestHome);
   const exec: ManagedNativeBootstrapIO['exec'] = async (request) => {
     input.signal?.throwIfAborted();
     request.signal?.throwIfAborted();
@@ -194,16 +192,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     command: dedicatedIdentity ? buildDedicatedDaemonInvocationCommand(request.command) : request.command });
   const configureNativeBoot = async (installedBinaryPath: string, options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>) => {
     if (!nativeGuestHome) return;
-    const foregroundCommand = `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: installedBinaryPath, args: ['daemon', 'start-sync'], channel: configuration.channel })}`;
-    const detachedCommand = `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: installedBinaryPath, args: ['daemon', 'start', '--json'], channel: configuration.channel })}`;
-    const configured = await exec({ command: foregroundCommand,
-      ...(options ? { signal: options.signal, timeoutMs: options.timeoutMs } : {}),
-      processConfig: {
-        environment: { HOME: nativeGuestHome.homeDir, HAPPIER_HOME_DIR: nativeGuestHome.happyHomeDir },
-        detachedDaemonStartArgv: ['sh', '-c', wrapNativeCommand(detachedCommand)],
-      } });
-    if (configured.status !== 0) throw new SystemTaskExecutionError('native_boot_unconfirmed', 'The native daemon boot configuration was not confirmed.');
-    input.signal?.throwIfAborted();
+    await startManagedNativeGuestDaemon({ native, binaryPath: installedBinaryPath, channel: configuration.channel,
+      guestHome: nativeGuestHome, signal: options?.signal ?? input.signal, timeoutMs: options?.timeoutMs });
   };
   // Registration may commit before the native config update is confirmed.
   // Retry the retained installation's boot config, not installation/pairing.
