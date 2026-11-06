@@ -4,6 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -58,6 +61,7 @@ export const ProjectsListView = React.memo(() => {
         open: hiddenOpen, onToggle: () => setHiddenOpen(open => !open),
         onShow: model.showHiddenProject,
     }), [model.hiddenItems, hiddenOpen, model.showHiddenProject]);
+    const phoneTabShell = usePhoneTabNavRow() !== null;
     // Saved, not open (lab p-projects TREEp): the same composition as the column's.
     const { saved } = model;
     const rows = React.useMemo(
@@ -92,10 +96,13 @@ export const ProjectsListView = React.memo(() => {
     });
 
     return (
+        <NavigationTitleChromeProvider showsTitle={false}>
         <ItemList presentation="grouped"
             testID="projects-list"
-            containerStyle={{ paddingTop: theme.space.s12 }}
+            containerStyle={phoneTabShell ? undefined : { paddingTop: theme.space.s12 }}
         >
+            {/* The phone tab's head: the shell draws the Home line above, the page names itself here. */}
+            {phoneTabShell ? <NavigationLargeTitleProvider largeTitle><PageHeader title={t('tabs.projects')} /></NavigationLargeTitleProvider> : null}
             {model.rowsUnconfirmed ? (
                 <ProjectOpenResolutionCard testID="projects-list:rows" issue={model.rowsUnconfirmed}
                     onChoose={() => {}} onRetry={rowsRetry} />
@@ -164,6 +171,7 @@ export const ProjectsListView = React.memo(() => {
             <ProjectHideUndoNotice testID="projects-list:hide-undo" undo={model.projectHideUndo} onDismiss={model.dismissProjectHideUndo} />
 
         </ItemList>
+        </NavigationTitleChromeProvider>
     );
 });
 

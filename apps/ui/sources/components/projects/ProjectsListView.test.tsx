@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import { act } from 'react-test-renderer';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -227,6 +228,18 @@ describe('ProjectsListView', () => {
             sessionListRenderableDelta: { revision: 1, changedSessionIds: ['session'], removedSessionIds: [], rebuiltSessionListIndex: false } }));
         expect(phoneRowRenders.get('projects-list-item-ref-0')).toBe(1);
         expect([...phoneRowRenders.keys()].filter(key => key !== 'projects-list-item-ref-0').length).toBe(0);
+    });
+
+    it('names the page with its large title in the phone tab shell, and leaves other hosts to their own head', async () => {
+        const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
+        const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+        const { ProjectsListView } = await import('./ProjectsListView');
+
+        const inShell = await renderProjects(<PhoneTabNavRowProvider leading={null} trailing={null}><ProjectsListView /></PhoneTabNavRowProvider>);
+        expect(inShell.findByType(PageHeader).props.title).toBe(t('tabs.projects'));
+
+        const elsewhere = await renderProjects(<ProjectsListView />);
+        expect(elsewhere.tree.root.findAllByType(PageHeader)).toHaveLength(0);
     });
 
     it('keeps hidden Projects reachable through the phone Hidden group without rendering checkout leaves', async () => {
