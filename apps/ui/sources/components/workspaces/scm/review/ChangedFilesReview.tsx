@@ -108,7 +108,6 @@ type ReviewListFile = DiffFileEntry & Readonly<{
     reviewFile: ScmFileStatus;
     showDivider: boolean;
     sectionTitle: string | undefined;
-    highlighted: boolean;
     attribution: SessionAttributedFile | undefined;
     imageCompare: ChangedFilesReviewDiffBlockProps['imageCompare'];
     snapshotSignature: string | null;
@@ -1269,14 +1268,13 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 reviewFile: entry.file,
                 showDivider: reviewFileEntries[index + 1]?.sectionKey === entry.sectionKey,
                 sectionTitle: showSectionHeaders && entry.indexInSection === 0 ? entry.sectionTitle : undefined,
-                highlighted: highlightedPath === entry.file.fullPath,
                 attribution: attributedEntriesByPath.get(entry.file.fullPath),
                 imageCompare,
                 snapshotSignature: imageSignature,
             };
         });
         return publishedFiles.current = retainKeyedRows(publishedFiles.current, incoming, file => file.key);
-    }, [reviewFileEntries, attributedEntriesByPath, highlightedPath, showSectionHeaders,
+    }, [reviewFileEntries, attributedEntriesByPath, showSectionHeaders,
         capturedComparison, capturedFileByPath, entryDeltaByPath, snapshot, snapshotSignature, diffArea]);
 
     const renderFileRow = React.useCallback<NonNullable<DiffFilesListViewProps<ReviewListFile>['renderFileRow']>>((params) => {
@@ -1360,7 +1358,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     showChangeMark={false}
                     tag={resolveScmChangePathTag(file.fullPath)}
                     accessibilityQualification={qualification}
-                    highlighted={params.file.highlighted}
+                    highlighted={highlightedPath === file.fullPath}
                     leadingElement={(
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                             {collapseControl}
@@ -1405,7 +1403,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     ? sessionAttributedFileAccessibilityQualification(attributed)
                     : undefined}
                 density={rowDensity}
-                highlighted={params.file.highlighted}
+                highlighted={highlightedPath === file.fullPath}
                 onPressPinned={
                     onFilePressPinned
                         ? () => deferOnWeb(() => onFilePressPinned(file))
@@ -1429,6 +1427,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         theme,
         hasComparisonChrome,
         props.evidenceOnly,
+        highlightedPath,
     ]);
 
     const renderFileNotes = props.comparisonChrome?.renderFileNotes ?? null;

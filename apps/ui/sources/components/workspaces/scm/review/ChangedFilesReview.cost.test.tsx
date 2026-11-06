@@ -25,6 +25,37 @@ describe('Review work follows file and control demand', () => {
     beforeAll(prepareSessionFilesViewTestkit);
     afterEach(async () => { standardCleanup(); await fixture?.dispose(); fixture = undefined; });
 
+    it('returns held rows without scanning the inventory for restored focus or renderer changes', async () => {
+        fixture = await createSessionFilesViewFixture();
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+        const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
+        const files = Array.from({ length: 59_000 }, (_, index) => scmFileStatusFromChange({
+            path: `src/return-${index}.ts`, changeKind: 'modified', added: 1, removed: 0,
+        }));
+        const props = { sessionId: fixture.session.id, workspaceScope: fixture.scope, theme: createThemeFixture(),
+            snapshot: fileViewSnapshot(), changedFilesViewMode: 'repository' as const,
+            allRepositoryChangedFiles: files, sessionAttributedFiles: [], repositoryOnlyFiles: [],
+            maxFiles: 1, maxChangedLines: 1, onFilePress() {}, initialCollapsedPaths: files.slice(1).map(file => file.fullPath),
+            activeReviewFile: { key: 'return-review', presented: true },
+            comparisonChrome: { indexPlacement: 'phone' as const, renderBarLeading: () => null, renderHeader: () => null } };
+        const screen = await renderScreen(<ChangedFilesReview {...props} />);
+        try {
+            const row = screen.findByTestId('scm-change-row-container:src_return-0.ts');
+            expect(row).not.toBeNull();
+            const held = screen.tree.root.findByType(DiffFilesListView).props.files;
+            let unseenRowReads = 0;
+            const lastRow = held.at(-1)!;
+            const lastKey = lastRow.key;
+            Object.defineProperty(lastRow, 'key', { configurable: true, get: () => { unseenRowReads += 1; return lastKey; } });
+            await screen.update(<ChangedFilesReview {...props} activeReviewFile={{ ...props.activeReviewFile, presented: false }} />);
+            unseenRowReads = 0;
+            await screen.update(<ChangedFilesReview {...props} focusPath={files[0]!.fullPath} onFilePress={() => {}} />);
+            expect(unseenRowReads, 'restoring focus and changing the renderer must not scan held rows').toBe(0);
+            expect(screen.findByTestId('scm-change-row-container:src_return-0.ts')).toBe(row);
+            expect(screen.tree.root.findByType(DiffFilesListView).props.files).toBe(held);
+        } finally { await screen.unmount(); }
+    });
+
     it('does no row work for idle host renders or comparison-header changes at 55,559 files', async () => {
         fixture = await createSessionFilesViewFixture();
         const { ChangedFilesReview } = await import('./ChangedFilesReview');

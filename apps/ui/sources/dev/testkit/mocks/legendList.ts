@@ -54,6 +54,8 @@ type CapturingLegendListMockOptions = Readonly<{
     memoizeItems?: boolean;
     /** Observe memoized cell render work, including invalidation through extraData. */
     onRenderItem?: () => void;
+    /** Observe commits at the external recycler boundary without replacing its owning UI. */
+    onCommit?: (props: Readonly<Record<string, unknown>>) => void;
     /** Stateful geometry feed: merged over the static defaults on every getState() read. */
     resolveState?: () => Partial<LegendListMockState> | null | undefined;
 }>;
@@ -124,6 +126,7 @@ export function createCapturingLegendListMock(
     });
     const LegendList = React.forwardRef<any, any>((nextProps, ref) => {
         props = nextProps;
+        React.useLayoutEffect(() => { options.onCommit?.(nextProps); });
         // Like the recycler, changing renderItem alone updates the callback but does not invalidate a cell.
         const renderItemRef = React.useRef(nextProps.renderItem);
         renderItemRef.current = nextProps.renderItem;

@@ -12,13 +12,91 @@ import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
-installSessionFilesViewBoundaries();
+let reviewCommits = 0;
+let reviewData: unknown;
+installSessionFilesViewBoundaries({ renderItemLimit: 25, onRecyclerCommit: props => {
+    if (props.testID === 'scm-review-list' || props['data-testid'] === 'scm-review-list') {
+        reviewCommits += 1;
+        reviewData = props.data;
+    }
+} });
 await prepareSessionFilesViewTestkit();
 const { ProjectGitSurface } = await import('./ProjectGitSurface');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('Project Changes destination', () => {
+    it('does not commit the parked Review when a different file route opens, switches or reopens', async () => {
+        const entries = Array.from({ length: 57_000 }, (_, index) => ({ path: `src/file-${index}.ts`,
+            previousPath: null, kind: 'modified' as const, includeStatus: '', pendingStatus: 'M',
+            hasIncludedDelta: false, hasPendingDelta: true,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 1, isBinary: false } }));
+        const snapshot = fileViewSnapshot({ rootPath: '/repo', entries });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+            request.method === 'scm.status.snapshot' ? { success: true, snapshot } : undefined });
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const noop = () => {};
+        const isFocused = () => true;
+        const navigation = { push: noop, replace: noop, back: noop };
+        reviewCommits = 0;
+        let openFile: React.Dispatch<React.SetStateAction<string>>;
+        let setPresented: React.Dispatch<React.SetStateAction<boolean>>;
+        const surface = <ProjectGitSurface scopeId="project:parked" serverId={fixture.home.id} machineId="m1" rootPath="/repo"
+                onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
+                onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />;
+        function Host() {
+            const [path, setPath] = React.useState('');
+            const [presented, setActive] = React.useState(true);
+            openFile = setPath;
+            setPresented = setActive;
+            const destination = { tabId: 'project:parked', pathname: '/project/parked',
+                ref: { kind: 'project', params: { projectId: 'parked', details: 'file', path } },
+                focused: true, visible: true, isFocused, navigation };
+            return <DestinationInstanceContext.Provider value={destination}>
+                <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>{surface}</PluginSurfaceFocusEligibilityProvider>
+            </DestinationInstanceContext.Provider>;
+        }
+        const screen = await fixture.render(<Host />);
+        await flushHookEffects({ cycles: 20 });
+        const retainedList = screen.findByTestId('scm-review-list');
+        expect(retainedList).not.toBeNull();
+        await act(async () => setPresented(false));
+        await flushHookEffects({ cycles: 10 });
+        const baseline = reviewCommits;
+        expect(baseline).toBeGreaterThan(0);
+        for (const path of ['src/a.ts', 'src/b.ts', 'src/a.ts']) {
+            await act(async () => openFile(path));
+            await flushHookEffects({ cycles: 5 });
+        }
+        console.info('57k parked Review: file open/switch/reopen list commits =', reviewCommits - baseline);
+        expect(reviewCommits - baseline).toBe(0);
+        expect(screen.findByTestId('scm-review-list')).toBe(retainedList);
+        const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
+        const heldRows = screen.tree.root.findByType(DiffFilesListView).props.files;
+        const heldRecyclerData = reviewData;
+        let unseenRowReads = 0;
+        const lastHeldRow = heldRows.at(-1)!;
+        const lastHeldKey = lastHeldRow.key;
+        Object.defineProperty(lastHeldRow, 'key', { configurable: true, get: () => { unseenRowReads += 1; return lastHeldKey; } });
+        await act(async () => setPresented(true));
+        await flushHookEffects({ cycles: 10 });
+        expect(unseenRowReads, 'returning the real Project Review must not scan held rows').toBe(0);
+        expect(reviewData, 'returning must not copy the held recycler inventory').toBe(heldRecyclerData);
+        expect(screen.tree.root.findByType(DiffFilesListView).props.files).toBe(heldRows);
+        expect(screen.findByTestId('scm-review-list')).toBe(retainedList);
+        await act(async () => setPresented(false));
+        await flushHookEffects({ cycles: 10 });
+        await act(async () => fixture.setSnapshot(fileViewSnapshot({ rootPath: '/repo', fetchedAt: 2, entries: entries.slice(0, -1) })));
+        await flushHookEffects({ cycles: 10 });
+        expect(reviewCommits).toBeGreaterThan(baseline);
+        const changed = reviewCommits;
+        await act(async () => setPresented(true));
+        await flushHookEffects({ cycles: 10 });
+        expect(reviewCommits).toBeGreaterThan(changed);
+        expect(screen.findByTestId('scm-review-list')).toBe(retainedList);
+    });
+
     it('selects two admitted Session sources on the same checkout and withdraws revoked evidence without a Machine fallback', async () => {
         let admitted = ['s1', 's2'];
         let serverId = '';

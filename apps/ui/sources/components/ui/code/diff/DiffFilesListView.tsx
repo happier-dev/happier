@@ -55,6 +55,7 @@ type DiffFilesListViewRenderContext<TFile extends DiffFileEntry> = Readonly<{
     rowHoverColor: string;
     controlColor: string;
     canRenderInlineDiffs: boolean;
+    focusedFileKey: string | null;
     clearMeasurementCache: () => void;
     inlineDiffContainerVariant?: 'default' | 'none';
     maxVirtualizedHeight: number;
@@ -75,9 +76,22 @@ type DiffFilesListViewItem<TFile extends DiffFileEntry> = Readonly<{
     key: string;
     file: TFile;
     expanded: boolean;
-    focused: boolean;
-    renderInlineUnifiedDiff: DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff'];
 }>;
+
+function InlineDiffBody<TFile extends DiffFileEntry>(props: Readonly<{
+    rendererContext: React.Context<DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff']>;
+    input: Parameters<NonNullable<DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff']>>[0];
+    fallback: React.ReactNode;
+    containerVariant: DiffFilesListViewProps<TFile>['inlineDiffContainerVariant'];
+    virtualized: boolean;
+}>) {
+    const render = React.useContext(props.rendererContext);
+    const content = render?.(props.input);
+    if (content === null || content === undefined || content === false) return <>{props.fallback}</>;
+    if (props.containerVariant === 'none') return <>{content}</>;
+    return <View style={[styles.inlineDiffContainer, props.virtualized
+        ? resolveInlineDiffVirtualizedViewportStyle(props.input.maxVirtualizedHeight) : null]}>{content}</View>;
+}
 
 export type DiffFilesListViewHandle = Readonly<{
     clearMeasurementCache: () => void;
@@ -181,6 +195,8 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     // A list mounting in a retained tab starts at its top, whatever that tab's earlier body left.
     React.useLayoutEffect(() => { paneHeaderSink?.reportTopDistance(0); }, [paneHeaderSink]);
     const [focusedFileKey, setFocusedFileKey] = React.useState<string | null>(null);
+    // Only expanded bodies consume renderer changes; the held inventory is independent of them.
+    const [inlineRendererContext] = React.useState(() => React.createContext<DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff']>(undefined));
     const listRef = React.useRef<VirtualizedListRef | null>(null);
 
     const { height: windowHeight } = usePresentationWindowDimensions();
@@ -214,27 +230,22 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         const data = files.map((file) => {
             const key = file.key;
             const expanded = expandedKeys.has(key);
-            const focused = focusedFileKey === key;
-            const inlineRenderer = expanded && canRenderInlineDiffs ? renderInlineUnifiedDiff : undefined;
             const previousItem = previous.get(key);
             if (
                 previousItem
                 && previousItem.file === file
                 && previousItem.expanded === expanded
-                && previousItem.focused === focused
-                && previousItem.renderInlineUnifiedDiff === inlineRenderer
             ) {
                 next.set(key, previousItem);
                 return previousItem;
             }
-            const item = { key, file, expanded, focused, renderInlineUnifiedDiff: inlineRenderer };
+            const item = { key, file, expanded };
             next.set(key, item);
             return item;
         });
         listItemCacheRef.current = next;
         return data;
-    }, [canRenderInlineDiffs, expandedKeys, files, focusedFileKey, renderInlineUnifiedDiff]);
-
+    }, [expandedKeys, files]);
     const clearMeasurementCache = React.useCallback(() => {
         if (virtualizeFileList !== true) return;
         try {
@@ -274,6 +285,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     renderContextRef.current = {
         fileRowColor, rowHoverColor, controlColor,
         canRenderInlineDiffs,
+        focusedFileKey,
         clearMeasurementCache,
         inlineDiffContainerVariant,
         maxVirtualizedHeight,
@@ -292,6 +304,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
 
     const listExtraData = React.useMemo(() => ({
         fileRowColor, rowHoverColor, controlColor,
+        focusedFileKey,
         getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
@@ -308,6 +321,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         wrapLines,
     }), [
         fileRowColor, rowHoverColor, controlColor,
+        focusedFileKey,
         getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
@@ -327,7 +341,8 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     const renderFileNode = React.useCallback((item: DiffFilesListViewItem<TFile>, index: number) => {
         const ctx = renderContextRef.current;
         if (!ctx) return null;
-        const { file, expanded, focused } = item;
+        const { file, expanded } = item;
+        const focused = ctx.focusedFileKey === file.key;
         const findState = ctx.getFindStateForFile?.(file);
         const statsText = diffFileDisplayStats(file);
         const addedTextLength = String(file.added).length + 1;
@@ -366,10 +381,6 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
             showLineNumbers: ctx.showLineNumbers,
             showPrefix: ctx.showPrefix,
         };
-        const customInlineDiff = ctx.canRenderInlineDiffs && expanded && item.renderInlineUnifiedDiff
-            ? item.renderInlineUnifiedDiff(inlineDiffRendererProps)
-            : null;
-        const hasCustomInlineDiff = customInlineDiff !== null && customInlineDiff !== undefined && customInlineDiff !== false;
         const inlineVirtualizedContainerStyle = inlineVirtualized
             ? resolveInlineDiffVirtualizedViewportStyle(ctx.maxVirtualizedHeight)
             : null;
@@ -518,19 +529,13 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                 )}
 
                 {ctx.canRenderInlineDiffs && expanded ? (
-                    hasCustomInlineDiff ? (
-                        ctx.inlineDiffContainerVariant === 'none' ? (
-                            <React.Fragment>{customInlineDiff}</React.Fragment>
-                        ) : (
-                            <View style={[styles.inlineDiffContainer, inlineVirtualizedContainerStyle]}>
-                                {customInlineDiff}
-                            </View>
-                        )
-                    ) : fallbackInlineDiff
+                    <InlineDiffBody rendererContext={inlineRendererContext} input={inlineDiffRendererProps}
+                        fallback={fallbackInlineDiff} containerVariant={ctx.inlineDiffContainerVariant}
+                        virtualized={inlineVirtualized} />
                 ) : null}
             </View>
         );
-    }, []);
+    }, [inlineRendererContext]);
     const renderVirtualizedItem = React.useCallback(
         ({ item, index }: { item: DiffFilesListViewItem<TFile>; index: number }) => renderFileNode(item, index),
         [renderFileNode],
@@ -538,6 +543,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
 
     return (
         // Nothing inside a diff list (inline viewers, their own scroll roots) speaks for the pane's header.
+        <inlineRendererContext.Provider value={renderInlineUnifiedDiff}>
         <PaneHeaderScrollIsolation>
         <PierreScrollRootVirtualizerProvider>
             {shouldUseVirtualizedList ? (
@@ -583,6 +589,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
             )}
         </PierreScrollRootVirtualizerProvider>
         </PaneHeaderScrollIsolation>
+        </inlineRendererContext.Provider>
     );
 }
 

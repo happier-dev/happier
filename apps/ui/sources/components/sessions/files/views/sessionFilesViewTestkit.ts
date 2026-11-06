@@ -57,6 +57,7 @@ export function installSessionFilesViewBoundaries(options: Readonly<{
     confirmResult?: boolean;
     renderItemLimit?: number;
     emitViewability?: boolean;
+    onRecyclerCommit?: (props: Readonly<Record<string, unknown>>) => void;
     onRecycler?: (state: import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState) => void;
 }> = {}) {
     vi.doMock('react-native', async () => {
@@ -73,7 +74,8 @@ export function installSessionFilesViewBoundaries(options: Readonly<{
     vi.doMock('@legendapp/list/react-native', async importOriginal => {
         const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
         const recycler = createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(),
-            renderItemLimit: options.renderItemLimit, emitViewability: options.emitViewability ?? true });
+            renderItemLimit: options.renderItemLimit, emitViewability: options.emitViewability ?? true,
+            onCommit: options.onRecyclerCommit });
         options.onRecycler?.(recycler.state);
         return recycler.module;
     });
