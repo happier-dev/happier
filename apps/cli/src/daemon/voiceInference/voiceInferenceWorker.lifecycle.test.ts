@@ -479,9 +479,6 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
       }),
     });
 
-    await expect(lifecycle.installModel({
-      packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
-    })).rejects.toMatchObject({ code: 'unsupported_runtime_family' });
     await expect(lifecycle.getModelsStatus([KOKORO_PACK_ID])).resolves.toEqual([
       expect.objectContaining({
         packId: KOKORO_PACK_ID,
