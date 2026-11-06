@@ -1,5 +1,8 @@
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
+import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
+import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import type {
   BundledRealtimeProviderRuntimeHost,
 } from '@/voice/registry/bundledConversationRuntimeContract';
@@ -314,6 +317,7 @@ describe('realtime_codex normal web composed gate', () => {
   };
 
   beforeEach(async () => {
+    await selectActiveTestHomeForTests();
     const activeServer = getActiveServerSnapshot();
     if (!activeServer.serverId) throw new Error('Codex composed test requires an active server');
     activeServerId = activeServer.serverId;
@@ -473,7 +477,7 @@ describe('realtime_codex normal web composed gate', () => {
     }
   });
 
-  it('composes public activation, exact direct binding, bound V3 authority, host WebRTC, finals, and reverse terminal cleanup', async () => {
+  it('composes public activation, exact direct binding, bound V3 authority, host WebRTC, finals, reverse terminal cleanup, and honest unphased live presentation', async () => {
     const consoleError = vi.spyOn(console, 'error');
     const watchResolvers: Array<(value: unknown) => void> = [];
     let resolveFirstStop!: (value: unknown) => void;
@@ -568,8 +572,16 @@ describe('realtime_codex normal web composed gate', () => {
       adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: 'codex-direct-session',
       status: 'connected',
+      mode: 'idle',
       preparedInstructionsFor: { serverId: activeServerId, sessionId: 'codex-direct-session' },
     });
+    const readPhaseLabel = () => resolveVoiceSurfaceStatusPresentation(
+      resolveVoiceSurfaceState(runtime.adapter.getSnapshot()),
+    ).labelKey;
+    // Codex declares outputLevelMeter: 'unavailable' and has no native audio
+    // phase edge. The announcer shares this canonical connected/live fallback;
+    // neither an open microphone nor transcript text proves Listening/Speaking.
+    expect(readPhaseLabel()).toBe('voiceAssistant.label');
     expect(browser.peer.setRemoteDescription).toHaveBeenCalledWith({
       type: 'answer',
       sdp: 'v=0\r\na=test-answer\r\n',
@@ -621,6 +633,10 @@ describe('realtime_codex normal web composed gate', () => {
       },
     };
     browser.peer.channel.message(JSON.stringify({
+      type: 'output_transcript.added',
+      item: { text: 'Reply in progress.' },
+    }));
+    browser.peer.channel.message(JSON.stringify({
       type: 'turn.done',
       turn: {
         id: 'turn-\uD800',
@@ -637,6 +653,8 @@ describe('realtime_codex normal web composed gate', () => {
       }),
     );
     expect(runtime.adapter.getSnapshot().status).toBe('connected');
+    expect(runtime.adapter.getSnapshot().mode).toBe('idle');
+    expect(readPhaseLabel()).toBe('voiceAssistant.label');
     expect(readCanonicalVoiceTranscriptSnapshot('codex-direct-session')).toEqual([]);
 
     await installTranscriptPersistenceBoundary();
@@ -675,6 +693,8 @@ describe('realtime_codex normal web composed gate', () => {
       }),
     ]));
     expect(transcriptPostCount()).toBe(1);
+    expect(runtime.adapter.getSnapshot().mode).toBe('idle');
+    expect(readPhaseLabel()).toBe('voiceAssistant.label');
     persistenceCleanup?.();
     const secondBrowser = installVoiceWebRtcBrowserBoundary();
     browser.peer.channel.close();
