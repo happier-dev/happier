@@ -1043,6 +1043,71 @@ test('focused source validation uses its measured shape while compiler and suite
   });
 });
 
+test('direct Vitest package scripts preserve the explicit payload preparation verdict', async t => {
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const cases = [
+    ['packages/triage-sources', 'test:local', ['src/projection/actionResultText.test.ts'],
+      ['vitest', 'run', '--config', 'vitest.config.ts']],
+    ['apps/cli', 'test:unit:vitest:local', ['src/plain.test.ts'],
+      ['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.config.ts']],
+    ['apps/ui', 'vitest:local', ['run', '--config', 'vitest.config.ts', 'sources/plain.test.ts'],
+      ['vitest']],
+  ];
+  for (const [component, script, forwarded, command] of cases) await t.test(component, async () => {
+    const options = { repoRoot, cwd: join(repoRoot, component) };
+    const expected = await commandPolicy.resolvePackageCommandPolicy([...command, ...forwarded], options);
+    assert.equal(expected.kind, 'source-test');
+    for (const args of [
+      [`--script=${script}`, ...forwarded],
+      ['pnpm', 'run', script, '--', ...forwarded],
+      ['hstack-exec', `--cwd=${component}`, `--script=${script}`, ...forwarded],
+    ]) {
+      const actual = await commandPolicy.resolvePackageCommandPolicy(args, options);
+      const equivalent = args[0] === 'hstack-exec'
+        ? await commandPolicy.resolvePackageCommandPolicy(['hstack-exec', `--cwd=${component}`, '--', ...command, ...forwarded], options)
+        : expected;
+      // The enclosing executor owns argv injection; compare its preparation
+      // verdict independently from those transport-specific worker flags.
+      if (args[0] === 'hstack-exec') {
+        for (const key of ['kind', 'heavyClass', 'component', 'requiredTools', 'bootstrap']) {
+          assert.equal(actual[key], equivalent[key], `${args.join(' ')} ${key}`);
+        }
+      } else assert.deepEqual(actual, equivalent, args.join(' '));
+    }
+    if (process.platform === 'win32') return;
+    const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s,%s,%s,%s" "$policy_kind" "$policy_heavyClass" "$policy_workerArguments" "$policy_runnerKnown" "$policy_component"',
+      'policy', artifact, repoRoot, options.cwd, `--script=${script}`, ...forwarded], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, [expected.kind, expected.heavyClass, expected.workerArguments, expected.runnerKnown, expected.component].join(','));
+  });
+});
+
+test('Vitest script aliases reuse payload policy while opaque scripts retain runtime preparation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'vitest-script-policy-' });
+  const cwd = fixture.path('packages/triage-sources');
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(cwd, 'package.json'), JSON.stringify({ scripts: {
+    focused: 'vitest run --config vitest.config.ts',
+    alias: 'pnpm run focused',
+    opaque: 'vitest run "$CONFIG"',
+    composite: 'vitest run --config vitest.config.ts && node after.mjs',
+    hooked: 'vitest run --config vitest.config.ts',
+    prehooked: 'node before.mjs',
+  } }));
+  const options = { repoRoot: fixture.root, cwd };
+  const expected = await commandPolicy.resolvePackageCommandPolicy(['vitest', 'run', '--config', 'vitest.config.ts', 'src/plain.test.ts'], options);
+  assert.equal(expected.kind, 'source-test');
+  for (const script of ['focused', 'alias']) {
+    assert.deepEqual(await commandPolicy.resolvePackageCommandPolicy([`--script=${script}`, 'src/plain.test.ts'], options), expected);
+    const overridden = await commandPolicy.resolvePackageCommandPolicy([`--script=${script}`, '--config=unknown.config.ts', 'src/plain.test.ts'], options);
+    assert.equal(overridden.kind, 'runtime', 'forwarded config overrides the script config');
+  }
+  for (const script of ['opaque', 'composite', 'hooked']) {
+    assert.equal((await commandPolicy.resolvePackageCommandPolicy([`--script=${script}`, 'src/plain.test.ts'], options)).kind, 'runtime', script);
+  }
+});
+
 test('source web export classification reserves its measured process-tree envelope in both dispatchers', () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/u, '');
   const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));

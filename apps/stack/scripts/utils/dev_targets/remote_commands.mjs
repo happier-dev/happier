@@ -969,6 +969,8 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
   const visiting = visitingScripts ?? new Set();
   const visit = async (name, packageDir, metadata, forwardedArguments = [], preparingValidation = false) => {
     const scripts = metadata?.scripts ?? {};
+    let payloadPolicy;
+    const hasLifecycleHooks = `pre${name}` in scripts || `post${name}` in scripts;
     const identity = `${packageDir}\0${name}`;
     if (visiting.has(identity) || typeof scripts[name] !== 'string') { include('compilation', false); selfPublisher = false; return; }
     visiting.add(identity);
@@ -983,6 +985,7 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
       if (!commands) { include('compilation', false); selfPublisher = false; continue; }
       for (const [index, command] of commands.entries()) {
         const args = hook === name && index === commands.length - 1 ? [...command, ...forwardedArguments] : command;
+        const directPayload = !hasLifecycleHooks && hook === name && commands.length === 1;
         const facts = normalizeCommandArguments(args, packageDir, repoRoot);
         const policy = await resolveComposedCommandPolicy(args, { cwd: packageDir, repoRoot, env, visitingScripts: visiting,
           manifestContext: { packageDir, packageJson: metadata } });
@@ -997,16 +1000,23 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
         if (dispatchedScript) {
           const forwarded = args.slice(args.findIndex(arg => arg.startsWith('--script=')) + 1);
           if (forwarded[0] === '--') forwarded.shift();
-          await visit(dispatchedScript, packageDir, metadata, forwarded, preparationOnly);
+          const child = await visit(dispatchedScript, packageDir, metadata, forwarded, preparationOnly);
+          if (directPayload) payloadPolicy = child;
           continue;
         }
         if (!facts.executorContext && facts.script && REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(facts.manager)) {
           if (facts.manager === 'npx') { include('compilation', false); selfPublisher = false; }
           else if (facts.managerCwd || facts.workspace) {
             const referenced = await resolvePackageCommandManifest(args, { repoRoot, cwd: packageDir });
-            if (referenced) await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson, referenced.scriptArguments, preparationOnly);
+            if (referenced) {
+              const child = await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson, referenced.scriptArguments, preparationOnly);
+              if (directPayload) payloadPolicy = child;
+            }
             else { include('compilation', false); selfPublisher = false; }
-          } else await visit(facts.script, packageDir, metadata, facts.scriptArguments, preparationOnly);
+          } else {
+            const child = await visit(facts.script, packageDir, metadata, facts.scriptArguments, preparationOnly);
+            if (directPayload) payloadPolicy = child;
+          }
           continue;
         }
         const wrapperScript = !facts.executorContext && facts.entry === 'bundleWorkspaceDeps.mjs'
@@ -1025,16 +1035,18 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
           selfPublisher = false;
         }
         include(policy.heavyClass);
+        if (directPayload) payloadPolicy = policy;
         placementHeavyClass = largestHeavyweightClass(placementHeavyClass, policy.placementHeavyClass);
         if (policy.selfPublisher === '1') sawPublisher = true;
         else if (policy.localCompile === '1' && policy.compilerLeaf !== '1') selfPublisher = false;
       }
     }
     visiting.delete(identity);
+    return payloadPolicy;
   };
-  await visit(scriptName, resolve(cwd), packageJson, scriptArguments);
+  const payloadPolicy = await visit(scriptName, resolve(cwd), packageJson, scriptArguments);
   return { placement, commandClass, admissionClass, knownAdmissionClass, placementHeavyClass, selfPublisher: selfPublisher && sawPublisher,
-    requiredTools: [...requiredTools].join(' ') };
+    requiredTools: [...requiredTools].join(' '), payloadPolicy };
 }
 
 export async function resolveWorkspacePackageBuildAdmissionClass(options = {}) {
@@ -1207,14 +1219,17 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     }
   }
   const manifest = await resolvePackageCommandManifest(commandArgs, options);
-  const policy = await resolveComposedCommandPolicy(commandArgs, { ...options,
+  const resolved = manifest ? await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir }) : null;
+  // A recognized test runner supplies the script's actual preparation facts.
+  // Other scripts retain their enclosing phase/admission policy, including
+  // light generators, composite/opaque scripts and lifecycle hooks.
+  const policy = resolved?.payloadPolicy?.runnerKnown === '1' ? resolved.payloadPolicy : await resolveComposedCommandPolicy(commandArgs, { ...options,
     ...(manifest ? { packageDir: manifest.packageDir } : {}) });
   const requiredTools = new Set(policy.requiredTools.split(/\s+/u).filter(Boolean));
   let selfPublisher = policy.selfPublisher;
   let heavyClass = policy.heavyClass;
   let placementHeavyClass = policy.placementHeavyClass;
-  if (manifest) {
-    const resolved = await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir });
+  if (resolved) {
     if (resolved.placement === 'primary-only') {
       policy.placement = resolved.placement;
       policy.commandClass = resolved.commandClass;
@@ -2924,14 +2939,7 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
       process.stdout.write(resolveSourceTestRequiredTools(repoRoot, cwd, commandArgs[0] ?? '') + '\n');
       return 0;
     }
-    if (vitestPolicy) {
-      const policy = await resolveComposedCommandPolicy(commandArgs, { repoRoot, cwd });
-      for (const key of ['kind', 'workspaceLock', 'requiredTools', 'heavyClass', 'localCompile']) {
-        process.stdout.write(`policy_${key}=${posixQuote(policy[key])}\n`);
-      }
-      return 0;
-    }
-    if (packagePolicy) {
+    if (vitestPolicy || packagePolicy) {
       const policy = await resolvePackageCommandPolicy(commandArgs, { repoRoot, cwd });
       process.stdout.write(Object.entries(policy).map(([key, value]) => `policy_${key}=${posixQuote(value)}`).join('\n') + '\n');
       return 0;
