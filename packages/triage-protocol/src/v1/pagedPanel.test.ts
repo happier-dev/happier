@@ -247,6 +247,17 @@ describe('triage paged panel state', () => {
         expect(settled.canLoadMore).toBe(true);
     });
 
+    it('retains a provider-stated empty page during refresh and after its failure', () => {
+        const empty = reduce(initial(), { kind: 'requestStarted', token: 1 },
+            { kind: 'pageSettled', token: 1, page: {
+                rows: [], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null,
+            } });
+        const refreshing = triagePagedPanelReducer(empty, { kind: 'refreshStarted', token: 2 });
+        expect(refreshing).toMatchObject({ kind: 'ready', rows: [], pending: true });
+        const failed = triagePagedPanelReducer(refreshing, { kind: 'pageFailed', token: 2, failure: { code: 'forbidden' } });
+        expect(failed).toMatchObject({ kind: 'ready', rows: [], pending: false, failure: { code: 'forbidden' } });
+    });
+
     it('keeps the last-known-good walk visible when an explicit refresh fails', () => {
         const settled = reduce(
             initial(),

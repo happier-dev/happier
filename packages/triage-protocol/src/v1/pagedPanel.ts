@@ -136,9 +136,8 @@ export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
         case 'requestStarted':
             return {
                 ...state,
-                // A page in flight over rows a reader already has must not flash a
-                // loading skeleton over them.
-                kind: state.rows.length === 0 ? 'loading' : state.kind,
+                // An answered empty page is also a last-known-good result.
+                kind: state.kind === 'ready' ? 'ready' : 'loading',
                 pending: true,
                 refreshing: false,
                 // While a page is in flight the reader cannot ask for another one, but
@@ -152,7 +151,7 @@ export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
                 ...state,
                 // Refresh is a warm replacement. Keep the last-known-good walk
                 // visible until the new first page has actually settled.
-                kind: state.rows.length === 0 ? 'loading' : 'ready',
+                kind: state.kind === 'ready' ? 'ready' : 'loading',
                 pending: true,
                 refreshing: true,
                 canLoadMore: state.canLoadMore,
@@ -191,9 +190,7 @@ export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
             if (!state.pending) return state;
             return {
                 ...state,
-                // A start event over an empty settled page had moved the panel to
-                // `loading`; nothing is loading any more, and the settled page is
-                // what the reader has.
+                // Nothing is loading any more; the settled page is what the reader has.
                 kind: state.kind === 'loading' ? 'ready' : state.kind,
                 pending: false,
                 refreshing: false,
@@ -202,13 +199,13 @@ export function triagePagedPanelReducer<TRow, TFailure, TIncomplete = never>(
         }
         case 'pageFailed': {
             if (event.token !== state.token) return state;
-            // Rows a reader already had survive a later failure — including the
+            // An answered page, even empty, survives a later failure — including the
             // authentication failure a mid-panel reconnect produces. Only a first page
             // that never arrived leaves the panel with nothing to show, and it says so
             // rather than rendering an empty list.
             return {
                 ...state,
-                kind: state.rows.length === 0 ? 'unavailable' : 'ready',
+                kind: state.kind === 'ready' ? 'ready' : 'unavailable',
                 pending: false,
                 refreshing: false,
                 canLoadMore: state.continuation !== null,
