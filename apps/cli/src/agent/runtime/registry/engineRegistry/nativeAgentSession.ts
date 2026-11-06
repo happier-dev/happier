@@ -18,6 +18,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
+import type { ScmCommandRunner } from '@/scm/runtime';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol/runtime';
@@ -1724,6 +1725,7 @@ type NativeAgentSessionUsagePublisher = Readonly<{
 }>;
 
 type NativeAgentSessionDirectFacets = Readonly<{
+    scmCommandRunner?: ScmCommandRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
@@ -1852,6 +1854,7 @@ type NativeAgentSessionInteractionLifecycle = Readonly<{
 }>;
 
 type NativeAgentSessionDirectHostControls = Readonly<{
+    runScmCommand?: ScmCommandRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
@@ -3245,6 +3248,12 @@ export function createNativeAgentSessionOperations(
     const liveUsageLimitRecovery = session.usageLimitRecovery ?? directFacets?.usageLimitRecovery;
     const directHostControls: NativeAgentSessionDirectHostControls = directFacets
         ? Object.freeze({
+            async runScmCommand(input) {
+                if (activeControlUnavailable() || !directFacets.scmCommandRunner) {
+                    return { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
+                }
+                return await directFacets.scmCommandRunner(input);
+            },
             ...(directFacets.managedProviderRunServices ? { managedProviderRunServices: directFacets.managedProviderRunServices } : {}),
             readAppliedTeamCredentialModel: () => activeControlUnavailable()
                 ? undefined
@@ -4516,6 +4525,7 @@ function openNativeAgentSessionUntilAbort(
 }
 
 export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
+    scmCommandRunner?: ScmCommandRunner;
     runtime?: AgentRuntime;
     createRuntime?: (params: Readonly<{
         signal: AbortSignal;
@@ -6239,6 +6249,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 () => ownedAbortController.abort(),
                 {
                     readAppliedTeamCredentialModel: () => appliedTeamCredentialModel,
+                    scmCommandRunner: params.scmCommandRunner,
                     ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                     openedWithoutConnectedServices: () => openedWithoutConnectedServices,
                     ...(params.prepareTeamCredentialProviderBinding

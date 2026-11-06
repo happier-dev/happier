@@ -5,7 +5,10 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { probeScmExecutableAvailable, runScmCommand } from './runtime';
+import {
+    createHostScmCommandRunner, probeScmExecutableAvailable as probeCanonicalScmExecutableAvailable,
+    runScmCommand as runCanonicalScmCommand, runWithScmCommandRunner,
+} from './runtime';
 
 function initRepo(cwd: string): void {
     execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
@@ -15,6 +18,14 @@ function initRepo(cwd: string): void {
     execFileSync('git', ['add', 'a.txt'], { cwd, stdio: 'pipe' });
     execFileSync('git', ['commit', '-m', 'init'], { cwd, stdio: 'pipe' });
 }
+
+describe.each(['direct', 'delegated Exec'] as const)('SCM process contracts (%s)', mode => {
+const runner = mode === 'direct' ? undefined : createHostScmCommandRunner({
+    agentIsolation: { read: () => ({ enabled: false, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }) },
+    isCurrent: () => true,
+});
+const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandRunner(runner, () => runCanonicalScmCommand(input));
+const probeScmExecutableAvailable: typeof probeCanonicalScmExecutableAvailable = input => runWithScmCommandRunner(runner, () => probeCanonicalScmExecutableAvailable(input));
 
 describe('runScmCommand output limits', () => {
     it('fails through host executable resolution when the SCM tool is missing', async () => {
@@ -72,6 +83,23 @@ describe('runScmCommand output limits', () => {
         expect(result.success).toBe(true);
         expect(result.outputLimitExceeded).not.toBe(true);
         expect(result.stdout.trim()).toBe('true');
+    });
+
+    it('preserves explicit removal of an inherited command environment value', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-runtime-env-'));
+        const inherited = process.env.GIT_INDEX_FILE;
+        try {
+            initRepo(workspace);
+            process.env.GIT_INDEX_FILE = join(workspace, 'wrong-index');
+            const result = await runScmCommand({ bin: 'git', cwd: workspace,
+                args: ['rev-parse', '--git-path', 'index'], env: { GIT_INDEX_FILE: undefined } });
+            expect(result.success).toBe(true);
+            expect(resolve(workspace, result.stdout.trim())).toBe(join(workspace, '.git', 'index'));
+        } finally {
+            if (inherited === undefined) delete process.env.GIT_INDEX_FILE;
+            else process.env.GIT_INDEX_FILE = inherited;
+            rmSync(workspace, { recursive: true, force: true });
+        }
     });
 });
 
@@ -205,4 +233,5 @@ describe('runScmCommand stdin interaction', () => {
             rmSync(workspace, { recursive: true, force: true });
         }
     });
+});
 });

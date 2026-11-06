@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { closeSync, openSync, writeSync } from 'node:fs';
+import { createHostScmCommandRunner } from '@/scm/runtime';
 import { isDeepStrictEqual } from 'node:util';
 import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic } from '../connectedServices/purposeBindings/bindingDiagnostics';
 import { readAccountConnectionProviderBrokerFailureDiagnostic } from '@/providers/broker/accountConnectionClient';
@@ -1227,6 +1229,39 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         ) => services.storage[scope];
 
         switch (operation.kind) {
+            case 'host_scm.run_v1': {
+                if (!invocation.agentIsolation) return result(operation, {
+                    success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1,
+                });
+                const command = operation.command;
+                const cancellation = AbortSignal.any([invocation.controller.signal, ...(signal ? [signal] : [])]);
+                const run = createHostScmCommandRunner({ agentIsolation: invocation.agentIsolation,
+                    isCurrent: () => !invocation.disposed && !cancellation.aborted,
+                    async assertLaunchCurrent(launchSignal) {
+                        if (invocation.disposed || launchSignal.aborted
+                            || !await invocation.authorizeOperation(operation.witness, { requireActiveTurn: false })
+                            || invocation.disposed || launchSignal.aborted) {
+                            return fail('scm_exec_unavailable', 'Host SCM invocation authority is unavailable');
+                        }
+                    },
+                });
+                let descriptor: number | undefined;
+                try {
+                    if (command.output?.kind === 'batch') descriptor = openSync(command.output.path, 'wx', 0o600);
+                    return result(operation, await run({
+                        bin: command.bin, cwd: command.cwd, args: command.args,
+                        stdin: command.stdin, timeoutMs: command.timeoutMs, maxOutputBytes: command.maxOutputBytes,
+                        ...(command.env ? { env: Object.fromEntries(Object.entries(command.env).map(([key, value]) => [key, value ?? undefined])) } : {}),
+                        signal: cancellation,
+                        ...(command.output?.kind === 'file' ? { stdoutFilePath: command.output.path } : {}),
+                        ...(descriptor === undefined ? {} : { stdoutConsumer: chunk => {
+                            let offset = 0;
+                            while (offset < chunk.length) offset += writeSync(descriptor!, chunk.subarray(offset));
+                            return 'continue';
+                        } }),
+                    }));
+                } finally { if (descriptor !== undefined) closeSync(descriptor); }
+            }
             case 'plugin_services.close_v1':
                 await disposeInvocation(invocation);
                 return result(operation, null);

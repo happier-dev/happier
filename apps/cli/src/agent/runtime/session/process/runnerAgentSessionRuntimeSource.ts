@@ -1,5 +1,6 @@
 import { resolveCurrentSessionCapabilityBinding } from '@/session/presentation/currentSessionUiBindings';
 import { randomUUID } from 'node:crypto';
+import type { ScmCommandRunner } from '@/scm/runtime';
 import { readMcpRequestAuthDispatchCause, type McpRequestAuthPort } from '@/mcp/runtime/mcpRequestAuth';
 import { createRunnerPluginMcpPort } from './runnerPluginMcp';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
@@ -685,6 +686,10 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
         },
         async createInvocationServices(params) {
             return requireClaimed().createInvocationServices(params);
+        },
+        async scmCommandRunner(command) {
+            return await claimed?.scmCommandRunner?.(command)
+                ?? { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
         },
         async prepareManagedProviderBinding(params) {
             return await requireClaimed()
@@ -1409,8 +1414,15 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
     let preparedManagedProviderPluginServices:
         PluginServices | null = null;
     let sessionLaunchEnvironment: Readonly<Record<string, string>> = Object.freeze({});
+    let sessionScmCommandRunner: ScmCommandRunner | undefined;
     const source: RunnerAgentSessionRuntimeSource = Object.freeze({
         agentContribution: verifiedAgentContribution,
+        async scmCommandRunner(command) {
+            if (lifetime.signal.aborted || !sessionScmCommandRunner) {
+                return { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
+            }
+            return await sessionScmCommandRunner(command);
+        },
         identity: Object.freeze({
             pluginId: binding.pluginId,
             pluginVersion: binding.pluginVersion,
@@ -1508,6 +1520,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     await prepareRunnerDaemonPluginServices({
                     processOwner: { kind: 'session', sessionId: params.sessionId },
                     invocationId: params.sessionId,
+                    bindHostScmCommandRunner: runner => { sessionScmCommandRunner = runner; },
                     readLaunchEnvironment: () => sessionLaunchEnvironment,
                     signal: params.signal,
                     dispatch: async (operation, options) =>
@@ -1739,6 +1752,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             return await prepareRunnerDaemonPluginServices({
                 ...(params.processOwner ? { processOwner: params.processOwner } : {}),
                 invocationId: params.correlationId,
+                ...(params.processOwner?.kind === 'run' ? {} : {
+                    bindHostScmCommandRunner: (runner: ScmCommandRunner) => { sessionScmCommandRunner = runner; },
+                }),
                 readLaunchEnvironment: params.processOwner?.kind === 'run'
                     ? () => params.environment ?? Object.freeze({})
                     : () => sessionLaunchEnvironment,

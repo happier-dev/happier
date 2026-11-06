@@ -374,6 +374,13 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         },
         supportsInFlightSteer: () => currentOperations.supportsInFlightSteer?.() ?? false,
         readAppliedTeamCredentialModel: () => runtimeClosed ? undefined : currentOperations.readAppliedTeamCredentialModel?.(),
+        async runScmCommand(input) {
+            const run = currentOperations.runScmCommand;
+            if (runtimeClosed || !run) {
+                return { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
+            }
+            return await run(input);
+        },
         openedWithoutConnectedServices: () => !runtimeClosed && (currentOperations.openedWithoutConnectedServices?.() ?? false),
         isTurnInFlight: () => currentOperations.isTurnInFlight?.() ?? false,
         canSteerPrompt: () => currentOperations.canSteerPrompt?.() ?? false,

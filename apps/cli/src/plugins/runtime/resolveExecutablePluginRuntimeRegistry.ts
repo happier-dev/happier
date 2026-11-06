@@ -8,6 +8,7 @@ import { createTargetSecretSources } from './lifecycle/contributions/targetSecre
 import type { ProjectNativeAdapterRoleV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ResolvedPluginExecutable } from './invocation/services/exec';
 import { authorizePluginExecLaunchForHost } from './invocation/services/exec';
+import { createHostScmCommandRunner } from '@/scm/runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DaemonPluginStoredImageReadRequest } from '@happier-dev/protocol';
@@ -618,6 +619,8 @@ export type ManagedProviderAdoptedPublicOutcome = Readonly<{
 }>;
 
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
+    /** Host-private SCM process port, sharing this registry's held launch context. */
+    scmCommandRunner?: import('@/scm/runtime').ScmCommandRunner;
     /** Incumbent Resource continuation owner; host Account demand carries no plugin occurrence. */
     uiResourceWatches?: PluginUiResourceWatchOwner;
     executionRealm?: 'account';
@@ -7585,6 +7588,9 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     }
 
     const resolvedRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
+        ...(params?.agentIsolation ? { scmCommandRunner: createHostScmCommandRunner({
+            agentIsolation: params.agentIsolation, isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
+        }) } : {}),
         ...(accountActivationSources ? { executionRealm: 'account' as const,
             revalidateAccountExecution: accountActivationSources.revalidate,
             readAccountExecutionSelection: accountActivationSources.readSelection } : {}),

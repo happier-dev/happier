@@ -1,4 +1,5 @@
 import type { BackendRuntimeHandlers, WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+import type { ScmCommandRunner } from './runtime';
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
@@ -131,6 +132,8 @@ export type ScmBackendContext = {
     projectKey: string;
     detection: ScmRepoDetection;
     signal?: AbortSignal;
+    /** Bound by the host to the current Session's admitted Exec authority. */
+    scmCommandRunner?: ScmCommandRunner;
     /** Host policy check for backend-derived filesystem mutation targets. */
     assertFilesystemPathAuthorized?: (targetPath: string) => void;
     beforeFilesystemMutation?: () => Promise<void>;

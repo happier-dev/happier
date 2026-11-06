@@ -1,5 +1,7 @@
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { randomUUID } from 'node:crypto';
+import type { ScmCommandRunner } from '@/scm/runtime';
+import { createRunnerDaemonScmCommandRunner } from './runnerDaemonScmCommand';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
 import type { ZodMiniType as ZodType } from 'zod/mini';
@@ -446,6 +448,8 @@ function readDaemonWitness(
 export async function prepareRunnerDaemonPluginServices(
     input: Readonly<{
         invocationId: string;
+        /** Private host port; not exposed in the plugin service bag. */
+        bindHostScmCommandRunner?(runner: ScmCommandRunner): void;
         /** Current host-resolved Session/Run scope, including late profile materialization. */
         readLaunchEnvironment?(): Readonly<Record<string, string>>;
         /** Host-authored child cwd; only snapshot-backed Run invocations use it. */
@@ -712,6 +716,7 @@ export async function prepareRunnerDaemonPluginServices(
             ...(witness ? { witness } : {}),
         };
     };
+    input.bindHostScmCommandRunner?.(createRunnerDaemonScmCommandRunner({ dispatch, requestBase }));
     type LoggerEntry = Extract<
         RunnerDaemonPluginServiceOperationV1,
         { kind: 'plugin_logger.write_v1' }

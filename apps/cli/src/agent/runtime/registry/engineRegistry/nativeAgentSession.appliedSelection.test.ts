@@ -8,8 +8,12 @@ import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/pl
 import { createNativeAgentRuntimeSessionPlanFixture as createNativeAgentRuntimeSessionPlan } from './nativeAgentSession.testkit';
 import { createNativeSessionClientTestPort, createExternalContributionFixtures, createLease, createSessionHostServiceOwners } from './nativeAgentSession.testkit';
 import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { runScmCommand, runWithScmCommandRunner } from '@/scm/runtime';
 
-async function openSession(binding?: SessionTeamCredentialBindingIntentV1, connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']> = [], runtimeAuth?: AgentSessionRuntime['runtimeAuth'], attached = false) {
+async function openSession(binding?: SessionTeamCredentialBindingIntentV1, connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']> = [], runtimeAuth?: AgentSessionRuntime['runtimeAuth'], attached = false, exec?: ExecService) {
     const agentId = 'acme-applied-reader';
     const contributions = createExternalContributionFixtures(agentId);
     const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
@@ -22,6 +26,7 @@ async function openSession(binding?: SessionTeamCredentialBindingIntentV1, conne
         runtime: { sessions: { open: async () => nativeSession } },
         lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
         createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+        ...(exec ? { createInvocationServices: async () => ({ ...createUnavailablePluginServices(), exec }) } : {}),
         // Runner materialization is out-of-process custody, not a replacement of host logic.
         prepareTeamCredentialProviderBinding: async () => ({
             providerBinding: {
@@ -65,6 +70,34 @@ async function openSession(binding?: SessionTeamCredentialBindingIntentV1, conne
 }
 
 describe('native accepted-open applied selection', () => {
+    it('never borrows plugin Exec when host SCM authority is absent, including after recreation', async () => {
+        // The separate composed suite proves production runner/daemon SCM wiring.
+        // A bare native Session must fail closed rather than borrow plugin authority.
+        const resolve = vi.fn<ExecService['systemTools']['resolve']>(async () => {
+            throw new PluginError({ code: 'workspace_exec_isolation_unavailable', message: 'Workspace execution is unavailable' });
+        });
+        const { created, hookRuntime } = await openSession(undefined, [], undefined, false, {
+            ...createUnavailablePluginServices().exec, systemTools: { resolve },
+        });
+        const command = { bin: 'git', cwd: '/tmp/applied-reader', args: ['rev-parse', '--show-toplevel'] };
+        const runCheckpointCommand = () => runWithScmCommandRunner(hookRuntime.runScmCommand, () => runScmCommand(command));
+        try {
+            await expect(runCheckpointCommand()).resolves.toMatchObject({
+                success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1,
+            });
+            expect(resolve).not.toHaveBeenCalled();
+            await created.operations.resetOrDisposeRuntime('runtime_recovery');
+            await expect(runCheckpointCommand()).resolves.toMatchObject({
+                success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1,
+            });
+            expect(resolve).not.toHaveBeenCalled();
+            await created.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+            await expect(runCheckpointCommand()).resolves.toMatchObject({
+                success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1,
+            });
+            expect(resolve).not.toHaveBeenCalled();
+        } finally { await created.operations.resetOrDisposeRuntime(); }
+    });
     it.each([
         { scopes: ['workspace'], nativeScope: false, expectedScope: 'workspace' },
         { scopes: ['personal', 'workspace'], nativeScope: false, expectedScope: 'workspace' },

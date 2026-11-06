@@ -17,7 +17,7 @@ import {
     createGitRollbackStash,
 } from './rollback/gitCheckpointRollbackOperations';
 import { rejectUnauthorizedScmInstallableCommand } from '../commandAuthorization';
-import { runScmCommand as runHostScmCommand } from '../runtime';
+import { runScmCommand as runHostScmCommand, runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '../runtime';
 import type { ScmBackendContext } from '../types';
 
 export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
@@ -49,36 +49,39 @@ export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices 
 
 const gitCheckpointRuntimeServices = createGitCheckpointRuntimeServices();
 
-async function runWithGitCheckpointRuntime<T>(callback: () => Promise<T> | T): Promise<T> {
-    return await runWithScmBackendRuntimeServices(
+async function runWithGitCheckpointRuntime<T>(context: ScmBackendContext, callback: () => Promise<T> | T): Promise<T> {
+    return await runWithScmCommandRunner(context.scmCommandRunner, () => runWithScmBackendRuntimeServices(
         gitCheckpointRuntimeServices,
         async () => await callback(),
-    );
+    ));
 }
 
 export const gitCheckpointAdapter = {
     capture: async (...args: Parameters<typeof captureGitRepositoryCheckpoint>) =>
-        await runWithGitCheckpointRuntime(async () => await captureGitRepositoryCheckpoint(...args)),
+        await runWithGitCheckpointRuntime(args[0].context, async () => await captureGitRepositoryCheckpoint(...args)),
     alias: async (...args: Parameters<typeof aliasGitRepositoryCheckpoint>) =>
-        await runWithGitCheckpointRuntime(async () => await aliasGitRepositoryCheckpoint(...args)),
+        await runWithGitCheckpointRuntime(args[0].context, async () => await aliasGitRepositoryCheckpoint(...args)),
     diff: async (...args: Parameters<typeof diffGitRepositoryCheckpoints>) =>
-        await runWithGitCheckpointRuntime(async () => await diffGitRepositoryCheckpoints(...args)),
+        await runWithGitCheckpointRuntime(args[0].context, async () => await diffGitRepositoryCheckpoints(...args)),
 } as const;
 
 export async function resolveGitCheckpointBackendContext(input: Readonly<{
     cwd: string;
     workingDirectory?: string;
+    scmCommandRunner?: ScmCommandRunner;
 }>): Promise<ScmBackendContext | null> {
-    const detectedRoot = await runHostScmCommand({
+    const detectedRoot = await runWithScmCommandRunner(input.scmCommandRunner, () => runHostScmCommand({
         bin: 'git',
         cwd: input.cwd,
         args: ['rev-parse', '--show-toplevel'],
-    });
+    }));
     const repoRoot = detectedRoot.success ? detectedRoot.stdout.trim() : '';
+    if (!detectedRoot.success && detectedRoot.stderr.trim() === 'scm_exec_unavailable') throw new ScmExecUnavailableError();
     if (!repoRoot) return null;
 
     return {
         cwd: input.cwd,
+        ...(input.scmCommandRunner ? { scmCommandRunner: input.scmCommandRunner } : {}),
         projectKey: `${resolve(input.workingDirectory ?? input.cwd)}:${input.cwd}`,
         detection: {
             isRepo: true,
@@ -93,19 +96,19 @@ export function createGitCheckpointRollbackDependencies(input: Readonly<{
     rollbackId: string;
 }>): CheckpointRollbackOrchestrationDependencies {
     return {
-        captureBackup: async (adapterContext) => await runWithGitCheckpointRuntime(async () =>
+        captureBackup: async (adapterContext) => await runWithGitCheckpointRuntime(input.context, async () =>
             await createGitRollbackBackup({
                 context: input.context,
                 request: adapterContext.request,
                 rollbackId: input.rollbackId,
             })),
-        createStash: async (adapterContext) => await runWithGitCheckpointRuntime(async () =>
+        createStash: async (adapterContext) => await runWithGitCheckpointRuntime(input.context, async () =>
             await createGitRollbackStash({
                 context: input.context,
                 request: adapterContext.request,
                 rollbackId: input.rollbackId,
             })),
-        applyReversePatch: async (adapterContext) => await runWithGitCheckpointRuntime(async () =>
+        applyReversePatch: async (adapterContext) => await runWithGitCheckpointRuntime(input.context, async () =>
             await applyGitCheckpointReversePatch({
                 context: input.context,
                 request: adapterContext.request,

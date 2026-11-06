@@ -1043,6 +1043,30 @@ response completion does not end the Session-owned hosted endpoint. This private
 development contract requires the daemon and runner to be reloaded together;
 it adds no runner executable registry or public SDK operation.
 
+In 0.3 development source, native Session checkpoint commands use that existing
+runner services channel's private `host_scm.run_v1` operation. The daemon invokes
+the canonical host SCM runner with the invocation's retained isolation context,
+authorization and cancellation lifetime. Isolation is not projected into the
+runner, and the Agent plugin's Exec resolver still rejects undeclared Git.
+Ordinary Git commands carry text stdin and the existing output/time budgets.
+Checkpoint materialization carries `ls-tree` output into an exclusively created
+host-owned file; binary `cat-file --batch` output uses a temporary shared-host
+spool, with the byte consumer/parser and cleanup retained in the runner. The
+daemon's existing command owner still enforces the batch's output budget.
+Interactive stdin and early-settling stream consumers are not supported by this
+private checkpoint port; no general plugin process authority is added.
+
+Session runners can survive daemon restart. The incumbent services proxy may
+reprepare an invocation only after a proven pre-effect refusal, and does not
+replay an ambiguous in-flight command across authority replacement. Missing
+isolation, unsupported daemon operations and unavailable authority fail as
+`scm_exec_unavailable`, retained as unavailable checkpoint evidence rather than
+`not_repo` or an empty successful comparison. Existing service operations remain
+compatible for an older runner on a newer daemon, but an older runner retains
+its old checkpoint binding: validating this correction needs both daemon and
+Session runner reload, not a UI reload alone. Missing historical checkpoint
+objects cannot be reconstructed from the present worktree.
+
 The public `services.mcp.resolveServers` signature is unchanged. Its host
 implementation projects the applied runner set and never repeats a catalog or
 rules resolution. Session-owned Runs receive their own applied projection;

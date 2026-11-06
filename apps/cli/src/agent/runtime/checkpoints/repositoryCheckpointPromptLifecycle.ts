@@ -6,6 +6,7 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { publishRuntimeTurnChangeSet, RuntimeTranscriptRequiredAdmissionError, type RuntimeTurnChangeSetPublication } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { ScmBackendContext } from '@/scm/types';
+import { runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '@/scm/runtime';
 import { buildRepositoryCheckpointRefs, projectRepositoryCheckpointTurnChangeSet } from '@/scm/checkpoints';
 import { createGitCheckpointRollbackDependencies, gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 import { executeCheckpointCodeRollback } from '@/scm/checkpoints/rollback';
@@ -51,11 +52,8 @@ function buildScopeId(params: Readonly<{
 async function resolveGitCheckpointContext(input: Readonly<{
     runtimeDirectory: string;
     sessionId: string;
+    scmCommandRunner?: ScmCommandRunner;
 }>): Promise<ActiveCheckpointBinding> {
-    const context = await resolveGitCheckpointBackendContext({
-        cwd: input.runtimeDirectory,
-        workingDirectory: input.runtimeDirectory,
-    });
     const unavailableBinding = (reason: RepositoryCheckpointTurnProjectionUnavailableReason, message: string): ActiveCheckpointBinding => ({
         scopeId: buildScopeId({
             sessionId: input.sessionId,
@@ -71,6 +69,14 @@ async function resolveGitCheckpointContext(input: Readonly<{
         unavailableReason: reason,
         unavailableError: message,
     });
+    let context: ScmBackendContext | null;
+    try {
+        context = await resolveGitCheckpointBackendContext({ cwd: input.runtimeDirectory,
+            workingDirectory: input.runtimeDirectory, scmCommandRunner: input.scmCommandRunner });
+    } catch (error) {
+        if (error instanceof ScmExecUnavailableError) return unavailableBinding(error.code, error.message);
+        throw error;
+    }
     if (!context) {
         return unavailableBinding('not_repo', 'Repository checkpoint capture is unavailable outside a source-control repository.');
     }
@@ -105,6 +111,7 @@ function appendReceipts(
 export function createRepositoryCheckpointCodeRollback(params: Readonly<{
     session: Pick<ApiSessionClient, 'sessionId'>;
     runtimeDirectory: string;
+    scmCommandRunner?: ScmCommandRunner;
 }>): (request: CheckpointCodeRollbackRequest) => Promise<CheckpointCodeRollbackResult> {
     return async (request) => {
         if (request.sessionId !== params.session.sessionId) {
@@ -116,6 +123,7 @@ export function createRepositoryCheckpointCodeRollback(params: Readonly<{
         const binding = await resolveGitCheckpointContext({
             runtimeDirectory: params.runtimeDirectory,
             sessionId: params.session.sessionId,
+            scmCommandRunner: params.scmCommandRunner,
         });
         if (!binding.context) {
             return {
@@ -158,6 +166,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     protocol: ToolNormalizationProtocol;
     attributionRegistry?: WorktreeAttributionRegistry;
     sessionIsNew?: boolean;
+    scmCommandRunner?: ScmCommandRunner;
 }>): RepositoryCheckpointPromptLifecycle {
     const initialSessionId = params.session.sessionId;
     const bindingsByMessageId = new Map<string, ActiveCheckpointBinding>();
@@ -207,9 +216,11 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             startRef: input.startRef,
             finalRef: input.finalRef,
         });
-        if (input.binding.repoRoot) {
+        const repoRoot = input.binding.repoRoot;
+        if (repoRoot) {
             try {
-                await retainRepositoryCheckpointTurnEvidence({ cwd: input.binding.repoRoot, scopeId: input.binding.scopeId, turnChangeSet });
+                await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointTurnEvidence({
+                    cwd: repoRoot, scopeId: input.binding.scopeId, turnChangeSet }));
             } catch (error) {
                 logger.debug('Repository turn checkpoint retention unavailable (non-fatal)', error);
             }
@@ -244,6 +255,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 const context = await resolveGitCheckpointContext({
                     runtimeDirectory: params.runtimeDirectory,
                     sessionId: params.session.sessionId,
+                    scmCommandRunner: params.scmCommandRunner,
                 });
                 const refs = buildRepositoryCheckpointRefs({
                     scopeId: context.scopeId,
@@ -267,10 +279,10 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     checkpointRef: messageStart,
                 });
                 try {
-                    await retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
+                    await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
                         scopeId: binding.scopeId, checkpointRef: messageStart, captured,
                         sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId,
-                        readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId() });
+                        readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId() }));
                 } catch (error) {
                     logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
                 }

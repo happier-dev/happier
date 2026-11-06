@@ -406,6 +406,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     runtimeDirectory: params.runtimeDirectory,
     provider: params.config.agentMessageType,
     protocol: toolNormalizationProtocol,
+    scmCommandRunner: input => hookRuntimeForCallbacks.runScmCommand?.(input)
+      ?? Promise.resolve({ success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 }),
   });
   const checkpointLifecycle = configuredCheckpointLifecycle ?? repositoryCheckpointLifecycle;
   let terminalRemoteModeLoop = params.terminalRemoteModeLoop ?? null;

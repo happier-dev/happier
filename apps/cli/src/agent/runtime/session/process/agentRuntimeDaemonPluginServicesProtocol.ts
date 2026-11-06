@@ -516,6 +516,30 @@ const ExecSpawnRequestSchema = lazyZodSchema(() => z.strictObject({
     timeoutMs: z.optional(SafeNonNegativeIntegerSchema),
 }));
 
+/** Host-only checkpoint commands; never a plugin executable grant. */
+export const RunnerDaemonScmCommandV1Schema = lazyZodSchema(() => z.strictObject({
+    bin: z.literal('git'),
+    cwd: z.string().check(z.minLength(1)),
+    args: z.array(z.string()),
+    stdin: z.optional(z.string()),
+    env: z.optional(z.record(z.string(), z.nullable(z.string()))),
+    timeoutMs: z.optional(SafeNonNegativeIntegerSchema),
+    maxOutputBytes: z.optional(SafeNonNegativeIntegerSchema),
+    output: z.optional(z.strictObject({
+        kind: z.enum(['file', 'batch']),
+        path: z.string().check(z.minLength(1)),
+    })),
+}).check(z.refine(command => !command.output || (command.output.kind === 'file'
+    ? command.args[0] === 'ls-tree'
+    : command.args.length === 2 && command.args[0] === 'cat-file' && command.args[1] === '--batch'))));
+
+export const RunnerDaemonScmCommandResultV1Schema = lazyZodSchema(() => z.strictObject({
+    success: z.boolean(), stdout: z.string(), stderr: z.string(), exitCode: z.number().check(z.int()),
+    timedOut: z.optional(z.boolean()), outputLimitExceeded: z.optional(z.boolean()),
+    executableMissing: z.optional(z.literal(true)), workingDirectoryMissing: z.optional(z.literal(true)),
+    stoppedEarly: z.optional(z.boolean()),
+}));
+
 export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_services.prepare_v1'),
@@ -1234,6 +1258,12 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         kind: z.literal('plugin_exec.launch.release_v1'),
         ...OperationBaseSchema,
         authorizationId: BoundedIdSchema,
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('host_scm.run_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        command: RunnerDaemonScmCommandV1Schema,
     })),
 ] as const;
 

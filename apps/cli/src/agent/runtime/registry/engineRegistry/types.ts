@@ -62,6 +62,8 @@ export type RunnerAgentExternalSessionProviderOps = Required<Pick<
 >>;
 
 export type RunnerAgentSessionRuntimeSource = Readonly<{
+    /** Host SCM over the existing daemon invocation channel, not plugin Exec. */
+    scmCommandRunner?: import('@/scm/runtime').ScmCommandRunner;
     /** Captured launch choice; grants no Agent/session authority. */
     startupRuntimeDescriptorV1?: AgentSessionOpenRequest['runtimeDescriptorV1'];
     /** Captured placement owner; does not admit a retained terminal. */

@@ -18,7 +18,7 @@ export type GitCheckpointCommandOptions = Readonly<{
 export type GitCheckpointTemporaryIndex = GitTemporaryIndex;
 
 export type GitCheckpointCommandFailure = Readonly<{
-    reason: Extract<RepositoryCheckpointAvailabilityReason, 'command_failed' | 'missing_git' | 'permission_denied'>;
+    reason: Extract<RepositoryCheckpointAvailabilityReason, 'command_failed' | 'missing_git' | 'permission_denied' | 'scm_exec_unavailable'>;
     error: string;
 }>;
 
@@ -43,6 +43,7 @@ export function classifyGitCheckpointCommandFailure(
     fallbackError: string,
 ): GitCheckpointCommandFailure {
     const error = result.stderr.trim() || fallbackError;
+    if (result.exitCode === -1 && error === 'scm_exec_unavailable') return { reason: 'scm_exec_unavailable', error };
     if (result.exitCode === -1 && /\b(?:ENOENT|not found|no such file)\b/i.test(error)) {
         return { reason: 'missing_git', error };
     }

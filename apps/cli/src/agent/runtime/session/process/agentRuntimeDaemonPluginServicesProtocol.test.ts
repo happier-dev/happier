@@ -108,6 +108,7 @@ const retainedRunnerOperationClassification = [
             'plugin_exec.launch.authorize_v1',
             'plugin_exec.resolved_agent_launch.authorize_v1',
             'plugin_exec.launch.release_v1',
+            'host_scm.run_v1',
         ],
     },
     {

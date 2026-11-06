@@ -22,6 +22,7 @@ export type RepositoryCheckpointRefs = Readonly<{
 
 export type RepositoryCheckpointAvailabilityReason =
     | 'not_repo'
+    | 'scm_exec_unavailable'
     | 'unsupported_scm'
     | 'missing_repo_root'
     | 'command_failed'

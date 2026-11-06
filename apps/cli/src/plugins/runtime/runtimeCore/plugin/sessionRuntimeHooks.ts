@@ -8,6 +8,7 @@ import type {
 } from '@/agent/runtime/session/input/providerInputOutcome';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { SessionRollbackRuntimeFacet } from '@/agent/runtime/session/loop/sessionRollbackRpc';
+import type { ScmCommandRunner } from '@/scm/runtime';
 
 export type PluginRuntimePromptAcceptedHandler = (info: Readonly<{
     localIds?: readonly string[];
@@ -38,6 +39,8 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 ) => Promise<PluginRuntimeInFlightConfigApplyOutcome>;
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
+    /** Host-private repository execution through this Session's current Exec service. */
+    runScmCommand?: ScmCommandRunner;
     /** null proves native custody; undefined means the applied identity is unavailable. */
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     /** Called once after this runtime opened, never used to infer subsequent auth state. */
