@@ -268,14 +268,17 @@ export async function readSessionMetadataOwnerAccountModes(
 export function projectSessionMetadataForRecipient(params: Readonly<{
     session: SessionMetadataRecipientProjectionInput & Readonly<{ metadataLayoutVersion: 1 }>;
     recipient: SessionMetadataRecipientAuthority;
+    onDocumentProjection?: (descriptor: ReturnType<typeof projectSessionMetadataDocumentDescriptorForRecipient>) => void;
 }>): SessionMetadataRecipientProjectionV1;
 export function projectSessionMetadataForRecipient(params: Readonly<{
     session: SessionMetadataRecipientProjectionInput;
     recipient: SessionMetadataRecipientAuthority;
+    onDocumentProjection?: (descriptor: ReturnType<typeof projectSessionMetadataDocumentDescriptorForRecipient>) => void;
 }>): SessionMetadataRecipientProjection;
 export function projectSessionMetadataForRecipient(params: Readonly<{
     session: SessionMetadataRecipientProjectionInput;
     recipient: SessionMetadataRecipientAuthority;
+    onDocumentProjection?: (descriptor: ReturnType<typeof projectSessionMetadataDocumentDescriptorForRecipient>) => void;
 }>): SessionMetadataRecipientProjection {
     const { session, recipient } = params;
     const descriptor = projectSessionMetadataDocumentDescriptorForRecipient(params);
@@ -295,6 +298,7 @@ export function projectSessionMetadataForRecipient(params: Readonly<{
             throw new SessionMetadataPrivacyUpgradeRequiredError();
         }
 
+        params.onDocumentProjection?.(descriptor);
         return {
             metadata: session.metadata,
             metadataVersion: session.metadataVersion,
@@ -333,6 +337,7 @@ export function projectSessionMetadataForRecipient(params: Readonly<{
         accountMode: ownerAccountMode, isOwner,
     });
 
+    params.onDocumentProjection?.(descriptor);
     if (isOwner) {
         if (recipient.type !== "owner") {
             throw new SessionMetadataPrivacyUpgradeRequiredError();

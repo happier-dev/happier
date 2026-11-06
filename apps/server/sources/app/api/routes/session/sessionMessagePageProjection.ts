@@ -247,7 +247,7 @@ export type SessionMessagePageRow = Prisma.SessionMessageGetPayload<{
 }>;
 export type SessionMessagePageResponse = {
     status: 200;
-    body: z.input<typeof SessionTranscriptMessagePageResponseSchema>;
+    body: z.output<typeof SessionTranscriptMessagePageResponseSchema>;
 } | {
     status: 400 | 403 | 404 | 503;
     body: {
@@ -262,7 +262,7 @@ export function projectSessionMessagePage(input: Readonly<{
     publicationBlocked?: boolean;
     externalShareableSnapshot?: z.infer<typeof ExternalShareableTranscriptSnapshotV1Schema>;
     turnProjectionNextBeforeSeq: number | null;
-    pageAccountActors: readonly (z.infer<typeof SessionMessageAccountActorV1Schema> | null)[];
+    pageAccountActors: readonly (z.infer<typeof SessionMessageAccountActorV1Schema> | null)[] | undefined;
     sessionListPreviewProjection: boolean;
     externalShareableProjection: boolean;
     turnProjection: boolean;
@@ -348,15 +348,14 @@ export function projectSessionMessagePage(input: Readonly<{
                 // Ordinary pages carry admitted occurrences when present. Only
                 // the explicit publication page asserts completeness with null.
                 ...(externalShareableProjection
-                    ? { surfaceItemReference: v.surfaceItemReference ?? null }
+                    ? { surfaceItemReference: v.surfaceItemReference == null ? null : SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) }
                     : !sessionListPreviewProjection && v.surfaceItemReference != null
-                        ? { surfaceItemReference: v.surfaceItemReference } : {}),
-                // Explicit object-or-null: a current server always states whether
-                // it proved an Account actor, so a client can retract stale
-                // attribution. Omission is reserved for older producers.
+                        ? { surfaceItemReference: SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) } : {}),
+                // Transcript pages state object-or-null so clients can retract
+                // stale attribution. Derived evidence may omit presentation.
                 ...(externalShareableProjection || sessionListPreviewProjection
                     ? {}
-                    : { accountActor: pageAccountActors[index] ?? null,
+                    : { ...(pageAccountActors === undefined ? {} : { accountActor: pageAccountActors[index] ?? null }),
                         ...projectSessionInputAdmissionReceipt(v.inputAdmissionReceipt) }),
             })),
             hasMore: sessionListPreviewProjection

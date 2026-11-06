@@ -545,8 +545,10 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
 /** Full detail keeps the exact envelope projection and validation boundary. */
 export function mapV2SessionListRow(params: Omit<SessionRowMappingParams, 'row'> & Readonly<{
     row: V2SessionListRowCompat | V2SessionOwnerRow;
+    onMetadataDocumentProjection?: (descriptor: ReturnType<typeof projectSessionMetadataDocumentDescriptorForRecipient>) => void;
 }>): V2SessionRecord {
-    return mapV2SessionRow(params, recipient => projectSessionMetadataForRecipient({ session: params.row, recipient }));
+    return mapV2SessionRow(params, recipient => projectSessionMetadataForRecipient({ session: params.row, recipient,
+        onDocumentProjection: params.onMetadataDocumentProjection }));
 }
 
 export function mapV2SessionCompactListRow(params: Omit<SessionRowMappingParams, 'row'> & Readonly<{

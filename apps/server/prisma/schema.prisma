@@ -1478,6 +1478,8 @@ model AccountLiveActivityTarget {
 //
 
 model Session {
+    // Clear non-content Usage timing. Null (including old writers) means unknown.
+    usageTimingV1     Json?
     /// Immutable authenticated-host creation facts; not access or fork lineage.
     originKind        String              @default("none")
     originSessionId   String?
@@ -2243,6 +2245,8 @@ model SessionFollowEdge {
 }
 
 model SessionMessage {
+    // Coverage of consumed embedded timestamps, committed with this message body.
+    usageTimingV1 Json?
     /// Private original-input reply custody; content stays in its encryption envelope.
     replyProgress Json?
     /// Query projections only; replyProgress retains authority.
@@ -2331,6 +2335,8 @@ enum PendingProviderAction {
 }
 
 model SessionPendingMessage {
+    /// Clear timing carried with the original input until transcript materialization.
+    usageTimingV1 Json?
     /// Carried atomically to the committed original input when Pending retires.
     replyProgress Json?
     replySourceSessionId String?

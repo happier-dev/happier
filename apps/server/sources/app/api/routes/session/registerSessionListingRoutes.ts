@@ -9,6 +9,8 @@ import { V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionList
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
+import { prismaRuntime } from '@/storage/prisma';
+import { sessionEvidenceSql } from '@/app/usage/query/sessionEvidenceSql';
 import { readSessionObservationCursorInTx } from '@/app/session/access/readObservation';
 import { type Fastify } from "../../types";
 import {
@@ -84,17 +86,26 @@ async function findV2SessionDetailRowsInTx(tx: Tx, params: Readonly<{
     userId: string;
     sessionIds: readonly string[];
     accessProjectionVersion?: number;
+    usageProjection?: boolean;
 }>) {
     const current = createV2SessionListRowSelect(params);
     const legacy = createV2SessionListLegacyRowSelect(params);
-    const readCurrentRows = () => tx.session.findMany({
-        where: { id: { in: [...params.sessionIds] } },
-        select: { ...current, account: { select: { ...current.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } },
-    });
-    const readLegacyRows = () => tx.session.findMany({
-        where: { id: { in: [...params.sessionIds] } },
-        select: { ...legacy, account: { select: { ...legacy.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } },
-    });
+    const readCurrentRows = async () => {
+        const select = { ...current, account: { select: { ...current.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } };
+        if (params.usageProjection) {
+            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: { ...select, ownerMetadata: false, metadata: false, agentState: false } });
+            return rows.map(row => ({ ...row, ownerMetadata: null, metadata: '', agentState: null }));
+        }
+        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select });
+    };
+    const readLegacyRows = async () => {
+        const select = { ...legacy, account: { select: { ...legacy.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } };
+        if (params.usageProjection) {
+            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: { ...select, ownerMetadata: false, metadata: false, agentState: false } });
+            return rows.map(row => ({ ...row, ownerMetadata: null, metadata: '', agentState: null }));
+        }
+        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select });
+    };
     type Row = Awaited<ReturnType<typeof readCurrentRows>>[number] | Awaited<ReturnType<typeof readLegacyRows>>[number];
     // Only the released adapter permits migration-skew fallback. Current detail
     // must load its complete projection, including the canonical access facts.
@@ -102,9 +113,32 @@ async function findV2SessionDetailRowsInTx(tx: Tx, params: Readonly<{
         : runWithSessionListProjectionFallback<Row[]>(readCurrentRows, readLegacyRows);
 }
 
+/** Project admitted plain documents at storage; encrypted content remains opaque. */
+async function readUsageDetailDocumentsInTx(tx: Tx, sessionIds: readonly string[]) {
+    const sql = sessionEvidenceSql();
+    const owner = sql.column('ownerMetadata');
+    const document = `(${sql.parseText(owner)})`;
+    const withoutCursors = sql.remove(document, 'v', 'cursors');
+    const projected = `CASE WHEN ${sql.text(document, 't')} = 'plain' AND ${sql.type(sql.json(document, 'v'))} = 'object'
+        THEN CAST(${withoutCursors} AS ${sql.dialect === 'mysql' ? 'CHAR' : 'TEXT'}) ELSE ${owner} END`;
+    const metadata = sql.column('metadata');
+    const plain = `${sql.column('encryptionMode')} = 'plain'`;
+    const shared = `CASE WHEN ${plain} AND ${sql.isObjectText(metadata)} THEN CAST(${sql.remove(`(${sql.parseText(metadata)})`, 'actionConfirmationsV1')} AS ${sql.dialect === 'mysql' ? 'CHAR' : 'TEXT'}) ELSE ${metadata} END`;
+    const agentState = `CASE WHEN ${plain} THEN NULL ELSE ${sql.column('agentState')} END`;
+    const rows = await tx.$queryRaw<{ id: string; ownerMetadata: string | null; metadata: string; agentState: string | null }[]>(prismaRuntime.sql`
+        SELECT ${prismaRuntime.raw(sql.column('id'))}, ${prismaRuntime.raw(projected)} AS ${prismaRuntime.raw(owner)},
+            ${prismaRuntime.raw(shared)} AS ${prismaRuntime.raw(metadata)}, ${prismaRuntime.raw(agentState)} AS ${prismaRuntime.raw(sql.column('agentState'))}
+        FROM ${prismaRuntime.raw(sql.column('Session'))} WHERE ${prismaRuntime.raw(sql.column('id'))} IN (${prismaRuntime.join([...sessionIds])})`);
+    return new Map(rows.map(row => [row.id, row]));
+}
+
 type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAccessAuthentication; accessProjectionVersion?: number; storedContentCompatibility: AccountStoredContentCompatibilityEvaluation;
     /** The batch owner adds these from one request-local rule snapshot after detail admission. */
     includePrivateRuleProjection?: boolean;
+    /** Usage consumes projected state facts separately; encrypted documents stay opaque. */
+    usageProjection?: boolean;
+    /** Internal evidence authority from the existing recipient projector, never a wire field. */
+    onUsageStateAdmission?: (sessionId: string, admitted: boolean) => void;
 }>;
 export type SessionDetailResponse =
     | { status: 200; body: z.infer<typeof V2SessionByIdResponseSchema> }
@@ -172,7 +206,7 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                         const admissions = runtimeManagedSubtree
                             ? new Map<string, SessionAccessOperationDecision>(rows.map(row => [row.id, { status: 'allowed', access: viewAccess(row.id) }]))
                             : await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
-                        const candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
+                        let candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
                             && (session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1 || input.storedContentCompatibility.supportsCurrentProtocol));
                         for (const id of batch) {
                             const admission = admissions.get(id);
@@ -181,6 +215,10 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                                 : { status: 426, body: input.storedContentCompatibility.upgradeRequired ?? buildAccountStoredContentUpgradeRequired() } });
                         }
                         if (!candidates.length) return result;
+                        if (input.usageProjection) {
+                            const documents = await readUsageDetailDocumentsInTx(tx, candidates.map(session => session.id));
+                            candidates = candidates.map(session => ({ ...session, ...documents.get(session.id) }));
+                        }
                         // Runtime credentials never acquire their hosting Account's private facts.
                         const discussionFacts = verifiedSessionRuntimePrincipal ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
                         const latestFailureSequences = verifiedSessionRuntimePrincipal ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
@@ -198,7 +236,9 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                                 return [mapV2SessionListRow({ row: session, userId,
                                     ownerAccountMode: ownerModes.get(session.accountId),
                                     discussionFacts, latestFailureSequences, ruleReadStates,
-                                    hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal })];
+                                    hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal,
+                                    ...(input.usageProjection ? { onMetadataDocumentProjection: descriptor =>
+                                        input.onUsageStateAdmission?.(session.id, descriptor.agentStateDocument === 'omitted') } : {}) })];
                             } catch (error) { result.set(session.id, sessionDetailFailure(error)); return []; }
                         });
                         const projected = runtimeManagedSubtree ? mapped : await projectSessionManagerForRowsInTx(tx, { ...admissionInput, sessions: mapped,

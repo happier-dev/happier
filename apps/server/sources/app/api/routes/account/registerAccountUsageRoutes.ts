@@ -1,3 +1,4 @@
+import { registerSessionEvidenceRoute } from '@/app/usage/query/registerSessionEvidenceRoute';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { FastifyReply } from 'fastify';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
@@ -43,6 +44,7 @@ async function ensureReadableSessionIds(tx: Tx, accountId: string, sessionIds: r
 }
 
 export function registerAccountUsageRoutes(app: Fastify): void {
+    registerSessionEvidenceRoute(app);
     app.get(accountUsageRoutePaths.prices, {
         schema: { response: { 200: UsageModelPriceCatalogSchema } },
         preHandler: app.authenticate,

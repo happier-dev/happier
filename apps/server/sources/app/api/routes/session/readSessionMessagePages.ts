@@ -14,6 +14,8 @@ export async function readSessionMessagePages(input: Readonly<{
     userId: string;
     sessionIds: readonly string[];
     authentication: SessionAccessAuthentication;
+    /** Derived evidence consumers do not need transcript author presentation. */
+    includeAccountActors?: boolean;
     previewRequest?: Parameters<typeof readSessionMessagePage>[0]['previewRequest'];
 }>): Promise<ReadonlyMap<string, PromiseSettledResult<SessionMessagePageResponse>>> {
     const ids = [...new Set(input.sessionIds)];
@@ -31,7 +33,7 @@ export async function readSessionMessagePages(input: Readonly<{
     const captured = await inReadSnapshot(async (tx) => {
         const pages = new Map<string, {
             rows: SessionMessagePageRow[];
-            actors: Awaited<ReturnType<typeof projectSessionMessageAccountActors>>;
+            actors: Awaited<ReturnType<typeof projectSessionMessageAccountActors>> | undefined;
         }>();
         const denials = new Map<string, SessionMessagePageResponse>();
         // SQL identifiers are static here; only values enter the parameterized query.
@@ -91,12 +93,13 @@ export async function readSessionMessagePages(input: Readonly<{
                     sessionRows.push(row);
                     visible.set(row.sessionId, sessionRows);
                 }
-                const pageRows = [...visible.values()].flatMap(rows => rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT));
-                const actors = await projectSessionMessageAccountActors(tx, pageRows);
+                const actors = input.includeAccountActors === false ? undefined
+                    : await projectSessionMessageAccountActors(tx,
+                        [...visible.values()].flatMap(rows => rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT)));
                 let actorIndex = 0;
                 for (const [sessionId, rows] of visible) {
                     const count = Math.min(rows.length, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT);
-                    pages.set(sessionId, { rows, actors: actors.slice(actorIndex, actorIndex + count) });
+                    pages.set(sessionId, { rows, actors: actors?.slice(actorIndex, actorIndex + count) });
                     actorIndex += count;
                 }
             }
@@ -110,7 +113,7 @@ export async function readSessionMessagePages(input: Readonly<{
             results.set(sessionId, { status: 'fulfilled', value: denied ?? projectSessionMessagePage({
                     sessionId, resultMessages: page?.rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT) ?? [],
                     hasMore: (page?.rows.length ?? 0) > SESSION_MESSAGE_PAGE_DEFAULT_LIMIT,
-                    turnProjectionNextBeforeSeq: null, pageAccountActors: page?.actors ?? [],
+                    turnProjectionNextBeforeSeq: null, pageAccountActors: input.includeAccountActors === false ? undefined : page?.actors ?? [],
                     sessionListPreviewProjection: false, externalShareableProjection: false, turnProjection: false,
                 }) });
         }
