@@ -34,6 +34,7 @@ describe('native Codex request scope → host → ingest', () => {
                 })), credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', forcedWorkspaceId: 'native-A',
                 selection: { kind: 'profile', serviceId: service.localId, profileId: 'account-A' },
             } })).toMatchObject({ ok: true });
+            await runtime.updateConfig({ modelId: 'gpt-5.4' });
             const session = createCodexNativeAppServerSessionRuntime(runtime, 'actual-happier-session');
             const publisher = createSessionClientUsageObservationPublisher({ token: 'synthetic-token',
                 transport: { serverId: 'home', serverUrl: 'https://usage-attribution.test',
@@ -55,10 +56,12 @@ describe('native Codex request scope → host → ingest', () => {
                 // A later read/default plan cannot rewrite the dispatched request's fact.
                 planType = 'team';
                 emitNotification('rawResponse/completed', { threadId: 'fresh-thread', turnId: 'provider-turn-1',
-                    responseId: 'paid-response', usage: { totalTokens: 3, inputTokens: 2, outputTokens: 1 } });
+                    responseId: 'paid-response', usage: { totalTokens: 3, inputTokens: 2, cachedInputTokens: 1, outputTokens: 1 } });
                 await vi.waitFor(() => expect(posted).toHaveLength(1));
                 expect(UsageEventIngestRequestSchema.parse(posted[0])).toMatchObject({
                     turnId: 'host-paid-turn', scope: 'turn_delta', isCumulative: false,
+                    tokens: { input: 2, output: 1, cacheRead: 1, total: 3 },
+                    cost: { estimatedUsd: expect.any(Number), breakdown: { cacheSavingsUsd: expect.any(Number) } },
                     attribution: { v: 1, turnId: 'host-paid-turn', source: { kind: 'native', accountScope: 'personal',
                         connectedAccount: { service, accountId: 'account-A' } } },
                 });
@@ -73,7 +76,7 @@ describe('native Codex request scope → host → ingest', () => {
                 await vi.waitFor(() => expect(posted).toHaveLength(3));
                 expect(UsageEventIngestRequestSchema.parse(posted[2])).not.toHaveProperty('attribution');
             } finally { unsubscribe(); await bridge.resetOrDisposeRuntime('runtime_recovery'); }
-        }, { connectedAccountService: service,
+        }, { connectedAccountService: service, threadStartModel: 'gpt-5.4',
             runtimeAuthHost: { refreshRuntimeAuth: async () => ({ status: 'failed', reason: 'unused' }) },
             accountRead: () => ({ account: { type: 'chatgpt', planType } }),
         });

@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import { buildCodexAppServerTokenCountObservationInput } from './tokenCountMessage.js';
 
 describe('buildCodexAppServerTokenCountObservationInput', () => {
+    it.each(['gpt-5.4', 'gpt-6-luna'])('admits priced %s cached usage at the runtime event boundary', modelId => {
+        const input = buildCodexAppServerTokenCountObservationInput({ modelId,
+            notificationParams: { tokenUsage: { total: {
+                inputTokens: 20_001, cachedInputTokens: 4_480,
+                outputTokens: 18, reasoningOutputTokens: 10, totalTokens: 20_019,
+            } } } });
+        const observation = input!.runtimeObservation!;
+        expect(observation.cost?.breakdown?.cacheSavingsUsd).toBeGreaterThan(0);
+        const event = { ...observation, sequence: 1, sessionId: 'session', emittedAtMs: 1, observationId: 'usage' };
+        const parsed = AgentSessionRuntimeEventSchema.safeParse(event);
+        expect(parsed.success, JSON.stringify(parsed.error?.issues.flatMap(issue => issue.code === 'invalid_union' ? issue.errors.flat() : [issue]).filter(issue => issue.path.includes('cost')).map(issue => ({ code: issue.code, path: issue.path })))).toBe(true);
+        expect(parsed.data).toMatchObject(JSON.parse(JSON.stringify({ tokens: observation.tokens, cost: observation.cost })));
+    });
+
     it('uses the shared catalog for a model absent from the retired Codex table', () => {
         const observation = buildCodexAppServerTokenCountObservationInput({ modelId: 'gpt-4o',
             notificationParams: { tokenUsage: { total: { inputTokens: 1_000_000, outputTokens: 0 } } } });
@@ -125,6 +140,6 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
         expect(input?.defaultScope).toBe('session_cumulative');
         expect(cost?.estimatedUsd).toBeCloseTo(32.275, 6);
         expect(cost?.total).toBeCloseTo(32.275, 6);
-        expect(cost?.breakdown).toEqual({ cacheSavingsUsd: 0.225 });
+        expect(JSON.parse(JSON.stringify(cost?.breakdown))).toEqual({ cacheSavingsUsd: 0.225 });
     });
 });

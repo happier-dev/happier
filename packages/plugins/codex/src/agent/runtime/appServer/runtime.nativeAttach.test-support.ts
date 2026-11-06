@@ -34,6 +34,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   openConfiguredRun(): Promise<AgentExecutionRunConversationRuntimeV1>;
 }) => Promise<void>, options: {
   longTemporaryDirectory?: boolean;
+  threadStartModel?: string;
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   mcpServers?: AgentSessionOpenRequest['mcpServers'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
@@ -164,7 +165,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         catch { error = { code: -32000, message: 'Quota read unavailable' }; }
       } else if (message.method === 'thread/start') {
         loadedGoalServers.add(webSockets);
-        result = { model: 'fixture-model', thread: { id: 'fresh-thread', turns: [] }, sandbox: { type: 'readOnly' }, reasoningEffort: 'low' };
+        result = { model: options.threadStartModel ?? 'fixture-model', thread: { id: 'fresh-thread', turns: [] }, sandbox: { type: 'readOnly' }, reasoningEffort: 'low' };
       } else if (message.method.startsWith('thread/goal/')) {
         // An independent native control process can find only a persisted rollout.
         if (options.goalFailure) error = options.goalFailure;
