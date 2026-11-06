@@ -40,7 +40,7 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 const { useMachineAddFlow, useMachineAddDraftRow, discardMachineAdd } = await import('./useMachineAddFlow');
-const sshPolicy = { v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'machines.add.ssh.start': ['ui' as const], 'machines.add.ssh.respond': ['ui' as const] } };
+const sshPolicy = { v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'machines.add.ssh.start': ['ui' as const], 'machines.add.ssh.respond': ['ui' as const], 'machines.add.local.start': ['ui' as const] } };
 
 async function admitSsh(serverId: string, accountId: string) {
     const scope = createAccountSettingsScope(serverId, accountId);
@@ -56,6 +56,148 @@ async function admitSsh(serverId: string, accountId: string) {
 beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTests(); });
 afterEach(async () => { await act(async () => discardMachineAdd()); publishAppliedActiveServerRuntimeAvailability(false); vi.useRealTimers(); standardCleanup(); });
 describe('machine add flow lifetime', () => {
+    it.each(['another_account', 'read_failed'] as const)('reads cold local daemon facts before an agent can move This computer away from another Account (%s)', async outcome => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+        const { createMachineConnectionActionDeps } = await import('@/sync/ops/actions/machineConnectionActionDeps');
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://cold-local.example.test', name: 'Cold local', accountId: 'alice' });
+        const manual = createManualSystemTaskRunner('tauri');
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture(createMachineConnectionActionDeps({ runner: manual.runner })));
+            const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['agent'] } });
+            const execution = executor.execute('machines.add.local.start', { serverId }, { surface: 'agent', authority: 'account_automation', serverId, actionsSettings });
+            await vi.waitFor(() => expect(manual.bridge.start).toHaveBeenCalledWith(expect.objectContaining({ kind: 'daemon.service.status.v1' })));
+            manual.emitResult('personal-home-task-1', outcome === 'read_failed'
+                ? { protocolVersion: 1, taskId: 'personal-home-task-1', ok: false,
+                    error: { code: 'service_inventory_unavailable', message: 'Service inventory unavailable' } }
+                : { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
+                data: { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: 'bobs-machine',
+                    daemonServerUrl: 'https://cold-local.example.test', daemonAccountId: 'bob', daemonAccountLabel: 'Bob' } });
+            expect(await execution).toMatchObject({ ok: false, errorCode: outcome === 'read_failed' ? 'machine_enroll_not_started' : 'cancelled' });
+            expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === 'setup.thisComputer.v1')).toBe(false);
+        } finally { await act(async () => discardMachineAdd()); storage.setState(previous); }
+    });
+
+    it('admits This computer setup through the same client Action for agents and retains the private native task', async () => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+        const { createMachineConnectionActionDeps } = await import('@/sync/ops/actions/machineConnectionActionDeps');
+        const { publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+        const { Modal } = await import('@/modal');
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://local-action.example.test', name: 'Local setup', accountId: 'alice' });
+        const manual = createManualSystemTaskRunner('tauri');
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture(createMachineConnectionActionDeps({ runner: manual.runner })));
+            const context = { surface: 'agent', authority: 'account_automation', serverId } as const;
+            expect(await executor.execute('machines.add.local.start', { serverId }, context))
+                .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            expect(manual.bridge.start).not.toHaveBeenCalled();
+            const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['agent'] } });
+            expect(await executor.execute('machines.add.local.start', { serverId, password: 'private' }, { ...context, actionsSettings }))
+                .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+            publishLocalDaemonStatus(manual.runner, { serviceInstalled: true, daemonRunning: true, needsAuth: false,
+                daemonServerUrl: 'https://local-action.example.test', daemonAccountId: 'bob', daemonAccountLabel: 'Bob' });
+            expect(await executor.execute('machines.add.local.start', { serverId }, { ...context, actionsSettings }))
+                .toMatchObject({ ok: false, errorCode: 'cancelled' });
+            expect(manual.bridge.start).not.toHaveBeenCalled();
+            vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+            expect(await executor.execute('machines.add.local.start', { serverId }, { ...context, actionsSettings }))
+                .toEqual({ ok: true, result: { taskId: 'personal-home-task-1' } });
+            expect(manual.bridge.start).toHaveBeenCalledOnce();
+            expect(manual.bridge.start.mock.calls[0]?.[0]).toMatchObject({ kind: 'setup.thisComputer.v1', params: {
+                activeRelayUrl: 'https://local-action.example.test', activeAccountId: 'alice', installService: true, startService: true, verifyService: true,
+            } });
+            expect(readMachineAddFlowDraft()).toMatchObject({ serverId, path: 'thisComputer', thisComputerTask: { taskId: 'personal-home-task-1', starting: false } });
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'another-task' }, context))
+                .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, { ...context, expectedAccountId: 'bob' }))
+                .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, context))
+                .toEqual({ ok: true, result: { taskId: 'personal-home-task-1' } });
+            expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-1');
+            expect(readMachineAddFlowDraft().startedAtMs).toBeNull();
+        } finally { await act(async () => discardMachineAdd()); storage.setState(previous); }
+    });
+
+    it('reconsiders CLI management through the admitted local setup Action without accepting arbitrary native tasks', async () => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+        const { createMachineConnectionActionDeps } = await import('@/sync/ops/actions/machineConnectionActionDeps');
+        const { publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://cli-choice.example.test', name: 'CLI choice', accountId: 'alice' });
+        const manual = createManualSystemTaskRunner('tauri');
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            publishLocalDaemonStatus(manual.runner, { serviceInstalled: true, daemonRunning: true, needsAuth: false,
+                daemonServerUrl: 'https://cli-choice.example.test', daemonAccountId: 'alice' });
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture(createMachineConnectionActionDeps({ runner: manual.runner })));
+            const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['agent'] } });
+            const context = { surface: 'agent', authority: 'account_automation', serverId, actionsSettings } as const;
+            for (const input of [{ serverId, reconsiderCli: 'yes' }, { serverId, reconsiderCli: true, command: 'arbitrary' },
+                { serverId, reconsiderCli: true, installService: false }]) {
+                expect(await executor.execute('machines.add.local.start', input, context))
+                    .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+            }
+            expect(manual.bridge.start).not.toHaveBeenCalled();
+            expect(await executor.execute('machines.add.local.start', { serverId, reconsiderCli: true }, context))
+                .toEqual({ ok: true, result: { taskId: 'personal-home-task-1' } });
+            expect(manual.bridge.start.mock.calls[0]?.[0]).toMatchObject({ kind: 'setup.thisComputer.v1', params: {
+                activeRelayUrl: 'https://cli-choice.example.test', activeAccountId: 'alice', reconsiderCli: true,
+                installService: true, startService: true, verifyService: true,
+            } });
+        } finally { await act(async () => discardMachineAdd()); storage.setState(previous); }
+    });
+
+    it('runs admitted This computer setup through the mounted executor and keeps its task after leaving the presenter', async () => {
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://mounted-local.example.test', name: 'Mounted local', accountId: 'alice' });
+        vi.stubGlobal('isTauri', true);
+        const manual = createManualSystemTaskRunner('tauri');
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'thisComputer' }));
+            // The real page offers setup after its existing native preflight settles.
+            await act(async () => manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
+                data: { serviceInstalled: false, daemonRunning: false, needsAuth: true, machineId: null } }));
+            await act(async () => hook.getCurrent().startThisComputer());
+            await vi.waitFor(() => expect(readMachineAddFlowDraft().thisComputerTask?.taskId).toBeTruthy());
+            const taskId = readMachineAddFlowDraft().thisComputerTask!.taskId!;
+            expect(manual.bridge.start.mock.calls.filter(([spec]) => spec.kind === 'setup.thisComputer.v1')).toHaveLength(1);
+            await hook.unmount();
+            expect(readMachineAddFlowDraft().thisComputerTask?.taskId).toBe(taskId);
+            expect(manual.bridge.cancel).not.toHaveBeenCalledWith(taskId);
+        } finally { await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
+    });
+
+    it('enforces disabled This computer Action policy before the mounted Add flow starts setup', async () => {
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://disabled-local.example.test', name: 'Disabled local', accountId: 'alice' });
+        vi.stubGlobal('isTauri', true);
+        const manual = createManualSystemTaskRunner('tauri');
+        const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'machines.add.local.start': { enabled: false } } });
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 2 } });
+            storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1 } });
+            const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'thisComputer' }));
+            await act(async () => hook.getCurrent().startThisComputer());
+            await vi.waitFor(() => expect(readMachineAddFlowDraft().thisComputerTask?.startError).toBe('action_disabled'));
+            expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === 'setup.thisComputer.v1')).toBe(false);
+            await hook.unmount();
+        } finally { await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
+    });
+
     it.each([
         { kind: 'auth.approveRemoteProvisioning', approved: true },
         { kind: 'daemon.replaceRemoteBackgroundServices', replaceExistingServices: true },
@@ -167,37 +309,45 @@ describe('machine add flow lifetime', () => {
             vi.unstubAllGlobals();
         }
     });
-    it.each(['cancel', 'discard', 'addAnother'] as const)('applies SSH cancel policy to pending %s and cancels its eventual native task only after admission', async (operation) => {
+    it.each((['ssh', 'thisComputer'] as const).flatMap(path => (['cancel', 'discard', 'addAnother'] as const).map(operation => ({ path, operation }))))('applies $path cancel policy to pending $operation and cancels its eventual native task only after admission', async ({ path, operation }) => {
         const previous = storage.getState();
         const serverId = await harness.addHome({ serverUrl: 'https://pending-cancel.example.test', name: 'Pending cancel', accountId: 'alice' });
         await admitSsh(serverId, 'alice');
-        const manual = createManualSystemTaskRunner('native');
+        const manual = createManualSystemTaskRunner('tauri');
         vi.stubGlobal('isTauri', true);
         let finishStart!: (id: string) => void;
         const pending = new Promise<string>(resolve => { finishStart = resolve; });
         const originalStart = manual.bridge.start.getMockImplementation()!;
-        manual.bridge.start.mockImplementation(spec => spec.kind === 'remote.ssh.bootstrapMachine.v1' ? pending : originalStart(spec));
-        const policy = ActionsSettingsV1Schema.parse({ ...sshPolicy, actions: { 'machines.add.ssh.cancel': { enabled: false } } });
+        manual.bridge.start.mockImplementation(spec => spec.kind === 'remote.ssh.bootstrapMachine.v1' || spec.kind === 'setup.thisComputer.v1' ? pending : originalStart(spec));
+        const cancelAction = path === 'ssh' ? 'machines.add.ssh.cancel' : 'machines.add.local.cancel';
+        const key = path === 'ssh' ? 'sshTask' : 'thisComputerTask';
+        const policy = ActionsSettingsV1Schema.parse({ ...sshPolicy, actions: { [cancelAction]: { enabled: false } } });
         harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1: policy } }, version: 1 } });
         storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, { ...storage.getState().settings, actionsSettingsV1: policy }, 1);
         try {
-            const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'ssh' }));
-            await act(async () => hook.getCurrent().ssh.setDraft({ ...hook.getCurrent().ssh.draft, host: 'pending-box' }));
-            await act(async () => hook.getCurrent().startSsh());
-            await vi.waitFor(() => expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.bootstrapMachine.v1')).toBe(true));
+            const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: path }));
+            if (path === 'ssh') {
+                await act(async () => hook.getCurrent().ssh.setDraft({ ...hook.getCurrent().ssh.draft, host: 'pending-box' }));
+                await act(async () => hook.getCurrent().startSsh());
+            } else {
+                await act(async () => manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
+                    data: { serviceInstalled: false, daemonRunning: false, needsAuth: true, machineId: null } }));
+                await act(async () => hook.getCurrent().startThisComputer());
+            }
+            await vi.waitFor(() => expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === (path === 'ssh' ? 'remote.ssh.bootstrapMachine.v1' : 'setup.thisComputer.v1'))).toBe(true));
             if (operation === 'addAnother') {
                 // Arrival can precede the native setup result; the visible Add another still retires that task.
                 await act(async () => storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'joined-while-starting', activeAt: Date.now() })] } }));
                 expect(hook.getCurrent().arrived?.machineId).toBe('joined-while-starting');
             }
-            const promise = readMachineAddFlowDraft().sshTask?.startPromise;
+            const promise = readMachineAddFlowDraft()[key]?.startPromise;
             await act(async () => { await hook.getCurrent()[operation](); });
-            await vi.waitFor(() => expect(readMachineAddFlowDraft().sshTask?.startError).toBe('action_disabled'));
-            expect(readMachineAddFlowDraft().sshTask?.startPromise).toBe(promise);
+            await vi.waitFor(() => expect(readMachineAddFlowDraft()[key]?.startError).toBe('action_disabled'));
+            expect(readMachineAddFlowDraft()[key]?.startPromise).toBe(promise);
             harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1: sshPolicy } }, version: 2 } });
             await act(async () => { storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, { ...storage.getState().settings, actionsSettingsV1: sshPolicy }, 2); });
             await act(async () => { await hook.getCurrent()[operation](); });
-            await vi.waitFor(() => expect(readMachineAddFlowDraft().sshTask).toBeNull());
+            await vi.waitFor(() => expect(readMachineAddFlowDraft()[key]).toBeNull());
             await act(async () => finishStart('pending-cancel-task'));
             await vi.waitFor(() => expect(manual.bridge.cancel).toHaveBeenCalledWith('pending-cancel-task'));
             expect(hook.getCurrent().watch.status).toBe('idle');

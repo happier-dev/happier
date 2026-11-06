@@ -276,6 +276,10 @@ export async function dispatchMachineControls3(inv: Pick<CoreInvocation, 'action
         if (!deps.machineAddLocalStart) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         return completeActionResult(await deps.machineAddLocalStart(MachineAddLocalStartInputSchema.parse(parsed.data), ctx));
       }
+      if (actionId === 'machines.add.local.cancel') {
+        if (!deps.machineAddLocalCancel) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        return completeActionResult(await deps.machineAddLocalCancel(parsed.data as AdmittedActionInputById['machines.add.local.cancel'], ctx));
+      }
       if (actionId === 'machines.add.command') {
         if (!deps.machineAddCommand) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         return completeActionResult(await deps.machineAddCommand(MachineAddCommandInputSchema.parse(parsed.data), ctx));

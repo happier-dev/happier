@@ -8,9 +8,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { storage } from '@/sync/domains/state/storageStore';
-import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, getServerProfilesGeneration, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolveWebappUrlFromServerUrl';
 import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
@@ -19,7 +17,6 @@ import type { z } from 'zod/mini';
 import type { MachineAddSshAnswerSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { buildSshCredentialsDraftFromRemoteHostConfig } from '@/components/settings/remoteHosts/remoteHostOutcomeActions';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
-import { confirmThisComputerAccountMove } from '@/components/settings/machines/localControl/thisComputerConnectionPresentation';
 import { useThisComputerSetupPreflight } from '@/components/onboarding/checklists/setupThisComputer/useThisComputerSetupPreflight';
 import { buildRemoteSshChecklistItems } from '@/components/onboarding/checklists/remoteSsh/buildRemoteSshChecklistItems';
 import { mapRemoteSshTaskToChecklistExecution } from '@/components/onboarding/checklists/remoteSsh/mapRemoteSshTaskToChecklistExecution';
@@ -32,7 +29,6 @@ import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntim
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
 import { resolveRemoteSshBootstrapPrompt } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
-import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
 import { buildThisComputerSetupStageModel } from '@/components/systemTasks/thisComputerSetup/buildThisComputerSetupStageModel';
 import { mapThisComputerSetupExecutionToStages } from '@/components/systemTasks/thisComputerSetup/mapThisComputerSetupExecutionToStages';
 import { resolveThisComputerSetupPrompt } from '@/components/systemTasks/thisComputerSetup/resolveThisComputerSetupPrompt';
@@ -46,8 +42,8 @@ import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabe
 import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
 import { useMachineAddPaths } from './useMachineAddPaths';
 import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, type MachineAddCommandOs } from './machineAddCommand';
-import { cancelMachineAddFlowTasks, discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle } from './machineAddFlowStore';
-import { beginMachineAddWatch, startMachineAddTask, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
+import { discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle } from './machineAddFlowStore';
+import { beginMachineAddWatch, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
 import { getMachineAddSshSupportedAuthModes } from './machineAddSshTask';
 
 export type MachineAddDraftRow = Readonly<{ title: string; entityTitle: string | null; status: string | null; tone: 'draft' | 'waiting' | 'running' | 'failed' | 'arrived' }>;
@@ -117,28 +113,29 @@ export function discardMachineAdd(): void { discardMachineAddFlowDraft(); }
 
 type MachineAddActionExecute = ReturnType<typeof useMountedActionExecution>['execute'];
 
-async function cancelMachineAddSshThroughActions(execute: MachineAddActionExecute): Promise<boolean> {
-    const handle = readMachineAddFlowDraft().sshTask;
+async function cancelMachineAddThroughActions(execute: MachineAddActionExecute, kind: TaskKind): Promise<boolean> {
+    const key = taskKey(kind);
+    const handle = readMachineAddFlowDraft()[key];
     if (!handle) return true;
     const snapshot = handle.taskId ? handle.runner.getSnapshot(handle.taskId) : null;
     // A terminal task or an owner-issued cancellation needs only local view disposal.
     if (!handle.starting && (snapshot?.result || snapshot?.cancelRequested)) return true;
     let errorCode: string | null = null;
     try {
-        const result = await execute('machines.add.ssh.cancel', handle.starting ? {} : { taskId: handle.taskId });
+        const result = await execute(kind === 'ssh' ? 'machines.add.ssh.cancel' : 'machines.add.local.cancel', handle.starting ? {} : { taskId: handle.taskId });
         if (result.ok) {
-            const current = readMachineAddFlowDraft().sshTask;
+            const current = readMachineAddFlowDraft()[key];
             return current === null || current === handle;
         }
         errorCode = result.errorCode ?? result.error;
-    } catch { errorCode = 'machine_setup_cancel_failed'; }
-    updateMachineAddFlowDraft(draft => draft.sshTask !== handle ? draft : { ...draft, sshTask: { ...handle, startError: errorCode } });
+    } catch { errorCode = 'machine_enroll_cancel_failed'; }
+    updateMachineAddFlowDraft(draft => draft[key] !== handle ? draft : { ...draft, [key]: { ...handle, startError: errorCode } });
     return false;
 }
 
 /** Header Discard, flow Discard and Add another all consume the same cancellation admission. */
 async function discardMachineAddThroughActions(execute: MachineAddActionExecute): Promise<boolean> {
-    if (!await cancelMachineAddSshThroughActions(execute)) return false;
+    if (!await cancelMachineAddThroughActions(execute, 'ssh') || !await cancelMachineAddThroughActions(execute, 'thisComputer')) return false;
     discardMachineAddFlowDraft();
     return true;
 }
@@ -267,19 +264,18 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         if (current.path && current.serverId && paths.some((candidate) => candidate.id === current.path && candidate.runs === 'command')) beginMachineAddWatch(current.serverId, current.path);
     }, [paths]);
     const startThisComputer = React.useCallback(() => {
-        if (chosen?.id !== 'thisComputer' || chosen.runs !== 'task' || chosen.connectedMachineId || !profile || !isActiveHome) return;
-        const expectedScope = storage.getState().settingsScope;
-        void startMachineAddTask('thisComputer', runner, async (isCurrent) => {
-            if (!await confirmThisComputerAccountMove(preflight.thisComputerConnection)) return null;
-            if (!isCurrent() || (expectedScope && !areAccountSettingsScopesEqual(storage.getState().settingsScope, expectedScope))) return null;
-            beginMachineAddWatch(serverId, 'thisComputer');
-            return localTask.start(buildLocalMachineSetupSystemTaskSpec({ activeRelayUrl: profile.serverUrl, activeWebappUrl: resolveWebappUrlFromServerUrl(profile.serverUrl),
-                activeLocalRelayUrl: preflight.activeLocalRelayUrl, activeServerIdentityId: profile.serverIdentityId, installService: true, startService: true, verifyService: true,
-                // Guarded above to the active Home, so the app's signed-in account is its account there.
-                activeAccountId: storage.getState().profile?.id ?? null,
-            }));
-        });
-    }, [isActiveHome, chosen, localTask.start, preflight.activeLocalRelayUrl, preflight.thisComputerConnection, profile, runner, serverId]);
+        if (chosen?.id !== 'thisComputer' || chosen.runs !== 'task' || chosen.connectedMachineId || !profile || !isActiveHome
+            || !sshActions.ready || hasRunningTask() || sshActions.approval.approvalPending) return;
+        const originHandle = readMachineAddFlowDraft().thisComputerTask;
+        const recordError = (error: unknown) => update(current => current.serverId !== serverId || current.path !== 'thisComputer'
+            || current.thisComputerTask !== originHandle ? current : { ...current, thisComputerTask: {
+                ...(current.thisComputerTask ?? { runner, taskId: null, starting: false }),
+                startError: error instanceof Error ? error.message : t('settings.systemTaskStartFailed'),
+            } });
+        void sshActions.execute('machines.add.local.start', { serverId }).then(result => {
+            if (!result.ok && result.errorCode !== 'cancelled') recordError(new Error(result.error));
+        }).catch(recordError);
+    }, [isActiveHome, chosen, profile, runner, serverId, sshActions.execute, sshActions.ready, sshActions.approval.approvalPending, update]);
     const startSsh = React.useCallback(() => {
         if (chosen?.id !== 'ssh' || chosen.runs !== 'task' || !profile || !isActiveHome || !isSshCredentialsDraftReady(draft.sshDraft)
             || !sshActions.ready || hasRunningTask() || sshActions.approval.approvalPending) return;
@@ -339,9 +335,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         }).catch(recordSshError);
     }, [isActiveHome, recordSshError, sshActions.execute, sshActions.approval.approvalPending]);
     const cancel = React.useCallback(async () => {
-        if (readMachineAddFlowDraft().path !== 'ssh') { cancelMachineAddFlowTasks(); return true; }
         if (sshActions.approval.approvalPending) return false;
-        return cancelMachineAddSshThroughActions(sshActions.execute);
+        if (!await cancelMachineAddThroughActions(sshActions.execute, readMachineAddFlowDraft().path === 'ssh' ? 'ssh' : 'thisComputer')) return false;
+        updateMachineAddFlowDraft(draft => ({ ...draft, startedAtMs: null, baseline: null }));
+        return true;
     }, [sshActions.execute, sshActions.approval.approvalPending]);
     const discard = React.useCallback(() => sshActions.approval.approvalPending ? Promise.resolve(false)
         : discardMachineAddThroughActions(sshActions.execute), [sshActions.execute, sshActions.approval.approvalPending]);

@@ -244,6 +244,15 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
       { path: 'reconsiderCli', title: 'Ask who manages the command line again', widget: 'boolean' }] },
   },
   {
+    id: 'machines.add.local.cancel', approval: { result: 'required' }, title: 'Cancel this computer setup',
+    description: 'Cancel the retained enrollment task through its existing system-task owner. Omit taskId to cancel its pending native start.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    bindings: { mcpToolName: 'machines_add_local_cancel' },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MachineAddSshCancelInputSchema, outputSchema: MachineAddSshCancelOutputSchema,
+    inputHints: { fields: [{ path: 'taskId', title: 'Task ID', widget: 'text' }] },
+  },
+  {
     id: 'machines.add.ssh.start', approval: {result: 'required'}, title: 'Add machine over SSH',
     description: 'Start SSH setup on the focused signed-in Home using a target or saved host. Credentials stay in private task custody or are resolved from the captured saved host; they are never Action arguments.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,

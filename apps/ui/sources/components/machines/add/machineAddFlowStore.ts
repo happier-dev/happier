@@ -74,7 +74,8 @@ export function updateMachineAddFlowDraft(next: MachineAddFlowDraft | ((current:
     publish();
 }
 
-export function cancelMachineAddFlowTasks(): void {
+/** Lifecycle teardown only; user cancellation is admitted through the enrollment Actions. */
+function cancelMachineAddFlowTasks(): void {
     for (const handle of [draft.thisComputerTask, draft.sshTask]) {
         handle?.unsubscribeCompletion?.();
         const snapshot = handle?.taskId ? handle.runner.getSnapshot(handle.taskId) : null;

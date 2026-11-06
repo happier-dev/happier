@@ -18,6 +18,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { createMachineAddSshTaskAction } from '@/components/machines/add/machineAddSshTaskAction';
 import { createLocalDaemonServiceAction } from './localDaemonServiceAction';
+import { createMachineAddLocalSetupAction, createMachineAddLocalCancelAction } from '@/components/machines/add/machineAddLocalSetupAction';
 import { MachineCapabilityInstallInputSchema, MachineMetadataUpdateInputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { readCurrentMachineUpdateItem } from '@/updates/updatesActionRuntime';
@@ -31,7 +32,7 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
-export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machinePageAction'> {
+export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction'> {
     return {
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
@@ -100,6 +101,8 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
         },
         machineAddSshTaskAction: createMachineAddSshTaskAction(options.runner),
         localDaemonServiceAction: createLocalDaemonServiceAction(options),
+        machineAddLocalStart: createMachineAddLocalSetupAction(options.runner),
+        machineAddLocalCancel: createMachineAddLocalCancelAction(),
         homeReconnect: async (input, context) => {
             context.signal?.throwIfAborted();
             if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, input.serverId)) {
