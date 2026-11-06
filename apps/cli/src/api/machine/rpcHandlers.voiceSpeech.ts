@@ -51,6 +51,7 @@ import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountS
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import type { RegisteredSpeechProviderRuntime } from '@/plugins/runtime/lifecycle/contributions/targetVoiceSpeech';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
+import { createFinalizedUploadHold } from './finalizedUploadHold';
 import { readVoiceSpeechSettingsSnapshot } from './voiceSpeechSettings';
 
 type VoiceSpeechTargetRef = Readonly<{ pluginId: string; localId: string }>;
@@ -245,16 +246,12 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES,
     Math.max(1, Math.trunc(configuration.filesTransferChunkBytes)),
   );
-  const uploadStore = new TransferSessionStore({ ttlMs });
-  const downloadStore = new TransferSessionStore({ ttlMs });
+  // Nothing else sweeps these stores, so each owns its sessions' deadline.
+  const uploadStore = new TransferSessionStore({ ttlMs, expiryTrigger: 'self' });
+  const downloadStore = new TransferSessionStore({ ttlMs, expiryTrigger: 'self' });
   const uploads = createTransferSessionLifecycle({ store: uploadStore, chunkSizeBytes });
   const downloads = createTransferSessionLifecycle({ store: downloadStore, chunkSizeBytes });
-  const uploadMetadata = new Map<string, UploadMetadata>();
-  const finalizedUploads = new Map<string, FinalizedUpload>();
-  const finalizedUploadTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const downloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const downloadFiles = new Map<string, string>();
-  const outputFiles = new Set<string>();
+  const finalizedUploads = createFinalizedUploadHold<FinalizedUpload>(ttlMs);
   let outputRootPromise: Promise<string> | null = null;
   let disposed = false;
   const resolveRawCredentialDependencies: () => Promise<RawCredentialDependencies | null> =
@@ -461,37 +458,11 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
 
   const outputRoot = async () => outputRootPromise ??= Promise.resolve(createHappierTempDir({ purpose: 'voice-speech' }));
   const clearUpload = async (uploadId: string) => {
-    const timer = finalizedUploadTimers.get(uploadId);
-    if (timer) clearTimeout(timer);
-    finalizedUploadTimers.delete(uploadId);
-    const finalized = finalizedUploads.get(uploadId);
-    finalizedUploads.delete(uploadId);
-    uploadMetadata.delete(uploadId);
     await uploads.abortUploadTransferSession({ uploadId }).catch(() => undefined);
-    if (finalized) await rm(finalized.path, { force: true }).catch(() => undefined);
-  };
-  const scheduleUploadExpiry = (uploadId: string) => {
-    const existing = finalizedUploadTimers.get(uploadId);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => { void clearUpload(uploadId); }, ttlMs);
-    timer.unref?.();
-    finalizedUploadTimers.set(uploadId, timer);
+    await finalizedUploads.discard(uploadId);
   };
   const clearDownload = async (downloadId: string) => {
-    const timer = downloadTimers.get(downloadId);
-    if (timer) clearTimeout(timer);
-    downloadTimers.delete(downloadId);
     await downloads.abortDownloadTransferSession({ downloadId }).catch(() => undefined);
-    const filePath = downloadFiles.get(downloadId);
-    downloadFiles.delete(downloadId);
-    if (filePath) outputFiles.delete(filePath);
-  };
-  const scheduleDownloadExpiry = (downloadId: string) => {
-    const existing = downloadTimers.get(downloadId);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => { void clearDownload(downloadId); }, ttlMs);
-    timer.unref?.();
-    downloadTimers.set(downloadId, timer);
   };
   const runBounded = async <T>(
     operation: (signal: AbortSignal) => Promise<T>,
@@ -761,13 +732,14 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         target: {
           destPath: 'voice-speech-transcribe', destDisplayPath: 'voice-speech-transcribe',
           expectedSizeBytes: upload.sizeBytes, overwrite: true,
-          finalizeUpload: async ({ tempPath, sizeBytes }) => ({ success: true, path: tempPath, sizeBytes }),
+          finalizeUpload: async ({ tempPath, sizeBytes }) => ({
+            success: true, path: tempPath, sizeBytes,
+            result: { target, ...upload, path: tempPath, sizeBytes } satisfies FinalizedUpload,
+          }),
         },
         recipientSecretKeySeed: recipient.recipientSecretKeySeed,
         recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
       });
-      uploadMetadata.set(session.uploadId, { target, ...upload });
-      scheduleUploadExpiry(session.uploadId);
       return DaemonVoiceSpeechTranscribeUploadInitResponseSchema.parse({
         success: true,
         uploadId: session.uploadId,
@@ -782,20 +754,17 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     const parsed = DaemonVoiceSpeechTranscribeUploadChunkRequestSchema.safeParse(raw);
     if (!parsed.success) return transferInvalid;
     const response = await uploads.writeUploadTransferChunk(parsed.data);
-    if (!response.success) return uploadMetadata.has(parsed.data.uploadId) ? transferFailure('transfer_failed') : transferFailure('transfer_not_found');
-    scheduleUploadExpiry(parsed.data.uploadId);
+    if (!response.success) return uploadStore.getUploadSession(parsed.data.uploadId) ? transferFailure('transfer_failed') : transferFailure('transfer_not_found');
     return DaemonVoiceSpeechTranscribeUploadChunkResponseSchema.parse({ success: true });
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_FINALIZE, async (raw: unknown) => {
     const parsed = DaemonVoiceSpeechTranscribeUploadFinalizeRequestSchema.safeParse(raw);
     if (!parsed.success) return transferInvalid;
-    const metadata = uploadMetadata.get(parsed.data.uploadId);
-    if (!metadata) return transferFailure('transfer_not_found');
+    if (!uploadStore.getUploadSession(parsed.data.uploadId)) return transferFailure('transfer_not_found');
     const result = await uploads.finalizeUploadTransferSession(parsed.data);
-    if (!result.success) return transferFailure('transfer_failed');
-    uploadMetadata.delete(parsed.data.uploadId);
-    finalizedUploads.set(parsed.data.uploadId, { ...metadata, path: result.finalized.path, sizeBytes: result.finalized.sizeBytes });
-    scheduleUploadExpiry(parsed.data.uploadId);
+    const finalized = result.success ? result.finalized.result as FinalizedUpload | undefined : undefined;
+    if (!result.success || !finalized) return transferFailure('transfer_failed');
+    finalizedUploads.hold(parsed.data.uploadId, finalized);
     return DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema.parse({ success: true, uploadId: parsed.data.uploadId, sizeBytes: result.finalized.sizeBytes, sha256: result.sha256 });
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT, async (raw: unknown) => {
@@ -822,7 +791,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       await lease.release();
       return invalid;
     }
-    uploaded = finalizedUploads.get(uploadId);
+    uploaded = finalizedUploads.peek(uploadId);
     const maxInputBytes = Math.min(
       VOICE_SPEECH_INPUT_MAX_BYTES,
       lease.contribution.limits?.transcribe?.maxInputBytes ?? VOICE_SPEECH_INPUT_MAX_BYTES,
@@ -836,10 +805,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       await lease.release();
       return invalid;
     }
-    finalizedUploads.delete(uploadId);
-    const uploadTimer = finalizedUploadTimers.get(uploadId);
-    if (uploadTimer) clearTimeout(uploadTimer);
-    finalizedUploadTimers.delete(uploadId);
+    finalizedUploads.take(uploadId);
     try {
       const result = await runBounded(async (signal) => {
         const bytes = new Uint8Array(await readFile(uploaded!.path));
@@ -925,15 +891,12 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         throwIfTransportCancelled(signal);
         filePath = join(root, `${randomUUID()}.audio`);
         await writeFile(filePath, synthesized.bytes, { mode: 0o600, signal });
-        outputFiles.add(filePath);
         throwIfTransportCancelled(signal);
         const session = await downloads.openDownloadTransferSession({
           source: { filePath, deleteFileOnClose: true, sizeBytes: synthesized.bytes.byteLength, name: 'voice-speech-audio' },
           recipientPublicKeyBase64,
         });
         downloadId = session.downloadId;
-        downloadFiles.set(session.downloadId, filePath);
-        scheduleDownloadExpiry(session.downloadId);
         throwIfTransportCancelled(signal);
         return DaemonVoiceSpeechSynthesizeResponseSchema.parse(Object.freeze({
           ok: true as const, requestId, downloadId: session.downloadId,
@@ -944,7 +907,6 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     } catch (error) {
       if (downloadId) await clearDownload(downloadId);
       else if (filePath) {
-        outputFiles.delete(filePath);
         await rm(filePath, { force: true }).catch(() => undefined);
       }
       return classify(error);
@@ -956,7 +918,6 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     const response = await downloads.readDownloadTransferChunk(parsed.data);
     if (!response.success) return transferFailure('transfer_not_found');
     if (!('payloadBase64' in response)) return transferFailure('transfer_failed');
-    scheduleDownloadExpiry(parsed.data.downloadId);
     return DaemonVoiceSpeechDownloadChunkResponseSchema.parse(response);
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_FINALIZE, async (raw: unknown) => {
@@ -976,15 +937,9 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
   return Object.freeze({
     async dispose() {
       disposed = true;
-      for (const timer of finalizedUploadTimers.values()) clearTimeout(timer);
-      finalizedUploadTimers.clear();
-      for (const timer of downloadTimers.values()) clearTimeout(timer);
-      downloadTimers.clear();
-      for (const uploadId of [...finalizedUploads.keys()]) await clearUpload(uploadId);
+      await finalizedUploads.discardAll();
       await uploadStore.dispose();
       await downloadStore.dispose();
-      for (const path of outputFiles) await rm(path, { force: true }).catch(() => undefined);
-      outputFiles.clear();
       if (outputRootPromise) await removeHappierTempDirAsync(await outputRootPromise).catch(() => undefined);
     },
   });
