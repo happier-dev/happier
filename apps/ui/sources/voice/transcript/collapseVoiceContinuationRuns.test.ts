@@ -64,4 +64,17 @@ describe('collapseVoiceContinuationRuns', () => {
 
     expect(collapseVoiceContinuationRuns(ids, byId(messages))).toBe(ids);
   });
+
+  it('preserves independent Voice tool-result notes and breaks continuation runs at them', () => {
+    const failed = { ...said('failed'), text: 'The tool failed.', meta: buildVoiceTranscriptNoteMeta() };
+    const succeeded = { ...said('succeeded'), text: 'The tool succeeded.', meta: buildVoiceTranscriptNoteMeta() };
+    const messages = [note('n1', 'Chrome'), failed, succeeded, note('n2', 'iPhone'), note('n3', 'Chrome')];
+
+    expect(collapseVoiceContinuationRuns(messages.map(({ id }) => id), byId(messages))).toEqual([
+      'n1', 'failed', 'succeeded', 'n3',
+    ]);
+    const independent = [failed, succeeded];
+    const ids = independent.map(({ id }) => id);
+    expect(collapseVoiceContinuationRuns(ids, byId(independent))).toBe(ids);
+  });
 });

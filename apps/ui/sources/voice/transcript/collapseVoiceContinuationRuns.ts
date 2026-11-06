@@ -1,6 +1,6 @@
 import type { Message } from '@happier-dev/session-core/messages';
 
-import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
+import { readVoiceContinuationProvenance } from './voiceTranscriptNoteMeta';
 
 /**
  * A run of consecutive Voice continuation notes ("Continued on Chrome" after each reconnect) reads as
@@ -18,8 +18,8 @@ export function collapseVoiceContinuationRuns(
     const nextId = ids[index + 1];
     const superseded =
       nextId !== undefined &&
-      hasVoiceTranscriptNoteMeta(messagesById[id]?.meta) &&
-      hasVoiceTranscriptNoteMeta(messagesById[nextId]?.meta);
+      readVoiceContinuationProvenance(messagesById[id]?.meta) !== null &&
+      readVoiceContinuationProvenance(messagesById[nextId]?.meta) !== null;
     if (superseded) {
       kept ??= ids.slice(0, index);
       continue;
