@@ -12,6 +12,7 @@ import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '.
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
+import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { requestAdmissionSample } from './admission_client.mjs';
 
 // Finite cutover coverage consumes an explicitly selected pre-broker producer.
@@ -74,6 +75,7 @@ peer.close()
 test('admission reports one waiting line with enqueue facts only when capacity queues the command',
   { skip: process.platform !== 'linux' }, async t => {
     for (const mode of ['queued', 'immediate', 'older-broker']) await t.test(mode, async t => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
       const queued = mode !== 'immediate';
       const fixture = await restartFixture(t);
       if (mode === 'older-broker') {
@@ -115,6 +117,10 @@ test('admission reports one waiting line with enqueue facts only when capacity q
         assert.equal(busy.stdout(), '');
         assert.equal(busy.stderr().split('\n').filter(line => line.includes('waiting for admission')).length, 0);
         availableMemoryKiB = 100;
+        // Reconnecting demand shares the sample; external memory recovery is
+        // observed by the broker's existing shared catch-up, not a new arrival.
+        t.mock.timers.tick(DEFAULT_FILE_CHANGE_CATCH_UP_MS);
+        await requestAdmissionSample(fixture.native.admissionRoot);
         const next = fixture.start('process.stdout.write("next");', ['--no-wait']);
         assert.deepEqual(await next.closed, [0, null], next.stderr());
         assert.equal(next.stderr().split('\n').filter(line => line.includes('waiting for admission')).length, 0);

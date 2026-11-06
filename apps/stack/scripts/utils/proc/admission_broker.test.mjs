@@ -145,6 +145,39 @@ function captureRecoveryClock(t) {
   } };
 }
 
+test('a reconnect burst shares one capacity walk and answers sample before another walk', linux, async t => {
+  captureRecoveryClock(t);
+  let walks = 0;
+  const memory = { availableMemoryKiB: 100, totalMemoryKiB: 100 };
+  const { root, broker } = await fixture(t, { readMemory: () => memory });
+  const holder = await acquire(root, 100, t);
+  await holder.admit();
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'),
+    sampleResources: ({ slots }) => readAdmissionMemorySample({ slots, readMemory: () => memory,
+      readProcesses: () => {
+        walks += 1;
+        return new Map(Array.from({ length: 1700 }, (_, index) => [index + 2,
+          { pid: index + 2, parentPid: 1, pssKiB: 0 }]));
+      } }),
+  });
+  await replacement.start();
+  t.after(() => replacement.close());
+  const before = walks;
+  const started = performance.now();
+  const clients = await Promise.all(Array.from({ length: 100 }, () => acquire(root, 50, t)));
+  const sample = await request(root, { kind: 'sample' });
+  const response = await sample.next();
+  sample.socket.destroy();
+  console.log(JSON.stringify({ reconnectWaiters: clients.length, processRows: 1700,
+    walks: walks - before, timeToFirstAnswerMs: performance.now() - started }));
+  assert.equal(response.waitingCount, clients.length);
+  assert.ok(walks - before <= 1, 'reconnecting demand shares capacity; it cannot change physical memory');
+  assert.ok(response.sampleCount <= 2, 'sample answers after at most the one burst observation');
+  memory.availableMemoryKiB = 100;
+  clients.forEach(client => client.socket.destroy());
+});
+
 test('queue positions advance on existing passes and unchanged waiters stay silent', linux, async t => {
   const clock = captureRecoveryClock(t);
   const notices = [];

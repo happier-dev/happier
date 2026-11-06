@@ -142,8 +142,11 @@ The development push Gate runs each non-UI partition through `pnpm run test:gate
 
 In 0.3 development, runtime worker bootstrap, runtime validation preparation, local `hstack` bundled-workspace preflight and the Stack unit runner prepare emitted workspace prerequisites in `source-dev` mode by default. Their package compilers use the existing `package-dist` envelope, reusing an authenticated parent admission when present. Explicit strict mode and public packing/publication still check semantics. Both UI patch stages request patch-package's `--error-on-fail`, so a mixed previously patched tree reaches the existing dependency owner's pristine re-extraction and retry rather than being admitted as ready.
 
-The development Linux heavyweight broker samples resources once per arrival or
-release and reuses its cached sample for placement and status. Queued clients
+The development Linux heavyweight broker samples resources when an arrival has
+no existing memory-waiting demand, on slot releases, after disk reclamation and
+on shared recovery ticks. Further arrivals
+share that observation while memory demand is queued; withdrawing an unreserved
+waiter does not resample capacity. Placement and status reuse the same sample. Queued clients
 block on sockets; they do not start their own process-tree census, filesystem
 waiter record or catch-up poll. Relevant workspace-resource changes wake only
 blocked demand that consumes those resources. Replacing the launcher affects new
@@ -446,8 +449,8 @@ leases and publication-priority entries consumed by blocked requests. A
 resource-busy attempt releases its partial leases and offered capacity, retaining
 its original queue order. An unrelated arrival does not reoffer unchanged blocked
 demand; the relevant resource change makes it runnable again. Capacity waiting
-uses the broker's arrival and release events, without a per-waiter observer or
-resource walk.
+uses the broker's shared capacity observation, slot-release events and recovery
+loop, without a per-waiter observer or resource walk.
 
 In current 0.3 development, joint resource attempts and ordinary waiting
 publishers share the bundle-lock owner's publication preference. A group keeps
@@ -625,7 +628,7 @@ Selection excludes machines whose total RAM is below the selected class's requir
 
 Selection excludes machines whose total RAM is below the selected class's requirement. Linux admission subtracts only each admitted job's unused reservation, `max(0, class floor - observed process-tree PSS)`, from available memory: resident pages are already absent from `MemAvailable`. Missing proportional-memory evidence retains the full reservation. There is no additional guessed available-memory percentage, PSI or CPU-load denial. Reservations follow client-held socket witnesses. Nested commands reuse their containing job's fixed floor; a larger nested request refuses rather than enlarging that floor or taking a second slot. Explicit `--local` bypasses remote placement and uses this same admission against local memory. Light local commands remain immediate. `dev-targets status` consumes cached available, reserved and queued memory with active/waiting counts. The floors reserve admission headroom but do not cap a command's actual memory use. Runtime publication placement uses the retained-demand broker described below; busy admission keeps the build remote, and only unavailable capable workers permit configured local fallback. Darwin selection applies the total-capacity filter and load ranking; its existing execution path has no admission queue. Native Windows command routing remains local.
 
-In current 0.3 development source, only a request exceeding total physical memory is permanently infeasible and emits `HSTACK_ADMISSION_CAPACITY:<executionId>` before payload execution. AUTO excludes that worker for this invocation and re-evaluates the pool; an explicit pin returns the refusal. A physically fitting request with insufficient current unreserved memory is busy or waits. Achievable memory remains diagnostic and never establishes permanent capacity. The broker samples resources for arrivals and releases; cached placement and status reads do not repeat that observation.
+In current 0.3 development source, only a request exceeding total physical memory is permanently infeasible and emits `HSTACK_ADMISSION_CAPACITY:<executionId>` before payload execution. AUTO excludes that worker for this invocation and re-evaluates the pool; an explicit pin returns the refusal. A physically fitting request with insufficient current unreserved memory is busy or waits. Achievable memory remains diagnostic and never establishes permanent capacity. The broker samples the first arrival without existing memory demand, slot releases, disk reclamation and shared recovery ticks; later queued arrivals and cached placement/status reads reuse that observation.
 
 For a `sh`/`bash` batch, placement also considers known producer commands in its
 static prefix, including multiline inline bodies and repository script files.

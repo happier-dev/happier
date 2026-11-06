@@ -121,7 +121,7 @@ async function createSocketAdmissionFixture(t, totalSlots = 3) {
     physicalReads: () => physicalReads, setAvailable: value => { availableMemoryKiB = value; } };
 }
 
-test('broker samples once per arrival, release or shared recovery tick at the observed queue scale', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+test('broker shares capacity samples across queued arrivals, releases and recovery ticks at the observed scale', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   // The clock is the substituted boundary; socket and capacity decisions stay real.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const fixture = await createSocketAdmissionFixture(t);
@@ -130,7 +130,7 @@ test('broker samples once per arrival, release or shared recovery tick at the ob
   // LOAD-AUDIT E1 observed 273 waiters on nl3. Keep that actual queue scale.
   const waiters = Array.from({ length: 273 }, () => fixture.acquire());
   while (fixture.broker.status().waitingCount !== waiters.length) await new Promise(setImmediate);
-  assert.equal(fixture.physicalReads(), 1 + 1 + waiters.length, 'one startup sample plus one per actual arrival');
+  assert.equal(fixture.physicalReads(), 3, 'startup, holder and first waiting demand each sample once; queued arrivals share capacity');
   const before = fixture.physicalReads();
   t.mock.timers.tick(100);
   await new Promise(setImmediate);
@@ -151,7 +151,7 @@ test('broker backfills spare capacity while preserving the waiting head and admi
   await waitForJointAdmission(() => fixture.broker.status().waitingCount === 1, null, () => JSON.stringify(fixture.broker.status()));
   const fitting = fixture.acquire();
   // Owner-approved admission-backfill-1106 replaces strict oldest-first admission.
-  await waitForJointAdmission(() => fixture.broker.status().sampleCount === 4, null, () => JSON.stringify(fixture.broker.status()));
+  await waitForJointAdmission(() => fixture.broker.status().activeCount === 2, null, () => JSON.stringify(fixture.broker.status()));
   assert.equal(fixture.broker.status().activeCount, 2, 'the head cannot use this spare memory until the older holder releases');
   assert.equal((await fitting.admitted).kind, 'admitted');
   assert.equal(fixture.broker.status().waitingCount, 1);
@@ -183,7 +183,8 @@ test('broker backfill streams preserve released memory for the head and oldest f
   const order = [];
   head.admitted.then(value => { if (value.kind === 'admitted') order.push('head'); });
   small.forEach((client, index) => client.admitted.then(value => { if (value.kind === 'admitted') order.push(index); }));
-  await waitForJointAdmission(() => fixture.broker.status().sampleCount === 9, null, () => JSON.stringify(fixture.broker.status()));
+  await waitForJointAdmission(() => fixture.broker.status().activeCount === 4 && fixture.broker.status().waitingCount === 4,
+    null, () => JSON.stringify(fixture.broker.status()));
   assert.equal(fixture.broker.status().activeCount, 4, 'both fitting peers use spare capacity while the head waits');
   await Promise.all(small.slice(0, 2).map(client => client.admitted));
   assert.deepEqual(order, [0, 1], 'a non-fitting peer cannot reserve another floor ahead of fitting work');

@@ -427,7 +427,12 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         return;
       }
       if (!disk.admitted) { refuse(item, 'HSTACK_DISK_UNAVAILABLE'); refreshWatchers(); return; }
-      await observe();
+      // Existing memory demand already has an observation and the shared
+      // recovery loop. Another waiter changes neither physical capacity nor
+      // admitted floors, including when many clients reconnect after restart.
+      // Disk reclamation is a real resource change and still needs a new read.
+      const memoryWaiting = waiting.some(other => other !== item && !other.slot && !other.blocked);
+      if (!memoryWaiting || disk.reclamation?.length) await observe();
       await drain();
     }));
     socket.on('error', () => {});
@@ -436,7 +441,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (!item || item.settled) return;
       enqueue(async () => {
         if (item.slot) { removeWaiting(item); await release(item.slot); }
-        else { removeWaiting(item); await observe(); await drain(); }
+        else { removeWaiting(item); await drain(); }
       });
     });
   }
