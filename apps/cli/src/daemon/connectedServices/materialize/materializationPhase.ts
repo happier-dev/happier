@@ -7,6 +7,8 @@ import { logger } from '@/utils/logger';
 
 type MaterializationPhase =
   | 'credential_binding_resolution'
+  | 'binding_group_read'
+  | 'binding_account_list'
   | 'group_state_read'
   | 'group_lease_wait'
   | 'group_generation_apply'

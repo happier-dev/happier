@@ -467,6 +467,8 @@ export type MachineRpcHandlerDeps = Readonly<{
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
+  captureExecutionRunWorkflowRequester?: ExecutionRunHostBridge['captureWorkflowRequester'];
+  captureExecutionRunResumeMaterialization?: ExecutionRunHostBridge['captureResumeMaterialization'];
   /** Close this ingress occurrence while retaining observation until actual finite settlement. */
   retireFiniteExecution(): Promise<void>;
   liveWorkProducers?: readonly LiveWorkProducerV1[];
@@ -1210,6 +1212,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
 
   return {
     retireFiniteExecution,
+    captureExecutionRunResumeMaterialization: (runId, occurrenceId) =>
+      detachedExecutionRunManager?.captureResumeMaterialization(runId, occurrenceId) ?? null,
+    captureExecutionRunWorkflowRequester: runId => detachedExecutionRunManager?.captureWorkflowRequester(runId) ?? null,
     getFiniteTerminalSessions: terminalRegistration.getSessionManager,
     liveWorkProducers: [
       executionBudgetRegistry.getLiveWorkProducer(),

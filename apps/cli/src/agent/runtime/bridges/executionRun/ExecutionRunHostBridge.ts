@@ -78,6 +78,7 @@ import { applyExecutionRunAction } from './executionRunApplyAction';
 import { getExecutionRunAvailableActionIds } from './availableActionIds';
 import { executeBoundedBackendRun } from './bounded/loop';
 import { ensureExecutionRun, type ExecutionRunEnsureResult } from './ensureExecutionRun';
+import { captureExecutionRunResumeMaterialization, type ExecutionRunResumeMaterializationAuthority } from './resumeBackendController';
 import { applyReviewWalkthroughAction, applyReviewExplainFindingsAction } from './reviewNarrationAction';
 import { finishExecutionRun } from './finishExecutionRun';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
@@ -468,6 +469,26 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   /** The exact Run occurrence/turn witness reader for this bridge's Session. */
   readExecutionRunOccurrenceWitnessReader(): ExecutionRunOccurrenceWitnessReaderV1 {
     return this.runOccurrenceWitnesses.reader;
+  }
+
+  /** Host-private materialization proof from this bridge's canonical resume owner. */
+  captureResumeMaterialization(runId: string, occurrenceId: string): ExecutionRunResumeMaterializationAuthority | null {
+    return captureExecutionRunResumeMaterialization({ runId, occurrenceId, controllers: this.controllers });
+  }
+
+  /** Borrow the admitted Workflow requester from the existing live controller. */
+  captureWorkflowRequester(runId: string): Readonly<{
+    bootstrap: NonNullable<ExecutionRunBackendController['requesterSessionBootstrap']>;
+    workflowRunId: string;
+    isCurrent(): boolean;
+  }> | null {
+    const controller = this.controllers.get(runId);
+    const run = this.runs.get(runId);
+    if (controller?.kind !== 'backend' || !controller.workflowRunId || !controller.requesterSessionBootstrap
+      || run?.sessionId !== null || run.originWorkflowRunId !== controller.workflowRunId) return null;
+    return Object.freeze({ bootstrap: controller.requesterSessionBootstrap, workflowRunId: controller.workflowRunId,
+      isCurrent: () => this.controllers.get(runId) === controller && !controller.cancelled
+        && !controller.backend.getRuntimeLifetimeSignal().aborted });
   }
 
   /** Resolve broker/Follow authority from the exact live controller owner. */

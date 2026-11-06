@@ -1092,6 +1092,8 @@ async function startAdmittedExecutionRun(
       kind: 'backend',
       ...(args.profileCatalog ? { profileCatalog: args.profileCatalog } : {}),
       ...(args.params.workflowRunId ? { workflowRunId: args.params.workflowRunId } : {}),
+        ...(args.params.workflowRunId && args.params.projectLaunchContext?.ingress?.requesterSessionBootstrap
+          ? { requesterSessionBootstrap: args.params.projectLaunchContext.ingress.requesterSessionBootstrap } : {}),
       ...(args.params.workflowScope ? { workflowScope: args.params.workflowScope } : {}),
       controllerOccurrenceId,
       backend,

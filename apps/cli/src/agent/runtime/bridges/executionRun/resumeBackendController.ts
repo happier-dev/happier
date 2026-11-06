@@ -28,6 +28,28 @@ export type ExecutionRunResumeMaterializationHooks = Readonly<{
   onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
 }>;
 
+export type ExecutionRunResumeMaterializationAuthority = Readonly<{
+  occurrenceId: string;
+  isCurrent(): boolean;
+}>;
+
+/** Borrow the existing controller's exact resume attempt, without another registry. */
+export function captureExecutionRunResumeMaterialization(args: Readonly<{
+  runId: string;
+  occurrenceId: string;
+  controllers: ReadonlyMap<string, ExecutionRunController>;
+}>): ExecutionRunResumeMaterializationAuthority | null {
+  const controller = args.controllers.get(args.runId);
+  const materialization = controller?.resumeMaterialization;
+  if (!controller || controller.controllerOccurrenceId !== args.occurrenceId
+    || !materialization?.isCurrent()) return null;
+  const isCurrent = () => materialization.isCurrent()
+    && (controller.kind !== 'backend' || !controller.backend.getRuntimeLifetimeSignal().aborted);
+  // Issued materialization remains bound to this controller after native open.
+  // Only new captures require the in-flight resume; Stop/replacement retires both.
+  return isCurrent() ? Object.freeze({ occurrenceId: args.occurrenceId, isCurrent }) : null;
+}
+
 /** One admission/held-registration owner for each genuinely claimed resume. */
 export function createExecutionRunResumeMaterialization(args: Readonly<{
   runId: string;
@@ -246,6 +268,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   };
   args.controllers.set(args.runId, resumeCtrl);
   materialization.publishProvisioning();
+  resumeCtrl.resumeMaterialization = materialization;
   const releaseOccurrence = args.registerRunOccurrence?.({
     runId: args.runId, sidechainId: args.run.sidechainId, controller: resumeCtrl,
   });
@@ -372,5 +395,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     rollbackProvisionalResume();
     await retireResumeOccurrence();
     return resumeFailure(error);
+  } finally {
+    delete resumeCtrl.resumeMaterialization;
   }
 }

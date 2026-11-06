@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
+import { createSpawnBindingAccountApi } from '../spawnBindingAccountApi';
 
-import { isExecutionRunConnectedServiceGenerationCurrent } from './executionRunGenerationAdmission';
+import { isExecutionRunConnectedServiceGenerationCurrent, readExecutionRunConnectedServiceGenerationCurrent } from './executionRunGenerationAdmission';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { parseConnectedServiceProjectionSnapshot } from '../accountGroups/generation/connectedServiceProjectionSnapshot';
 
@@ -11,6 +14,31 @@ const projection = {
 } as any;
 
 describe('isExecutionRunConnectedServiceGenerationCurrent', () => {
+  it('reads qualified plugin credential generations through the selected requester Account', async () => {
+    const service = { pluginId: 'acme.project-launch', localId: 'upstream' };
+    const serviceId = 'acme.project-launch/upstream';
+    const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    let currentRevision = revision;
+    // Only Home HTTP is substituted; the qualified API parses the real response.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (_url, config) => {
+      expect(config?.headers?.Authorization).toBe('Bearer guest-token');
+      return { status: 200, data: QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{
+        ref: { service, accountId: 'guest-profile' }, status: 'connected', authenticationModeId: 'token',
+        revisionSemantics: 'revisioned', credentialRevision: currentRevision, configurationReady: true,
+        configurationRevision: null, scopes: [],
+      }] }) };
+    });
+    try {
+      const registry = new ConnectedServiceRuntimeRegistry();
+      const target = { ...registry.registerRunTarget({ runKey: 'guest-run', pid: process.pid,
+        materializationKey: 'guest-run', connectedServicesBindingsRaw: null, connectedServiceSelectionsEnv: {} }),
+        activeBindings: [{ serviceId, groupId: null, groupGeneration: null, profileId: 'guest-profile', credentialRevision: revision }] };
+      const input = { runId: 'guest-run', target, api: createSpawnBindingAccountApi({ token: 'guest-token' }) };
+      expect(await readExecutionRunConnectedServiceGenerationCurrent(input)).toBe(true);
+      currentRevision = 'csr_1123456789ABCDEFGHJKMNPQRS';
+      expect(await readExecutionRunConnectedServiceGenerationCurrent(input)).toBe(false);
+    } finally { get.mockRestore(); }
+  });
   it('accepts only the exact materialized group generation and credential revision', () => {
     const target = {
       materializationKey: 'run-1',

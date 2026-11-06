@@ -17,6 +17,7 @@ import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
  */
 
 import axios from 'axios';
+import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { AutomationEventSourcesInvalidatedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -739,6 +740,27 @@ export class ApiMachineClient {
     });
 
     getLiveWorkProducer() { return this.liveWorkProducer; }
+
+    /** Borrow the requester already held by this installed Workflow controller. */
+    captureExecutionRunWorkflowRequester(runId: string): ReturnType<NonNullable<MachineRpcLifecycleRegistration['captureExecutionRunWorkflowRequester']>> {
+        if (this.projectionSchedulingClosed) return null;
+        const registration = this.rpcLifecycleRegistrations.at(-1);
+        const requester = registration?.captureExecutionRunWorkflowRequester?.(runId);
+        return requester ? Object.freeze({ ...requester,
+            isCurrent: () => !this.projectionSchedulingClosed && this.rpcLifecycleRegistrations.at(-1) === registration
+                && requester.isCurrent() }) : null;
+    }
+
+    /** Project the installed detached Run owner's exact active resume attempt. */
+    captureExecutionRunResumeMaterialization(runId: string, occurrenceId: string): ExecutionRunResumeMaterializationAuthority | null {
+        if (this.projectionSchedulingClosed) return null;
+        const registration = this.rpcLifecycleRegistrations.at(-1);
+        const authority = registration?.captureExecutionRunResumeMaterialization?.(runId, occurrenceId);
+        if (!authority) return null;
+        return Object.freeze({ occurrenceId: authority.occurrenceId,
+            isCurrent: () => !this.projectionSchedulingClosed
+                && this.rpcLifecycleRegistrations.at(-1) === registration && authority.isCurrent() });
+    }
 
     /** Host-private port to the installed terminal/output owner. */
     getFiniteTerminalSessions() {

@@ -2101,7 +2101,8 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
           });
         }
       : undefined;
-    let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
+    let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal,
+      options?: Readonly<{ bootstrapOwnership?: 'borrowed' }>) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
     const readRequesterRuntimeServerHttpBaseUrl = captureServerHttpBaseUrl();
     const openRunAccountConnectionSource = managedPolicyHomeId && externalActionAccountId
       ? createDaemonAccountConnectionManagedConsumerOpen({
@@ -2321,7 +2322,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       credentials,
       readPluginCatalogProjection: () => ({ runtimeId,
         contributionRegistryProjectionRevision: pluginRegistryProjectionInvalidation.readRevision() }),
-      createRequesterSessionRuntimeContext: async bootstrap => await createRequesterRuntime?.(bootstrap) ?? null,
+      createRequesterSessionRuntimeContext: async (bootstrap, options) => await createRequesterRuntime?.(bootstrap, undefined, options) ?? null,
       resolveRequesterSessionRuntimeContext,
       releaseRequesterSessionRuntimeContext,
       daemonSessionMutationCustody,
@@ -3299,13 +3300,13 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
     connectedServiceQuotasCoordinator = runtimeBootstrap.connectedServiceQuotasCoordinator;
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     publicProfileRefreshHandle = runtimeBootstrap.publicProfileRefreshHandle;
-    createRequesterRuntime = async (bootstrap, signal) => {
+    createRequesterRuntime = async (bootstrap, signal, options) => {
       if (bootstrap.serverHttpBaseUrl !== readRequesterRuntimeServerHttpBaseUrl()
         || !requesterMachineAdmissionBoundary(bootstrap.attribution).isHomeCurrent()) return null;
-      bindRequesterSessionRuntimeMachineAdmissionCurrentness({
+      if (options?.bootstrapOwnership !== 'borrowed') bindRequesterSessionRuntimeMachineAdmissionCurrentness({
         bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
       });
-      return await createRequesterSessionRuntimeContext({ bootstrap, signal,
+      return await createRequesterSessionRuntimeContext({ bootstrap, signal, ...options,
         providerAccountUsageStore: resolveProviderAccountUsageStore(bootstrap.attribution),
         activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
         resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(serverFeaturesSnapshotStore.getSnapshot()),

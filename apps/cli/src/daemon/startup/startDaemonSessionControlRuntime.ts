@@ -338,13 +338,16 @@ import {
 } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import { isValidConnectedServiceRunMaterializeToken } from '../connectedServices/runs/capabilityToken';
 import { createExecutionRunConnectedServicesBridge, registerExecutionRunConnectedServicesTarget, type CreateExecutionRunConnectedServicesBridgeDeps } from '../connectedServices/runs/executionRunMaterialization';
+import { createExecutionRunRequesterAccountAccess } from '../connectedServices/runs/requesterAccountContext';
 import { acknowledgeExecutionRunAuthGroupGeneration, resolveExecutionRunAuthForSpawn } from '../connectedServices/runs/resolveAuthForSpawn';
-import { isExecutionRunConnectedServiceGenerationCurrent } from '../connectedServices/runs/executionRunGenerationAdmission';
+import { readExecutionRunConnectedServiceGenerationCurrent } from '../connectedServices/runs/executionRunGenerationAdmission';
+import { createSpawnBindingAccountApi } from '../connectedServices/spawnBindingAccountApi';
 import {
   reattestRunningExecutionRunConnectedServices,
   rehydrateLiveExecutionRunTargets,
 } from '../connectedServices/runs/rehydrateExecutionRunTargets';
 import { createAdoptedExecutionRunRootCleanup } from '../connectedServices/runs/createAdoptedExecutionRunRootCleanup';
+import { createExecutionRunConnectedServicesRunnerIdentityCapture } from '../connectedServices/runs/runnerIdentity';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import {
   createExecutionRunLiveWorkProducer,
@@ -477,7 +480,6 @@ import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTer
 import { resolveTrackedSessionCatalogAgentId, resolveTrackedSessionRuntimeAgentId } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import { findTrackedSessionByRunnerPid } from '../sessions/sessionReportCorrelation';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
-import { processGenerationMatches, readProcessIdentityByPid } from '../processIdentity';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
   readSessionMarkerForPid,
@@ -1201,6 +1203,7 @@ export async function startDaemonSessionControlRuntime(
     >;
     createRequesterSessionRuntimeContext?: (
       bootstrap: import('../sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap,
+      options?: Readonly<{ bootstrapOwnership?: 'borrowed' }>,
     ) => Promise<
       | import('../sessionEncryption/requesterSessionCredentials').RequesterSessionRuntimeContext
       | null
@@ -9507,8 +9510,15 @@ daemonWorkSignal: AbortSignal;
       );
     });
   };
+  const executionRunAccountAccess = createExecutionRunRequesterAccountAccess({
+    resolveSession: resolveSessionAccountContext,
+    releaseSession: releaseSessionAccountContext,
+    assertSession: assertSessionAccountCurrent,
+    createRequester: params.createRequesterSessionRuntimeContext,
+  });
   const resolveDaemonAuthBridge = async (
     serviceId: ConnectedAccountServiceKey,
+    requesterSessionBootstrap?: import('../sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap,
   ): Promise<Readonly<{
     pluginId: string;
     registration: ConnectedServiceDaemonAuthBridgeRegistration;
@@ -9526,7 +9536,7 @@ daemonWorkSignal: AbortSignal;
       registration: Object.freeze({
         serviceId,
         refresh: async (request, context) => {
-          return await withSessionAccountContext(context?.target.sessionId || null, async (requesterContext) => {
+          return await executionRunAccountAccess.withContext(context?.target.sessionId || null, async (requesterContext) => {
             const refreshCoordinator = requesterContext
               ? (requesterContext.connectedServiceRefreshCoordinator ?? null)
               : params.getConnectedServiceRefreshCoordinator();
@@ -9584,13 +9594,13 @@ daemonWorkSignal: AbortSignal;
                 );
               return result;
             });
-          });
+          }, undefined, undefined, requesterSessionBootstrap);
         },
       } satisfies ConnectedServiceDaemonAuthBridgeRegistration),
     });
   };
-  const recoverExecutionRunRuntimeFailure: NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRuntimeFailure']> = async ({ runId, parentSessionId, interruptedOriginId, selection, classification, isCurrent, signal, refreshCredential }) => {
-        return await withSessionAccountContext(parentSessionId, async (context) => {
+  const recoverExecutionRunRuntimeFailure: NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRuntimeFailure']> = async ({ runId, parentSessionId, requesterSessionBootstrap, interruptedOriginId, selection, classification, isCurrent, signal, refreshCredential }) => {
+        return await executionRunAccountAccess.withContext(parentSessionId, async (context) => {
           const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(selection.serviceId);
           if (!service || !isCurrent()) return { status: 'failed' as const, reason: 'runtime_recovery_stale' };
           const groupId = selection.kind === 'group' ? selection.groupId : null;
@@ -9606,14 +9616,14 @@ daemonWorkSignal: AbortSignal;
             groupId: groupId ?? '', profileId: selection.kind === 'group' ? selection.activeProfileId : selection.profileId,
             credentialRevision: selection.credentialRevision ?? null };
           return await withSessionAccountHome(context, async () => {
-            await assertSessionAccountCurrent(parentSessionId, context);
+            await executionRunAccountAccess.assertCurrent(parentSessionId, context);
             if (!isCurrent()) return { status: 'failed' as const, reason: 'runtime_recovery_stale' };
             const result = await recoverConnectedServiceRuntimeFailure({ scope, selection, classification, signal, isCurrent, continuation, temporaryThrottleScheduler, refreshCredential, nowMs: () => Date.now(),
               switchesThisTurn: connectedServiceRuntimeAuthSwitchAttempts.resolveSwitchesThisTurn({ ...switchAttemptKey, reportedSwitchesThisTurn: 0 }),
               sessionSwitchesThisHour: connectedServiceRuntimeAuthSwitchAttempts.countRecordedSwitchesInWindow({ ...switchAttemptKey, windowMs: SESSION_SWITCH_LIMIT_WINDOW_MS }),
               switchCoordinator: { switchAfterClassifiedFailure: async (input) => {
                 if (!coordinator || !isCurrent()) return { status: 'stale_context', generation: selection.kind === 'group' ? selection.generation : 0 };
-                await assertSessionAccountCurrent(parentSessionId, context);
+                await executionRunAccountAccess.assertCurrent(parentSessionId, context);
                 const switched = await coordinator.switchAfterClassifiedFailure({ ...input, serviceId: service,
                   ...(selection.kind === 'group' && selection.credentialRevision ? { expectedFailureSource: {
                     profileId: selection.activeProfileId, groupGeneration: selection.generation,
@@ -9623,11 +9633,11 @@ daemonWorkSignal: AbortSignal;
                 return switched;
               } },
             });
-            await assertSessionAccountCurrent(parentSessionId, context);
+            await executionRunAccountAccess.assertCurrent(parentSessionId, context);
             return isCurrent() ? result
               : { status: 'failed' as const, reason: 'runtime_recovery_stale' };
           });
-        }, undefined, signal);
+        }, undefined, signal, requesterSessionBootstrap);
       };
   const handleSessionConnectedServiceRuntimeAuthRefresh =
     createSessionConnectedServiceRuntimeAuthRefreshHandler({
@@ -9672,16 +9682,17 @@ daemonWorkSignal: AbortSignal;
   // refresh/quota views cover materialized run homes without either coordinator owning writes.
   const resolveExecutionRunMaterializationBaseDir = async (
     parentSessionId: string | null,
+    runId: string,
   ): Promise<string | null> => {
-    if (parentSessionId === null) return params.connectedServicesMaterializationBaseDir;
-    const tracked = findTrackedSessionByHappySessionId(
+    const tracked = parentSessionId === null ? undefined : findTrackedSessionByHappySessionId(
       params.pidToTrackedSession.values(),
       parentSessionId,
     );
-    let attribution =
-      tracked?.requesterWorkAttributionV1 ??
+    let attribution = parentSessionId === null
+      ? (await readRetainedExecutionRunRecord(runId).catch(() => null))?.requesterWorkAttributionV1
+      : tracked?.requesterWorkAttributionV1 ??
       tracked?.spawnOptions?.requesterWorkAttributionV1;
-    if (!attribution) {
+    if (!attribution && parentSessionId !== null) {
       const installation = readInstallationIdentityIfExistsSync();
       if (installation && params.requesterSessionCustodyServerId) {
         const retained = await listRequesterSessionCredentialBindings({
@@ -9713,55 +9724,13 @@ daemonWorkSignal: AbortSignal;
     }
     // Only an actual retained owned runner supplies ordinary cleanup custody.
     // Absence of a requester file does not assign an unknown Session to Alice.
-    return tracked ? params.connectedServicesMaterializationBaseDir : null;
+    return parentSessionId === null || tracked ? params.connectedServicesMaterializationBaseDir : null;
   };
-  const captureExecutionRunConnectedServicesRunnerIdentity: CreateExecutionRunConnectedServicesBridgeDeps['captureRunnerIdentity'] = async ({ runnerPid, expectedParentSessionId, runId, controllerOccurrenceId }) => {
-    if (runnerPid === process.pid && expectedParentSessionId === undefined && runId !== undefined) {
-      // Detached Runs execute inside this daemon. The sealed lifecycle record,
-      // not the visibility marker or a caller-selected PID, proves that owner.
-      const record = await readRetainedExecutionRunRecord(runId).catch(() => null);
-      const processIdentity = await readProcessIdentityByPid(process.pid);
-      const attribution = record?.requesterWorkAttributionV1;
-      if (record?.state.runId === runId && record.state.sessionId === null
-        && record.ownerPid === process.pid && record.ownerProcessStartTimeMs !== undefined
-        && processIdentity?.processStartTimeMs !== undefined
-        && processGenerationMatches(record.ownerProcessStartTimeMs, processIdentity.processStartTimeMs)
-        && (!attribution || attribution.accountId === params.externalActionAccountId
-          && attribution.serverId === params.serverId && attribution.machineId === params.machineId)) {
-        // A terminal sealed checkpoint stays terminal until native load succeeds.
-        // Only its canonical in-flight resume can borrow this live host's custody.
-        const resume = record.state.status !== 'running' && controllerOccurrenceId
-          ? params.getApiMachineForSessions()?.captureExecutionRunResumeMaterialization(runId, controllerOccurrenceId)
-          : null;
-        if (record.state.status !== 'running' && !resume?.isCurrent()) return null;
-        return Object.freeze({ identity: params, parentSessionId: null,
-          isCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing()
-            && (!resume || resume.isCurrent()) });
-      }
-    }
-    const resolveTracked = () => params.pidToTrackedSession.get(runnerPid)
-      ?? findTrackedSessionByRunnerPid(params.pidToTrackedSession, runnerPid);
-    const tracked = resolveTracked();
-    if (!tracked) return null;
-    const parentSessionId = normalizeOptionalString(tracked.happySessionId);
-    if (!parentSessionId || (expectedParentSessionId !== undefined && parentSessionId !== expectedParentSessionId)) return null;
-    const runnerIdentity = resolveTrackedSessionRunnerIdentity(tracked);
-    const runnerStartTimeMs = runnerIdentity?.processStartTimeMs;
-    if (runId !== undefined) {
-      // Run custody supplies Session/host lineage, independently of marker visibility.
-      const record = await readRetainedExecutionRunRecord(runId).catch(() => null);
-      if (!record || record.state.runId !== runId || record.state.sessionId !== parentSessionId
-        || !runnerIdentity || runnerIdentity.pid !== runnerPid) return null;
-    }
-    return Object.freeze({ identity: tracked, parentSessionId,
-      isCurrent: () => {
-        const currentRunner = resolveTrackedSessionRunnerIdentity(tracked);
-        return resolveTracked() === tracked && tracked.happySessionId === parentSessionId
-          && (runId === undefined || (currentRunner?.pid === runnerPid && runnerStartTimeMs !== undefined
-            && processGenerationMatches(currentRunner.processStartTimeMs, runnerStartTimeMs)));
-      },
-    });
-  };
+  const captureExecutionRunConnectedServicesRunnerIdentity = createExecutionRunConnectedServicesRunnerIdentityCapture({
+    machineId: params.machineId, serverId: params.serverId ?? undefined, externalActionAccountId: params.externalActionAccountId ?? undefined,
+    pidToTrackedSession: params.pidToTrackedSession, getApiMachineForSessions: params.getApiMachineForSessions,
+    isCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
+  });
   const executionRunConnectedServicesBridge =
     createExecutionRunConnectedServicesBridge({
       classifyRuntimeFailure: classifyConnectedServiceRuntimeFailureForTarget,
@@ -9785,6 +9754,7 @@ daemonWorkSignal: AbortSignal;
       resolveDaemonAuthBridge,
       recoverRejectedStart: async ({
         parentSessionId,
+        requesterSessionBootstrap,
         selection,
         modelId,
         isCurrent,
@@ -9802,7 +9772,7 @@ daemonWorkSignal: AbortSignal;
           return { status: 'stale_context', generation: selection.generation };
         }
         const credentialRevision = selection.credentialRevision;
-        return await withSessionAccountContext(parentSessionId, async (context) => {
+        return await executionRunAccountAccess.withContext(parentSessionId, async (context) => {
           const coordinator =
             await createSessionQualifiedAuthGroupSwitchCoordinator({
               sessionId: parentSessionId,
@@ -9815,7 +9785,7 @@ daemonWorkSignal: AbortSignal;
             return { status: 'stale_context' as const, generation: selection.generation };
           // Pool truth changes here; this Run's host releases and rematerializes its own
           // activation. The request-auth coordinator's applyGeneration does no Session work.
-          await assertSessionAccountCurrent(parentSessionId, context);
+          await executionRunAccountAccess.assertCurrent(parentSessionId, context);
           return await withSessionAccountHome(context, () =>
             coordinator.switchAfterClassifiedFailure({
               serviceId: service,
@@ -9834,19 +9804,20 @@ daemonWorkSignal: AbortSignal;
               },
             }),
           );
-        });
+        }, undefined, undefined, requesterSessionBootstrap);
       },
-      resolveAuthForSpawn: async ({ parentSessionId, ...input }) => {
+      resolveAuthForSpawn: async ({ parentSessionId, requesterSessionBootstrap, ...input }) => {
         const context = await readRequesterHomeWithinActionLifetime(
-          () => resolveSessionAccountContext(parentSessionId, undefined, input.signal), input.signal);
+          () => executionRunAccountAccess.resolve(parentSessionId, requesterSessionBootstrap, input.signal), input.signal);
         const assertPreparationCurrent = () => readRequesterHomeWithinActionLifetime(
-          () => assertSessionAccountCurrent(parentSessionId, context, undefined, input.signal), input.signal);
+          () => executionRunAccountAccess.assertCurrent(parentSessionId, context, undefined, input.signal), input.signal);
         let retained = false;
         try {
           await assertPreparationCurrent();
           const resolved = await withSessionAccountHome(context, () =>
             resolveExecutionRunAuthForSpawn({
               ...input,
+              activateQualifiedPurposeBindings: snapshot => input.activateQualifiedPurposeBindings(snapshot, context),
               ...(parentSessionId ? { sessionId: parentSessionId } : {}),
               activeServerDir:
                 context?.activeServerDir ?? configuration.activeServerDir,
@@ -9895,14 +9866,16 @@ daemonWorkSignal: AbortSignal;
           }
           if (!resolved) return null;
           retained = true;
-          return { ...resolved, releaseAccountContext: async () => await releaseSessionAccountContext(context) };
+          return { ...resolved, requesterSessionRuntimeContext: context,
+            releaseAccountContext: async () => await executionRunAccountAccess.release(context) };
         } finally {
-          if (!retained) await releaseSessionAccountContext(context);
+          if (!retained) await executionRunAccountAccess.release(context);
         }
       },
       registerRunTargets: (registration, signal) => {
         return registerExecutionRunConnectedServicesTarget({ registry: connectedServiceRuntimeRegistry,
-          registration, withSessionAccountContext, assertSessionAccountCurrent, signal });
+          registration, withSessionAccountContext: executionRunAccountAccess.withContext,
+          assertSessionAccountCurrent: executionRunAccountAccess.assertCurrent, signal });
       },
       unregisterRunTargets: (runKey) => {
         connectedServiceRuntimeRegistry.unregisterRunKey(runKey);
@@ -9917,7 +9890,7 @@ daemonWorkSignal: AbortSignal;
         parentSessionId,
       }) => {
         const baseDir =
-          await resolveExecutionRunMaterializationBaseDir(parentSessionId);
+          await resolveExecutionRunMaterializationBaseDir(parentSessionId, runKey);
         return baseDir
           ? resolveConnectedServiceMaterializedRootDir({
               baseDir,
@@ -9933,7 +9906,7 @@ daemonWorkSignal: AbortSignal;
         parentSessionId,
       }) => {
         const baseDir =
-          await resolveExecutionRunMaterializationBaseDir(parentSessionId);
+          await resolveExecutionRunMaterializationBaseDir(parentSessionId, runKey);
         // A retained ordinary marker may already carry its exact root even
         // when its runner is gone. The canonical cleanup owner validates it
         // against the ordinary root; a Bob/unknown root never passes that proof.
@@ -9986,9 +9959,12 @@ daemonWorkSignal: AbortSignal;
         });
       },
       purposeBindingOwner: Object.freeze({
-        activatePurposeBindings: async (input, { parentSessionId, signal }) => {
-          const context = await readRequesterHomeWithinActionLifetime(
-            () => resolveSessionAccountContext(parentSessionId, undefined, signal), signal);
+        activatePurposeBindings: async (input, { parentSessionId, requesterSessionBootstrap, requesterSessionRuntimeContext, signal }) => {
+          const context = requesterSessionRuntimeContext ?? await readRequesterHomeWithinActionLifetime(
+            () => executionRunAccountAccess.resolve(parentSessionId, requesterSessionBootstrap, signal), signal);
+          const release = async () => {
+            if (!requesterSessionRuntimeContext) await executionRunAccountAccess.release(context);
+          };
           try {
             const activate = context
               ? context.activatePurposeBindings
@@ -9998,13 +9974,13 @@ daemonWorkSignal: AbortSignal;
                 'connected_account_purpose_binding_owner_unavailable',
               );
             await readRequesterHomeWithinActionLifetime(
-              () => assertSessionAccountCurrent(parentSessionId, context, undefined, signal), signal);
+              () => executionRunAccountAccess.assertCurrent(parentSessionId, context, undefined, signal), signal);
             const lease = await withSessionAccountHome(context, async () =>
               activate(input),
             );
-            return { lease, releaseAccountContext: async () => await releaseSessionAccountContext(context) };
+            return { lease, releaseAccountContext: release };
           } catch (error) {
-            await releaseSessionAccountContext(context);
+            await release();
             throw error;
           }
         },
@@ -15707,26 +15683,23 @@ daemonWorkSignal: AbortSignal;
         ) {
           return { ok: true as const, current: false };
         }
-        const sessionId = target.sessionId;
-        if (sessionId === null) {
-          const owner = await captureExecutionRunConnectedServicesRunnerIdentity({ runnerPid, runId });
-          if (!owner?.isCurrent()) return { ok: true as const, current: false };
-        }
+        const admittedTarget = target;
+        const sessionId = admittedTarget.sessionId;
+        const owner = sessionId === null
+          ? await captureExecutionRunConnectedServicesRunnerIdentity({ runnerPid, runId }) : null;
+        if (sessionId === null && !owner?.isCurrent()) return { ok: true as const, current: false };
         let operationEntered = false;
         try {
-          return await withSessionAccountContext(sessionId, async (accountContext) => {
+          return await executionRunAccountAccess.withContext(sessionId, async (accountContext) => {
             operationEntered = true;
-            let projection: ConnectedServiceProjectionSnapshot;
+            let current: boolean;
             try {
-              await assertSessionAccountCurrent(sessionId, accountContext);
-              projection = accountContext
-                ? await fetchConnectedServiceProjectionSnapshot(
-                    undefined,
-                    sessionId ?? undefined,
-                  )
-                : (latestConnectedServiceProjectionSnapshot ??
-                  (await fetchConnectedServiceProjectionSnapshot()));
-              await assertSessionAccountCurrent(sessionId, accountContext);
+              await executionRunAccountAccess.assertCurrent(sessionId, accountContext);
+              current = await withSessionAccountHome(accountContext, () =>
+                readExecutionRunConnectedServiceGenerationCurrent({ runId, target: admittedTarget,
+                  api: createSpawnBindingAccountApi({ token: accountContext?.bootstrap.credentials.token ?? params.credentials.token,
+                    ...(accountContext ? { api: accountContext.qualifiedConnectedAccountApi } : {}) }) }));
+              await executionRunAccountAccess.assertCurrent(sessionId, accountContext);
             } catch {
               return { ok: true as const, current: false };
             }
@@ -15741,13 +15714,9 @@ daemonWorkSignal: AbortSignal;
             }
             return {
               ok: true as const,
-              current: isExecutionRunConnectedServiceGenerationCurrent({
-                runId,
-                target,
-                projection,
-              }),
+              current,
             };
-          });
+          }, undefined, undefined, owner?.requesterSessionBootstrap);
         } catch (error) {
           if (operationEntered) throw error;
           return { ok: true as const, current: false };

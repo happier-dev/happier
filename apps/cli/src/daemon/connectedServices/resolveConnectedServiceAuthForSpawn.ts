@@ -5,10 +5,7 @@ import type { AccountSettings, ConnectedAccountServiceKey, ConnectedServiceCrede
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
-import {
-  listQualifiedConnectedAccountsV4,
-  readQualifiedConnectedAccountGroupV4,
-} from '@/api/client/qualifiedConnectedAccountApi';
+import { createSpawnBindingAccountApi, type ConnectedServiceQualifiedAuthGroupApi } from './spawnBindingAccountApi';
 import type { ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { StoredCredentials } from '@/persistence';
 import type { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
@@ -77,20 +74,7 @@ import {
 } from './requestAuth/qualifiedPurposeAuthority';
 
 export { ConnectedServiceQualifiedPurposeAuthorityError } from './requestAuth/qualifiedPurposeAuthority';
-export type ConnectedServiceQualifiedAuthGroupApi = Readonly<{
-  readGroup: (params: Readonly<{
-    service: QualifiedConnectedAccountServiceRef;
-    groupId: string;
-    signal?: AbortSignal;
-  }>) => Promise<QualifiedConnectedAccountGroupV4 | null>;
-  listAccounts: (params: Readonly<{
-    service: QualifiedConnectedAccountServiceRef;
-    signal?: AbortSignal;
-  }>) => Promise<Readonly<{
-    service: QualifiedConnectedAccountServiceRef;
-    accounts: readonly QualifiedConnectedAccountProfileV4[];
-  }>>;
-}>;
+export type { ConnectedServiceQualifiedAuthGroupApi } from './spawnBindingAccountApi';
 
 type ConnectedServiceProfileStatus =
   | 'connected'
@@ -626,25 +610,10 @@ async function resolveCredentialBindings(params: Readonly<{
   const groupSelections = new Map<ConnectedAccountServiceKey, ConnectedServiceResolvedGroupSelection>();
   const admittedProfiles = new Map<ConnectedAccountServiceKey, Awaited<ReturnType<typeof readQualifiedSpawnProfile>>>();
   const preparedProfiles = new Map<ConnectedAccountServiceKey, PreparedSpawnProfile>();
-  const qualifiedAccountApi = params.qualifiedConnectedAccountApi ?? {
-    readGroup: ({ service, groupId, signal }: Readonly<{
-      service: QualifiedConnectedAccountServiceRef;
-      groupId: string;
-      signal?: AbortSignal;
-    }>) => readQualifiedConnectedAccountGroupV4({
-      token: params.credentials.token,
-      group: { service, groupId },
-      ...(signal ? { signal } : {}),
-    }),
-    listAccounts: ({ service, signal }: Readonly<{
-      service: QualifiedConnectedAccountServiceRef;
-      signal?: AbortSignal;
-    }>) => listQualifiedConnectedAccountsV4({
-      token: params.credentials.token,
-      service,
-      ...(signal ? { signal } : {}),
-    }),
-  } satisfies ConnectedServiceQualifiedAuthGroupApi;
+  const qualifiedAccountApi = createSpawnBindingAccountApi({
+    token: params.credentials.token,
+    api: params.qualifiedConnectedAccountApi,
+  });
 
   for (const selection of params.selections) {
     const qualifiedService = parseQualifiedPluginContributionKey(selection.serviceId);

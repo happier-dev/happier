@@ -2737,6 +2737,18 @@ The extra decoded credential annotation is immutable, nonenumerable and never
 part of the persisted credential codec. Private Action options carry admitted
 Workflow attribution only across the existing in-process host seam; a public
 request or Session metadata cannot provide it.
+
+Detached Workflow steps with Connected Services borrow the live controller's
+admitted requester bootstrap. The runner identity owner still binds the sealed
+Run to its daemon PID/start generation, server, Machine and installation; an
+ordinary detached Run cannot borrow Workflow custody. Credential resolution,
+purpose activation, generation reads and recovery use the guest Account's
+existing owners and private directories. Qualified generation reads use the V4
+metadata owner, including plugin services omitted by the legacy V2 projection.
+Releasing a materialization context leaves the Run-owned bootstrap alive until
+the Workflow settles. This correction is daemon-local: it adds no wire or
+persisted format and requires only a daemon reload.
+
 These optional fields do not upgrade legacy work: missing attribution or
 conflicting active observations make the summary unavailable rather than hiding
 that work behind an attributed duplicate. Current public Run projections omit

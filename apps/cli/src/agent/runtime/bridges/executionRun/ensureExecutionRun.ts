@@ -170,6 +170,7 @@ export async function ensureExecutionRun(args: Readonly<{
       }),
     });
     materialization.publishProvisioning();
+    voiceCtrl.resumeMaterialization = materialization;
     const releaseOccurrence = args.registerRunOccurrence?.({ runId: args.runId, sidechainId: run.sidechainId, controller: voiceCtrl });
     if (releaseOccurrence) voiceCtrl.releaseSessionInputAttachment = async () => releaseOccurrence();
     const isCurrentResumeOccurrence = materialization.isCurrent;
@@ -299,6 +300,8 @@ export async function ensureExecutionRun(args: Readonly<{
       await retireVoiceResumeOccurrence();
       const message = error instanceof Error ? error.message : 'Resume failed';
       return { ok: false, errorCode: 'execution_run_not_allowed', error: message, resumeFailureKind: 'indeterminate' };
+    } finally {
+      delete voiceCtrl.resumeMaterialization;
     }
   }
 

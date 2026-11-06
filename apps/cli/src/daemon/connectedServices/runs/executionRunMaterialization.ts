@@ -79,7 +79,8 @@ import {
  * auth.
  */
 
-type ResolveAuthForSpawnInput = Readonly<{ parentSessionId: string | null }> & Pick<
+type ResolveAuthForSpawnInput = Readonly<{ parentSessionId: string | null;
+    requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap'] }> & Pick<
     Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
     | 'agentId'
     | 'connectedServicesBindingsRaw'
@@ -89,21 +90,25 @@ type ResolveAuthForSpawnInput = Readonly<{ parentSessionId: string | null }> & P
     | 'resumeReachabilityRequired'
     | 'modelId'
     | 'resolveQualifiedPurposeBindingSnapshot'
-    | 'activateQualifiedPurposeBindings'
     | 'signal'
->;
+> & Readonly<{ activateQualifiedPurposeBindings: (
+    snapshot: AgentSpawnQualifiedPurposeBindingSnapshot,
+    requesterContext?: RequesterSessionRuntimeContext | null,
+) => Promise<Readonly<{ subjectId: string; dispose(): void | Promise<void> }>> }>;
 
 type CapturedExecutionRunRunnerIdentity = Readonly<{
     /** Canonical tracked Session object, also used by the exact exit owner. */
     identity: object;
     parentSessionId: string | null;
+    requesterSessionBootstrap?: import('@/daemon/sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap;
     isCurrent(): boolean;
 }>;
 
 type ResolveAuthForSpawn = (
     input: ResolveAuthForSpawnInput,
 ) => Promise<(NonNullable<Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>>
-    & Readonly<{ releaseAccountContext?: () => Promise<void> }>) | null>;
+    & Readonly<{ releaseAccountContext?: () => Promise<void>;
+        requesterSessionRuntimeContext?: RequesterSessionRuntimeContext | null }>) | null>;
 
 type RunPurposeBindingActivation = Readonly<{
     lease: ConnectedAccountPurposeBindingLease;
@@ -129,6 +134,7 @@ export type ExecutionRunTargetRegistration = Readonly<{
     sessionId: string | null;
     sessionDirectory?: string | null;
     exactPurposeBindingSubjectId?: string;
+    requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap'];
 }>;
 
 /** The existing host registration callback; registration is captured runner custody, never wire input. */
@@ -137,7 +143,8 @@ export async function registerExecutionRunConnectedServicesTarget(input: Readonl
     registration: ExecutionRunTargetRegistration;
     signal?: AbortSignal;
     withSessionAccountContext: <T>(sessionId: string | null, operation: (context: RequesterSessionRuntimeContext | null) => Promise<T>,
-        attribution?: RequesterSessionRuntimeContext['bootstrap']['attribution'], signal?: AbortSignal) => Promise<T>;
+        attribution?: RequesterSessionRuntimeContext['bootstrap']['attribution'], signal?: AbortSignal,
+        requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap']) => Promise<T>;
     assertSessionAccountCurrent: (sessionId: string | null, context: RequesterSessionRuntimeContext | null,
         attribution?: RequesterSessionRuntimeContext['bootstrap']['attribution'], signal?: AbortSignal) => Promise<void>;
 }>): Promise<void> {
@@ -153,7 +160,7 @@ export async function registerExecutionRunConnectedServicesTarget(input: Readonl
             exactPurposeBindingSubjectId: registration.exactPurposeBindingSubjectId, sessionId: registration.sessionId,
             sessionDirectory: registration.sessionDirectory,
             ...(context ? { requesterWorkAttributionV1: context.bootstrap.attribution } : {}) });
-    }, undefined, input.signal), input.signal);
+    }, undefined, input.signal, registration.requesterSessionBootstrap), input.signal);
 }
 
 export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
@@ -161,6 +168,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     classifyRuntimeFailure?: (input: Readonly<{ target: ConnectedServiceRuntimeTarget; diagnostic: unknown }>) => Promise<ConnectedServiceRuntimeFailureClassification | null>;
     recoverRuntimeFailure?: (input: Readonly<{
         runId: string; parentSessionId: string | null; nativeResumeId: string; interruptedOriginId: string;
+        requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap'];
         selection: ConnectedServiceChildSelection; classification: ConnectedServiceRuntimeFailureClassification;
         refreshCredential(): ReturnType<ConnectedServiceRunRuntimeAuthRefreshHandler>;
         isCurrent(): boolean; signal: AbortSignal;
@@ -168,9 +176,11 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     getRunRuntimeTarget?: (runKey: string) => ConnectedServiceRuntimeTarget | null;
     adoptRunCredentialRevision?: ConnectedServiceRuntimeRegistry['adoptExactCredentialRevisionForRun'];
     resolveRunCredentialRevisionTarget?: ConnectedServiceRuntimeRegistry['resolveExactRunCredentialRevisionTarget'];
-    resolveDaemonAuthBridge?: ResolveDaemonAuthBridge;
+    resolveDaemonAuthBridge?: (serviceId: Parameters<ResolveDaemonAuthBridge>[0],
+        requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap']) => ReturnType<ResolveDaemonAuthBridge>;
     recoverRejectedStart?: (input: Readonly<{
         parentSessionId: string | null;
+        requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap'];
         selection: Extract<ConnectedServiceChildSelection, { kind: 'group' }>;
         modelId: string;
         isCurrent(): boolean;
@@ -196,6 +206,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
         expectedParentSessionId?: string;
         /** Fresh materialization must belong to this runner's canonical retained Run. */
         runId?: string;
+        controllerOccurrenceId?: string;
     }>) => CapturedExecutionRunRunnerIdentity | null | Promise<CapturedExecutionRunRunnerIdentity | null>;
     acquireAgentPurposeContributions: (input: Readonly<{
         agentId: CatalogAgentId;
@@ -215,7 +226,9 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     }>>;
     purposeBindingOwner: Readonly<{
         activatePurposeBindings(input: Parameters<ConnectedAccountPurposeBindingOwner['activatePurposeBindings']>[0],
-            context: Readonly<{ parentSessionId: string | null; signal?: AbortSignal }>): RunPurposeBindingActivation | Promise<RunPurposeBindingActivation>;
+            context: Readonly<{ parentSessionId: string | null; signal?: AbortSignal;
+                requesterSessionRuntimeContext?: RequesterSessionRuntimeContext | null;
+                requesterSessionBootstrap?: CapturedExecutionRunRunnerIdentity['requesterSessionBootstrap'] }>): RunPurposeBindingActivation | Promise<RunPurposeBindingActivation>;
     }>;
     requestAuthRegistry: Pick<
         ConnectedAccountRequestAuthSubjectRegistry,
@@ -513,6 +526,7 @@ export function createExecutionRunConnectedServicesBridge(
         cleanupOnFailure: (() => void | Promise<void>) | null;
         cleanupOnExit: (() => void | Promise<void>) | null;
         releaseMaterializationAccountContext?: (() => Promise<void>) | null;
+        requesterSessionRuntimeContext?: RequesterSessionRuntimeContext | null;
         signal?: AbortSignal;
         contributionLease?: Awaited<
             ReturnType<
@@ -581,7 +595,9 @@ export function createExecutionRunConnectedServicesBridge(
                         ...(purposeSnapshot.directMaterialOrigins
                             ? { directMaterialOrigins: purposeSnapshot.directMaterialOrigins }
                             : {}),
-                    }, { parentSessionId: input.runner.parentSessionId, ...(input.signal ? { signal: input.signal } : {}) });
+                    }, { parentSessionId: input.runner.parentSessionId, requesterSessionBootstrap: input.runner.requesterSessionBootstrap,
+                        requesterSessionRuntimeContext: input.requesterSessionRuntimeContext,
+                        ...(input.signal ? { signal: input.signal } : {}) });
                 purposeBindingLease = activation.lease;
                 releasePurposeBindingAccountContext = activation.releaseAccountContext ?? null;
             }
@@ -893,6 +909,7 @@ export function createExecutionRunConnectedServicesBridge(
                         registration.connectedServiceSelectionsEnv,
                     ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                     sessionId: runner.parentSessionId,
+                    requesterSessionBootstrap: runner.requesterSessionBootstrap,
                     sessionDirectory: registration.sessionDirectory,
                 });
                 if (!entry.isCurrent()) throw new Error('execution_run_runner_retired');
@@ -1033,6 +1050,7 @@ export function createExecutionRunConnectedServicesBridge(
                     resolved = await deps.resolveAuthForSpawn({
                         signal,
                         parentSessionId: runner.parentSessionId,
+                        requesterSessionBootstrap: runner.requesterSessionBootstrap,
                         agentId,
                         connectedServicesBindingsRaw: input.connectedServices,
                         materializationKey: runKey,
@@ -1048,7 +1066,7 @@ export function createExecutionRunConnectedServicesBridge(
                                 contributions: contributionLease.contributions,
                                 catalogEntry: contributionLease.catalogEntry,
                             }),
-                        activateQualifiedPurposeBindings: async (snapshot) => {
+                        activateQualifiedPurposeBindings: async (snapshot, requesterContext) => {
                             const activation = await deps.purposeBindingOwner.activatePurposeBindings({
                                 subject: {
                                     kind: 'execution_run',
@@ -1065,7 +1083,9 @@ export function createExecutionRunConnectedServicesBridge(
                                 ...(snapshot.directMaterialOrigins
                                     ? { directMaterialOrigins: snapshot.directMaterialOrigins }
                                     : {}),
-                            }, { parentSessionId: runner.parentSessionId, ...(signal ? { signal } : {}) });
+                            }, { parentSessionId: runner.parentSessionId, requesterSessionBootstrap: runner.requesterSessionBootstrap,
+                                requesterSessionRuntimeContext: requesterContext,
+                                ...(signal ? { signal } : {}) });
                             return {
                                 subjectId: activation.lease.subjectId,
                                 async dispose() {
@@ -1186,6 +1206,7 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupOnFailure,
                         cleanupOnExit,
                         releaseMaterializationAccountContext: resolved.releaseAccountContext ?? null,
+                        requesterSessionRuntimeContext: resolved.requesterSessionRuntimeContext,
                         signal,
                         contributionLease,
                     });
@@ -1225,6 +1246,7 @@ export function createExecutionRunConnectedServicesBridge(
                             registration.connectedServiceSelectionsEnv,
                         ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                         sessionId: runner.parentSessionId,
+                        requesterSessionBootstrap: runner.requesterSessionBootstrap,
                         sessionDirectory: input.cwd,
                     }, ...(signal ? [signal] as const : []));
                     signal?.throwIfAborted();
@@ -1297,11 +1319,12 @@ export function createExecutionRunConnectedServicesBridge(
             && target.pid === request.runnerPid && target.agentId === entry.agentId && target.materializationKey === request.runId
             && deps.getRunRuntimeTarget?.(request.runId) === target);
         const current = target ? resolveCurrentRefreshSelection({ target, serviceId: request.serviceId }) : null;
-        if (!isCurrent() || !entry || !target || !current || request.serviceId !== request.selection.serviceId
+        if (!runner || !isCurrent() || !entry || !target || !current || request.serviceId !== request.selection.serviceId
             || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({ target, selection: request.selection })
             || (request.selection.kind === 'profile' && (current.selection.kind !== 'profile'
                 || current.selection.profileId !== request.selection.profileId))) return refused;
-        if (!deps.resolveDaemonAuthBridge) return { status: 'unavailable', reason: 'connected_service_daemon_auth_bridge_unavailable' };
+        const resolveDaemonAuthBridge = deps.resolveDaemonAuthBridge;
+        if (!resolveDaemonAuthBridge) return { status: 'unavailable', reason: 'connected_service_daemon_auth_bridge_unavailable' };
         const acceptSettledCredentialRevision = (revision: ConnectedServiceCredentialRevisionV1) => {
             if (!hasCurrentAuthority() || !target) return null;
             const accepted = deps.resolveRunCredentialRevisionTarget?.({ runKey: request.runId, target,
@@ -1315,7 +1338,8 @@ export function createExecutionRunConnectedServicesBridge(
         // activation while the shared core rechecks authority before disclosing its settlement.
         try {
             const result = await refreshConnectedServiceRuntimeAuthForTarget({ target, request,
-                scope: { runId: request.runId }, authority: entry, isCurrent, resolveDaemonAuthBridge: deps.resolveDaemonAuthBridge,
+                scope: { runId: request.runId }, authority: entry, isCurrent,
+                resolveDaemonAuthBridge: serviceId => resolveDaemonAuthBridge(serviceId, runner.requesterSessionBootstrap),
                 acceptSettledCredentialRevision });
             if (result.ok && result.result.status === 'refreshed'
                 && Object.prototype.hasOwnProperty.call(result.result.result, 'credentialRevision')) {
@@ -1389,6 +1413,7 @@ export function createExecutionRunConnectedServicesBridge(
                 || (failure.expectedCredentialRevision != null && failure.expectedCredentialRevision !== selection.credentialRevision)
                 || !deps.recoverRuntimeFailure || !isCurrent()) return { status: 'failed', reason: 'runtime_recovery_source_unavailable' };
             const result = await deps.recoverRuntimeFailure({ runId: input.runId, parentSessionId: runner.parentSessionId,
+                requesterSessionBootstrap: runner.requesterSessionBootstrap,
                 nativeResumeId: input.nativeResumeId, interruptedOriginId: input.interruptedOriginId, selection,
                 classification: binding ? applyConnectedServiceRuntimeAuthFailureSourceBinding(failure, binding) : failure, isCurrent, signal,
                 refreshCredential: async () => {
@@ -1437,7 +1462,8 @@ export function createExecutionRunConnectedServicesBridge(
             let result: Awaited<ReturnType<NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRejectedStart']>>>;
             try {
                 if (!runner) return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
-                result = await deps.recoverRejectedStart({ parentSessionId: runner.parentSessionId, selection, modelId: input.modelId, isCurrent });
+                result = await deps.recoverRejectedStart({ parentSessionId: runner.parentSessionId,
+                    requesterSessionBootstrap: runner.requesterSessionBootstrap, selection, modelId: input.modelId, isCurrent });
             } catch {
                 return isCurrent() ? blocked('Rejected-start pool recovery is unavailable')
                     : { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };

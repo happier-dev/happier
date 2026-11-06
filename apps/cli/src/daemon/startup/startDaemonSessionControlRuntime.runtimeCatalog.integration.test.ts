@@ -151,6 +151,7 @@ import { configuration } from '@/configuration';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { procfsFileHandle } from '@/testkit/process/procfsFileHandle';
 import { retainExecutionRunState } from '../executionRunRegistry';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { readProcessIdentityByPid } from '../processIdentity';
 import { hashProcessCommand } from '../sessionRegistry';
@@ -1505,7 +1506,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const originalConfiguration = { happyHomeDir: configuration.happyHomeDir,
             deviceLocalSecretKeyFile: configuration.deviceLocalSecretKeyFile };
         Object.assign(configuration, { happyHomeDir: directory, deviceLocalSecretKeyFile: join(directory, 'local.key') });
-        const runtime = await startDaemonSessionControlRuntime({ machineId: 'machine',
+        const runtime = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId: 'home', externalActionAccountId: 'owner',
             credentials: { token: 'daemon-fixture', encryption: null }, api: {} as never,
             connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
@@ -1516,10 +1517,11 @@ describe('startDaemonSessionControlRuntime', () => {
             onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         try {
-            await retainExecutionRunState({ runId: 'daemon-detached-run', callId: 'call', sidechainId: 'side', sessionId: null,
+            const detachedRun: ExecutionRunState = { runId: 'daemon-detached-run', callId: 'call', sidechainId: 'side', sessionId: null,
                 depth: 0, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
                 instructions: 'Background reply', permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'long_lived',
-                ioMode: 'request_response', status: 'running', startedAtMs: 1 });
+                ioMode: 'request_response', status: 'running', startedAtMs: 1 };
+            await retainExecutionRunState(detachedRun);
             const materialize = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0].materializeConnectedServicesForExecutionRun;
             if (!materialize) throw new Error('Production Run materializer was not registered');
             const input = { activationId: randomUUID(), runId: 'daemon-detached-run', runnerPid: process.pid, agentId: 'claude', cwd: directory,
@@ -1532,6 +1534,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 expect(await materialize({ ...input, ...changed })).toMatchObject({ ok: false,
                     errorMessage: 'Execution-run connected services runner identity is not current' });
             }
+            // Sealed guest attribution alone cannot borrow the custodian's
+            // credentials for an ordinary detached Run without Workflow custody.
+            await retainExecutionRunState(detachedRun, undefined, {
+                accountId: 'guest', serverId: 'home', machineId: 'machine', installationId: 'installation',
+            });
+            expect(await materialize({ ...input, activationId: randomUUID() })).toMatchObject({ ok: false,
+                errorMessage: 'Execution-run connected services runner identity is not current' });
         } finally { await runtime.stopControlServer(); Object.assign(configuration, originalConfiguration);
             await rm(directory, { recursive: true, force: true }); }
     });

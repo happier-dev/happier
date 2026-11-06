@@ -47,6 +47,10 @@ export type ExecutionRunLiveIntervention = Readonly<{
 
 export type ExecutionRunBackendController = {
   kind: 'backend';
+  /** The admitted Workflow's existing private requester, held by this occurrence only. */
+  requesterSessionBootstrap?: import('@/daemon/sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap;
+  /** The canonical resume owner's in-flight preparation, never retained authority. */
+  resumeMaterialization?: Readonly<{ isCurrent(): boolean }>;
   /** Same admitted snapshot as this occurrence's executable runtime. */
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   readNativeOfferedModel?: ExecutionRunNativeOfferedModelReader;
@@ -138,6 +142,8 @@ export type ExecutionRunBackendController = {
 
 export type ExecutionRunVoiceAgentController = {
   kind: 'voice_agent';
+  /** The same resume preparation owner as backend Runs. */
+  resumeMaterialization?: Readonly<{ isCurrent(): boolean }>;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   readNativeOfferedModel?: ExecutionRunNativeOfferedModelReader;
   nativeModelRegistry?: ResolvedContributionRegistry;

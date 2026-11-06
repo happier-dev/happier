@@ -48,6 +48,8 @@ export function resolveRequesterSessionRuntimeDirectories(input: Readonly<{
 /** Reuses ordinary Account owners with invocation custody; never publishes Bob as the daemon Account. */
 export async function createRequesterSessionRuntimeContext(input: Readonly<{
   bootstrap: AdmittedRequesterSessionBootstrap;
+  /** A finite Workflow owns its admitted bootstrap until the whole Run settles. */
+  bootstrapOwnership?: 'borrowed';
   providerAccountUsageStore: ProviderAccountUsageStore;
   signal?: AbortSignal;
   coordinatorInput: Omit<CoordinatorInput, 'api' | 'credentials' | 'accountSettingsSnapshot' | 'subscribeAccountSettingsSnapshot'
@@ -202,12 +204,12 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     followSourceReconciliation.dispose();
     releaseSettingsPublication();
     profileProjection = null;
-    savedSecrets.withdrawCatalog();
+    if (input.bootstrapOwnership !== 'borrowed') savedSecrets.withdrawCatalog();
     providerAccountUsagePersistence.dispose();
     listeners.clear();
     coordinators?.connectedServiceQuotasCoordinator?.disposeInBandQuotaPersistence();
     const results = await Promise.allSettled([
-      bootstrap.dispose(),
+      ...(input.bootstrapOwnership === 'borrowed' ? [] : [bootstrap.dispose()]),
       Promise.resolve(coordinators?.connectedServiceRefreshLoopHandle?.stop()),
       Promise.resolve(coordinators?.connectedServiceQuotasLoopHandle?.stop()), daemonSessionMutationCustody.close(),
     ]);
