@@ -256,6 +256,51 @@ test('queue positions advance on existing passes and unchanged waiters stay sile
   assert.equal(notices.length, 5, 'unchanged positions do not produce catch-up log spam');
 });
 
+test('each admission ahead advances a connected waiter until it reaches the head and runs', linux, async t => {
+  const notices = [];
+  const nativeWrite = Socket.prototype.write;
+  // Observe broker progress at the socket boundary; ordering and admission stay real.
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'queued') notices.push({ socket: this, response });
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  const { root, broker } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const admissionsAhead = 2;
+  const ahead = [];
+  const barrier = async () => {
+    const sample = await request(root, { kind: 'sample' });
+    await sample.next();
+    sample.socket.destroy();
+  };
+  for (let index = 0; index < admissionsAhead; index++) {
+    ahead.push(await acquire(root, 100, t));
+    await barrier();
+  }
+  const waiter = await acquire(root, 100, t);
+  await barrier();
+  const waiterSocket = notices.at(-1).socket;
+  const positions = () => notices.filter(notice => notice.socket === waiterSocket)
+    .map(({ response }) => response.queuePosition);
+  assert.deepEqual(positions(), [admissionsAhead + 1]);
+  let active = holder;
+  for (const [index, client] of ahead.entries()) {
+    await active.release();
+    active = await client.admit();
+    await barrier();
+    assert.equal(positions().at(-1), admissionsAhead - index,
+      'each admission ahead removes exactly one predecessor from the queue');
+  }
+  assert.deepEqual(positions(), [3, 2, 1]);
+  await active.release();
+  await waiter.admit();
+  assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().activeCount, 1, 'the original waiter runs when the head fits');
+});
+
 test('a missing slot settles its own request even when the following memory observation fails', linux, async t => {
   // Capture the wire outcome at the OS boundary so a missing refusal fails an
   // assertion instead of leaving this negative regression waiting forever.
