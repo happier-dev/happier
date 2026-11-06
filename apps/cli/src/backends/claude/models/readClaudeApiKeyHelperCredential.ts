@@ -1,57 +1,100 @@
-import { exec } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const API_KEY_HELPER_MAX_OUTPUT_BYTES = 64 * 1024;
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { withCatalogProbeLifecycle, type CatalogProbeLifecycle, type RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
+import { logger } from '@/ui/logger';
 
-function readApiKeyHelperCommand(settingsJson: string): string | null {
-  try {
-    const settings: unknown = JSON.parse(settingsJson);
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null;
-    const command = (settings as Record<string, unknown>).apiKeyHelper;
-    return typeof command === 'string' && command.trim().length > 0 ? command : null;
-  } catch {
-    return null;
-  }
-}
+// Claude Code validates helper tokens against this limit before using them in HTTP headers.
+// https://code.claude.com/docs/en/errors#your-apikeyhelper-script-is-failing
+const MAX_HELPER_TOKEN_LENGTH = 16_384;
+
+export type ClaudeApiKeyHelperCredential =
+  | Readonly<{ status: 'absent' }>
+  | Readonly<{ status: 'failed' }>
+  | Readonly<{ status: 'ok'; value: string }>;
 
 /**
- * Run the `apiKeyHelper` from the Claude Code user settings the way Claude Code does: through the
- * shell, with the session environment, using its trimmed stdout as the key.
- *
- * Gateways commonly hand Claude Code short-lived keys through this helper instead of an env var, so
- * model discovery needs it to authenticate as the session will. Only the user settings of the
- * configured config dir are read: project settings come from the repository, and Claude Code runs a
- * project helper only after the workspace is trusted. Returns `null` on any failure. Never throws.
+ * Read only the selected user settings: project helpers require Claude Code's workspace trust.
+ * A configured but unusable helper is terminal, so callers cannot substitute a different account.
+ * The caller owns the deadline; helper execution and cleanup consume that same lifecycle.
  */
-export async function readClaudeApiKeyHelperCredential(params: Readonly<{
+export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifecycle & Readonly<{
   claudeConfigDir: string;
   env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-}>): Promise<string | null> {
-  let command: string | null;
+  onNativeCleanup?: RegisterNativeCatalogCleanup;
+}>): Promise<ClaudeApiKeyHelperCredential> {
+  let child: ReturnType<typeof spawn> | undefined;
+  let childClosed: Promise<void> | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () => cleanupPromise ??= (async () => {
+    try {
+      if (child) await killProcessTree(child);
+    } finally {
+      // An exited shell may leave a background process holding this pipe. The shell's PID
+      // is no longer ours to terminate, but closing our reader must still settle cleanup.
+      child?.stdout?.destroy();
+      await childClosed;
+    }
+  })();
   try {
-    command = readApiKeyHelperCommand(await readFile(join(params.claudeConfigDir, 'settings.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!command) return null;
+    const result = await withCatalogProbeLifecycle(params, async (lifecycle): Promise<ClaudeApiKeyHelperCredential> => {
+      let settings: unknown;
+      try {
+        settings = JSON.parse(await readFile(join(params.claudeConfigDir, 'settings.json'), { encoding: 'utf8', signal: lifecycle.signal }));
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+          return { status: 'absent' };
+        }
+        throw error;
+      }
+      if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return { status: 'failed' };
+      const command = (settings as Record<string, unknown>).apiKeyHelper;
+      if (command === undefined || command === null || command === '') return { status: 'absent' };
+      if (typeof command !== 'string' || command.trim().length === 0) return { status: 'failed' };
+      lifecycle.signal.throwIfAborted();
 
-  return await new Promise((resolvePromise) => {
-    const child = exec(
-      command,
-      {
-        env: params.env,
-        timeout: Math.max(250, params.timeoutMs),
-        maxBuffer: API_KEY_HELPER_MAX_OUTPUT_BYTES,
-        windowsHide: true,
-      },
-      (error, stdout) => {
-        const key = error ? '' : String(stdout).trim();
-        resolvePromise(key.length > 0 ? key : null);
-      },
-    );
-    // A helper that reads stdin must see EOF rather than wait for the timeout.
-    child.stdin?.end();
-  });
+      const value = await new Promise<string | null>((resolve) => {
+        const started = spawn(command, {
+          shell: true,
+          env: params.env,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+        });
+        child = started;
+        childClosed = new Promise<void>((closed) => started.once('close', () => closed()));
+        params.onNativeCleanup?.(cleanup);
+        let token = '';
+        let ended = false;
+        let invalid = false;
+        // Retain only the bounded token. Surrounding whitespace is discarded incrementally,
+        // so a valid maximum-length token plus a shell newline is never truncated/rejected.
+        started.stdout?.setEncoding('utf8');
+        started.stdout?.on('data', (chunk: string) => {
+          if (invalid) return;
+          for (const character of chunk) {
+            if (/\s/u.test(character)) {
+              if (token.length > 0) ended = true;
+            } else if (ended || !/[\x21-\x7e]/u.test(character) || token.length >= MAX_HELPER_TOKEN_LENGTH) {
+              invalid = true;
+              resolve(null);
+              return;
+            } else {
+              token += character;
+            }
+          }
+        });
+        started.once('error', () => resolve(null));
+        started.once('close', (code) => resolve(code === 0 && !invalid && token.length > 0 ? token : null));
+      });
+      return value === null ? { status: 'failed' } : { status: 'ok', value };
+    }, cleanup);
+    if (result.status === 'failed') logger.warnFile('[claude-models] Configured apiKeyHelper did not produce a usable credential');
+    return result;
+  } catch {
+    // Never include the command, output, environment, or OS error: all may contain credentials.
+    logger.warnFile('[claude-models] apiKeyHelper unavailable or cancelled; model discovery skipped');
+    return { status: 'failed' };
+  }
 }

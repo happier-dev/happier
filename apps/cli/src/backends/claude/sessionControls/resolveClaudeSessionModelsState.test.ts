@@ -5,6 +5,7 @@ import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsSta
 describe('resolveClaudeSessionModelsState', () => {
   it('still publishes the model list when the installed Claude CLI does not expose --effort', async () => {
     const res = await resolveClaudeSessionModelsState({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
@@ -21,8 +22,9 @@ describe('resolveClaudeSessionModelsState', () => {
     expect(optionIds).not.toContain('ultracode');
   });
 
-  it('publishes a dynamic session model list with a Thinking option when --effort is supported', async () => {
+  it('publishes model controls with a Thinking option when --effort is supported', async () => {
     const res = await resolveClaudeSessionModelsState({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',

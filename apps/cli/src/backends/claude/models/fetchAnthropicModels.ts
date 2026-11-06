@@ -1,3 +1,4 @@
+import { withCatalogProbeLifecycle, type CatalogProbeLifecycle } from '@/capabilities/probes/catalogProbeLifecycle';
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
 
 export const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
@@ -122,7 +123,7 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
   return entries.length > 0 || wasExplicitlyEmpty ? entries : null;
 }
 
-export type FetchAnthropicModelsParams = Readonly<{
+export type FetchAnthropicModelsParams = CatalogProbeLifecycle & Readonly<{
   /** OAuth access token (subscription/Claude Code). Sent as `Authorization: Bearer`. */
   accessToken?: string | null;
   /** Anthropic API key. Sent as `x-api-key` only when no bearer token is available. */
@@ -134,7 +135,6 @@ export type FetchAnthropicModelsParams = Readonly<{
   apiKeyHelperValue?: string | null;
   /** Anthropic-compatible endpoint root (`ANTHROPIC_BASE_URL`). Defaults to the Anthropic host. */
   baseUrl?: string | null;
-  timeoutMs: number;
   userAgent?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -177,21 +177,20 @@ export async function fetchAnthropicModels(
   const modelsUrl = resolveAnthropicModelsUrl(params.baseUrl);
   if (!modelsUrl) return null;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(250, params.timeoutMs));
   try {
-    const response = await fetchImpl(modelsUrl, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      redirect: 'error',
+    return await withCatalogProbeLifecycle(params, async ({ signal }) => {
+      const response = await fetchImpl(modelsUrl, {
+        method: 'GET',
+        headers,
+        signal,
+        redirect: 'error',
+      });
+      if (!response.ok) return null;
+      const body: unknown = await response.json();
+      signal.throwIfAborted();
+      return parseAnthropicModelsResponse(body);
     });
-    if (!response.ok) return null;
-    const body = await response.json().catch(() => null);
-    return parseAnthropicModelsResponse(body);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }

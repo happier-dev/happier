@@ -43,3 +43,21 @@ it('publishes the cached catalog observation time rather than session publicatio
   });
   expect(state?.updatedAt).toBe(1_000);
 });
+
+it('retains a concurrent successful observation when another caller-owned refresh fails', async () => {
+  const pending: Array<(response: Response) => void> = [];
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(() => new Promise(resolve => pending.push(resolve))));
+  let now = 1_000;
+  const params = { timeoutMs: 5_000, processEnv: { ANTHROPIC_API_KEY: 'concurrent-key' }, nowMs: () => now };
+  const first = resolveClaudeModelCatalogResolution({ ...params, signal: new AbortController().signal });
+  const second = resolveClaudeModelCatalogResolution({ ...params, signal: new AbortController().signal });
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  pending[0]!(new Response(JSON.stringify({ data: [{ id: 'gateway-model' }] })));
+  const successful = await first;
+  expect(successful).toMatchObject({ source: 'dynamic', observedAt: 1_000, models: [{ id: 'gateway-model' }] });
+  now = 2_000;
+  pending[1]!(new Response(null, { status: 503 }));
+  const failed = await second;
+  expect(failed).toEqual({ ...successful, refreshError: true });
+  expect(await resolveClaudeModelCatalogResolution(params)).toEqual(failed);
+});

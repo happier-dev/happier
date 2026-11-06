@@ -42,6 +42,23 @@ function okResponse(): Response {
 }
 
 describe('fetchAnthropicModels', () => {
+  it('does not grant HTTP a fresh budget after credential preparation exhausts the probe deadline', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => okResponse());
+    await expect(fetchAnthropicModels({ apiKey: 'key', timeoutMs: 5_000,
+      deadlineAt: Date.now() - 1, fetchImpl })).resolves.toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('discards a response when the caller cancels during the request', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      controller.abort();
+      return okResponse();
+    });
+    await expect(fetchAnthropicModels({ apiKey: 'key', timeoutMs: 5_000,
+      signal: controller.signal, fetchImpl })).resolves.toBeNull();
+  });
+
   it('returns an empty array for a successful response with no model rows', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
 

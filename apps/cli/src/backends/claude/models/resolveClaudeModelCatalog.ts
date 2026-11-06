@@ -8,6 +8,7 @@ import { parseBooleanEnv, type ConnectedServiceBindingsV1 } from '@happier-dev/p
 import { buildDiscoveredClaudeModelDescriptor } from './deriveDiscoveredClaudeModel';
 import { fetchAnthropicModels, type AnthropicModelEntry } from './fetchAnthropicModels';
 import type { Credentials } from '@/persistence';
+import type { CatalogProbeLifecycle, RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
 import {
   resolveClaudeModelProbeTarget,
 } from './resolveClaudeModelProbeTarget';
@@ -127,8 +128,8 @@ function trimCatalogEntries(protectedKey: string): void {
   }
 }
 
-export type ResolveClaudeModelCatalogParams = Readonly<{
-  timeoutMs: number;
+export type ResolveClaudeModelCatalogParams = CatalogProbeLifecycle & Readonly<{
+  onNativeCleanup?: RegisterNativeCatalogCleanup;
   bypassCache?: boolean;
   connectedServices?: ConnectedServiceBindingsV1 | null;
   credentials?: Credentials | null;
@@ -147,7 +148,7 @@ function isClaudeDynamicModelProbeEnabled(params: ResolveClaudeModelCatalogParam
 /**
  * The models this account can run. A successful Models API response owns membership; static rows
  * enrich matching returned ids. The curated catalog is used only until the first success, after
- * which a failed refresh keeps the last successful dynamic snapshot. Never throws.
+ * which a failed refresh keeps the last successful dynamic snapshot. Caller cancellation propagates.
  */
 export async function resolveClaudeModelCatalogResolution(
   params: ResolveClaudeModelCatalogParams,
@@ -156,17 +157,25 @@ export async function resolveClaudeModelCatalogResolution(
     return { models: resolveStaticClaudeModels(), source: 'static', refreshError: false };
   }
 
+  params.signal?.throwIfAborted();
+  const deadlineAt = params.deadlineAt ?? Date.now() + params.timeoutMs;
   const nowMs = params.nowMs ?? (() => Date.now());
   // Resolving the target first is what lets the cache key carry the credential identity. It is env
-  // reads plus at most one local credential-file read — cheap next to the network fetch it guards,
-  // and this runs at session start and on model change, not on a hot path.
+  // reads, a native credential read, or the configured user helper. Helper and HTTP phases share
+  // one containing deadline, including when the helper rotates a short-lived credential.
   const target = await resolveClaudeModelProbeTarget({
+    timeoutMs: params.timeoutMs,
+    deadlineAt,
+    signal: params.signal,
+    onNativeCleanup: params.onNativeCleanup,
     connectedServices: params.connectedServices,
     credentials: params.credentials,
     accountSettings: params.accountSettings,
     profileId: params.profileId,
     processEnv: params.processEnv,
   });
+
+  params.signal?.throwIfAborted();
 
   // No resolvable credential is an absence of identity, not an identity of its own. Caching under a
   // placeholder key would let one unreadable credential file evict a valid catalog for the whole
@@ -177,7 +186,9 @@ export async function resolveClaudeModelCatalogResolution(
   const cached = catalogCache.get(cacheKey);
   if (!params.bypassCache && cached && cached.expiresAtMs > nowMs()) return cached.resolution;
 
-  const inFlight = inFlightCatalogResolutions.get(cacheKey);
+  // A caller-owned cancellation cannot abort or inherit another caller's work.
+  const shareWork = !params.signal;
+  const inFlight = shareWork ? inFlightCatalogResolutions.get(cacheKey) : undefined;
   if (inFlight) return await inFlight;
 
   const resolution = (async () => {
@@ -187,13 +198,18 @@ export async function resolveClaudeModelCatalogResolution(
       ...(target.credential.kind === 'api_key_helper' ? { apiKeyHelperValue: target.credential.value } : {}),
       ...(target.baseUrl ? { baseUrl: target.baseUrl } : {}),
       timeoutMs: params.timeoutMs,
+      deadlineAt,
+      signal: params.signal,
     });
+    params.signal?.throwIfAborted();
 
     const resolvedAtMs = nowMs();
+    // Another independently cancellable caller may have published a success while we waited.
+    const previousResolution = catalogCache.get(cacheKey)?.resolution ?? cached?.resolution;
     const resolution: ClaudeModelCatalogResolution = entries !== null
       ? { models: buildAuthoritativeDynamicCatalog(entries), source: 'dynamic', observedAt: resolvedAtMs }
-      : cached?.resolution.source === 'dynamic'
-        ? { ...cached.resolution, refreshError: true }
+      : previousResolution?.source === 'dynamic'
+        ? { ...previousResolution, refreshError: true }
         : { models: resolveStaticClaudeModels(), source: 'static', refreshError: true };
     pruneCatalogEntries(resolvedAtMs, cacheKey);
     // Refresh insertion order so the bounded cache removes the least recently resolved identity.
@@ -206,11 +222,11 @@ export async function resolveClaudeModelCatalogResolution(
     return resolution;
   })();
 
-  inFlightCatalogResolutions.set(cacheKey, resolution);
+  if (shareWork) inFlightCatalogResolutions.set(cacheKey, resolution);
   try {
     return await resolution;
   } finally {
-    inFlightCatalogResolutions.delete(cacheKey);
+    if (shareWork) inFlightCatalogResolutions.delete(cacheKey);
   }
 }
 

@@ -14,10 +14,10 @@ import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverl
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
+import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
+import type { CatalogProbeLifecycle, RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
 import { DEFAULT_ANTHROPIC_BASE_URL } from './fetchAnthropicModels';
 import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
-
-const API_KEY_HELPER_TIMEOUT_MS = 10_000;
 
 export type ClaudeModelProbeCredential = Readonly<{
   /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
@@ -39,12 +39,6 @@ export type ClaudeProbeBinding = Readonly<{
 }>;
 
 const CLAUDE_PROBE_SERVICE_IDS = ['claude-subscription', 'anthropic'] as const;
-const CLAUDE_AUTH_ENV_KEYS = [
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_OAUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-] as const;
 
 function readNonBlankString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -67,15 +61,12 @@ export function resolveClaudeProbeBinding(
   return null;
 }
 
-function readAuthFromEnv(env: NodeJS.ProcessEnv | Readonly<Record<string, string>>): ClaudeModelProbeCredential | null {
-  for (const key of CLAUDE_AUTH_ENV_KEYS) {
-    const value = readNonBlankString(env[key]);
-    if (!value) continue;
-    return key === 'ANTHROPIC_API_KEY'
-      ? { kind: 'api_key', value }
-      : { kind: 'bearer', value };
-  }
-  return null;
+function readPrimaryEnvCredential(env: NodeJS.ProcessEnv): ClaudeModelProbeCredential | null {
+  // Preserve the existing ANTHROPIC_OAUTH_TOKEN alias alongside the explicit auth token.
+  const bearer = readNonBlankString(env.ANTHROPIC_AUTH_TOKEN) ?? readNonBlankString(env.ANTHROPIC_OAUTH_TOKEN);
+  if (bearer) return { kind: 'bearer', value: bearer };
+  const apiKey = readNonBlankString(env.ANTHROPIC_API_KEY);
+  return apiKey ? { kind: 'api_key', value: apiKey } : null;
 }
 
 function normalizeExplicitBaseUrl(env: NodeJS.ProcessEnv | Readonly<Record<string, string>>): string | null | 'invalid' {
@@ -166,7 +157,7 @@ async function resolveConnectedCredential(params: Readonly<{
   return null;
 }
 
-export type ResolveClaudeModelProbeTargetParams = Readonly<{
+export type ResolveClaudeModelProbeTargetParams = CatalogProbeLifecycle & Readonly<{
   connectedServices?: ConnectedServiceBindingsV1 | null;
   credentials?: Credentials | null;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -174,6 +165,7 @@ export type ResolveClaudeModelProbeTargetParams = Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   nowMs?: () => number;
   createCredentialApi?: (credentials: Credentials) => ConnectedServiceReadApi;
+  onNativeCleanup?: RegisterNativeCatalogCleanup;
 }>;
 
 /**
@@ -187,6 +179,7 @@ export type ResolveClaudeModelProbeTargetParams = Readonly<{
 export async function resolveClaudeModelProbeTarget(
   params: ResolveClaudeModelProbeTargetParams,
 ): Promise<ClaudeModelProbeTarget | null> {
+  params.signal?.throwIfAborted();
   const processEnv = params.processEnv ?? process.env;
   let effectiveEnv: NodeJS.ProcessEnv = { ...processEnv };
   const profileId = readNonBlankString(params.profileId);
@@ -231,20 +224,31 @@ export async function resolveClaudeModelProbeTarget(
     }
   }
 
-  const envCredential = readAuthFromEnv(effectiveEnv);
+  const envCredential = readPrimaryEnvCredential(effectiveEnv);
   if (envCredential) {
     return { baseUrl, credential: envCredential, cacheIdentity: targetCacheIdentity(baseUrl, envCredential) };
   }
 
-  // Claude Code authenticates with its `apiKeyHelper` after the auth env vars and before a saved
-  // subscription login, for any endpoint; gateways use it to hand out short-lived keys.
-  const helperKey = await readClaudeApiKeyHelperCredential({
-    claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
-    env: effectiveEnv,
-    timeoutMs: API_KEY_HELPER_TIMEOUT_MS,
-  });
-  if (helperKey) {
-    const credential = { kind: 'api_key_helper' as const, value: helperKey };
+  // Claude Code's documented precedence is explicit auth token, API key, helper, setup token,
+  // then saved login. User settings eligibility comes from the same policy as native launch.
+  if (resolveClaudeSettingSources(params.accountSettings ?? {}).includes('user')) {
+    const helperKey = await readClaudeApiKeyHelperCredential({
+      claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
+      env: effectiveEnv,
+      timeoutMs: params.timeoutMs,
+      deadlineAt: params.deadlineAt,
+      signal: params.signal,
+      onNativeCleanup: params.onNativeCleanup,
+    });
+    if (helperKey.status === 'failed') return null;
+    if (helperKey.status === 'ok') {
+      const credential = { kind: 'api_key_helper' as const, value: helperKey.value };
+      return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
+    }
+  }
+  const setupToken = readNonBlankString(effectiveEnv.CLAUDE_CODE_OAUTH_TOKEN);
+  if (setupToken) {
+    const credential = { kind: 'bearer' as const, value: setupToken };
     return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
   }
 
@@ -254,6 +258,7 @@ export async function resolveClaudeModelProbeTarget(
   try {
     const native = await readClaudeCodeNativeCredential({
       claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
+      signal: params.signal,
     });
     const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
     if (!accessToken) return null;

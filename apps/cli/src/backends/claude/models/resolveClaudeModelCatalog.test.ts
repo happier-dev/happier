@@ -1,29 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { CLAUDE_AUTH_ENV_KEYS } from '@/backends/claude/auth/claudeAuthEnvKeys';
 
 import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
-const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock, readClaudeApiKeyHelperCredentialMock } = vi.hoisted(() => ({
-  fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
-  readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  readClaudeApiKeyHelperCredentialMock: vi.fn<(...args: unknown[]) => Promise<string | null>>(),
-}));
-
-// The helper is the developer's real shell command; keep it out of catalog tests.
-vi.mock('./readClaudeApiKeyHelperCredential', () => ({
-  readClaudeApiKeyHelperCredential: readClaudeApiKeyHelperCredentialMock,
-}));
-
-vi.mock('./fetchAnthropicModels', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./fetchAnthropicModels')>();
-  return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
-});
-
-vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
-  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
-});
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer, type IncomingHttpHeaders } from 'node:http';
+import { once } from 'node:events';
 
 import { buildClaudeEffortCliArgs } from '@/backends/claude/utils/claudeEffort';
 import {
@@ -33,11 +19,24 @@ import {
   resetClaudeModelCatalogCacheForTests,
 } from './resolveClaudeModelCatalog';
 
+// Only the HTTP transport is replaced; settings, helper execution, credential resolution,
+// response parsing, and catalog enrichment all run through their real owners.
+const realFetch = globalThis.fetch;
+const fetchMock = vi.fn<typeof fetch>();
+let configDir: string;
+function modelsResponse(entries: AnthropicModelEntry[] | null): Response {
+  return new Response(JSON.stringify({ data: entries?.map(entry => ({
+    id: entry.id, display_name: entry.displayName, max_input_tokens: entry.maxInputTokens,
+    capabilities: entry.capabilities,
+  })) }), { status: entries === null ? 503 : 200 });
+}
+async function writeNativeToken(token: string): Promise<void> {
+  await writeFile(join(configDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: token, scopes: [] } }));
+}
+
 const envKeys = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_OAUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CONFIG_DIR',
+  ...CLAUDE_AUTH_ENV_KEYS,
   'ANTHROPIC_BASE_URL',
   'HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED',
 ] as const;
@@ -54,34 +53,29 @@ function fullEffort(): AnthropicModelEntry['capabilities'] {
   };
 }
 
-beforeEach(() => {
-  fetchAnthropicModelsMock.mockReset();
-  readClaudeCodeNativeCredentialMock.mockReset();
-  readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
-  readClaudeApiKeyHelperCredentialMock.mockReset();
-  readClaudeApiKeyHelperCredentialMock.mockResolvedValue(null);
+beforeEach(async () => {
+  fetchMock.mockReset();
+  vi.stubGlobal('fetch', fetchMock);
   resetClaudeModelCatalogCacheForTests();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
+  for (const key of envKeys) delete process.env[key];
+  configDir = await mkdtemp(join(tmpdir(), 'happier-claude-model-catalog-'));
+  process.env.CLAUDE_CONFIG_DIR = configDir;
 });
 
-afterEach(() => {
-  // Leave no cached catalog behind: the cache is module state, so a later suite sharing this
-  // module context would otherwise read entries this one populated.
+afterEach(async () => {
   resetClaudeModelCatalogCacheForTests();
+  vi.unstubAllGlobals();
   envScope.restore();
-  envScope = createEnvKeyScope(envKeys);
+  await rm(configDir, { recursive: true, force: true });
 });
 
 describe('resolveClaudeModelCatalog', () => {
   it('uses only the static catalog when the Claude account setting disables dynamic discovery', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-native-account', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken('sk-ant-oat01-native-account');
     process.env.ANTHROPIC_API_KEY = 'sk-ant-explicit-key';
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-account-only', displayName: 'Account only' }]);
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-account-only', displayName: 'Account only' }]));
 
     const resolution = await resolveClaudeModelCatalogResolution({
       timeoutMs: 1_000,
@@ -89,18 +83,13 @@ describe('resolveClaudeModelCatalog', () => {
     });
 
     expect(resolution.source).toBe('static');
-    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
-    expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('uses only the static catalog when the CLI environment disables Claude dynamic discovery', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-native-account', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken('sk-ant-oat01-native-account');
     process.env.HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED = '0';
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-account-only', displayName: 'Account only' }]);
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-account-only', displayName: 'Account only' }]));
 
     const resolution = await resolveClaudeModelCatalogResolution({
       timeoutMs: 1_000,
@@ -108,13 +97,12 @@ describe('resolveClaudeModelCatalog', () => {
     });
 
     expect(resolution.source).toBe('static');
-    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
-    expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('uses a successful response as membership authority and enriches matching rows without overriding API facts', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       {
         id: 'claude-sonnet-4-6',
         displayName: 'Claude Sonnet 4.6',
@@ -129,7 +117,7 @@ describe('resolveClaudeModelCatalog', () => {
           },
         },
       },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
@@ -146,10 +134,10 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('retains every exact returned id when an alias and dated snapshot normalize to the same curated row', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet Alias' },
       { id: 'claude-sonnet-4-6-20260812', displayName: 'Sonnet Snapshot' },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
@@ -165,11 +153,11 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('deduplicates only repeated exact returned ids', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-opus-9', displayName: 'Opus 9 First' },
       { id: 'claude-opus-9', displayName: 'Opus 9 Duplicate' },
       { id: 'claude-opus-9-20260812', displayName: 'Opus 9 Snapshot' },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
@@ -181,9 +169,9 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('does not apply a curated-generation floor to account-returned ids', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-2.1-account-model', displayName: 'Account Legacy Model' },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
@@ -194,9 +182,9 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('records a successful endpoint response as dynamic even when every id is already curated', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-fable-5', displayName: 'Claude Fable 5' },
-    ]);
+    ]));
 
     const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
 
@@ -206,7 +194,7 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('treats a successful empty response as authoritative empty membership', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([]);
+    fetchMock.mockImplementation(async () => modelsResponse([]));
 
     const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
 
@@ -215,19 +203,14 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('serves a cached catalog and never substitutes ambient auth for a selected account', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]));
 
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // A bound session ignores the ambient key (the spawn strips it) and reads the account's own
-    // on-disk credential — and must not read the unbound account's cached catalog.
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-profile-a', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    // An unavailable selected account cannot use the ambient key, saved login, or their cache.
+    await writeNativeToken('sk-ant-oat01-profile-a');
     const boundResult = await resolveClaudeModelCatalog({
       timeoutMs: 1_000,
       connectedServices: {
@@ -237,103 +220,131 @@ describe('resolveClaudeModelCatalog', () => {
         },
       },
     });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(boundResult.some((model) => model.id === 'claude-opus-9')).toBe(false);
   });
 
   it('discovers gateway models with the Claude Code apiKeyHelper key', async () => {
     process.env.ANTHROPIC_BASE_URL = 'https://gateway.example/anthropic';
-    readClaudeApiKeyHelperCredentialMock.mockResolvedValue('helper-key');
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'gateway/model', displayName: 'Gateway model' }]);
+    await writeFile(join(configDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'echo helper-key' }));
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'gateway/model', displayName: 'Gateway model' }]));
 
     const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
 
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKeyHelperValue: 'helper-key',
-      baseUrl: 'https://gateway.example/anthropic',
-    }));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe('https://gateway.example/anthropic/v1/models?limit=1000');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('x-api-key')).toBe('helper-key');
+    expect(headers.get('Authorization')).toBe('Bearer helper-key');
+    expect(headers.has('anthropic-beta')).toBe(false);
     expect(resolution.source).toBe('dynamic');
     expect(resolution.models.map((model) => model.id)).toContain('gateway/model');
   });
 
+  it('discovers through a real helper and HTTP gateway and isolates rotated credentials', async () => {
+    vi.stubGlobal('fetch', realFetch);
+    const requests: { url: string | undefined; headers: IncomingHttpHeaders }[] = [];
+    const server = createServer((request, response) => {
+      requests.push({ url: request.url, headers: request.headers });
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ data: [{ id: `gateway/${request.headers['x-api-key']}` }] }));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP gateway');
+    try {
+      await writeFile(join(configDir, 'settings.json'), JSON.stringify({
+        apiKeyHelper: process.platform === 'win32' ? 'echo %HELPER_TOKEN%' : 'echo "$HELPER_TOKEN"',
+      }));
+      const processEnv = { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}/gateway/anthropic`,
+        CLAUDE_CODE_OAUTH_TOKEN: 'other-account', HELPER_TOKEN: 'first-key' };
+      const first = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000, processEnv });
+      expect(first).toMatchObject({ source: 'dynamic', models: [{ id: 'gateway/first-key' }] });
+      const second = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000,
+        processEnv: { ...processEnv, HELPER_TOKEN: 'second-key' } });
+      expect(second).toMatchObject({ source: 'dynamic', models: [{ id: 'gateway/second-key' }] });
+      expect(requests.map(request => request.url)).toEqual([
+        '/gateway/anthropic/v1/models?limit=1000', '/gateway/anthropic/v1/models?limit=1000',
+      ]);
+      expect(requests.map(request => request.headers.authorization)).toEqual(['Bearer first-key', 'Bearer second-key']);
+      expect(requests.every(request => !request.headers['anthropic-beta'])).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('does not query a saved subscription account when a configured helper fails', async () => {
+    await writeNativeToken('other-subscription-account');
+    await writeFile(join(configDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'exit 3' }));
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'wrong-account-model' }]));
+    const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
+    expect(resolution).toMatchObject({ source: 'static', refreshError: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('refetches when the ambient credential changes', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key-one';
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]));
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Swapping the key without changing the config dir must not serve the previous key's list.
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key-two';
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('bounds retained snapshots across rotated credential identities', async () => {
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]));
 
     for (let index = 0; index < 33; index += 1) {
       process.env.ANTHROPIC_API_KEY = `sk-ant-rotated-${index}`;
       await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     }
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(33);
+    expect(fetchMock).toHaveBeenCalledTimes(33);
 
     process.env.ANTHROPIC_API_KEY = 'sk-ant-rotated-0';
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(34);
+    expect(fetchMock).toHaveBeenCalledTimes(34);
   });
 
   it('refetches when the on-disk credential is replaced in the same config dir', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account-one', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    await writeNativeToken('sk-ant-oat01-account-one');
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]));
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Re-authing the same slot to a different account must not inherit the previous list for the
     // rest of the TTL — the config dir is unchanged, so the credential itself has to key the cache.
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account-two', scopes: [] } },
-      updatedAtMs: 1,
-      source: 'file',
-    });
+    await writeNativeToken('sk-ant-oat01-account-two');
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not let an unreadable credential evict a valid cached catalog', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
-    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    await writeNativeToken('sk-ant-oat01-account');
+    fetchMock.mockImplementation(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]));
     const warm = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     expect(warm.some((m) => m.id === 'claude-opus-9')).toBe(true);
 
     // A transient credential read failure degrades this call to the curated catalog...
-    readClaudeCodeNativeCredentialMock.mockRejectedValue(new Error('EIO'));
+    await writeFile(join(configDir, '.credentials.json'), '{ invalid JSON');
     const degraded = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     expect(degraded.some((m) => m.id === 'claude-opus-9')).toBe(false);
 
     // ...but must not have evicted or shadowed the still-valid entry: recovery is immediate and
     // does not require a refetch.
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken('sk-ant-oat01-account');
     const recovered = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     expect(recovered.some((m) => m.id === 'claude-opus-9')).toBe(true);
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('carries the extended-context model id through to the picker rows', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue(null);
+    fetchMock.mockImplementation(async () => modelsResponse(null));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     const sonnet = models.find((m) => m.id === 'claude-sonnet-4-6') ?? null;
@@ -343,7 +354,7 @@ describe('resolveClaudeModelCatalog', () => {
 
   it('falls back to the curated catalog when the fetch fails', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue(null);
+    fetchMock.mockImplementation(async () => modelsResponse(null));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
@@ -355,9 +366,9 @@ describe('resolveClaudeModelCatalog', () => {
   it('retains the last successful dynamic snapshot when a later refresh fails', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     let currentTimeMs = 10;
-    fetchAnthropicModelsMock
-      .mockResolvedValueOnce([{ id: 'claude-opus-9', displayName: 'Opus 9' }])
-      .mockResolvedValueOnce(null);
+    fetchMock
+      .mockImplementationOnce(async () => modelsResponse([{ id: 'claude-opus-9', displayName: 'Opus 9' }]))
+      .mockImplementationOnce(async () => modelsResponse(null));
 
     const first = await resolveClaudeModelCatalogResolution({
       timeoutMs: 1_000,
@@ -378,15 +389,15 @@ describe('resolveClaudeModelCatalog', () => {
     expect(stale).toEqual({ ...first, refreshError: true });
     expect(staleDuringFailureCooldown).toEqual(stale);
     expect(stale.models.map((model) => model.id)).toEqual(['claude-opus-9']);
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not let another account refresh discard an expired dynamic snapshot before its own refresh', async () => {
     let currentTimeMs = 10;
-    fetchAnthropicModelsMock
-      .mockResolvedValueOnce([{ id: 'claude-account-a', displayName: 'Account A' }])
-      .mockResolvedValueOnce([{ id: 'claude-account-b', displayName: 'Account B' }])
-      .mockResolvedValueOnce(null);
+    fetchMock
+      .mockImplementationOnce(async () => modelsResponse([{ id: 'claude-account-a', displayName: 'Account A' }]))
+      .mockImplementationOnce(async () => modelsResponse([{ id: 'claude-account-b', displayName: 'Account B' }]))
+      .mockImplementationOnce(async () => modelsResponse(null));
 
     process.env.ANTHROPIC_API_KEY = 'sk-ant-account-a';
     const accountA = await resolveClaudeModelCatalogResolution({
@@ -409,16 +420,16 @@ describe('resolveClaudeModelCatalog', () => {
 
     expect(staleAccountA).toEqual({ ...accountA, refreshError: true });
     expect(staleAccountA.models.map((model) => model.id)).toEqual(['claude-account-a']);
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
 describe('resolveClaudeEffortLevelsFromModelDescriptor', () => {
   it('reads the reported tiers off a discovered model descriptor', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     const discovered = models.find((m) => m.id === 'claude-opus-9') ?? null;
@@ -435,9 +446,9 @@ describe('resolveClaudeEffortLevelsFromModelDescriptor', () => {
 describe('effort tiers carried on the mode', () => {
   it('clamps a carried effort to the tiers the resolved catalog reports', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
-    fetchAnthropicModelsMock.mockResolvedValue([
+    fetchMock.mockImplementation(async () => modelsResponse([
       { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
-    ]);
+    ]));
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     const levels = resolveClaudeEffortLevelsFromModelDescriptor(

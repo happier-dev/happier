@@ -41,9 +41,12 @@ export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAda
   probeCatalogsRaw: probeClaudeCatalogs,
   modelProbeCachePolicy: 'provider-owned',
   failureCacheStrategy: 'cooldown',
-  probeModelsRaw: async ({ cwd, timeoutMs, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {
+  probeModelsRaw: async ({ cwd, timeoutMs, deadlineAt, signal, onNativeCleanup, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {
     const resolution = await resolveClaudeModelCatalogResolution({
       timeoutMs,
+      deadlineAt,
+      signal,
+      onNativeCleanup,
       bypassCache,
       connectedServices,
       credentials,
