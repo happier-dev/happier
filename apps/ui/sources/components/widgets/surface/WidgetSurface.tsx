@@ -5,6 +5,7 @@ import { WidgetPresentationProvider, useWidgetPresentation } from '@happier-dev/
 import type { JsonValue } from '@happier-dev/protocol';
 import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { readWidgetDefinitionNetworkOverrideV1 } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
+import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { ConfiguredInstalledWidgetSurface, ConfiguredWidgetRefusal, UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
 import { BuiltinWidgetBody } from '@/components/sessions/companion/glances/BuiltinWidgetBody';
@@ -141,7 +142,7 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
         approvalSubject={`widget:${props.definition.id}:${props.instance.id}`} source={props.body.source}
         requestedCapabilities={requestedCapabilities} input={props.resolution.input}
         target={props.resolution.target.kind === 'workspace'
-            ? { kind: 'project', projectId: props.resolution.target.checkout.id }
+            ? { kind: 'project', projectKey: projectWorkspaceRefV1(props.resolution.target.checkout).projectKey }
             : props.resolution.target.kind === 'session'
                 ? { kind: 'session', sessionId: props.resolution.target.sessionId }
                 : { kind: 'app' }} runtime={runtime}
