@@ -23,6 +23,7 @@ import {
     resolveConnectedAccountUiNegotiation,
 } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useProfile } from '@/sync/store/hooks';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import type {
     ConnectedServiceQuotaSnapshotV1,
@@ -192,11 +193,13 @@ export function useConnectedServiceQuotaSnapshots(
     const normalizedProfiles = React.useMemo(() => normalizedInput, [profilesSignature]);
     const negotiation: BuiltInConnectedAccountQuotaNegotiation =
         resolveConnectedAccountUiNegotiation(serverFeatures);
+    const publishedLoadContexts = React.useRef<ReadonlyArray<QuotaRegistration>>([]);
     const loadContexts = React.useMemo(() => {
         if (!quotasEnabled || !credentials || !activeServer.serverId) {
-            return [] as ReadonlyArray<QuotaRegistration>;
+            publishedLoadContexts.current = retainKeyedRows(publishedLoadContexts.current, [], row => row.profileKey);
+            return publishedLoadContexts.current;
         }
-        return normalizedProfiles.flatMap<QuotaRegistration>(
+        const incoming = normalizedProfiles.flatMap<QuotaRegistration>(
             (quotaProfile) => {
             const serverBasis = {
                 serverId: activeServer.serverId,
@@ -262,6 +265,10 @@ export function useConnectedServiceQuotaSnapshots(
             }];
             },
         );
+        // Account activity may change without changing any admitted quota transport.
+        // Publish the same registrations so existing observations keep their lifetime.
+        publishedLoadContexts.current = retainKeyedRows(publishedLoadContexts.current, incoming, row => row.profileKey);
+        return publishedLoadContexts.current;
     }, [
         activeServer.generation,
         activeServer.serverId,

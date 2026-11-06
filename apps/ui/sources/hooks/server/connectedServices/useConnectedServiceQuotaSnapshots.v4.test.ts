@@ -113,6 +113,35 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         expectNoLegacyQuotaRequest();
     });
 
+    it('keeps quota acquisition stable across one turn of account activity and reads one real allowance change', async () => {
+        const hook = await renderHook(() => useConnectedServiceQuotaSnapshots(profileInput), { wrapper: Wrapper });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+        const retained = hook.getCurrent().snapshotsByKey['anthropic/work'];
+        // Exercise 27 activity updates, matching F4's observed request count.
+        // lastUsedAt changes while the admitted quota transport/ref stays the same.
+        for (let arrival = 1; arrival <= 27; arrival++) {
+            await act(async () => {
+                const profile = storage.getState().profile;
+                storage.getState().applyProfile({ ...profile, connectedAccountsV4: profile.connectedAccountsV4.map(account => ({
+                    ...account, lastUsedAt: arrival,
+                })) });
+                publishHomeAccountChange(getActiveServerSnapshot().serverId, ['turn-session'], { changeKinds: ['session'] });
+            });
+            await flushHookEffects({ cycles: 3, turns: 3 });
+        }
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().snapshotsByKey['anthropic/work']).toBe(retained);
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(fresh)));
+        await act(async () => {
+            publishHomeAccountChange(getActiveServerSnapshot().serverId,
+                [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] });
+        });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.fetchedAt).toBe(fresh.fetchedAt);
+    });
+
     it('shares visible summary and Session quota demand, retains facts on reopen, and revalidates once', async () => {
         const { useUsageSummary } = await import('@/components/hub/usage/useUsageSummary');
         const summary = await renderHook(() => useUsageSummary({ load: 'visible' }), { wrapper: Wrapper });

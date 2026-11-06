@@ -8,6 +8,7 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import type { ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type ProviderConnectionUsageRefreshView = Readonly<{
     result: DaemonProviderUsageRefreshResponseV1;
@@ -126,7 +127,6 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
                         } });
                     if (!current() || invocation.signal.aborted) return null;
                     view = projectUsageRefresh(result, view);
-                    publish({ view, refreshing: true, failed: false, pendingApproval: null });
                     return view;
                 } catch (error) {
                     if (!current() || invocation.signal.aborted) return null;
@@ -143,13 +143,12 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
                         throw error;
                     }
                     view = projectUsageRefresh({ status: 'error', error: typed.data }, view);
-                    publish({ view, refreshing: true, failed: false, pendingApproval: null });
                     return view;
                 } finally {
                     if (controller === invocation) {
                         reading = null;
                         if (current()) {
-                            publish({ ...snapshot, refreshing: false, pendingApproval: null });
+                            publish({ ...snapshot, view, refreshing: false, pendingApproval: null });
                             if (invalidated && input.isPresented() && !blockedAutomatic) void resource.refresh(true).catch(() => {});
                         }
                     }
@@ -257,5 +256,5 @@ function projectUsageRefresh(result: DaemonProviderUsageRefreshResponseV1,
         stateBySourceId[source.sourceId] = resolveProviderAccountUsageSnapshotState({ snapshot: snapshot ?? null,
             loading: false, hadError: source.status === 'error', nowMs: Date.now() });
     }
-    return { result, snapshotsBySourceId, stateBySourceId };
+    return retainDeep(previous ?? undefined, { result, snapshotsBySourceId, stateBySourceId });
 }

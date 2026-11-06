@@ -46,6 +46,47 @@ async function setup() {
 }
 
 describe('Provider connection usage data resource', () => {
+    it('retains equal refreshed usage and publishes a real source change once', async () => {
+        const { resource } = await setup();
+        rpc.setResponse(method, good);
+        await resource.refresh();
+        const before = resource.getCurrent();
+        let publishedView = before;
+        let dataPublications = 0;
+        const refreshActivity: boolean[] = [];
+        const unsubscribe = resource.subscribe(() => {
+            refreshActivity.push(resource.getSnapshot().refreshing);
+            const next = resource.getCurrent();
+            if (next !== publishedView) dataPublications++;
+            publishedView = next;
+        });
+
+        // The real Action transport opens a new response object on each read.
+        rpc.setResponse(method, structuredClone(good));
+        await resource.refresh();
+        expect(requests()).toHaveLength(2);
+        expect(resource.getCurrent()).toBe(before);
+        expect(resource.getCurrent()?.snapshotsBySourceId).toBe(before?.snapshotsBySourceId);
+        expect(resource.getCurrent()?.stateBySourceId).toBe(before?.stateBySourceId);
+        expect(resource.getCurrent()?.snapshotsBySourceId.credits).toBe(before?.snapshotsBySourceId.credits);
+        expect(dataPublications).toBe(0);
+        expect(refreshActivity).toEqual([true, false]);
+
+        const changed = { ...snapshot, meters: [{ meterId: 'credits', label: 'Credits', used: 1, limit: 10,
+            unit: 'count', utilizationPct: 10, remainingPct: 90, resetsAt: null, status: 'ok', confidence: 'exact' }] };
+        rpc.setResponse(method, DaemonProviderUsageRefreshResponseV1Schema.parse({
+            status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: changed }],
+        }));
+        await resource.refresh();
+        expect(requests()).toHaveLength(3);
+        expect(resource.getCurrent()?.snapshotsBySourceId.credits?.meters[0]?.used).toBe(1);
+        expect(resource.getCurrent()?.stateBySourceId.credits).toBe('stale_data');
+        expect(dataPublications).toBe(1);
+        expect(refreshActivity).toEqual([true, false, true, false]);
+        unsubscribe();
+        resource.dispose();
+    });
+
     it('shares one read across settings, picker and remounts, and refreshes only an invalidated connection', async () => {
         const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
         const controller = new AbortController();
