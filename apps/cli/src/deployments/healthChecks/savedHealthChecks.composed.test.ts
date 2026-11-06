@@ -102,7 +102,7 @@ describe('saved source finite native producer binding', () => {
         expect(receipts).toHaveBeenCalledTimes(3);
     });
 
-    it.each(['http', 'certificate'] as const)('binds saved %s to the current Domain and refuses another person before the network', async kind => {
+    it.each(['http', 'certificate'] as const)('binds a finite saved %s Action to the current Domain and refuses another person before the network', async kind => {
         const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
         await withTempDir('happier-saved-health-home-', async homeDir => {
             env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
@@ -153,6 +153,8 @@ describe('saved source finite native producer binding', () => {
                     checks: [{ ...definition(kind, {}), binding: { kind: 'domain', domainId: domain.id,
                         targetLinkId: link.id, condition: 'domain_probe_failed' } }] };
                 const f = await adopted(sourceConfig, home.machineId);
+                const actionSeed: PluginInvocationServicesSeed = { ...f.seed, surface: 'cli',
+                    contribution: { id: `health/${kind}`, qualifiedId: `happier.machine.services/actions/health/${kind}` } };
                 const requests: string[] = [];
                 let expectedStatus = 204;
                 const http = { request: vi.fn(async ({ url }: { url: string }) => {
@@ -166,7 +168,7 @@ describe('saved source finite native producer binding', () => {
                 const onDomainResult = vi.fn();
                 const host = createSavedHealthChecksHost({ serverId: profile.id,
                     resolveAdoptedDefinitionSet: () => f.owner, readObserver: () => f.observer, openDomainArtifact, onDomainResult });
-                const actionsFor = (token: string) => createPluginInvocationActionsService({ seed: f.seed,
+                const actionsFor = (token: string) => createPluginInvocationActionsService({ seed: actionSeed,
                     actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
                         ...createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
                             serverId: profile.id, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
@@ -174,7 +176,7 @@ describe('saved source finite native producer binding', () => {
                             runtime: { async acquire() { throw new Error('No native role in saved health admission'); } },
                         }),
                     }), invokeContributedAction: async () => { throw new Error('No contributed Action in saved health admission'); } });
-                const ownerService = host.bind(f.seed, { actions: actionsFor(home.token), http });
+                const ownerService = host.bind(actionSeed, { actions: actionsFor(home.token), http });
                 if (!ownerService) throw new Error('Owner service must bind');
                 expect(await ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig,
                     heartbeatContributionId: 'health-heartbeat' })).toEqual(sourceConfig);
@@ -199,7 +201,7 @@ describe('saved source finite native producer binding', () => {
                     sourceRevision: '1', environment: expect.objectContaining({ id: environment.id }),
                     targetLink: expect.objectContaining({ id: link.id }), domain: expect.objectContaining({ id: domain.id }),
                     result: expect.objectContaining({ status: 'up' }) }));
-                const requesterService = host.bind(f.seed, { actions: actionsFor(requesterToken), http });
+                const requesterService = host.bind(actionSeed, { actions: actionsFor(requesterToken), http });
                 if (!requesterService) throw new Error('Requester service must bind');
                 await expect(requesterService.setup({ sourceInstanceId: 'health:subject', sourceConfig,
                     heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({ code: 'deployment_access_denied' });
