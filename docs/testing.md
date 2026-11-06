@@ -1193,6 +1193,10 @@ and evaluate them on demand. Lazy development chunks create separate overlapping
 transitive graphs per entry; the live web trial stalled root and child requests
 for several minutes. The canonical request rewrite keeps bundle, map and HMR
 policy aligned. Production retains Expo's bundling mode.
+Expo resolves the canonical web app entry for every development bundle, map and
+HMR request, including chunk URLs retained by older tabs. Chunk responses keep
+their module-only, non-executing options, so they reuse that graph without
+reinstalling the runtime or running the app entry again.
 For stable native profiling, disable Fast Refresh in the React Native Dev Menu.
 That pauses update application; explicit reloads remain separate.
 

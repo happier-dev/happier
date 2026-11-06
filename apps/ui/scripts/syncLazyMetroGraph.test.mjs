@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
+import { Script, createContext } from 'node:vm';
+import { createServer } from 'node:http';
 import test from 'node:test';
 
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -223,6 +224,85 @@ test('optional web renderers stay outside their entry static closures', async ()
     } finally {
         if (server) await server.end();
         rmSync(cache, { recursive: true, force: true });
+    }
+});
+
+test('stale web lazy chunks share the canonical root entry without executing it', () => {
+    delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+    const config = require(path.join(uiRoot, 'metro.config.js'));
+    const rewrite = config.server.rewriteRequestUrl;
+    const root = new URL(rewrite('/.expo/.virtual-metro-entry.bundle?platform=web&dev=true&lazy=true'), 'http://localhost');
+    const overridden = new URL(rewrite('/other.bundle?platform=web&dev=true&lazy=true&bundleEntry=obsolete'), 'http://localhost');
+    assert.equal(overridden.searchParams.has('bundleEntry'), false, 'the query must not override the canonical root entry');
+    for (const entry of ['defaultActionExecutor', 'sessionFollowApi', 'actionAccountContext']) {
+        const chunk = new URL(rewrite(`/apps/ui/sources/${entry}.bundle?platform=web&dev=true&lazy=true&modulesOnly=true&runModule=false`), 'http://localhost');
+        assert.equal(chunk.pathname, root.pathname, 'stale chunks must reuse the app entry graph');
+        assert.equal(chunk.searchParams.get('lazy'), 'false');
+        assert.equal(chunk.searchParams.get('modulesOnly'), 'true', 'a chunk response must not reinstall the runtime');
+        assert.equal(chunk.searchParams.get('runModule'), 'false', 'a chunk response must not remount the app');
+    }
+});
+
+test('three stale web chunk requests and a warm root reuse one real Metro graph', async () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-shared-root-'));
+    let metro;
+    let http;
+    try {
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        const canonical = new URL(config.server.rewriteRequestUrl('/.expo/.virtual-metro-entry.bundle?platform=web&dev=true'), 'http://localhost').pathname;
+        const entry = path.join(fixture, canonical.slice(1).replace(/\.bundle$/, '.js'));
+        mkdirSync(path.dirname(entry), { recursive: true });
+        writeFileSync(entry, `globalThis.appStarts = (globalThis.appStarts || 0) + 1;
+            globalThis.loadA = () => import('./a'); globalThis.loadB = () => import('./b'); globalThis.loadC = () => import('./c');`);
+        writeFileSync(path.join(path.dirname(entry), 'shared.js'), 'export const shared = "shared-value";');
+        for (const name of ['a', 'b', 'c']) writeFileSync(path.join(path.dirname(entry), `${name}.js`),
+            `import { shared } from './shared'; export const value = ${JSON.stringify(name)} + shared;`);
+        config.projectRoot = fixture;
+        config.server.unstable_serverRoot = fixture;
+        config.watchFolders = [...config.watchFolders, fixture];
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        config.serializer.getModulesRunBeforeMainModule = () => [];
+        const Server = require('metro/private/Server').default;
+        metro = new Server(config, { watch: false });
+        http = createServer((request, response) => metro.processRequest(request, response, error => {
+            response.statusCode = error ? 500 : 404;
+            response.end(error ? String(error.message) : 'Not found');
+        }));
+        await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
+        const base = `http://127.0.0.1:${http.address().port}`;
+        const query = '?platform=web&dev=true&lazy=true&hot=false';
+        const initial = await fetch(base + canonical + query);
+        assert.equal(initial.status, 200);
+        const context = createContext({ console, setTimeout, clearTimeout });
+        new Script(await initial.text()).runInContext(context);
+        assert.equal(context.appStarts, 1);
+        const start = performance.now();
+        const responses = await Promise.all([
+            fetch(base + canonical + query),
+            ...['a', 'b', 'c'].map(name => fetch(`${base}/obsolete/${name}.bundle${query}&modulesOnly=true&runModule=false`)),
+        ]);
+        const bodies = await Promise.all(responses.map(async response => {
+            assert.equal(response.status, 200);
+            return response.text();
+        }));
+        const graphs = [...metro.getBundler().getDeltaBundler()._deltaCalculators.keys()];
+        assert.equal(graphs.length, 1, 'stale dependency entry paths must not retain overlapping graphs');
+        for (const body of bodies.slice(1)) new Script(body).runInContext(context);
+        assert.equal(context.appStarts, 1, 'module-only responses must not execute the app entry again');
+        for (const [name, load] of [['a', context.loadA], ['b', context.loadB], ['c', context.loadC]]) {
+            assert.equal((await load()).value, `${name}shared-value`, 'demand imports retain their real exports');
+        }
+        console.log(JSON.stringify({ entry: 'warm root plus three stale chunks', graphs: graphs.length,
+            milliseconds: performance.now() - start, responseBytes: bodies.map(body => Buffer.byteLength(body)) }));
+    } finally {
+        if (http) await new Promise((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
+        if (metro) await metro.end();
+        rmSync(fixture, { recursive: true, force: true });
     }
 });
 

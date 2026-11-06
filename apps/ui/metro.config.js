@@ -138,12 +138,24 @@ config.cacheVersion = JSON.stringify([
 // defers evaluation. HTTP, maps and HMR consume this URL policy. Production
 // keeps Expo's mode.
 const rewriteExpoRequestUrl = config.server.rewriteRequestUrl;
+// Let Expo resolve the app's configured entry; stale lazy URLs must not make
+// their former dependency path a second root after this policy changes.
+const webDevelopmentEntryPath = new URL(rewriteExpoRequestUrl(
+  '/.expo/.virtual-metro-entry.bundle?platform=web&dev=true',
+), 'http://localhost').pathname.replace(/\.bundle$/, '');
 config.server.rewriteRequestUrl = (requestUrl) => {
   const rewritten = rewriteExpoRequestUrl(requestUrl);
   const url = new URL(rewritten, 'http://localhost');
   const isDev = !url.searchParams.has('dev') || ['true', '1'].includes(url.searchParams.get('dev'));
   if (!['web', 'ios', 'android'].includes(url.searchParams.get('platform')) || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
     return rewritten;
+  }
+  if (url.searchParams.get('platform') === 'web') {
+    const extension = url.pathname.match(/\.(bundle|map|delta)$/)[0];
+    url.pathname = `${webDevelopmentEntryPath}${extension}`;
+    url.searchParams.delete('bundleEntry');
+    // Retain modulesOnly/runModule: old chunk readers need definitions without
+    // reinstalling the Metro runtime or executing the app entry again.
   }
   url.searchParams.set('lazy', 'false');
   return rewritten.startsWith('/') ? `${url.pathname}${url.search}${url.hash}` : url.toString();
