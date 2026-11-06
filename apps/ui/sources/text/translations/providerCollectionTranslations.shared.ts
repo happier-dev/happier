@@ -6,6 +6,15 @@ export type ProviderCollectionCopy = typeof en;
 
 export const en = {
     settingsProvidersCollection: {
+        modelsSaved: ({ shown, total }: { shown: number; total: number }) => total === shown
+            ? `${total} saved ${total === 1 ? 'model' : 'models'}`
+            : `${shown} of ${total} saved shown`,
+        gatewaysDescription: 'Serve the accounts and pools in Credentials to other agents.',
+        openCredentials: 'Credentials',
+        pickerTitle: 'Connect a provider',
+        addFoundGroup: 'Found on your machines',
+        addProvidersGroup: 'Model providers',
+        addNextApiKey: 'Next you paste an API key.',
         usage: {
             description: ({ provider }: { provider: string }) => `${provider} balances and spend, in the reported currency.`,
             scopeKey: 'This key',
@@ -24,6 +33,25 @@ export const en = {
             getBillingKey: 'Where to get this key',
         },
         addDetail: {
+            needsTitle: 'What it needs',
+            needsApiKey: 'An API key',
+            needsApiKeyOptional: 'An API key, if you have one',
+            needsKeyFrom: ({ host }: { host: string }) => `From ${host} · saved as a secret in your account`,
+            needsKeySaved: 'Saved as a secret in your account',
+            needsAccount: 'A connected account',
+            needsAccountBody: 'You choose it when you connect',
+            needsLocal: 'A model server on one of your machines',
+            needsNothing: 'Nothing to set up',
+            worksWithTitle: 'Works with',
+            worksWithUnknown: 'Checked when you choose a model',
+            modelsTitle: 'Models',
+            sourceTitle: 'Source and version',
+            sourceBuiltIn: 'Built into Happier',
+            sourcePlugin: 'From a plugin',
+            sourceBuiltInBody: 'Updated with Happier itself',
+            sourcePluginBody: 'Updated with its plugin',
+            worksWithAgent: 'An agent',
+            purpose: ({ provider }: { provider: string }) => `${provider}’s models appear in every agent that can run them.`,
             modelsCount: ({ count }: { count: number }) => count === 1 ? `1 model` : `${count} models`,
             modelsCountMore: ({ count }: { count: number }) => count === 1 ? `1 model, more once connected` : `${count} models, more once connected`,
             modelsOnConnect: 'Listed once connected',
