@@ -31,6 +31,18 @@ function responseFor(init?: RequestInit) {
     })) });
 }
 
+it.each([404, 403] as const)('classifies a whole batch %s without issuing scalar reads', async status => {
+    const request = vi.fn(async () => Response.json({ error: 'not_found' }, { status }));
+    const authority = fixtureAuthority(request);
+    const failed = await readSessionBatchForAuthority({ authority, sessionIds: ['a'], includeSnapshot: true,
+        includeMessages: false, assertCurrent: () => {} }).catch((error: unknown) => error);
+    expect(failed).toMatchObject({ httpStatus: status, ...(status === 404 ? {
+        updateRequired: { kind: 'update_required', operation: 'session.detail', component: 'server', reason: 'session_read_batch_unsupported' },
+    } : {}) });
+    if (status === 403) expect(failed).toMatchObject({ updateRequired: undefined });
+    expect(request).toHaveBeenCalledTimes(1);
+});
+
 it('gathers overlapping authoritative Session demands in one HTTP batch and rereads after settlement', async () => {
     const request = vi.fn(async (_path: string, init?: RequestInit) => responseFor(init));
     const authority = fixtureAuthority(request);

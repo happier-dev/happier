@@ -8,9 +8,10 @@ import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority'
 import { createTaskLimiter } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import type { SessionByIdPrefetchedRead } from '@/sync/engine/sessions/sessionById';
-import { readSessionBatchForAuthority } from './readSessionBatchForAuthority';
+import { readSessionBatchForAuthority, SessionPartsHttpError } from './readSessionBatchForAuthority';
 import { readSessionDetailAccessProjectionVersion } from '@/sync/api/session/sessionDetailAccessProjection';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 
 type SessionSnapshot = Omit<Session, 'presence'> & { presence?: 'online' | number };
 type SnapshotHydrationContext = Pick<Parameters<typeof fetchSessionByIdWithServerScope>[0], 'getExistingSession'> & Readonly<{
@@ -138,6 +139,12 @@ export async function readSessionSnapshotsForAuthority(params: Readonly<{
         try {
             assertCurrent();
             if (!detail) throw new SessionSnapshotReadError('invalid_response');
+            for (const part of [detail, ...(params.requireTurns && turns ? [turns] : [])]) {
+                if (part.status !== 200) {
+                    const requirement = OperationUpdateRequiredV1Schema.safeParse(part.body);
+                    if (requirement.success) throw new SessionPartsHttpError(part.status, part.body, requirement.data);
+                }
+            }
             const snapshot = await readSessionSnapshotForAuthority({ ...params, sessionId,
                 accountCurrentnessSource: currentness, prefetched: { accessProjectionVersion: projectionVersion, detail, turns } });
             await currentness.ensureCurrent();

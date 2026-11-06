@@ -1,6 +1,7 @@
 import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema,
     type SessionReadBatchResponseV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
+import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import type { ServerAccountRequestAuthority } from './createServerRequestWithServerScope';
 import type { CapturedServerReadTransport } from './capturedServerReadTransport';
 import { createScopedBatchResolutionSingleFlight, type ScopedBatchResolutionContext } from './scopedResolutionSingleFlight';
@@ -9,7 +10,7 @@ type SessionReadPart = SessionReadBatchResponseV1['results'][number];
 const sessionParts = createScopedBatchResolutionSingleFlight<SessionReadPart>({ materializePhysicalChunks: true });
 
 export class SessionPartsHttpError extends Error {
-    constructor(readonly httpStatus: number, readonly body: unknown) {
+    constructor(readonly httpStatus: number, readonly body: unknown, readonly updateRequired?: OperationUpdateRequiredV1) {
         super('Session batch unavailable');
     }
 }
@@ -79,7 +80,12 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
                         const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal };
                         const consume = async (response: Response) => {
                             const payload: unknown = await response.json().catch(() => null);
-                            if (!response.ok) throw new SessionPartsHttpError(response.status, payload);
+                            if (!response.ok) {
+                                const requirement = OperationUpdateRequiredV1Schema.safeParse(payload);
+                                throw new SessionPartsHttpError(response.status, payload, requirement.success ? requirement.data
+                                    : response.status === 404 ? { kind: 'update_required', operation: 'session.detail', component: 'server',
+                                        reason: 'session_read_batch_unsupported' } : undefined);
+                            }
                             const parsed = SessionReadBatchResponseV1Schema.safeParse(payload);
                             if (!parsed.success) throw new SessionPartsInvalidResponseError();
                             return parsed.data;
