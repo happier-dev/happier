@@ -1,14 +1,21 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsageComparisonQuery, resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { projectUsagePageCost, resolveUsageCostForSelection, repriceUsageAnalyticsResponse, type UsageAnalyticsContribution } from '@happier-dev/protocol';
-import { allocateUsageOutcomes } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+import { projectUsagePageCost, resolveUsageCostForSelection} from '@happier-dev/protocol/usage/usageCostFacts';
+import { repriceUsageAnalyticsResponse} from '@happier-dev/protocol/usage/usageCost';
+import { type UsageAnalyticsContribution } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { allocateUsageOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
+import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
+import { ScmPullRequestWorkEvidenceSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { summarizeUsageWork } from './usageWorkPresentation';
 import { usagePageCostTrend } from '../usageCostPresentation';
 import { renderScreen } from '@/dev/testkit';
-import { t } from '@/text';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageFootprintWidget } from './UsageFootprintWidget';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
@@ -17,14 +24,17 @@ import { UsageSourceCoverageWidget, UsageUnpricedWidget } from './UsageSourcePan
 import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
 import { UsageBreakdownsWidget } from './UsageBreakdownsWidget';
-import { leadingUsageRows, UsageShowAllRows, usagePartialHistoryLabel } from './usageBodyKit';
+import { UsageConstellationBody } from './UsageChartStyleBodies';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { leadingUsageRows, UsageCoverageLine, UsageShowAllRows, usagePartialHistoryLabel } from './usageBodyKit';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 
 const day = 86_400_000;
 const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
-function mountedCosts(unpriced = false) {
+function mountedCosts(unpriced = false, tokenCount = 10) {
+  const tokens = { input: tokenCount, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: tokenCount };
   const query = normalizeUsageQuery({ period: { startMs: 0, endMs: day }, metric: 'cost', costBasis: 'auto', breakdown: ['agent'] });
   const contributions: UsageAnalyticsContribution[] = [
     { id: 'a', sessionId: 's', turnId: 'a', observedAtMs: 1, eventCount: 1, agentId: 'claude', modelId: 'unknown-a',
@@ -37,11 +47,11 @@ function mountedCosts(unpriced = false) {
   ];
   const cost = { reportedUsd: unpriced ? 1 : 3, estimatedUsd: unpriced ? 0.5 : 1.2, invoiceUsd: 0.2, currency: 'USD', costSource: 'none' as const };
   const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse({
-    v: 1, totals: { eventCount: 2, tokens: { ...tokens, input: 20, total: 20 }, cost }, contributions,
-    series: [{ bucketStartMs: 0, bucketEndMs: day, eventCount: 2, tokens: { ...tokens, input: 20, total: 20 }, cost }],
-    breakdowns: { agent: [{ key: 'claude', eventCount: 2, tokens: { ...tokens, input: 20, total: 20 }, cost }] },
+    v: 1, totals: { eventCount: 2, tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }, contributions,
+    series: [{ bucketStartMs: 0, bucketEndMs: day, eventCount: 2, tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }],
+    breakdowns: { agent: [{ key: 'claude', eventCount: 2, tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }] },
     engineTimeline: [{ bucketStartMs: 0, bucketEndMs: day, leaders: [{ key: 'claude', eventCount: 2,
-      tokens: { ...tokens, input: 20, total: 20 }, cost }] }],
+      tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }] }],
   }) }] }).results[0]!;
   const identity = { query, authority: { serverId: 'home', accountId: 'usage-account' } };
   const model: UsageWidgetBodyModel = { requestedQuery: identity, shownQuery: identity, slice, pending: false, error: null,
@@ -50,8 +60,67 @@ function mountedCosts(unpriced = false) {
 }
 
 describe('one selected money basis across Usage bodies', () => {
-  it('keeps the private footprint as an accounted-token proxy with no fabricated estimate', async () => {
+  it('uses the agent presentation owner for Constellation unattributed identities', async () => {
     const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, includeActivity: true });
+    const slice = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: props.slice.accounting! }],
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }],
+    }).results[0]!;
+    const calendar = slice.howYouWork!.agentCalendar!;
+    const member = calendar.periodSummary.agents[0]!;
+    const unknowns = { ...slice, howYouWork: { ...slice.howYouWork!, agentCalendar: { ...calendar,
+      periodSummary: { ...calendar.periodSummary, agents: [
+        { ...member, agentId: 'legacy', shares: { ...member.shares, tokens: 0.5 } },
+        { ...member, agentId: null, shares: { ...member.shares, tokens: 0.5 } },
+      ] },
+    } } };
+    const screen = await renderScreen(<UsageConstellationBody {...props} query={query} slice={unknowns} id="usage_constellation" testID="constellation" />);
+    const chart = screen.findByType(UsageConstellation);
+    await act(async () => {
+      chart.findAll(node => node.props.testID === 'constellation.constellationChart' && typeof node.props.onLayout === 'function')[0]!
+        .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 330 } } });
+    });
+    expect(screen.findByTestId('constellation.constellationChart.node.legacy')).not.toBeNull();
+    expect(screen.findByTestId('constellation.constellationChart.node.null')).not.toBeNull();
+    expect(screen.getTextContent()).toContain(usageAgentTitle(''));
+    expect(screen.getTextContent()).not.toContain(t('usage.board.charts.unknownAgent'));
+  });
+  it('explains an unavailable partially unpriced Agent cost in its existing annotation', async () => {
+    const props = mountedCosts(true);
+    const screen = await renderScreen(<UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="agents" />);
+    const row = screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude');
+    expect(row.value).toBeNull();
+    expect(row.annotation).toContain(t('usage.board.page.costUnpricedCaption'));
+  });
+  it('keeps exact cache-hit precision in percentage units rather than the fractional numeric model', async () => {
+    const props = mountedCosts();
+    const tokens = { input: 2, output: 0, reasoning: 0, cacheRead: 1, cacheWrite: 0, total: 3 };
+    const tokenCategories = resolveUsageTokenCategories(tokens, { inputIncludesCache: false });
+    if (tokenCategories === null) throw new Error('Expected categorized tokens for an explicit accounting convention');
+    const accounting = { ...props.slice.accounting!, totals: { ...props.slice.accounting!.totals,
+      tokens }, tokenCategories };
+    const screen = await renderScreen(<UsageEfficiencyWidget {...props} slice={{ ...props.slice, accounting }} id="usage_efficiency" testID="efficiency" />);
+    expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'efficiency.cacheHit.detail')?.props.datum.value).toContain('33.33%');
+  });
+  it('formats explicit precision in the selected app language rather than the browser default locale', async () => {
+    const previous = getPreferredLanguage();
+    try {
+      setPreferredLanguageFromSettings('fr');
+      await preloadTranslations();
+      const screen = await renderScreen(<UsageCostFactsWidget {...mountedCosts(false, 2093005)} id="usage_cost_facts" testID="facts" />);
+      expect(screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.fact.reported.detail')?.props.datum.subtitle).toContain('4\u202f186\u202f010');
+    } finally { setPreferredLanguageFromSettings(previous); await preloadTranslations(); }
+  });
+  it('reveals the exact token basis of a money fact whose inline token caption is abbreviated', async () => {
+    const props = mountedCosts(false, 2093005);
+    const screen = await renderScreen(<UsageCostFactsWidget {...props} id="usage_cost_facts" testID="facts" />);
+    const reported = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.fact.reported.detail');
+    expect(reported?.props.datum.subtitle).toContain('4,186,010');
+    expect(screen.getTextContent()).toContain('4.2M');
+  });
+  it('keeps the private footprint as an accounted-token proxy with no fabricated estimate', async () => {
+    const props = mountedCosts(false, 2093005);
     const slice = resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: props.slice.accounting! }],
       howYouWork: [{ query: props.query, asOfMs: day, detail: { status: 'available', facts: [] } }],
@@ -61,29 +130,34 @@ describe('one selected money basis across Usage bodies', () => {
     expect(metric?.props.value).toBe(formatTokenCount(slice.accounting!.totals.tokens.total));
     expect(metric?.props.comparison.value).toBe(t('usage.board.howYouWork.footprintProxy'));
     expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.footprintNoEstimate'));
+    const datum = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'footprint.tokens.detail');
+    expect(datum?.props.datum.value).toContain('4,186,010');
+    expect(datum?.findAllByType(UsageCoverageLine)).toHaveLength(0);
   });
   it('does not reaggregate unchanged comparison contributions on a source-progress render', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, period: { startMs: day, endMs: 2 * day } });
     // The page reads the canonical preceding-range query (totals only, no charts or insights).
     const priorQuery = resolveUsageComparisonQuery(query)!;
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
-      { query, status: 'available', value: props.slice.accounting! },
-      { query: priorQuery, status: 'available', value: props.slice.accounting! },
-    ] }).results[0]!;
     let reads = 0;
-    const previous = { ...slice.comparison!.accounting!, contributions: slice.comparison!.accounting!.contributions!.map(row =>
+    const previous = { ...props.slice.accounting!, contributions: props.slice.accounting!.contributions!.map(row =>
       new Proxy(row, { get(target, key, receiver) {
         if (key === 'cost') reads++;
         return Reflect.get(target, key, receiver);
       } })) };
-    const withComparison = { ...slice, comparison: { ...slice.comparison!, accounting: previous } };
+    const withComparison = resolveUsagePageAggregation({ queries: [query], accounting: [
+      { query, status: 'available', value: props.slice.accounting! },
+      { query: priorQuery, status: 'available', value: previous },
+    ] }).results[0]!;
+    expect(reads).toBeGreaterThan(0);
+    expect(withComparison.comparison!.accounting).not.toHaveProperty('contributions');
+    reads = 0;
     const bodies = (current: typeof withComparison, includeEfficiency = true) => <>
       <UsagePeriodSummaryWidget {...props} query={query} slice={current} id="usage_period_summary" testID="comparison-summary" />
       {includeEfficiency ? <UsageEfficiencyWidget {...props} query={query} slice={current} id="usage_efficiency" testID="comparison-efficiency" /> : null}
     </>;
     const screen = await renderScreen(bodies(withComparison, false));
-    expect(reads).toBeGreaterThan(0);
+    expect(reads).toBe(0);
     const metrics = () => screen.findAllByType(HappierDataMetric).filter(metric => metric.props.testID === 'comparison-summary.hero'
       || metric.props.testID === 'comparison-efficiency.perMtok');
     expect(metrics().map(metric => metric.props.comparison?.value)).toEqual(['▲ 0%']);
@@ -95,9 +169,16 @@ describe('one selected money basis across Usage bodies', () => {
     await screen.update(bodies({ ...withComparison, pending: true }));
     expect(reads).toBe(0);
     expect(metrics().map(metric => metric.props.comparison?.value)).toEqual(['▲ 0%', '▲ 0%']);
-    const changedPrevious = { ...previous, contributions: previous.contributions.map(row => ({ ...row,
-      cost: { ...row.cost, reportedUsd: row.cost.reportedUsd * 2 } })) };
-    await screen.update(bodies({ ...withComparison, comparison: { ...withComparison.comparison, accounting: changedPrevious } }));
+    const changedPrevious = repriceUsageAnalyticsResponse({ ...previous,
+      totals: { ...previous.totals, cost: { ...previous.totals.cost, reportedUsd: previous.totals.cost.reportedUsd * 2 } },
+      contributions: previous.contributions.map(row => ({ ...row, cost: { ...row.cost, reportedUsd: row.cost.reportedUsd * 2 } })),
+    });
+    const changed = resolveUsagePageAggregation({ queries: [query], accounting: [
+      { query, status: 'available', value: props.slice.accounting! },
+      { query: priorQuery, status: 'available', value: changedPrevious },
+    ] }).results[0]!;
+    expect(changed.comparison!.accounting).not.toHaveProperty('contributions');
+    await screen.update(bodies(changed));
     expect(metrics().map(metric => metric.props.comparison?.value)).toEqual(['▼ 50%', '▼ 50%']);
   });
   it('keeps unrequested calendar evidence unavailable in the period summary', async () => {
@@ -292,6 +373,50 @@ describe('one selected money basis across Usage bodies', () => {
       expect(stat(t('usage.board.page.agentTime')).props.caption === t('usage.board.page.notMeasuredYet')).toBe(expected === '—');
       expect(stat(t('usage.board.page.mergedPrs')).props.caption).toEqual(expect.any(String));
     }
+  });
+  it('renders observed merged counts from compact Work facts without allocation rows', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, includeWorkEvidence: true, workProjection: 'summary', includeSessionEvidence: false });
+    const value = projectUsageAnalyticsSummary(props.slice.accounting!, UsageAnalyticsQueryRequestSchema.parse({
+      dateRange: { startMs: 0, endMs: day }, costMode: 'auto',
+    }));
+    const evidence = ['a', 'b'].map(turnId => ScmPullRequestWorkEvidenceSchema.parse({ sessionId: 's', turnId, repositoryKey: 'repo',
+      checkpointRef: `checkpoint/s/${turnId}`, checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Outcome', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' },
+    }));
+    const summary = projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({
+      turns: evidence.map(({ sessionId, turnId }) => ({ sessionId, turnId })), evidence,
+    }).outcomes);
+    const slice = (merged: typeof summary) => resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value }], work: [{ query, status: 'available', summary: merged }],
+    }).results[0]!;
+    const current = slice(summary);
+    expect(current.accounting).not.toHaveProperty('contributions');
+    expect(current.work).toBeUndefined();
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={current} id="usage_period_summary" testID="summary" />);
+    const merged = () => screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.mergedPrs'));
+    expect(merged()?.props.value).toBe(1);
+    expect(merged()?.props.caption).toBe(t('usage.board.page.linkedByEvidence'));
+    await screen.update(<UsagePeriodSummaryWidget {...props} query={query} slice={slice(projectUsageWorkSummary([]))} id="usage_period_summary" testID="summary" />);
+    expect(merged()?.props.value).toBe(0);
+    expect(merged()?.props.caption).toBe(t('usage.board.page.noneLinkedByEvidence'));
+  });
+  it('says Agent time and merged work need a newer server, not "not measured yet", when this Home\'s server is too old to read them', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, includeSessionEvidence: true, includeWorkEvidence: true });
+    const accounting = [{ query, status: 'available' as const, value: props.slice.accounting! }];
+    const tooOld = (operation: string) => ({ status: 'error' as const, errorCode: 'update_required',
+      updateRequired: { kind: 'update_required' as const, operation, component: 'server' as const, reason: 'session_read_batch_unsupported' } });
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting,
+      sources: [{ source: 'how_you_work', ...tooOld('session.detail') }, { source: 'work', ...tooOld('work.outcomes') }] }).results[0]!;
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice} id="usage_period_summary" testID="summary" />);
+    const caption = (label: string) => screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === label)?.props.caption;
+    // Waiting cannot fill these in: the slot says why once, in the same words as the page header, and keeps its place.
+    expect(caption(t('usage.board.page.agentTime'))).toBe(t('usage.board.page.needsNewerServer'));
+    expect(caption(t('usage.board.page.mergedPrs'))).toBe(t('usage.board.page.needsNewerServer'));
   });
   it('uses reported then priced money per real QA row across Daily, Flow, Breakdowns, Leaders, Efficiency and Work', async () => {
     const query = normalizeUsageQuery({ metric: 'cost', breakdown: ['agent'], timeZoneOffsetMinutes: 120 });

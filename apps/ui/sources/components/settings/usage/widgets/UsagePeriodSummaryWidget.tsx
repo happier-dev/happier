@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { UsagePeriodSummaryBody, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
+import { UsagePeriodSummaryBody, formatHappierDataValue, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import {
   UsageCoverageLine,
@@ -13,6 +13,7 @@ import {
   useUsagePluginTheme,
   type UsageBodyProps,
   UsageBodyNoUsage,
+  readUsageSourceNeedsNewerServer,
 } from './usageBodyKit';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
@@ -54,10 +55,9 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const comparison = usageComparison(current, previous);
   const apiEquivalent = props.slice.costFactTotals?.find(fact => fact.kind === 'api_equivalent' && fact.currency === currency);
   const invoice = props.slice.costFactTotals?.find(fact => fact.kind === 'invoice' && fact.currency === currency);
-  const merged =
-    props.slice.work?.outcomes.filter(
-      (outcome) => outcome.pullRequest.state === 'merged',
-    ) ?? null;
+  // A work read this Home's server cannot answer counts nothing, not zero merged work.
+  const merged = readUsageSourceNeedsNewerServer(props.slice, 'work') ? null
+    : props.slice.workSummary?.mergedPrCount ?? null;
   const measuredIntervals = props.slice.howYouWork?.intervals;
   const intervals = measuredIntervals?.coverage === 'complete_for_supplied_facts' ? measuredIntervals : null;
   const subline = [
@@ -73,6 +73,9 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   ]
     .filter(Boolean)
     .join(' · ');
+  // A figure this Home's server is too old to read will not arrive by waiting: its slot says so in the header's words.
+  const unmeasured = (source: 'how_you_work' | 'work') => readUsageSourceNeedsNewerServer(props.slice, source)
+    ? t('usage.board.page.needsNewerServer') : t('usage.board.page.notMeasuredYet');
   const stats: UsageSummaryMetric[] = [];
   if (!cost && invoice?.amountUsd != null)
     stats.push(
@@ -86,12 +89,12 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
     );
   if (props.query.includeWorkEvidence)
     stats.push(
-      { id: 'merged', label: t('usage.board.page.mergedPrs'), value: merged?.length ?? UNKNOWN_VALUE,
+      { id: 'merged', label: t('usage.board.page.mergedPrs'), value: merged ?? UNKNOWN_VALUE,
         // Every figure, a zero or a dash included, says why it reads as it does in the same caption slot.
         caption:
-          !merged
-            ? t('usage.board.page.notMeasuredYet')
-            : merged.length > 0
+          merged === null
+            ? unmeasured('work')
+            : merged > 0
               ? t('usage.board.page.linkedByEvidence')
               : t('usage.board.page.noneLinkedByEvidence'),
       },
@@ -102,9 +105,16 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
     stats.push(
       { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? intervals.agentTimeMs / HOUR_MS : UNKNOWN_VALUE,
         valueFormatter: intervals ? () => formatUsageDurationCompact(intervals.agentTimeMs) : undefined,
+        ...(intervals && !formatUsageDurationCompact(intervals.agentTimeMs).includes(formatHappierDataValue(intervals.agentTimeMs / HOUR_MS, getPreferredLanguage())) ? {
+          datum: { label: t('usage.board.page.agentTime'),
+            value: t('usage.board.howYouWork.durationSeconds', { seconds: formatHappierDataValue(intervals.agentTimeMs / 1000, getPreferredLanguage()) }),
+            subtitle: t('usage.board.page.elapsedTime', { time: t('usage.board.howYouWork.durationSeconds', {
+              seconds: formatHappierDataValue(intervals.elapsedBusyMs / 1000, getPreferredLanguage()),
+            }) }) },
+        } : {}),
         caption: intervals ? t('usage.board.page.elapsedTime', {
           time: formatUsageDurationCompact(intervals.elapsedBusyMs),
-        }) : t('usage.board.page.notMeasuredYet') },
+        }) : unmeasured('how_you_work') },
     );
   else
     stats.push(

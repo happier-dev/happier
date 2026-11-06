@@ -4,6 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   CompositionStrip,
+  ChartDatum,
+  formatHappierDataExactShare,
+  formatHappierDataValue,
   HappierDataMetric,
 } from '@happier-dev/plugin-ui/presentation';
 import { ChartTooltip } from '@/components/ui/charts';
@@ -17,7 +20,7 @@ import {
   formatTokenCountLong,
   formatUsageCost,
 } from '@/utils/format/usageNumbers';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
@@ -103,31 +106,25 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
         reason={t(unpriced ? 'usage.board.page.efficiencyUnpricedReason' : 'usage.board.page.efficiencyNoBasisReason')}
       />
     );
+  const cacheCaption = efficiency.cacheHitRatePct === null ? t('common.unavailable')
+    : view.cacheSavings?.cacheSavingsUsd != null
+      ? t('usage.board.page.cacheListPriceDifference', { amount: formatUsageCost(view.cacheSavings.cacheSavingsUsd, 'USD') })
+      : t('usage.board.page.cacheReadTokens', { tokens: formatTokenCount(efficiency.cachedReadTokens) });
+  const exactCacheRate = efficiency.cacheHitRatePct === null ? null : formatHappierDataExactShare(efficiency.cacheHitRatePct / 100, getPreferredLanguage());
+  const exactCacheBasis = view.cacheSavings?.cacheSavingsUsd != null
+    ? `USD ${formatHappierDataValue(view.cacheSavings.cacheSavingsUsd, getPreferredLanguage())}` : `${formatHappierDataValue(efficiency.cachedReadTokens, getPreferredLanguage())} ${t('usage.board.page.tokensUnit')}`;
+  const cacheFigure = <HappierDataMetric testID={`${props.testID}.cacheHit`} theme={chartTheme} size="stat" showLabel
+    label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? UNKNOWN_VALUE}
+    valueFormatter={value => `${Math.round(value)}%`} caption={cacheCaption} />;
+  const cacheHidden = exactCacheRate !== null && (`${Math.round(efficiency.cacheHitRatePct!)}%` !== exactCacheRate
+    || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens, getPreferredLanguage())));
   return (
     <View style={styles.body} testID={`${props.testID}.efficiency`}>
       {/* The lab's four figures keep their slots: an unknown is a quiet dash with its reason beneath. */}
       <View style={styles.grid}>
         <View style={cellStyle}>
-          <HappierDataMetric
-            testID={`${props.testID}.cacheHit`}
-            theme={chartTheme}
-            size="stat"
-            showLabel
-            label={t('usage.board.page.cacheHit')}
-            value={efficiency.cacheHitRatePct !== null ? efficiency.cacheHitRatePct / 100 : UNKNOWN_VALUE}
-            valueFormatter={(value) => `${Math.round(value * 100)}%`}
-            caption={
-              efficiency.cacheHitRatePct === null
-                ? t('common.unavailable')
-                : view.cacheSavings?.cacheSavingsUsd != null
-                  ? t('usage.board.page.cacheListPriceDifference', {
-                      amount: formatUsageCost(view.cacheSavings.cacheSavingsUsd, 'USD'),
-                    })
-                  : t('usage.board.page.cacheReadTokens', {
-                      tokens: formatTokenCount(efficiency.cachedReadTokens),
-                    })
-            }
-          />
+          {cacheHidden && exactCacheRate ? <ChartDatum testID={`${props.testID}.cacheHit.detail`}
+            datum={{ label: t('usage.board.page.cacheHit'), value: exactCacheRate, subtitle: `${exactCacheBasis} · ${cacheCaption}` }}>{cacheFigure}</ChartDatum> : cacheFigure}
         </View>
         <View style={cellStyle}>
           <HappierDataMetric

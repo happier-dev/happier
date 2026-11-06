@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { UsageAnalyticsCostFactKind } from '@happier-dev/protocol';
-import { HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
+import type { UsageAnalyticsCostFactKind } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { ChartDatum, formatHappierDataValue, HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -79,9 +79,12 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   return (
     <View style={styles.body} testID={`${props.testID}.costFacts`}>
       <View style={styles.grid}>
-        {facts.map((fact) => (
-          <View key={`${fact.kind}:${fact.currency}`} style={styles.cell}>
-            <HappierDataMetric
+        {facts.map((fact) => {
+          const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage());
+          const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
+          const hiddenPrecision = !formatTokenCount(fact.tokens.total).includes(exactTokens)
+            || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
+          const figure = <HappierDataMetric
               testID={`${props.testID}.fact.${fact.kind}`}
               theme={chartTheme}
               size="stat"
@@ -106,9 +109,17 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               ]
                 .filter(Boolean)
                 .join(' · ')}
-            />
-          </View>
-        ))}
+            />;
+          return <View key={`${fact.kind}:${fact.currency}`} style={styles.cell}>
+            {hiddenPrecision ? <ChartDatum testID={`${props.testID}.fact.${fact.kind}.detail`}
+              datum={{ label: t(KIND_TITLE[fact.kind]),
+                value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
+                subtitle: [t('usage.board.page.factTokens', { tokens: exactTokens }),
+                  fact.complete ? null : t('usage.board.page.factIncomplete')].filter(Boolean).join(' · ') }}>
+              {figure}
+            </ChartDatum> : figure}
+          </View>;
+        })}
       </View>
       {partialOnce ? (
         <Text style={styles.partial} testID={`${props.testID}.partial`}>{usagePartialHistoryLabel()}</Text>
