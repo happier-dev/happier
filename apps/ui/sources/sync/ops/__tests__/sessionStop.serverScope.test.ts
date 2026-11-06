@@ -561,6 +561,60 @@ describe('sessionStopWithServerScope', () => {
     expect(mockStorageState.applySessions).not.toHaveBeenCalled();
   });
 
+  it('maps a daemon turn-guard refusal to its own first-class outcome without runner fallback', async () => {
+    mockStorageState.sessions = {
+      'sid-agent-stop': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({ status: 'refused_turn_in_flight' });
+
+    await expect(sessionStopWithServerScope('sid-agent-stop', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'A turn is in flight; retry to force-stop',
+      code: 'session_stop_refused_turn_in_flight',
+    });
+    // A refusal means "do not stop"; the live-runner fallback would bypass the
+    // daemon's guard and kill the turn anyway.
+    expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(mockStorageState.applySessionListRenderablePatches).not.toHaveBeenCalled();
+    expect(mockStorageState.applySessions).not.toHaveBeenCalled();
+  });
+
+  it('attributes agent-action origin in the daemon stop payload and keeps the default payload legacy-shaped', async () => {
+    mockStorageState.sessions = {
+      'sid-attributed': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({ status: 'stopped' });
+
+    await sessionStopWithServerScope('sid-attributed', { serverId: 'server-a', origin: 'agent-action' });
+    expect(mockMachineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+      method: 'stop-session',
+      payload: { sessionId: 'sid-attributed', origin: 'agent-action' },
+    }));
+
+    await sessionStopWithServerScope('sid-attributed', { serverId: 'server-a', origin: 'user-explicit' });
+    expect(mockMachineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+      payload: { sessionId: 'sid-attributed', origin: 'user-explicit' },
+    }));
+
+    mockMachineRpcWithServerScope.mockClear();
+    await sessionStopWithServerScope('sid-attributed', { serverId: 'server-a' });
+    expect(mockMachineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+      payload: { sessionId: 'sid-attributed' },
+    }));
+  });
+
   it('fails closed for a current daemon response that violates the strict Stop protocol', async () => {
     mockStorageState.sessions = {
       'sid-protocol-mismatch': {

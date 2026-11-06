@@ -18,6 +18,50 @@ function unknownTranscriptTurnActivity(): SessionTurnActivity {
   };
 }
 
+/**
+ * One-shot "is a turn in flight right now" answer — the synchronous form of
+ * the initial activity read `waitForSessionIdle` performs, without the wait.
+ *
+ * Reads the projected turn state first and falls back to the transcript tail;
+ * whenever turn truth cannot be established (session unresolvable, transcript
+ * unavailable) it fails CLOSED to busy. The stop-session turn guard consumes
+ * this: a session that cannot be shown idle must not be killed by a guarded
+ * caller.
+ */
+export async function readSessionTurnInFlight(params: Readonly<{
+  credentials: Credentials;
+  idOrPrefix: string;
+}>): Promise<boolean> {
+  const sessionTarget = await resolveSessionTransportContext({
+    credentials: params.credentials,
+    idOrPrefix: params.idOrPrefix,
+  });
+  if (!sessionTarget.ok) {
+    return true;
+  }
+
+  const projectedActivity = detectSessionTurnActivityFromProjection(sessionTarget.rawSession);
+  if (projectedActivity) {
+    return projectedActivity.turnInFlight;
+  }
+
+  try {
+    const transcriptActivity = await detectSessionTurnActivity({
+      token: params.credentials.token,
+      sessionId: sessionTarget.sessionId,
+      encryptionMode: sessionTarget.mode,
+      encryptionKey: sessionTarget.ctx.encryptionKey,
+      encryptionVariant: sessionTarget.ctx.encryptionVariant,
+      sessionProjection: sessionTarget.rawSession,
+    });
+    return transcriptActivity.turnInFlight;
+  } catch {
+    // Same fail-closed rule the idle wait applies when the transcript cannot
+    // be read: absence of evidence is not an idle session.
+    return unknownTranscriptTurnActivity().turnInFlight;
+  }
+}
+
 export async function waitForSessionIdle(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;

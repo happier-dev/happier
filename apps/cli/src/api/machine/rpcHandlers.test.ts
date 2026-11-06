@@ -62,6 +62,18 @@ const { fetchServerFeaturesSnapshotMock } = vi.hoisted(() => ({
   })),
 }));
 
+const { readSessionTurnInFlightMock } = vi.hoisted(() => ({
+  readSessionTurnInFlightMock: vi.fn(async () => false),
+}));
+
+vi.mock('@/session/services/waitForSessionIdle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/session/services/waitForSessionIdle')>();
+  return {
+    ...actual,
+    readSessionTurnInFlight: readSessionTurnInFlightMock,
+  };
+});
+
 const {
   getDaemonSessionRunnerStatusMock,
   requestDaemonSessionConnectedServiceAuthSwitchMock,
@@ -305,6 +317,129 @@ describe('registerMachineRpcHandlers', () => {
 
     await expect(registered.get(RPC_METHODS.STOP_SESSION)?.({ sessionId: 'session-1' })).resolves.toEqual(result);
     expect(stopSession).toHaveBeenCalledWith('session-1');
+  });
+
+  describe('stop-session turn guard for agent-attributed callers', () => {
+    const legacyCredentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+
+    const registerStopHandler = () => {
+      const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+      const stopSession = vi.fn(async () => ({ status: 'stopped' as const }));
+      registerMachineRpcHandlers({
+        rpcHandlerManager: {
+          registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => {
+            registered.set(method, handler);
+          },
+        } as any,
+        handlers: {
+          spawnSession: vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const)),
+          stopSession: stopSession as never,
+          requestShutdown: () => {},
+        },
+      });
+      return { handler: registered.get(RPC_METHODS.STOP_SESSION)!, stopSession };
+    };
+
+    beforeEach(() => {
+      readSessionTurnInFlightMock.mockReset();
+      readSessionTurnInFlightMock.mockResolvedValue(false);
+      readCredentialsMock.mockReset();
+      readCredentialsMock.mockResolvedValue(legacyCredentials as any);
+    });
+
+    it('refuses an agent-action stop while a turn is in flight, without signalling the session', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readSessionTurnInFlightMock.mockResolvedValue(true);
+
+      await expect(handler({
+        sessionId: 'session-1',
+        origin: 'agent-action',
+      })).resolves.toEqual({ status: 'refused_turn_in_flight' });
+      expect(stopSession).not.toHaveBeenCalled();
+      expect(readSessionTurnInFlightMock).toHaveBeenCalledWith(expect.objectContaining({
+        idOrPrefix: 'session-1',
+      }));
+    });
+
+    it('dispatches an agent-action stop when no turn is in flight', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readSessionTurnInFlightMock.mockResolvedValue(false);
+
+      await expect(handler({
+        sessionId: 'session-1',
+        origin: 'agent-action',
+      })).resolves.toEqual({ status: 'stopped' });
+      expect(stopSession).toHaveBeenCalledWith('session-1');
+    });
+
+    it('keeps the legacy unattributed stop unguarded even while a turn is in flight', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readSessionTurnInFlightMock.mockResolvedValue(true);
+
+      await expect(handler({ sessionId: 'session-1' })).resolves.toEqual({ status: 'stopped' });
+      expect(stopSession).toHaveBeenCalledWith('session-1');
+      // The guard is not merely passing through a busy detector answer: an
+      // unattributed caller must not reach the detector at all.
+      expect(readSessionTurnInFlightMock).not.toHaveBeenCalled();
+    });
+
+    it('dispatches a user-explicit stop even while a turn is in flight', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readSessionTurnInFlightMock.mockResolvedValue(true);
+
+      await expect(handler({
+        sessionId: 'session-1',
+        origin: 'user-explicit',
+      })).resolves.toEqual({ status: 'stopped' });
+      expect(stopSession).toHaveBeenCalledWith('session-1');
+      expect(readSessionTurnInFlightMock).not.toHaveBeenCalled();
+    });
+
+    it('dispatches a forced agent-action stop even while a turn is in flight', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readSessionTurnInFlightMock.mockResolvedValue(true);
+
+      await expect(handler({
+        sessionId: 'session-1',
+        origin: 'agent-action',
+        force: true,
+      })).resolves.toEqual({ status: 'stopped' });
+      expect(stopSession).toHaveBeenCalledWith('session-1');
+    });
+
+    it('refuses an agent-action stop when turn truth cannot be established (credentials unavailable)', async () => {
+      const { handler, stopSession } = registerStopHandler();
+      readCredentialsMock.mockResolvedValue(null);
+
+      await expect(handler({
+        sessionId: 'session-1',
+        origin: 'agent-action',
+      })).resolves.toEqual({ status: 'refused_turn_in_flight' });
+      expect(stopSession).not.toHaveBeenCalled();
+      expect(readSessionTurnInFlightMock).not.toHaveBeenCalled();
+    });
+
+    it('attributes the origin in the stop log line while keeping the existing fields stable', async () => {
+      const { handler } = registerStopHandler();
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+      await handler({ sessionId: 'session-1', origin: 'user-explicit' });
+      expect(debug).toHaveBeenCalledWith('[API MACHINE] Stop session session-1: stopped origin:user-explicit');
+
+      debug.mockClear();
+      await handler({ sessionId: 'session-1' });
+      expect(debug).toHaveBeenCalledWith('[API MACHINE] Stop session session-1: stopped');
+
+      debug.mockClear();
+      readSessionTurnInFlightMock.mockResolvedValue(true);
+      await handler({ sessionId: 'session-1', origin: 'agent-action' });
+      expect(debug).toHaveBeenCalledWith(
+        '[API MACHINE] Stop session session-1: refused_turn_in_flight origin:agent-action',
+      );
+    });
   });
 
   it('emits ONE attribution info line per spawn/resume request carrying caller-source fields, never secrets (WAVE-E-F01)', async () => {

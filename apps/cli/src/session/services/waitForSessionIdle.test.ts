@@ -309,4 +309,89 @@ describe('waitForSessionIdle', () => {
             initialAgentStateCiphertextBase64: controlledAgentState,
         }));
     });
+    describe('readSessionTurnInFlight', () => {
+        it('answers from the projection alone when it carries turn state', async () => {
+            const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+            vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+                fetchEncryptedTranscriptPageLatest,
+                fetchEncryptedTranscriptPageAfterSeq: vi.fn(async () => []),
+            }));
+            mockTransportContext({ latestTurnStatus: 'in_progress' });
+
+            const { readSessionTurnInFlight } = await import('./waitForSessionIdle');
+
+            await expect(readSessionTurnInFlight({
+                credentials: credentials(),
+                idOrPrefix: 'sess-1',
+            })).resolves.toBe(true);
+
+            mockTransportContext({ latestTurnStatus: 'completed' });
+            vi.resetModules();
+            const fresh = await import('./waitForSessionIdle');
+            await expect(fresh.readSessionTurnInFlight({
+                credentials: credentials(),
+                idOrPrefix: 'sess-1',
+            })).resolves.toBe(false);
+            expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+        });
+
+        it('falls back to the transcript tail when the projection carries no turn state', async () => {
+            // A user row with no lifecycle close event leaves the turn in flight.
+            const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [
+                {
+                    id: 'm1',
+                    seq: 1,
+                    createdAt: 1,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+                },
+            ]);
+            vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+                fetchEncryptedTranscriptPageLatest,
+                fetchEncryptedTranscriptPageAfterSeq: vi.fn(async () => []),
+            }));
+            mockTransportContext({});
+
+            const { readSessionTurnInFlight } = await import('./waitForSessionIdle');
+
+            await expect(readSessionTurnInFlight({
+                credentials: credentials(),
+                idOrPrefix: 'sess-1',
+            })).resolves.toBe(true);
+            expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalled();
+        });
+
+        it('fails closed to busy when the transcript cannot be read', async () => {
+            const fetchEncryptedTranscriptPageLatest = vi.fn(async () => {
+                throw new Error('transcript unavailable');
+            });
+            vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+                fetchEncryptedTranscriptPageLatest,
+                fetchEncryptedTranscriptPageAfterSeq: vi.fn(async () => []),
+            }));
+            mockTransportContext({});
+
+            const { readSessionTurnInFlight } = await import('./waitForSessionIdle');
+
+            await expect(readSessionTurnInFlight({
+                credentials: credentials(),
+                idOrPrefix: 'sess-1',
+            })).resolves.toBe(true);
+        });
+
+        it('fails closed to busy when the session cannot be resolved', async () => {
+            vi.doMock('./resolveSessionTransportContext', () => ({
+                resolveSessionTransportContext: vi.fn(async () => ({
+                    ok: false,
+                    code: 'session_not_found',
+                })),
+            }));
+
+            const { readSessionTurnInFlight } = await import('./waitForSessionIdle');
+
+            await expect(readSessionTurnInFlight({
+                credentials: credentials(),
+                idOrPrefix: 'sess-missing',
+            })).resolves.toBe(true);
+        });
+    });
 });

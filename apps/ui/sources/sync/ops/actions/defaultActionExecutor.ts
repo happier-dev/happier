@@ -232,8 +232,8 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
     },
 
-    sessionStop: async ({ sessionId, serverId }) =>
-      await sessionStopWithServerScope(sessionId, { serverId }),
+    sessionStop: async ({ sessionId, serverId, origin }) =>
+      await sessionStopWithServerScope(sessionId, { serverId, ...(origin ? { origin } : {}) }),
 
     sessionRollback: async ({ sessionId, serverId, target }) => {
       const sid = String(sessionId ?? '').trim();

@@ -865,3 +865,69 @@ describe('requestSessionStop marker fallback', () => {
     },
   );
 });
+
+describe('requestSessionStop origin attribution and turn-guard refusal', () => {
+  const credentials = {
+    token: 'token-1',
+    encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-owned',
+      rawSession: {
+        id: 'sess-owned',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-owned',
+      active: false,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockReset();
+  });
+
+  it('forwards the caller origin to the owning-machine stop RPC when provided', async () => {
+    mocks.callMachineRpc.mockResolvedValue({ status: 'stopped' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await requestSessionStop({ credentials, idOrPrefix: 'sess-owned', origin: 'agent-action' });
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'stop-session',
+      request: { sessionId: 'sess-owned', origin: 'agent-action' },
+    }));
+  });
+
+  it('keeps the machine stop request legacy-shaped when no origin is provided', async () => {
+    mocks.callMachineRpc.mockResolvedValue({ status: 'stopped' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await requestSessionStop({ credentials, idOrPrefix: 'sess-owned' });
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'stop-session',
+      request: { sessionId: 'sess-owned' },
+    }));
+  });
+
+  it('surfaces a daemon turn-guard refusal as its own stop outcome, not an unsupported response', async () => {
+    mocks.callMachineRpc.mockResolvedValue({ status: 'refused_turn_in_flight' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-owned', origin: 'agent-action' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-owned',
+      stopped: false,
+      stopOutcome: { status: 'refused_turn_in_flight' },
+    });
+    // A refusal answered the stop request; no caller-local stop path may run.
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+  });
+});

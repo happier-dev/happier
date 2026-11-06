@@ -770,14 +770,25 @@ export async function sessionStop(sessionId: string): Promise<SessionStopRespons
 
 export async function sessionStopWithServerScope(
     sessionId: string,
-    opts?: Readonly<{ serverId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null; origin?: import('@happier-dev/protocol').StopSessionOrigin }>,
 ): Promise<SessionStopResponse> {
     const stopResult = await stopSessionUsingCanonicalStrategy({
         sessionId,
         serverId: opts?.serverId ?? null,
+        ...(opts?.origin ? { origin: opts.origin } : {}),
     });
     if (stopResult.success) {
         return { success: true };
+    }
+
+    if (stopResult.reason === 'refused_turn_in_flight') {
+        // First-class outcome, not a failure: the daemon's turn guard left the
+        // session running on purpose.
+        return {
+            success: false,
+            message: stopResult.message,
+            code: 'session_stop_refused_turn_in_flight',
+        };
     }
 
     if (stopResult.reason === 'requested') {

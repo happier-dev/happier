@@ -87,5 +87,10 @@ export async function cmdSessionStop(
     return;
   }
 
+  if (result.stopOutcome?.status === 'refused_turn_in_flight') {
+    console.log(chalk.yellow('!'), 'stop refused: a turn is in flight; wait for it to finish or stop from the app');
+    return;
+  }
+
   console.log(chalk.yellow('!'), 'stop could not be confirmed');
 }

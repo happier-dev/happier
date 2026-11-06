@@ -532,6 +532,16 @@ export const SessionStopOutcomeSchema = lazySchema(() => z.discriminatedUnion('s
     status: z.literal('stopped_projection_unconfirmed'),
     reason: z.literal('relay_inactive_not_observed'),
   }).strict(),
+  /**
+   * The owning daemon refused an agent-attributed stop because a turn was in
+   * flight, so NOTHING was signalled. Deliberately not a
+   * `physical_stop_unconfirmed` reason: those mean "could not determine",
+   * while this one proves the session was left running on purpose. Retrying
+   * with force stops anyway.
+   */
+  z.object({
+    status: z.literal('refused_turn_in_flight'),
+  }).strict(),
   z.object({
     status: z.literal('stopped_cleanup_incomplete'),
     reason: SessionStopCleanupIncompleteReasonSchema,

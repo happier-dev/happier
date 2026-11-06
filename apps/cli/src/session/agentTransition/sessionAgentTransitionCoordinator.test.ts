@@ -129,9 +129,12 @@ function readReasonLiterals(schema: unknown): readonly string[] {
 function everyUnconfirmedStopOutcome(): ReadonlyArray<readonly [string, SessionStopOutcome]> {
   const cases = SessionStopOutcomeSchema.options.flatMap((option) => {
     const shape = (option as unknown as Readonly<{
-      shape: Readonly<{ status: Readonly<{ value: string }>; reason: unknown }>;
+      shape: Readonly<{ status: Readonly<{ value: string }>; reason?: unknown }>;
     }>).shape;
     const status = shape.status.value;
+    // Reason-less outcomes (e.g. refused_turn_in_flight) carry no reason literals
+    // to enumerate; their status-level predicate is covered by isSessionStopConfirmed below.
+    if (!('reason' in shape)) return [];
     return readReasonLiterals(shape.reason).map((reason) => [
       `${status}/${reason}`,
       SessionStopOutcomeSchema.parse({ status, reason }),
@@ -144,7 +147,10 @@ function everyUnconfirmedStopOutcome(): ReadonlyArray<readonly [string, SessionS
   // A zod change that broke the introspection above would silently turn the
   // suite into a no-op. Anchor on one reason that WAS allowlisted as proof of
   // "no applied effect" and one that never was.
-  const reasons = new Set(cases.map(([, outcome]) => outcome.reason));
+  // Read from the emitted label rather than the parsed outcome: the outcome
+  // union now includes a reason-less arm (refused_turn_in_flight) that this
+  // generator never emits, so narrowing the parsed value would lie.
+  const reasons = new Set(cases.map(([label]) => label.split('/')[1]));
   if (!reasons.has('missing_topology_proof') || !reasons.has('runner_exit_timeout')) {
     throw new Error('SessionStopOutcomeSchema introspection produced no usable stop reasons');
   }
