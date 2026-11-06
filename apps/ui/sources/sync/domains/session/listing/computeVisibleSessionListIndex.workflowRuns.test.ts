@@ -54,6 +54,71 @@ function compute(show: 'sessions' | 'runs' | 'both' = 'both', startedBy: ('you' 
 }
 
 describe('computeVisibleSessionListIndex workflow Runs', () => {
+    it('keeps existing project order and appends new Run groups in first-seen order', () => {
+        const group = (path: string) => sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity('home',
+            resolveSessionProjectGroupingKeyParts({ machineId: 'machine-1', path })));
+        const input: SessionListIndexItem[] = ['/a', '/b'].flatMap(path => [
+            { type: 'header', headerKind: 'project', title: path, serverId: 'home', groupKey: group(path) },
+            { type: 'session', sessionId: path, serverId: 'home', groupKey: group(path), groupKind: 'project' },
+        ]);
+        const result = computeVisibleSessionListIndex({ source: input,
+            resolveSessionRow: (_server, id) => ({ ...resolveSessionRow('home', id),
+                metadata: { machineId: 'machine-1', path: id } }),
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListAttentionPlacementV1: 'inPlace',
+            presentation: { enabled: false, presentation: 'grouped' },
+            workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'] }),
+            workflowRuns: ['/b', '/c', '/a', '/c', '/d', '/b'].map((directory, index) => ({
+                serverId: 'home', summary: { ...summary(`run-${index}`, 'user'),
+                    where: { machineId: 'machine-1', directory } },
+            })),
+        })!;
+        expect(result.map(item => item.type === 'header' ? `header:${item.title}`
+            : item.type === 'session' ? item.sessionId : item.runId)).toEqual([
+            'header:/a', '/a', 'run-2',
+            'header:/b', '/b', 'run-0', 'run-5',
+            'header:/c', 'run-1', 'run-3',
+            'header:/d', 'run-4',
+        ]);
+    });
+
+    it('merges Runs with one pass over Session groups and preserves every row in input order', () => {
+        // F24's audit reproduced this at 1,000 Sessions and 1,000 Runs.
+        const sessionCount = 1_000;
+        const runCount = 1_000;
+        let groupVisits = 0;
+        const sessions: SessionListIndexItem[] = Array.from({ length: sessionCount }, (_, index) => ({
+            type: 'session', sessionId: `session-${index}`, serverId: 'home', groupKind: 'project',
+            get groupKey() { groupVisits += 1; return projectGroupKey; },
+        }));
+        const params = {
+            source: [source[0]!, ...sessions], resolveSessionRow,
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListAttentionPlacementV1: 'inPlace' as const,
+            presentation: { enabled: false, presentation: 'grouped' as const },
+            workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'] }),
+        };
+        computeVisibleSessionListIndex({ ...params, workflowRuns: [] });
+        const sessionProjectionVisits = groupVisits;
+        groupVisits = 0;
+        const result = computeVisibleSessionListIndex({ ...params,
+            workflowRuns: Array.from({ length: runCount }, (_, index) => ({
+                serverId: 'home', summary: summary(`run-${index}`, 'user'),
+            })),
+        })!;
+        expect(result.filter(item => item.type !== 'header').map(item =>
+            item.type === 'session' ? item.sessionId : item.runId)).toEqual([
+            ...Array.from({ length: sessionCount }, (_, index) => `session-${index}`),
+            ...Array.from({ length: runCount }, (_, index) => `run-${index}`),
+        ]);
+        // Observe actual row accesses, independently of the insertion implementation.
+        console.info('F24 workflow Run group visits', {
+            sessionCount, runCount, sessionProjectionVisits, withRuns: groupVisits,
+            addedByRuns: groupVisits - sessionProjectionVisits,
+        });
+        expect(groupVisits - sessionProjectionVisits).toBeLessThanOrEqual(2 * sessionCount);
+    });
+
     it('does not turn another Account\'s readable Team Run into your start or participation', () => {
         const run = { ...summary('shared', 'user'), ownerAccountId: 'other', visibleTeamId: 'team' };
         const own = buildWorkflowRunFilterFacts({ ...run, ownerAccountId: 'me' }, 'home', 'me');

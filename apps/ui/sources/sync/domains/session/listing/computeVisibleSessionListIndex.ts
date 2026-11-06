@@ -1,5 +1,6 @@
 import type { SessionListBackgroundWorkAttentionMode } from './sessionListBackgroundWorkAttention';
 import { nestSessionListReports, resolveWorkflowRunParentSessionId } from './nestSessionListReports';
+import { mergeWorkflowRunGroups, type WorkflowRunGroup } from './mergeWorkflowRunGroups';
 import { canSessionListFilterIncludeRunsV1, normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { compileSessionListRowLocalFilter, compileSessionListSpaceFilter, compileWorkflowRunSessionListFilter, type SessionListSpaceMembership } from './sessionListWorkFilter';
@@ -1289,13 +1290,14 @@ function projectWorkflowRunRows(
 ;
     const resolveRunProject = membership.projectKeyResolver;
     const projectDisplay = buildProjectGroupDisplayIndex(params.workspaceRefs ?? []);
-    const output = visible.filter((item) => {
+    const sessionItems = visible.filter((item) => {
         if (item.type !== 'session') return item.type === 'header';
         const key = normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey;
         return Boolean(key && params.supplementalNeedsYouSessionKeys?.has(key))
             || sessionListItemMatchesWorkFilter(item, filter, membership);
     });
     const summaryByKey = new Map(runs.map((run) => [JSON.stringify([run.serverId, run.summary.id]), run.summary]));
+    const runGroups = new Map<string, WorkflowRunGroup>();
     for (const { serverId, summary } of runs) {
         const section = isTerminalWorkflowRunState(summary.state) ? 'inactive' : 'active';
         const where = summary.where;
@@ -1325,18 +1327,21 @@ function projectWorkflowRunRows(
             type: 'workflow_run', runId: summary.id, serverId, groupKey, groupKind: 'project', section,
             ...(workspace ? { workspace } : {}),
         };
-        let insertAt = -1;
-        for (let i = 0; i < output.length; i += 1) if (output[i]?.groupKey === groupKey) insertAt = i + 1;
-        if (insertAt >= 0) output.splice(insertAt, 0, row);
-        else output.push({ type: 'header', headerKind: 'project', groupKey,
+        const group = runGroups.get(groupKey);
+        if (group) {
+            group.rows.push(row);
+            continue;
+        }
+        runGroups.set(groupKey, { rows: [row], header: { type: 'header', headerKind: 'project', groupKey,
             workspaceKey: fallbackIdentity ? buildSessionWorkspaceFallbackOrderKey(fallbackIdentity) : groupKey, serverId,
             title: project ? projectDisplay.get(groupKey)?.title ?? t('common.loading') : where?.directory ?? t('workflows.title'),
             ...(project ? { projectKey: project } : {}), ...(workspace ? { workspace } : {}),
             ...(project ? { workspaceScopeHint: baseline
                 ? { serverId, machineId: baseline.machineId, rootPath: baseline.rootPath } : null }
                 : where ? { workspaceScopeHint: { serverId, machineId: where.machineId, rootPath: where.directory } } : {}),
-        }, row);
+        } });
     }
+    const output = mergeWorkflowRunGroups(sessionItems, runGroups);
     // Placement has already assigned these bands through the canonical Session
     // owner. Adding Runs must not reclassify those rows into ordinary sections.
     const placed: SessionListIndexItem[] = [];
