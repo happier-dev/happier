@@ -88,16 +88,27 @@ export type HostRequesterExecutionIdentity =
 
 type HostAgentIsolationRefusalReason = Extract<HostRequesterExecutionIdentity, { kind: 'unknown' }>['reason']
     | Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['code']
-    | 'owner_person_authority_required' | 'launch_probe_failed'
+    | 'owner_person_authority_required' | 'launch_probe_failed' | 'isolation_not_ready'
     | 'workspace_not_ready' | 'unsupported_platform' | 'agent_launch_kind_unavailable';
 
 function throwNativeAdmissionRefusal(error: PluginError, reason: HostAgentIsolationRefusalReason,
-    launchKind?: HostAgentIsolationLaunchKind): never {
+    launchKind?: HostAgentIsolationLaunchKind, status?: HostAgentIsolationLaunchSnapshot['status']): never {
     try {
         logger.warnLocalFile('[P11] Native execution admission refused', { code: error.code, reason,
+            ...(status ? { status: status.kind } : {}),
+            ...(status?.kind === 'applying' ? { isolationPhase: status.phase } : {}),
             ...(launchKind ? { launchKind } : {}), phase: 'native_execution_admission' });
     } catch { /* File diagnostics cannot replace the original no-effect refusal. */ }
     throw error;
+}
+
+function refuseIsolationNotReady(status: HostAgentIsolationLaunchSnapshot['status'], code: string,
+    launchKind?: HostAgentIsolationLaunchKind): never {
+    const reason = status.kind === 'unavailable' ? status.code : 'isolation_not_ready';
+    throwNativeAdmissionRefusal(new PluginError({ code,
+        message: 'Requester execution protection is unavailable', retryable: false,
+        details: { reason, status: status.kind, ...(status.kind === 'applying' ? { phase: status.phase } : {}),
+            ...(launchKind ? { launchKind } : {}) } }), reason, launchKind, status);
 }
 
 type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
@@ -356,9 +367,7 @@ export function assertHostRequesterExecutionAdmissionForHost(input: Readonly<{
             message: 'Requester execution protection is unavailable', retryable: false, details: { reason } }), reason, input.agentLaunchKind);
     }
     if (identity && !ownerBreakGlass && input.snapshot?.enabled && input.snapshot.status.kind !== 'effective') {
-        const reason = input.snapshot.status.kind === 'unavailable' ? input.snapshot.status.code : 'launch_probe_failed';
-        throwNativeAdmissionRefusal(new PluginError({ code: 'agent_isolation_unavailable',
-            message: 'Requester execution protection is unavailable', retryable: false, details: { reason } }), reason, input.agentLaunchKind);
+        refuseIsolationNotReady(input.snapshot.status, 'agent_isolation_unavailable', input.agentLaunchKind);
     }
     if (identity && !ownerBreakGlass && input.snapshot?.enabled) {
         const status = input.snapshot.status.kind;
@@ -484,8 +493,7 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
     if (!isAbsolute(requestedCwd) || requestedCwd.includes('\u0000')) return refuse('workspace_not_ready');
     const requireReady = () => {
         if (process.platform !== 'linux') return refuse('unsupported_platform');
-        if (admittedSnapshot.status.kind !== 'effective') return refuse(admittedSnapshot.status.kind === 'unavailable'
-            ? admittedSnapshot.status.code : 'launch_probe_failed');
+        if (admittedSnapshot.status.kind !== 'effective') return refuseIsolationNotReady(admittedSnapshot.status, code, launchKind);
         assertHostIsolationLaunchKindSupported(launchKind, refuse);
     };
     const prepare = async () => {
