@@ -79,6 +79,7 @@ import {
     removeCommittedPendingSettings,
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
+import { retainAccountSettingsRawSnapshot } from './accountSettingsRawSnapshot';
 import { assertUiAccountEncryptionModeAllowed } from '@/sync/domains/settings/clientEncryptionRequirement';
 import { getProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 import { composeProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
@@ -257,9 +258,15 @@ export async function retireLegacyAuthoringMemoryKey(params: Readonly<{
         throw new Error('Authoring-memory retirement requires a valid expected version');
     }
     const request = (path: string, init?: RequestInit) => params.requestContext.request(path, init, { includeAuth: false });
-    const readBaseline = () => readAccountSettingsBaseline({
-        request, credentials: params.credentials, encryption: params.encryption, accountMode: params.accountMode,
-    });
+    const readBaseline = async () => {
+        const baseline = await readAccountSettingsBaseline({
+            request, credentials: params.credentials, encryption: params.encryption, accountMode: params.accountMode,
+        });
+        // A conflict is authoritative evidence that the socket-observed head
+        // was stale. The import's next read must use this admitted document.
+        retainAccountSettingsRawSnapshot(params.settingsScope, baseline.version, baseline.raw ?? {});
+        return baseline;
+    };
     const baseline = await readBaseline();
     if (baseline.version !== params.expectedSettingsVersion) {
         return { status: 'conflict', currentSettingsVersion: baseline.version };
@@ -308,9 +315,13 @@ export async function retireLegacyAuthoringMemoryKey(params: Readonly<{
     if (!parsed.success) return recoverUnknownOutcome();
     if (parsed.data.success) {
         if (!response.ok) return recoverUnknownOutcome();
+        retainAccountSettingsRawSnapshot(params.settingsScope, parsed.data.version, raw);
         return { status: 'applied', settingsVersion: parsed.data.version, value: undefined };
     }
     if (parsed.data.error === 'version-mismatch') {
+        const opened = openAccountSettingsStoredContent({ content: parsed.data.currentContent,
+            encryption: params.encryption, expectedMode: params.accountMode });
+        retainAccountSettingsRawSnapshot(params.settingsScope, parsed.data.currentVersion, opened.raw ?? {});
         return { status: 'conflict', currentSettingsVersion: parsed.data.currentVersion };
     }
     throw new Error(`Authoring-memory retirement rejected: ${parsed.data.error}`);

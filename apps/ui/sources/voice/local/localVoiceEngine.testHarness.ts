@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { waitForTestEvent } from '@/dev/testkit';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { markAccountSettingsHeadUnverified } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { captureMachinePresenceObservation as observeLocalVoiceFixturePresence } from '@/sync/domains/machines/reachability/machineReachability';
 import type { Socket } from 'socket.io-client';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
@@ -300,6 +301,10 @@ export async function getStorage() {
                     settings: normalizedSettings,
                     version,
                 });
+                // This direct HTTP fixture replacement bypasses the server's
+                // settingsV2 push. Its previous socket-observed head is no
+                // longer current; the real raw Settings owner must read it.
+                markAccountSettingsHeadUnverified();
             }
             if (patch.sessions && typeof patch.sessions === 'object') {
                 normalized.sessions = Object.fromEntries(Object.entries(patch.sessions).map(([id, raw]) => {
