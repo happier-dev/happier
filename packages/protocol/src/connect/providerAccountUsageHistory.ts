@@ -109,13 +109,19 @@ function openAdmittedUsageRecord(input: Readonly<{ recordId: string; enteredMont
   }
   if (!snapshot) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
   if (snapshot.recordId !== input.recordId || snapshot.fetchedAtMs !== record.metadata.fetchedAt || snapshot.staleAfterMs !== record.metadata.staleAfterMs) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+  return projectProviderAccountUsageEnteredPriceV1(snapshot, input.enteredMonthlyPrice);
+}
+
+/** Attach the independent admitted user price without inventing provider subscription evidence. */
+export function projectProviderAccountUsageEnteredPriceV1(snapshot: ProviderAccountUsageSnapshotV1,
+  enteredMonthlyPrice: ProviderAccountSubscriptionMonthlyPriceV1 | undefined): ProviderAccountUsageSnapshotV1 {
   // A provider observation cannot supply the independent user-owned price.
-  if (snapshot.subscription || input.enteredMonthlyPrice) {
+  if (snapshot.subscription || enteredMonthlyPrice) {
     const { enteredMonthlyPrice: _ignored, ...subscription } = snapshot.subscription ?? {
       status: 'unavailable' as const, renewal: 'unknown' as const,
       observedAtMs: snapshot.observedAtMs, staleAfterMs: snapshot.staleAfterMs,
     };
-    snapshot = { ...snapshot, subscription: { ...subscription, ...(input.enteredMonthlyPrice ? { enteredMonthlyPrice: input.enteredMonthlyPrice } : {}) } };
+    return { ...snapshot, subscription: { ...subscription, ...(enteredMonthlyPrice ? { enteredMonthlyPrice } : {}) } };
   }
   return snapshot;
 }

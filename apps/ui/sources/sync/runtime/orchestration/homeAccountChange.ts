@@ -1,10 +1,12 @@
+import type { EphemeralUpdate, UpdateBody } from '@happier-dev/protocol/updates';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { ChangeKindSchema, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeEntry } from '@happier-dev/protocol/changes';
 import {
     subscribeHomeCredentialMutations,
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { accountChangeKindsAffectMachineResources, accountChangeKindsAffectManagedMachineInventory, plannedChangesAffectProfileCatalog, plannedChangesAffectUsageQuery, plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
+import { accountChangeKindsAffectMachineResources, accountChangeKindsAffectManagedMachineInventory, plannedChangesAffectProfileCatalog, plannedChangesAffectUsageQuery, plannedChangesAffectUsageAccounting, plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -23,6 +25,7 @@ export type HomeAccountChangeEvent = Readonly<{
     /** Transport connection, or an early socket wake before detailed catch-up has answered. */
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
     changesCatchUp?: true;
+    feedPageConsumed?: true;
     /** Exact only for a consumed focused-Home change page; absent wakes remain conservative. */
     entityIds?: readonly string[];
     /** Revision hints from the consumed change page; never inferred from a socket wake. */
@@ -47,6 +50,9 @@ export type HomeAccountChangeEvent = Readonly<{
     accountSettingsAffects?: boolean;
     /** Machine-only focused pages are covered by the Usage store's material-input subscription. */
     usageQueryAffects?: boolean;
+    usageAccountingAffects?: boolean;
+    usageAccountingChange?: Extract<EphemeralUpdate, { type: 'usage' }>['accountingChange'];
+    usageSourcesMachineIds?: readonly string[];
     /** The canonical planner's private trigger-read decision; status is not definition content. */
     workflowTriggersAffect?: boolean;
     /** The canonical planner's saved definition/source query decision. */
@@ -64,6 +70,7 @@ type HomeAccountChangeDetails = Readonly<{
     savedSecretResourcesRefreshStarted?: true;
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
     changesCatchUp?: true;
+    feedPageConsumed?: true;
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Exact content-free record/access routing; an empty list excludes record changes. */
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
@@ -72,6 +79,9 @@ type HomeAccountChangeDetails = Readonly<{
     profileCatalogAffects?: boolean;
     accountSettingsAffects?: boolean;
     usageQueryAffects?: boolean;
+    usageAccountingAffects?: boolean;
+    usageAccountingChange?: Extract<EphemeralUpdate, { type: 'usage' }>['accountingChange'];
+    usageSourcesMachineIds?: readonly string[];
     workflowTriggersAffect?: boolean;
     workflowDefinitionsAffect?: boolean;
     /** Canonical Machine/Preset routing; absent content-free wakes remain conservative. */
@@ -116,6 +126,7 @@ function hearsHomeAccountChange(event: HomeAccountChangeEvent, reconnect: HomeAc
 const homeAccountChangeObservers = new Map<HomeAccountChangeObserver, Readonly<{
     includeCatchUpPending: boolean;
     serverIds: readonly string[];
+    usageSourcesMachineIds?: readonly string[];
     reconnect?: HomeAccountReconnectClass;
 }>>();
 const homeAccountChangeDemandListeners = new Set<() => void>();
@@ -185,12 +196,15 @@ export function subscribeHomeAccountChange(
     options?: Readonly<{
         includeCatchUpPending?: boolean;
         serverIds?: readonly string[];
+        usageSourcesMachineIds?: readonly string[];
         reconnect?: HomeAccountReconnectClass;
     }>,
 ): () => void {
     const subscription = {
         includeCatchUpPending: options?.includeCatchUpPending === true,
         serverIds: (options?.serverIds ?? []).map(resolveServerProfileScopeIdForIdentifier).filter(Boolean),
+        ...(options?.usageSourcesMachineIds !== undefined
+            ? { usageSourcesMachineIds: [...new Set(options.usageSourcesMachineIds)] } : {}),
         ...(options?.reconnect !== undefined ? { reconnect: options.reconnect } : {}),
     };
     homeAccountChangeObservers.set(observer, subscription);
@@ -260,6 +274,8 @@ export function publishHomeAccountChangeForRouting(
     const accountSettingsAffects = details?.accountSettingsAffects ?? routingPlan?.invalidate.settings;
     const usageQueryAffects = details?.usageQueryAffects
         ?? (routingPlan ? plannedChangesAffectUsageQuery(routingPlan) : undefined);
+    const usageAccountingAffects = details?.usageAccountingAffects
+        ?? (routingPlan ? plannedChangesAffectUsageAccounting(routingPlan) : undefined);
     const workflowTriggersAffect = details?.workflowTriggersAffect
         ?? (routingPlan ? plannedChangesAffectWorkflowTriggers(routingPlan) : undefined);
     const workflowDefinitionsAffect = details?.workflowDefinitionsAffect
@@ -294,6 +310,12 @@ export function publishHomeAccountChangeForRouting(
             || details.changeKinds.length === 0
             || details.changeKinds.some(kind => kind === 'account' || !ChangeKindSchema.safeParse(kind).success)),
         ...(usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
+        ...(details?.feedPageConsumed ? { feedPageConsumed: true as const } : {}),
+        ...(usageAccountingAffects !== undefined ? { usageAccountingAffects } : {}),
+        ...(details?.usageAccountingChange !== undefined
+            ? { usageAccountingChange: Object.freeze({ ...details.usageAccountingChange }) } : {}),
+        ...(details?.usageSourcesMachineIds !== undefined
+            ? { usageSourcesMachineIds: Object.freeze([...new Set(details.usageSourcesMachineIds)]) } : {}),
         machineResourcesAffect: details?.source === 'connected' || details?.source === 'snapshot'
             || (details?.machineResourcesAffect ?? accountChangeKindsAffectMachineResources(details?.changeKinds, entityIds)),
         managedMachineInventoryAffect: details?.source === 'connected' || details?.source === 'snapshot'
@@ -305,8 +327,13 @@ export function publishHomeAccountChangeForRouting(
                 || (workflowDefinitionsAffect ?? accountChangeKindsAffectWorkflowDefinitions(changeKinds)))),
         ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
     });
-    for (const [observer, { includeCatchUpPending, reconnect }] of [...homeAccountChangeObservers]) {
+    for (const [observer, { includeCatchUpPending, serverIds, usageSourcesMachineIds, reconnect }] of [...homeAccountChangeObservers]) {
         if (event.source === 'catch-up-pending' && !includeCatchUpPending) continue;
+        if (usageSourcesMachineIds !== undefined) {
+            if (serverIds.length > 0 && !serverIds.some(serverId => areServerProfileIdentifiersEquivalent(serverId, event.serverId))) continue;
+            if (event.source !== 'connected' && event.source !== 'snapshot'
+                && !event.usageSourcesMachineIds?.some(machineId => usageSourcesMachineIds.includes(machineId))) continue;
+        }
         try {
             if (!hearsHomeAccountChange(event, reconnect)) continue;
             observer(event);
@@ -316,4 +343,32 @@ export function publishHomeAccountChangeForRouting(
         }
     }
     return event;
+}
+
+
+export type HomeAccountChangeWake = Extract<UpdateBody, { t: 'account-change' | 'account-settings-changed' }>;
+
+/** Both Home ingress paths retain producer facts without claiming feed materialization. */
+export function publishHomeAccountChangeWake(
+    serverId: string,
+    wake: HomeAccountChangeWake,
+    source: 'socket' | 'catch-up-pending',
+): HomeAccountChangeEvent {
+    if (wake.t === 'account-change') return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
+        source, changeKinds: wake.changeKinds,
+    });
+    // This synthetic row routes an admitted socket fact through the incumbent
+    // planner only. It advances no cursor and is never checkpoint evidence.
+    const planned = planSyncActionsFromChanges([{ kind: 'account', entityId: 'self', cursor: 0, changedAt: 0,
+        hint: { settingsVersion: wake.settingsVersion } }]);
+    return publishHomeAccountChangeForRouting(serverId, ['self'], {
+        source, changeKinds: ['account'],
+        sessionListQueryAffects: plannedChangesAffectSessionListQuery(planned),
+        accountSettingsAffects: planned.invalidate.settings,
+        profileCatalogAffects: plannedChangesAffectProfileCatalog(planned),
+        usageQueryAffects: plannedChangesAffectUsageQuery(planned),
+        usageAccountingAffects: plannedChangesAffectUsageAccounting(planned),
+        workflowTriggersAffect: plannedChangesAffectWorkflowTriggers(planned),
+        workflowDefinitionsAffect: plannedChangesAffectWorkflowDefinitions(planned),
+    });
 }

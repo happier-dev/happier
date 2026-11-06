@@ -1,3 +1,10 @@
+import { readSessionUsageAccountingChangedV1, readAccountSettingsVersionChangeV1, isAccountCurrentnessChangeV1 } from '@happier-dev/protocol/changes';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { readSessionSystemRecordChangeV1, isSessionSystemRecordUnchangedHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
@@ -102,6 +109,8 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 } satisfies Record<ChangeKind, ChangeCheckpointCoverageEntry>;
 
 export type PlannedChangeActions = {
+    /** Account cursor consumed before this page; absent callers retain conservative accounting. */
+    afterCursor?: number;
     changes: ApiChangeEntry[];
     /** The existing planner owns resource invalidation alongside its domain routing. */
     machineResourcesAffect: boolean;
@@ -465,6 +474,7 @@ export function isRowLevelSessionChangeHint(hint: unknown): boolean {
 }
 
 export type SessionChangePlanningContext = Readonly<{
+    afterCursor?: number;
     /** Whether this Session is already in a loaded list membership of the planned Home. */
     isSessionListMember(sessionId: string): boolean;
 }>;
@@ -757,6 +767,7 @@ export function planSyncActionsFromChanges(
 
     return {
         changes: [...changes],
+        ...(context?.afterCursor !== undefined ? { afterCursor: context.afterCursor } : {}),
         machineResourcesAffect,
         managedMachineInventoryAffect,
         workflowRunIdsToRefresh: [...workflowRunIdsToRefresh].sort(),
@@ -856,9 +867,15 @@ export function accountChangeKindsAffectWorkflowTriggers(changeKinds: readonly s
 export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): boolean {
     const workflowEntityIds = new Set(planned.workflowRunIdsToRefresh.map(runId => `workflow-run:${runId}`));
     return planned.changes.some(change => {
+        if (change.kind === 'kv') return !isRecord(change.hint) || change.hint.full === true
+            || !Array.isArray(change.hint.keys) || change.hint.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY);
+        if (readSessionFollowReceiverChangeV1(change) !== null) return false;
+        if (readSessionSystemRecordChangeV1(change)?.address.namespace === 'surface') return false;
         if (['machine', 'machinePool', 'artifact', 'feed', 'friends', 'friend_request', 'friend_accepted',
             'pet', 'automation', 'kv', 'pluginDomain', 'savedSecretResource'].includes(change.kind)) return false;
-        if (change.kind === 'account' && (workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change))) return false;
+        if (change.kind === 'account' && (change.entityId === 'public-profile'
+            || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
+            || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change))) return false;
         // Session evidence, allowances, settings and unknown changes retain
         // their incumbent freshness/admission path, including on mixed pages.
         return true;
@@ -939,4 +956,37 @@ export function planSessionReadinessWake(changeKinds: readonly string[] | undefi
     if (!changes.sessionIds.length && !changes.machineIds.length) return changes;
     if (!entityIds?.length) return 'all';
     return { sessionIds: changes.sessionIds.length ? entityIds : [], machineIds: changes.machineIds.length ? entityIds : [] };
+}
+
+
+/** Private evidence and allowance/configuration inputs do not replace admitted accounting. */
+export function plannedChangesAffectUsageAccounting(planned: PlannedChangeActions): boolean {
+    const relevant = planned.changes.filter(change => {
+        if (change.kind === 'kv') return false;
+        // Access rosters and independent Discussions alter private evidence,
+        // not the Account-owned UsageEvent/report population. Actual access
+        // and usage transitions publish their independent changes as well.
+        if (change.kind === 'share' || change.kind === 'machineRecipientAccess' || change.kind === 'discussion') return false;
+        // The Settings owner observes the consumed Usage keys. A coarse
+        // version wake cannot establish that accounting or its prices changed.
+        if (readAccountSettingsVersionChangeV1(change) !== null) return false;
+        if (change.kind === 'session') {
+            // Transcript arrival still refreshes private evidence. Usage rows
+            // have their own push; a bare message-sequence hint is not one.
+            // An explicit accounting hint retains its cursor-relative proof.
+            if (isRecord(change.hint) && change.hint.usageAccountingChanged === undefined
+                && 'lastMessageSeq' in change.hint && getChangeTargetMessageSeq(change) !== null
+                && isSessionSystemRecordUnchangedHintV1(change.hint)) return false;
+            return planned.afterCursor === undefined || readSessionUsageAccountingChangedV1(change, planned.afterCursor);
+        }
+        if (change.kind !== 'account' || isAccountCurrentnessChangeV1(change)) return true;
+        // These canonical rows contain service configuration, allowances or
+        // Machine policy, not UsageEvents, message counts or entered prices.
+        // Other self changes and unknown Account rows remain conservative.
+        return change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1
+            && (change.entityId === 'self' || readConnectedServicesAccountChangeV1(change) === null)
+            && parseConnectedAccountCatalogPhysicalKeyV1(change.entityId) === null
+            && !ManagedMachinePolicyChangeHintV1Schema.safeParse(change.hint).success;
+    });
+    return plannedChangesAffectUsageQuery({ ...planned, changes: relevant });
 }
