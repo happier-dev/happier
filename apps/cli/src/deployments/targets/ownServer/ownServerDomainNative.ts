@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomainDiscoverChildRpcV1 } from '@happier-dev/protocol';
+import { isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, environmentSecretBindingIdentityV1,
     type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
@@ -146,7 +147,7 @@ export function createOwnServerDomainNative(host: Readonly<{
         const contentRef = job.kind === 'domain' ? job.capture.content : job.input;
         const opened = readDeploymentDomainArtifactV1(contentRef, await host.open(contentRef.contentArtifactId, context));
         if (!opened.ok) return refuse(opened.error);
-        const removing = job.kind === 'domain' && !job.capture.desired;
+        const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing;
         let environmentContent: DeploymentEnvironmentDetailV1['content'] | undefined;
