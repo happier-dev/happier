@@ -43,7 +43,12 @@ export type ListCollectionSearch = Readonly<{
 /** The `/` key focuses the field (web, with focus inside the list); the field says so as a key cap. */
 const SEARCH_FOCUS_KEY = '/';
 
-export function useListCollectionSearch(search: ListCollectionSearch | undefined, rootRef: RefObject<unknown>) {
+export function useListCollectionSearch(
+  search: ListCollectionSearch | undefined,
+  rootRef: RefObject<unknown>,
+  /** The toolbar folded (a phone, a list beside a pane): tokens say only what tells them apart. */
+  compact = false,
+) {
   const [uncontrolledQuery, setUncontrolledQuery] = useState(search?.defaultValue ?? '');
   const query = search?.value ?? uncontrolledQuery;
   const [composingQuery, setComposingQuery] = useState<string | null>(null);
@@ -109,7 +114,7 @@ export function useListCollectionSearch(search: ListCollectionSearch | undefined
     onChangeText={change} onCompositionChange={composition} onEscape={clear}
     autoCapitalize="none" autoCorrect={false} selection={selection} onSelectionChange={setSelection}
     controlRef={controlRef} leading={<Icon name="search" size="small" tone="muted" />} theme={theme} testID={search.testID}
-    {...(tokens.length === 0 ? {} : { inline: <SearchTokens tokens={tokens} /> })}
+    {...(tokens.length === 0 ? {} : { inline: <SearchTokens tokens={tokens} compact={compact} /> })}
     // The shortcut is a hardware-keyboard fact; touch platforms have no `/` to press.
     {...(Platform.OS !== 'web' ? {} : {
       trailing: <SearchShortcut {...(search.testID === undefined ? {} : { testID: `${search.testID}:shortcut` })} />,
@@ -119,7 +124,7 @@ export function useListCollectionSearch(search: ListCollectionSearch | undefined
 }
 
 /** The narrowings in force, each one press to remove (lab `.tok`: an inset chip, its qualifier quiet). */
-function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchToken[] }>) {
+function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchToken[]; compact: boolean }>) {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const translate = usePluginTranslation();
@@ -140,7 +145,8 @@ function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchTok
               ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus }),
             }]}
           >
-            {token.qualifier === undefined ? null : <HappierText variant="meta" tone="secondary" numberOfLines={1}>{token.qualifier}</HappierText>}
+            {/* Folded, the quiet qualifier gives its room to the label that tells tokens apart; the name keeps it. */}
+            {token.qualifier === undefined || props.compact ? null : <HappierText variant="meta" tone="secondary" numberOfLines={1}>{token.qualifier}</HappierText>}
             <HappierText variant="meta" tone="neutral" numberOfLines={1} style={searchTokenLabelStyle}>{token.label}</HappierText>
           </HappierPressable>
         );

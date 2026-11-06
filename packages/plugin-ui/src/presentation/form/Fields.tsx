@@ -434,6 +434,11 @@ export type HappierTextFieldProps = Readonly<{
   testID?: string;
 }>;
 
+/** Room for a short query (about six characters) beside a search field's inline tokens. */
+const SEARCH_QUERY_MIN_EMS = 6;
+/** Only for a text style that states no size; the field's own text role always does. */
+const SEARCH_QUERY_FALLBACK_FONT_SIZE = 14;
+
 export function HappierTextField(props: HappierTextFieldProps) {
   const paintColor = useHappierMaterialColorResolver();
   const palette = useOptionalHappierUiPalette(props.theme);
@@ -569,7 +574,10 @@ export function HappierTextField(props: HappierTextFieldProps) {
         ...HAPPIER_TEXT_INPUT_WEB_MARKER,
       } as Record<string, unknown>)}
       style={[props.appearance === 'search' ? {
-          ...textStyle, flex: 1, minWidth: 0, minHeight: 20, padding: 0, margin: 0, borderWidth: 0, backgroundColor: 'transparent',
+          ...textStyle, flex: 1,
+          // Beside inline tokens the query keeps room to be typed and read; the tokens truncate instead.
+          minWidth: props.inline === undefined ? 0 : (textStyle.fontSize ?? SEARCH_QUERY_FALLBACK_FONT_SIZE) * SEARCH_QUERY_MIN_EMS,
+          minHeight: 20, padding: 0, margin: 0, borderWidth: 0, backgroundColor: 'transparent',
         } : fieldAppearance !== null
         ? {
             ...resolveHappierFieldTextInputMetrics({ multiline: props.multiline }),

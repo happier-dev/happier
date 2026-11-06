@@ -2855,6 +2855,9 @@ describe('the search field', () => {
       tokens[1]!.compareDocumentPosition(input) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    // However many tokens there are, the query keeps room to be typed and read: the tokens give way, never the
+    // input (QA-F-LISTS r133: two source tokens left a 0 px input and an invisible query).
+    expect(Number.parseFloat(getComputedStyle(input).minWidth)).toBeGreaterThan(0);
     await act(async () => {
       tokens[1]!.click();
     });
@@ -2863,6 +2866,26 @@ describe('the search field', () => {
     const hint = view.query('search:shortcut');
     expect(hint?.textContent).toBe('/');
     expect(hint?.closest('[aria-hidden="true"]')).not.toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the search tokens on a phone', () => {
+  it('says only what tells the tokens apart where the toolbar folds, keeping their full names', async () => {
+    const view = mount({
+      search: {
+        label: 'Search entries', value: '', onValueChange: () => undefined, testID: 'search',
+        tokens: [
+          { key: 'a', qualifier: 'Source', label: 'acme/ledger', onRemove: () => undefined },
+          { key: 'b', qualifier: 'Source', label: 'PostHog', onRemove: () => undefined },
+        ],
+      },
+    });
+    view.measure(390);
+    const well = view.query('search')!.parentElement!;
+    const tokens = [...well.querySelectorAll<HTMLElement>('[role="button"]')];
+    expect(tokens.map((token) => token.getAttribute('aria-label'))).toEqual(['Remove Source acme/ledger', 'Remove Source PostHog']);
+    expect(tokens.map((token) => token.textContent)).toEqual(['acme/ledger', 'PostHog']);
     view.unmount();
   });
 });

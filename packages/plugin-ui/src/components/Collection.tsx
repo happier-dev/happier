@@ -2096,7 +2096,6 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
-  const search = useListCollectionSearch(props.search, rootRef);
   // A header render places the search in the caller's row, at the toolbar's bounded width; else it stays in the pane.
   const headerPlacesSearch = typeof props.header === 'function';
   const selectionMode = useListSelectionModeControl(multipleStore, selectableKeys.length > 0);
@@ -2120,6 +2119,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   }), []);
   const compactToolbar = size === null ? pageChrome?.showsTitle === true
     : size.width < HAPPIER_PAGE_METRICS.toolbarFoldBelowWidthPx || (toolbarRowPx !== null && toolbarRowPx < toolbarNeedPx);
+  const search = useListCollectionSearch(props.search, rootRef, compactToolbar);
   const header = typeof props.header === 'function' ? props.header({
     title: props.title === undefined || pageChrome?.showsTitle === true ? null : (
       <HappierText variant="heading" tone="neutral" accessibilityRole="header" numberOfLines={1}>{props.title}</HappierText>
