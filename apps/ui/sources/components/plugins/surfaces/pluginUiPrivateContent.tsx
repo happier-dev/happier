@@ -14,7 +14,7 @@ export const PluginUiMarkdown = lazyPresenter(async () => ({ default: (await imp
 export const PluginUiPrivateDiffViewer = lazyPresenter(async () => ({ default: (await import('./PluginUiPrivateDiffViewer')).PluginUiPrivateDiffViewer }));
 export const ProseDiffViewer = lazyPresenter(async () => ({ default: (await import('@/components/ui/code/diff/prose/ProseDiffViewer')).ProseDiffViewer }));
 export const CodeBlockView = lazyPresenter(async () => ({ default: (await import('@/components/ui/code/blocks/CodeBlockView')).CodeBlockView }));
-export const QRCode = lazyPresenter(async () => ({ default: (await import('@/components/qr/QRCode')).QRCode }));
+export const QRCode: React.ComponentType<React.ComponentProps<typeof import('@/components/qr/QRCode').QRCode>> = lazyPresenter(async () => ({ default: (await import('@/components/qr/QRCode')).QRCode }));
 export const PluginVoicePresence = lazyPresenter(async () => ({ default: (await import('./PluginVoicePresence')).PluginVoicePresence }));
 export const PluginVoiceMark = lazyPresenter(async () => ({ default: (await import('./PluginVoicePresence')).PluginVoiceMark }));
 export const PluginVoiceStatusLine = lazyPresenter(async () => ({ default: (await import('./PluginVoicePresence')).PluginVoiceStatusLine }));
