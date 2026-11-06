@@ -44,6 +44,9 @@ const DIAGNOSTICS_CDP_DOMAINS: Readonly<Record<string, readonly BrowserDiagnosti
     'Network.enable': ['network'], 'Runtime.enable': ['console', 'pageError'], 'Page.enable': ['pageInfo'],
 };
 export const SIDECAR_CDP_DIAGNOSTIC_FAMILIES = Object.values(DIAGNOSTICS_CDP_DOMAINS).flat();
+export const SIDECAR_CDP_DIAGNOSTICS_FIDELITY = Object.fromEntries(
+    SIDECAR_CDP_DIAGNOSTIC_FAMILIES.map(family => [family, 'cdp' as const]),
+);
 
 function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)

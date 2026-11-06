@@ -96,6 +96,54 @@ function openTwoLocalPreviewEvents(): readonly BrowserEventV1[] {
 }
 
 describe('browser control reducer', () => {
+    it('hydrates authoritative adapter facts without resetting retained navigation or controller state', async () => {
+        const { applyBrowserControlEvent, createBrowserControlState } = await import('./reducer');
+        const opened = openLocalPreviewEvents().find(event => event.kind === 'viewOpened');
+        if (!opened || opened.kind !== 'viewOpened') throw new Error('Expected opening fixture');
+        let state = openTwoLocalPreviewEvents().reduce(applyBrowserControlEvent, createBrowserControlState());
+        const streamedTarget = { kind: 'streamedBrowser', targetId: 'source', streamId: 'source',
+            daemonView: { browserSessionId: opened.browserSessionId, viewId: opened.viewId } } satisfies BrowserViewTargetV1;
+        state = { ...state, viewsById: { ...state.viewsById, view_1: { ...state.viewsById.view_1!, target: streamedTarget,
+            adapterKind: 'streamedBrowserSurface', engineKind: 'streamedSurface' } } };
+        state = applyBrowserControlEvent(state, { kind: 'navigationStateChanged', eventId: 'nav', occurredAt: 2_000,
+            browserSessionId: opened.browserSessionId, viewId: opened.viewId, navigationGeneration: 4,
+            currentUrl: 'https://current.test/', title: 'Current page', loadingState: 'ready', canGoBack: true, canGoForward: false });
+        state = applyBrowserControlEvent(state, { kind: 'controllerChanged', eventId: 'controller', occurredAt: 2_001,
+            browserSessionId: opened.browserSessionId, viewId: opened.viewId,
+            state: { browserSessionId: opened.browserSessionId, viewId: opened.viewId, controller: 'human', controlEpoch: 3 } });
+        const before = state.viewsById.view_1;
+        const authoritative = { ...opened, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', target: streamedTarget,
+            adapterCapabilities: { ...localPreviewCapabilities, adapterKind: 'chromiumSidecar', diagnosticsFidelityByFamily: { console: 'cdp' } } } satisfies BrowserEventV1;
+        const hydrated = applyBrowserControlEvent(state, authoritative);
+        expect(hydrated.viewsById.view_1).toMatchObject({ adapterKind: 'chromiumSidecar', target: streamedTarget,
+            currentUrl: before?.currentUrl, title: before?.title, navigationGeneration: 4, canGoBack: true,
+            adapterCapabilities: authoritative.adapterCapabilities });
+        expect(hydrated.viewsById.view_2).toBe(state.viewsById.view_2);
+        expect(hydrated.viewsById.view_1?.automationController).toBe(before?.automationController);
+        expect(applyBrowserControlEvent(hydrated, structuredClone(authoritative))).toBe(hydrated);
+        const reopened = applyBrowserControlEvent(hydrated, { ...authoritative, target: externalTarget });
+        expect(reopened.viewsById.view_1).toMatchObject({ target: externalTarget, canGoBack: false, navigationGeneration: 0 });
+        expect(reopened.viewsById.view_1?.automationController).toBeUndefined();
+    });
+
+    it('reconciles one navigation fact delivered through command results and live metadata without republishing it', async () => {
+        const { applyBrowserControlEvent, createBrowserControlState } = await import('./reducer');
+        let state = openTwoLocalPreviewEvents().reduce(applyBrowserControlEvent, createBrowserControlState());
+        const event = { kind: 'navigationStateChanged', eventId: 'navigation', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            occurredAt: 10, currentUrl: 'https://changed.test/', title: 'Changed', navigationGeneration: 1,
+            loadingState: 'ready', canGoBack: true, canGoForward: false } satisfies BrowserEventV1;
+        state = applyBrowserControlEvent(state, event);
+        const changed = state;
+        for (let delivery = 0; delivery < 3; delivery += 1) {
+            state = applyBrowserControlEvent(state, structuredClone(event));
+        }
+        expect(state).toBe(changed);
+        const next = applyBrowserControlEvent(state, { ...event, eventId: 'next', title: 'New title' });
+        expect(next.viewsById.view_1?.title).toBe('New title');
+        expect(next.viewsById.view_1).not.toBe(state.viewsById.view_1);
+        expect(next.viewsById.view_2).toBe(state.viewsById.view_2);
+    });
+
     it('uses authoritative generations without double-counting redirects or regressing stale events', async () => {
         const { applyBrowserControlEvent, createBrowserControlState } = await import('./reducer');
         let state = openLocalPreviewEvents().reduce(applyBrowserControlEvent, createBrowserControlState());

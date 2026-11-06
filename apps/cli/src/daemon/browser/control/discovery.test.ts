@@ -57,7 +57,12 @@ describe('daemon browser view discovery', () => {
       const target = { kind: 'externalUrl' as const, targetId: 'external', url: 'https://example.test/' };
       await routes.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, target, platform: 'web' });
       expect(discover()).toMatchObject([{ ...view, sourceId: browserViewKey(view), target,
-        adapterKind: 'chromiumSidecar', events: [expect.objectContaining({ kind: 'navigationStateChanged' })],
+        adapterKind: 'chromiumSidecar', events: [
+          expect.objectContaining({ kind: 'viewOpened', target,
+            adapterCapabilities: expect.objectContaining({ supportedTargetKinds: ['externalUrl'],
+              diagnosticsFidelityByFamily: expect.objectContaining({ console: 'cdp', network: 'cdp' }) }) }),
+          expect.objectContaining({ kind: 'navigationStateChanged' }),
+        ],
         captureSource: { sourceId: browserViewKey(view), sourceKind: 'browser', supportedCodecs: ['image.mjpeg'] } }]);
       expect(routes.listViews('other-session')).toEqual([]);
       const rpcDiscover = handlers.get(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST);

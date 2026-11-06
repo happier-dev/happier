@@ -108,6 +108,39 @@ function createTransport(overrides: Partial<SidecarCdpControlTransport> = {}): S
 }
 
 describe('browser sidecar CDP control adapter', () => {
+    it('publishes current adapter and diagnostic facts for every discovered view', async () => {
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+            transport: createTransport() });
+        await adapter.dispatchCommand(externalOpenViewCommand());
+        const snapshot = adapter.listViews?.('browser_session_1')[0];
+        expect(snapshot?.events.find(event => event.kind === 'viewOpened')).toMatchObject({
+            target: externalOpenViewCommand().target, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface',
+            adapterCapabilities: { supportedTargetKinds: ['externalUrl'], supportsPopups: true,
+                contextKinds: ['browserPageReference', 'browserScreenshot', 'browserAnnotation'],
+                diagnosticsFidelityByFamily: { console: 'cdp', network: 'cdp', pageError: 'cdp', pageInfo: 'cdp' } },
+        });
+        adapter.dispose();
+    });
+
+    it('keeps discovery events stable across equal reads and publishes only changed navigation', async () => {
+        let listener: BrowserSidecarCdpEventSubscriber | undefined;
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+            transport: { ...createTransport(), subscribeCdpEvents: callback => { listener = callback; return () => undefined; } } });
+        await adapter.dispatchCommand(externalOpenViewCommand());
+        const before = adapter.listViews?.('browser_session_1')[0]?.events;
+        for (let refresh = 0; refresh < 3; refresh += 1) {
+            expect(adapter.listViews?.('browser_session_1')[0]?.events).toEqual(before);
+        }
+        const events: unknown[] = [];
+        adapter.subscribeBrowserEvents(event => events.push(event));
+        const title = { method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'cdp_target_secret', title: 'Changed' } } };
+        listener?.(title);
+        listener?.(title);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ kind: 'navigationStateChanged', title: 'Changed' });
+        expect(adapter.listViews?.('browser_session_1')[0]?.events.filter(event => event.kind === 'navigationStateChanged')).toEqual(events);
+        adapter.dispose();
+    });
     it('retains the confidential page binding when an in-flight replacement opens late', async () => {
         const control = createSurfaceInputControl();
         const transport = createTransport();
@@ -194,6 +227,71 @@ describe('browser sidecar CDP control adapter', () => {
         listener?.({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret', params: { frame: { id: 'main', loaderId: 'late', url: 'https://late.test/' } } });
         expect(events).toHaveLength(count);
     });
+    it.each([
+        { completion: 'BackForwardCacheRestore', readyState: 'complete' },
+        { completion: 'loadEventFired', readyState: 'complete' },
+        { completion: 'navigatedWithinDocument', readyState: 'complete' },
+        { completion: 'navigatedWithinDocument', readyState: 'loading' },
+    ] as const)(
+        'publishes current history after Back completes through $completion ($readyState) without frameStoppedLoading',
+        async ({ completion, readyState }) => {
+            let listener!: BrowserSidecarCdpEventSubscriber;
+            let currentIndex = 2;
+            const entries = ['a', 'b', 'c'].map((path, index) => ({
+                id: index + 10, url: `https://browser.example.test/${path}`, title: `Page ${path}`,
+            }));
+            const adapter = createBrowserSidecarCdpControlAdapter({
+                browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+                transport: {
+                    ...createTransport(),
+                    subscribeCdpEvents: callback => { listener = callback; return () => undefined; },
+                    dispatchPageCommand: async command => {
+                        if (command.method === 'Page.getFrameTree') return { frameTree: { frame: {
+                            id: 'main', loaderId: 'document_c', url: entries[2]!.url,
+                        } } };
+                        if (command.method === 'Runtime.evaluate') return { result: { type: 'string', value: readyState } };
+                        if (command.method === 'Page.getNavigationHistory') return { currentIndex, entries };
+                        if (command.method === 'Page.navigateToHistoryEntry') {
+                            currentIndex = 1;
+                            if (completion === 'navigatedWithinDocument') {
+                                listener({ method: 'Page.navigatedWithinDocument', sessionId: 'cdp_session_secret', params: {
+                                    frameId: 'main', url: entries[1]!.url, navigationType: 'historyApi',
+                                } });
+                            } else {
+                                listener({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret', params: {
+                                    frame: { id: 'main', loaderId: 'document_b', url: entries[1]!.url },
+                                    type: completion === 'BackForwardCacheRestore' ? completion : 'Navigation',
+                                } });
+                                if (completion === 'loadEventFired') {
+                                    listener({ method: 'Page.loadEventFired', sessionId: 'cdp_session_secret', params: { timestamp: 1 } });
+                                }
+                            }
+                        }
+                        return {};
+                    },
+                },
+            });
+            try {
+                await adapter.dispatchCommand(externalOpenViewCommand());
+                expect(adapter.getNavigationState({ browserSessionId: 'browser_session_1', viewId: 'view_1' }))
+                    .toMatchObject({ loadingState: readyState === 'complete' ? 'ready' : 'loading', canGoForward: false });
+                const events: unknown[] = [];
+                adapter.subscribeBrowserEvents(event => events.push(event));
+                expect(await adapter.dispatchCommand({ kind: 'goBack', commandId: 'back',
+                    browserSessionId: 'browser_session_1', viewId: 'view_1' })).toMatchObject({ status: 'dispatched' });
+                // Flush the native event's asynchronous history reply, without a second command or discovery refresh.
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(adapter.getNavigationState({ browserSessionId: 'browser_session_1', viewId: 'view_1' }))
+                    .toMatchObject({ currentUrl: entries[1]!.url, loadingState: readyState === 'complete' ? 'ready' : 'loading', navigationGeneration: 1,
+                        canGoBack: true, canGoForward: true });
+                expect(events.at(-1)).toMatchObject({ kind: 'navigationStateChanged', currentUrl: entries[1]!.url,
+                    loadingState: readyState === 'complete' ? 'ready' : 'loading', navigationGeneration: 1, canGoBack: true, canGoForward: true });
+            } finally {
+                adapter.dispose();
+            }
+        },
+    );
+
     it.each(['complete', 'loading'])('bootstraps a page whose initial load preceded event admission (%s)', async readyState => {
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
             transport: { ...createTransport(), subscribeCdpEvents: () => () => undefined,

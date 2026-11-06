@@ -9,7 +9,7 @@ import { createBrowserSidecarCdpControlAdapterFactory } from '../../../../../cli
 import { act } from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
@@ -33,7 +33,7 @@ import { createMachineLiveStreamRelayAuthorizationSigningInputV1, MACHINE_LIVE_S
 import { openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import tweetnacl from 'tweetnacl';
 import { selectBrowserCopresence } from '@/sync/domains/browser/automation/copresence';
-import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapter';
+import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber, type BrowserSidecarCdpControlTransport } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapter';
 import { createBrowserAutomationDaemonService } from '../../../../../cli/src/daemon/browser/automation/service';
 import { createBrowserAutomationCdpAdapter } from '../../../../../cli/src/daemon/browser/automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../../../../../cli/src/daemon/browser/automation/adapters/controlBridge';
@@ -42,6 +42,16 @@ import { registerBrowserLiveCapture } from '../../../../../cli/src/daemon/browse
 import { createMachineLiveStreamCaptureRegistry } from '../../../../../cli/src/daemon/peer/mediation/stream/captureRegistry';
 import { createDaemonMachineLiveStreamCaptureAdapter } from '../../../../../cli/src/daemon/peer/mediation/stream/captureAdapter';
 import { createMachineLiveStreamRelayTerminator } from '../../../../../cli/src/daemon/peer/mediation/stream/relay';
+import { createBrowserDaemonControlBroker } from '../../../../../cli/src/daemon/browser/control/broker';
+import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createBrowserDaemonRuntimeActionExecutor } from '../../../../../cli/src/daemon/browser/actions/runtimeActionExecutor';
+import { createBrowserDaemonFeatureGate } from '../../../../../cli/src/daemon/browser/featureGate';
+import { createBrowserDaemonControlRoutes } from '../../../../../cli/src/daemon/browser/control/routes';
+import { resolveBrowserRecordingStartContext } from '../../../../../cli/src/daemon/browser/recording/startContext';
+import { resolveBrowserRecordingControl } from '../recording/browserRecordingControl';
+import { createBrowserRecordingState } from '@/sync/domains/browser/recording';
+import { selectBrowserContextComposerAttachments } from '@/sync/domains/browser/context/selectors';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 const clipboardBoundary = vi.hoisted(() => ({ text: '  pasted text\n' }));
@@ -63,6 +73,8 @@ const boundary = vi.hoisted(() => ({
     listeners: new Set<(raw: unknown) => void>(),
     requests: [] as unknown[],
     captureResult: null as unknown,
+    diagnosticsSnapshot: null as unknown,
+    actionDispatch: null as ((actionId: string, input: unknown) => Promise<unknown>) | null,
     discoveryError: null as string | null,
     /** Holds daemon discovery open until released, to observe the wait before it answers. */
     discoveryGate: null as Promise<void> | null,
@@ -79,6 +91,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
             ? { error: 'Browser prerequisite', errorCode: boundary.discoveryError }
             : { protocolVersion: 1, views: boundary.views };
         if (input.method === 'daemon.browser.context.dispatch') return { protocolVersion: 1, result: boundary.captureResult };
+        if (input.method === RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT && boundary.diagnosticsSnapshot) return boundary.diagnosticsSnapshot;
         if (input.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START) {
             const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(input.payload);
             return { protocolVersion: 1, result: { ok: true, streamId: startRequest.streamId } };
@@ -100,6 +113,7 @@ const { BrowserSurfaceHost } = await import('../surfaces/BrowserSurfaceHost');
 const { BrowserShell } = await import('../BrowserShell');
 const { BrowserStreamedTarget } = await import('../adapters/BrowserStreamedTarget');
 const { LiveStreamPlayer } = await import('@/components/stream/LiveStreamPlayer');
+const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
 afterAll(async () => { await network.dispose(); webLocks.restore(); webStorage.restore(); });
 
 async function waitForStreamAdmission(): Promise<void> {
@@ -148,7 +162,10 @@ function daemonView(captureSource?: Record<string, unknown>) {
         target: view.target,
         platform: 'web',
         adapterKind: 'chromiumSidecar',
-        events: [],
+        events: [BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: 'daemon-opened', occurredAt: 1,
+            browserSessionId: view.browserSessionId, viewId: view.viewId, target: view.target,
+            platform: view.platform, adapterKind: view.adapterKind, engineKind: view.engineKind,
+            adapterCapabilities: view.adapterCapabilities, currentUrl: view.currentUrl })],
         ...(captureSource ? { captureSource } : {}),
     };
 }
@@ -159,11 +176,33 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await network.addHome(home.serverUrl, home.accountId);
         network.setHttpResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (boundary.actionDispatch && path === '/v1/account/profile') {
+                const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
+                return Response.json(AccountProfileSchema.parse({ id: home.accountId }));
+            }
+            if (boundary.actionDispatch && path === '/v1/machines/read-batch') {
+                const { MachineReadBatchResponseV1Schema } = await import('@happier-dev/protocol/machines/machineReadBatchV1');
+                const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
+                return Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: 'machine_1', status: 'found',
+                    machine: { id: 'machine_1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+                        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                        access: { custodian: { accountId: home.accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } },
+                }] }));
+            }
+            if (boundary.actionDispatch && /^\/v1\/actions\/browser\.(goBack|goForward|reload|stop|navigate)$/.test(path)) {
+                const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                return Response.json({ v: 1, actionId: path.slice('/v1/actions/'.length), requestId: envelope.requestId,
+                    execution: { ok: true, result: await boundary.actionDispatch(path.slice('/v1/actions/'.length), envelope.input) } });
+            }
             if (path === '/v1/features') {
                 const base = createRootLayoutFeaturesResponse();
                 return Response.json(createRootLayoutFeaturesResponse({
                     features: { machines: { ...base.features.machines, enabled: true,
-                        liveStream: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: true } } } },
+                        liveStream: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: true } } },
+                        ...(boundary.actionDispatch ? { browser: { enabled: true, internal: { enabled: true },
+                            sidecar: { enabled: true }, viewTargets: { enabled: true }, diagnostics: { enabled: true } } } : {}) },
                     capabilities: { machines: { ...base.capabilities.machines,
                         liveStream: { serverRouted: { caps: {}, disabledReason: null } } } },
                 }));
@@ -190,6 +229,8 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.listeners.clear();
         boundary.requests = [];
         boundary.captureResult = null;
+        boundary.diagnosticsSnapshot = null;
+        boundary.actionDispatch = null;
         boundary.discoveryError = null;
         boundary.discoveryGate = null;
         boundary.disconnect.mockClear();
@@ -822,6 +863,229 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             await getSocketHandler(sourceSocket, 'disconnect')(); await getSocketHandler(viewerSocket, 'disconnect')();
             registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose();
         }
+    });
+
+    it('retains daemon facts after refresh, dispatches toolbar navigation and keeps recording and Attach page available', async () => {
+        const history = [{ id: 1, url: 'https://browser.test/a' }, { id: 2, url: 'https://browser.test/b' },
+            { id: 3, url: 'https://browser.test/c' }];
+        const pageCommands: string[] = [];
+        const historyEntries: unknown[] = [];
+        const navigatedUrls: unknown[] = [];
+        let cdpListener: Parameters<BrowserSidecarCdpEventSubscriber>[0] | undefined;
+        const transport: BrowserSidecarCdpControlTransport = { openPage: async () => ({ targetId: 'target', sessionId: 'page' }),
+                subscribeCdpEvents: listener => { cdpListener = listener; return () => { cdpListener = undefined; }; },
+                dispatchBrowserCommand: async () => ({}), dispatchPageCommand: async command => {
+                    pageCommands.push(command.method);
+                    if (command.method === 'Page.navigate') navigatedUrls.push(command.params?.url);
+                    if (command.method === 'Page.navigateToHistoryEntry') historyEntries.push(command.params?.entryId);
+                    if (command.method === 'Page.getFrameTree') return { frameTree: { frame: {
+                        id: 'frame', loaderId: 'initial', url: history[1]!.url,
+                    } } };
+                    if (command.method === 'Runtime.evaluate') return { result: { value: 'complete' } };
+                    return command.method === 'Page.getNavigationHistory' ? { currentIndex: 1, entries: history } : {};
+                } };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId, sidecarId: 'toolbar', transport });
+        await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', browserSessionId: view.browserSessionId,
+            viewId: view.viewId, target: { ...view.target, kind: 'externalUrl', url: history[1]!.url }, platform: 'web' });
+        const candidate = adapter.listViews?.(view.browserSessionId)[0];
+        if (!candidate) throw new Error('Expected real daemon discovery');
+        const discovered = { ...candidate, captureSource: { v: 1, sourceId: candidate.sourceId, sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } };
+        boundary.views = [discovered];
+        const { DaemonBrowserDiagnosticsSnapshotResponseV1Schema } = await import('@happier-dev/protocol/browser/diagnostics/v1');
+        boundary.diagnosticsSnapshot = DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+            snapshot: { v: 1, machineId: 'machine_1', generatedAt: 1, refreshState: 'idle', diagnostics: [], events: [{
+                v: 1, eventId: 'daemon-console', browserSessionId: view.browserSessionId, viewId: view.viewId,
+                navigationGeneration: 0, capturedAtMs: 1, family: 'console', kind: 'console.entry', fidelity: 'cdp',
+                trusted: true, redaction: { level: 'metadataOnly' }, data: { level: 'info', text: 'Daemon console entry' },
+            }] } });
+        const { BrowserDaemonViewV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+        const { resolveBrowserDaemonStreamTarget } = await import('@/sync/domains/browser/store');
+        const { resolveBrowserViewTargetOpen } = await import('../surfaces/openBrowserTargetInWorkspace');
+        const target = resolveBrowserDaemonStreamTarget(BrowserDaemonViewV1Schema.parse(discovered));
+        if (!target) throw new Error('Expected streamed source');
+        const opened = resolveBrowserViewTargetOpen({ scope: 'sessionDetails', platform: 'web' }, target);
+        const { recordingCapabilities } = resolveBrowserRecordingStartContext({ hasCdpScreencast: true,
+            hasFrameEncoder: true, hasNativeViewCapture: false, hasLiveStreamCaptureRegistry: false })({
+            browserSessionId: view.browserSessionId, viewId: view.viewId, profileId: 'profile',
+            targetKind: 'streamedBrowser', adapterKind: 'chromiumSidecar', renderEngineKind: 'streamedSurface',
+            captureKind: 'cdpScreencast', fidelity: 'cdp', navigationGeneration: 0,
+            mimeType: 'video/webm', retentionClass: 'preSend' });
+        const recordingControl = (current: BrowserControlViewState) => resolveBrowserRecordingControl({
+            view: current, profileId: 'profile', state: createBrowserRecordingState(), recordingCapabilities, enabled: true,
+        });
+        // Recording admission uses the canonical capture profile for both seeded and hydrated bindings.
+        expect(recordingControl(opened.seededState.viewsById[view.viewId]!)).toMatchObject({
+            unavailable: null, startRequest: { captureKind: 'cdpScreencast', targetKind: 'streamedBrowser' },
+        });
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(adapter);
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture: {
+                transport, resolvePageHandle: adapter.resolvePageHandle, getNavigationState: adapter.getNavigationState,
+            } }),
+        }), subscribeViewLifecycle: adapter.subscribeViewLifecycle });
+        const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
+        const gate = createBrowserDaemonFeatureGate({ env: { NODE_ENV: 'test' }, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+            features: FeaturesResponseSchema.parse({ features: { browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } } } }),
+        }) });
+        await gate.refresh();
+        const executeDaemonAction = createBrowserDaemonRuntimeActionExecutor({ control: routes, featureGate: gate, ownsAutomationView: broker.ownsView });
+        const commands: string[] = [];
+        const daemonResults: unknown[] = [];
+        boundary.actionDispatch = async (actionId, input) => {
+            const { BrowserCommandV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+            const command = BrowserCommandV1Schema.parse(input);
+            commands.push(command.kind);
+            const result = await executeDaemonAction({ actionId: RuntimeActionIdV1Schema.parse(actionId), input: command,
+                context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } });
+            daemonResults.push(result);
+            return result;
+        };
+        const actionHome = await network.addHome(home.serverUrl, home.accountId, { serverIdentityId: 'srv_browser_stream' });
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const connection = await restoreServerAccountForTest({ serverUrl: home.serverUrl, serverIdentityId: 'srv_browser_stream',
+            credentials: { token: actionHome.token }, request: network.request });
+        const attachFailures: unknown[] = [];
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountScope = captureActiveServerAccountScopeLifetime()?.scope;
+        expect(accountScope?.serverId).toBe(connection.serverId);
+        function SessionHost({ visible }: Readonly<{ visible: boolean }>): React.ReactElement {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope,
+                onAttachUnavailable: reason => { attachFailures.push(reason); } });
+            return <BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web" visible={visible}
+                testID="discovery-toolbar" initialBrowserState={opened.seededState}
+                browserContext={runtime?.browserShellContext}
+                pluginBrowserActionContext={{ sessionId: view.browserSessionId, machineId: 'machine_1', serverId }}
+                subscribeBrowserEvents={listener => adapter.subscribeBrowserEvents(listener)}
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: true }} />;
+        }
+        const renderHost = (visible: boolean) => <SessionHost visible={visible} />;
+        const screen = await renderScreen(renderHost(true));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const beforeRefresh = screen.findByType(BrowserShell).props.state.viewsById[view.viewId];
+            expect(beforeRefresh).toMatchObject({ viewId: view.viewId, canGoBack: true, canGoForward: true, loadingState: 'ready' });
+            const reads = boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST).length;
+            await screen.update(renderHost(false));
+            boundary.views = [structuredClone(discovered)];
+            await screen.update(renderHost(true));
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toHaveLength(reads + 1);
+            const afterRefresh = screen.findByType(BrowserShell).props.state.viewsById[view.viewId];
+            pageCommands.length = 0;
+            for (const button of ['back', 'forward', 'reload']) {
+                await act(async () => { await invokeTestInstanceHandler(
+                    screen.findHostByTestId(`discovery-toolbar-${button}`)!, 'onPress'); });
+                await flushHookEffects();
+            }
+            await act(async () => cdpListener?.({ method: 'Page.frameStartedLoading', sessionId: 'page', params: { frameId: 'frame' } }));
+            await flushHookEffects();
+            await act(async () => { await invokeTestInstanceHandler(
+                screen.findHostByTestId('discovery-toolbar-stop')!, 'onPress'); });
+            await flushHookEffects();
+            await act(async () => { await invokeTestInstanceHandler(screen.findHostByTestId('discovery-toolbar-address')!,
+                'onChangeText', 'https://browser.test/typed'); });
+            await flushHookEffects();
+            await act(async () => { await invokeTestInstanceHandler(screen.findHostByTestId('discovery-toolbar-address')!, 'onSubmitEditing'); });
+            await flushHookEffects();
+            expect(commands, JSON.stringify({ daemonResults, http: network.httpRequests.map(request => ({
+                method: request.method, path: new URL(request.url).pathname,
+            })) })).toEqual(['goBack', 'goForward', 'reload', 'stop', 'navigate']);
+            expect(daemonResults).toEqual(Array.from({ length: 5 }, () => expect.objectContaining({ status: 'dispatched' })));
+            expect(navigatedUrls).toEqual(['https://browser.test/typed']);
+            expect(historyEntries).toEqual([1, 3]);
+            expect(pageCommands.filter(method => method === 'Page.reload')).toHaveLength(1);
+            expect(pageCommands.filter(method => method === 'Page.stopLoading')).toHaveLength(1);
+            expect(afterRefresh).toBe(beforeRefresh);
+            // The same discovered binding that renders the stream must serve the real
+            // Attach page button through Account admission and the mounted context owner.
+            await screen.pressByTestIdAsync('discovery-toolbar-attach-page');
+            await act(async () => { await vi.waitFor(() => {
+                expect({ failures: attachFailures,
+                    attachments: selectBrowserContextComposerAttachments(screen.findByType(BrowserShell).props.browserContext.state),
+                }).toMatchObject({ failures: [], attachments: [{ sourceViewId: view.viewId, state: 'available' }] });
+            }); });
+            expect(recordingControl(afterRefresh)).toMatchObject({ unavailable: null, startRequest: {
+                adapterKind: 'chromiumSidecar', captureKind: 'cdpScreencast', targetKind: 'streamedBrowser', fidelity: 'cdp',
+            } });
+            const row = screen.findByType(BrowserShell).props.state.viewsById[view.viewId];
+            expect(row).toMatchObject({ adapterKind: 'chromiumSidecar', target: { kind: 'streamedBrowser' },
+                adapterCapabilities: { supportedTargetKinds: ['externalUrl'],
+                    diagnosticsFidelityByFamily: { console: 'cdp', network: 'cdp' }, supportsPopups: true } });
+            const { BrowserDiagnosticsDrawer } = await import('../diagnostics/BrowserDiagnosticsDrawer');
+            await act(async () => { screen.findByType(BrowserDiagnosticsDrawer).props.handleRef.current.open(); });
+            await flushHookEffects();
+            expect(Object.values(screen.findByType(BrowserShell).props.browserDiagnostics.eventSource.getState().viewsByKey))
+                .toMatchObject([{ events: [{ eventId: 'daemon-console', fidelity: 'cdp' }] }]);
+        } finally { await screen.unmount(); automation.dispose(); adapter.dispose(); await connection.dispose(); }
+    });
+
+    it('reconciles equal discovery without replay and delivers one changed navigation after re-enable', async () => {
+        let listener: BrowserSidecarCdpEventSubscriber | undefined;
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId, sidecarId: 'discovery',
+            transport: { openPage: async () => ({ targetId: 'target', sessionId: 'page' }),
+                dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}),
+                subscribeCdpEvents: callback => { listener = callback; return () => undefined; } } });
+        await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', browserSessionId: view.browserSessionId,
+            viewId: view.viewId, target: view.target, platform: 'web' });
+        const discover = () => { boundary.views = (adapter.listViews?.(view.browserSessionId) ?? []).map(candidate => ({ ...candidate,
+            captureSource: { v: 1, sourceId: candidate.sourceId, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
+                inputMode: 'shared', sidebands: [], health: { status: 'available' } } })); };
+        discover();
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        let state: ReturnType<typeof createBrowserControlState> = { ...createBrowserControlState(),
+            viewsById: { [view.viewId]: view, sibling: { ...view, viewId: 'sibling' } } };
+        const delivered: unknown[] = [];
+        const hook = await renderHook((props: { refreshKey: string; enabled: boolean }) => useBrowserStreamedSurfaceRuntime({
+            view: state.viewsById[view.viewId] ?? null, machineId: 'machine_1', serverId, ...props,
+            onBrowserEvent: event => {
+                delivered.push(event);
+                state = applyBrowserControlEvent(state, event);
+            },
+        }), { initialProps: { refreshKey: 'initial', enabled: true } });
+        await flushHookEffects({ cycles: 6, turns: 6 });
+        await waitForStreamAdmission();
+        const before = state.viewsById[view.viewId];
+        const sibling = state.viewsById.sibling;
+        delivered.length = 0;
+        for (let refresh = 0; refresh < 3; refresh += 1) {
+            discover();
+            await hook.rerender({ refreshKey: String(refresh), enabled: true });
+            await flushHookEffects();
+        }
+        expect(delivered).toHaveLength(0);
+        expect(state.viewsById[view.viewId]).toBe(before);
+        let liveEvent: unknown;
+        adapter.subscribeBrowserEvents(event => { liveEvent = event; });
+        listener?.({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'target', title: 'Live change' } } });
+        const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [liveEvent] }));
+        const streamId = hook.getCurrent()?.input?.streamId;
+        expect(streamId).toBeTruthy();
+        await act(async () => {
+            const envelope = { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1', message: { kind: 'frame', frame: {
+                v: 1, streamId, sequence: 1, timestampMs: 1, codecId: 'image.mjpeg', payloadKind: 'metadata',
+                payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } };
+            for (const receive of boundary.listeners) receive(envelope);
+        });
+        expect(delivered).toHaveLength(1);
+        const liveRow = state.viewsById[view.viewId];
+        discover();
+        await hook.rerender({ refreshKey: 'after-live', enabled: true });
+        await flushHookEffects();
+        expect(delivered).toHaveLength(1);
+        expect(state.viewsById[view.viewId]).toBe(liveRow);
+        await hook.rerender({ refreshKey: 'hidden', enabled: false });
+        listener?.({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'target', title: 'Changed while hidden' } } });
+        discover();
+        await hook.rerender({ refreshKey: 'shown', enabled: true });
+        await flushHookEffects({ cycles: 6, turns: 6 });
+        expect(delivered).toHaveLength(2);
+        expect(state.viewsById[view.viewId]?.title).toBe('Changed while hidden');
+        expect(state.viewsById.sibling).toBe(sibling);
+        await hook.unmount();
+        adapter.dispose();
     });
 
     it('pauses hidden stream subscriptions while retaining the discovered source and socket across show/hide/show', async () => {

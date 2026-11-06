@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import { BrowserEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { BrowserEventV1Schema, BrowserNavigationStateChangedEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
 import type { BrowserEventV1, BrowserCommandDispatchResultV1, BrowserCommandErrorCodeV1, BrowserCommandV1, BrowserSidecarErrorCodeV1, BrowserProfileV1, BrowserViewTargetV1, BrowserPlatformV1, MachineVitalsSampleV1 } from '@happier-dev/protocol';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
@@ -11,6 +12,7 @@ import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines
 import type { BrowserSidecarInteractions } from './interactions';
 import type { BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
+import { SIDECAR_CDP_DIAGNOSTICS_FIDELITY } from './diagnostics/cdpEventSource';
 
 import {
     browserCommandDispatchFailure,
@@ -212,6 +214,7 @@ type BoundView = BrowserSidecarCdpPageHandle & {
     platform: BrowserPlatformV1;
     openerViewId?: string;
     state: BrowserSidecarNavigationState;
+    navigationEvent?: Extract<BrowserEventV1, { kind: 'navigationStateChanged' }>;
     loaderId?: string;
     frameId?: string;
 };
@@ -315,7 +318,7 @@ export function createBrowserSidecarCdpControlAdapter(
         return event;
     }
 
-    function stateEvent(view: BoundView): BrowserEventV1 {
+    function stateEvent(view: BoundView): Extract<BrowserEventV1, { kind: 'navigationStateChanged' }> {
         // Page script can copy entered material into title or a navigation URL. Public events,
         // inventories and command results share this projection; private target proof/human
         // capture continue to read the unmodified engine state through getNavigationState.
@@ -323,21 +326,33 @@ export function createBrowserSidecarCdpControlAdapter(
             ? { navigationGeneration: view.state.navigationGeneration, loadingState: view.state.loadingState,
                 canGoBack: view.state.canGoBack, canGoForward: view.state.canGoForward }
             : view.state;
-        return BrowserEventV1Schema.parse({ kind: 'navigationStateChanged', eventId: `cdp:${++eventSequence}`,
-            browserSessionId: view.browserSessionId, viewId: view.viewId, occurredAt: Date.now(), ...state });
+        const previous = view.navigationEvent;
+        const projection = { kind: 'navigationStateChanged', eventId: previous?.eventId ?? '',
+            browserSessionId: view.browserSessionId, viewId: view.viewId, occurredAt: previous?.occurredAt ?? 0, ...state };
+        if (previous && sameStrictJsonValue(previous, projection)) return previous;
+        // Discovery and command responses read the same published fact as live metadata. A read
+        // must not mint another event identity or timestamp for unchanged navigation.
+        return view.navigationEvent = BrowserNavigationStateChangedEventV1Schema.parse({ ...projection,
+            eventId: `cdp:${++eventSequence}`, occurredAt: Date.now() });
     }
     function publishState(view: BoundView): void {
-        publishEvent(stateEvent(view));
+        const previous = view.navigationEvent;
+        const event = stateEvent(view);
+        if (event !== previous) publishEvent(event);
     }
     function openedViewEvent(view: BoundView): BrowserEventV1 {
         const state = stateEvent(view);
-        return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
+        return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `opened:${state.eventId}`, occurredAt: state.occurredAt,
             browserSessionId: view.browserSessionId, viewId: view.viewId, target: view.target, platform: view.platform,
             ...(view.openerViewId ? { openerViewId: view.openerViewId } : {}),
             ...('currentUrl' in state && state.currentUrl ? { currentUrl: state.currentUrl } : {}),
             adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', adapterCapabilities: {
                 adapterKind: 'chromiumSidecar', supportedTargetKinds: [view.target.kind], supportedRenderEngines: ['streamedSurface'],
                 navigation: { canNavigate: true, canGoBack: true, canGoForward: true, canReload: true, canStop: true },
+                diagnosticsFidelityByFamily: SIDECAR_CDP_DIAGNOSTICS_FIDELITY,
+                // Discovery consumers retain these owner facts instead of reconstructing
+                // capture support from the streamed presentation target.
+                contextKinds: ['browserPageReference', 'browserScreenshot', 'browserAnnotation'],
                 inputRouting: 'pmsControlSideband', supportsStreamingDisplay: true, supportsPopups: true,
             } });
     }
@@ -355,7 +370,8 @@ export function createBrowserSidecarCdpControlAdapter(
             publishState(view);
         } catch { /* Preserve the last engine state when the transport is unavailable. */ }
     }
-    function updateFrame(view: BoundView, frame: Record<string, unknown>, bootstrap = false): void {
+    function updateFrame(view: BoundView, frame: Record<string, unknown>, navigationType: 'bootstrap' | 'Navigation' | 'BackForwardCacheRestore' = 'Navigation'): void {
+        const bootstrap = navigationType === 'bootstrap';
         if (disposed || boundViews.get(browserViewKey(view)) !== view || frame.parentId) return;
         // A live main-frame commit outranks the earlier bootstrap query's eventual reply.
         if (bootstrap && view.frameId !== undefined) return;
@@ -365,26 +381,32 @@ export function createBrowserSidecarCdpControlAdapter(
         view.frameId = typeof frame.id === 'string' ? frame.id : view.frameId;
         const url = BrowserHttpUrlV1Schema.safeParse(frame.url);
         view.state = { ...view.state, navigationGeneration: view.state.navigationGeneration + (changedDocument ? 1 : 0),
-            ...(url.success ? { currentUrl: url.data } : {}), loadingState: bootstrap ? view.state.loadingState : 'loading' };
+            ...(url.success ? { currentUrl: url.data } : {}),
+            loadingState: bootstrap ? view.state.loadingState : navigationType === 'BackForwardCacheRestore' ? 'ready' : 'loading' };
         publishState(view);
+        // A restored document is complete without another frameStoppedLoading notification.
+        if (navigationType === 'BackForwardCacheRestore') void refreshHistory(view);
+    }
+    async function refreshReadiness(view: BoundView, scope: BrowserSidecarCdpCommandScope = {}): Promise<void> {
+        if (!view.frameId || view.state.loadingState !== 'loading') return;
+        const generation = view.state.navigationGeneration;
+        const readiness = recordValue(await input.transport.dispatchPageCommand({ ...scope, targetId: view.targetId,
+            ...(view.sessionId ? { sessionId: view.sessionId } : {}), method: 'Runtime.evaluate',
+            params: { expression: 'document.readyState', returnByValue: true, awaitPromise: false } }));
+        if (!disposed && boundViews.get(browserViewKey(view)) === view && view.state.navigationGeneration === generation
+            && recordValue(readiness?.result)?.value === 'complete') {
+            view.state = { ...view.state, loadingState: 'ready' };
+            publishState(view);
+        }
     }
     async function observePage(view: BoundView, scope: BrowserSidecarCdpCommandScope = {}): Promise<void> {
         const page = { targetId: view.targetId, ...(view.sessionId ? { sessionId: view.sessionId } : {}) };
         await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.enable' });
         const tree = recordValue(await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.getFrameTree' }));
         const frame = recordValue(recordValue(tree?.frameTree)?.frame);
-        if (frame) updateFrame(view, frame, true);
+        if (frame) updateFrame(view, frame, 'bootstrap');
         // Creation may finish navigating before Page.enable; recover that exact document's readiness.
-        if (view.frameId && view.state.loadingState === 'loading') {
-            const generation = view.state.navigationGeneration;
-            const readiness = recordValue(await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Runtime.evaluate',
-                params: { expression: 'document.readyState', returnByValue: true, awaitPromise: false } }));
-            if (!disposed && boundViews.get(browserViewKey(view)) === view && view.state.navigationGeneration === generation
-                && recordValue(readiness?.result)?.value === 'complete') {
-                view.state = { ...view.state, loadingState: 'ready' };
-                publishState(view);
-            }
-        }
+        await refreshReadiness(view, scope);
         await refreshHistory(view, scope);
     }
 
@@ -452,14 +474,19 @@ export function createBrowserSidecarCdpControlAdapter(
         if (notification.method === 'Target.targetDestroyed') {
             unbindView(view, true);
         } else if (notification.method === 'Page.frameNavigated') {
-            const frame = recordValue(params.frame); if (frame) updateFrame(view, frame);
+            const frame = recordValue(params.frame);
+            if (frame) updateFrame(view, frame, params.type === 'BackForwardCacheRestore' ? params.type : 'Navigation');
         } else if (notification.method === 'Page.navigatedWithinDocument' && params.frameId === view.frameId) {
             const url = BrowserHttpUrlV1Schema.safeParse(params.url);
             view.state = { ...view.state, navigationGeneration: view.state.navigationGeneration + 1, ...(url.success ? { currentUrl: url.data } : {}) };
             publishState(view);
-        } else if ((notification.method === 'Page.frameStartedLoading' || notification.method === 'Page.frameStoppedLoading') && params.frameId === view.frameId) {
+            void refreshHistory(view);
+            // History API changes can occur before the document finishes loading.
+            void refreshReadiness(view).catch(() => { /* Keep the last engine state if CDP is unavailable. */ });
+        } else if (notification.method === 'Page.loadEventFired'
+            || ((notification.method === 'Page.frameStartedLoading' || notification.method === 'Page.frameStoppedLoading') && params.frameId === view.frameId)) {
             view.state = { ...view.state, loadingState: notification.method === 'Page.frameStartedLoading' ? 'loading' : 'ready' }; publishState(view);
-            if (notification.method === 'Page.frameStoppedLoading') void refreshHistory(view);
+            if (notification.method !== 'Page.frameStartedLoading') void refreshHistory(view);
         } else if (notification.method === 'Target.targetInfoChanged') {
             const title = BrowserTitleChangedEventV1Schema.shape.title.safeParse(target?.title);
             view.state = { ...view.state, ...(title.success ? { title: title.data } : {}) };
@@ -697,7 +724,7 @@ export function createBrowserSidecarCdpControlAdapter(
             return [...boundViews.values()].map(view => ({ browserSessionId: view.browserSessionId, viewId: view.viewId,
                 sourceId: browserViewKey(view), target: view.target, platform: view.platform,
                 adapterKind: 'chromiumSidecar' as const,
-                events: [...(view.openerViewId ? [openedViewEvent(view)] : []), stateEvent(view)] }));
+                events: [openedViewEvent(view), stateEvent(view)] }));
         },
         getNavigationState(view) { return boundViews.get(browserViewKey(view))?.state ?? null; },
         resolvePageHandle(view) {

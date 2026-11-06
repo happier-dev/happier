@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
+import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 
 import { isClientRenderedBrowserEngine } from './lifecycle';
 import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
@@ -203,9 +204,22 @@ export function applyBrowserControlEvent(state: BrowserControlState, input: Brow
             };
         }
         case 'viewOpened': {
+            const view = state.viewsById[event.viewId];
+            // Re-admitting the same captured daemon view hydrates its binding facts;
+            // navigation and controller continuity already belong to the live record.
+            const sameStream = view?.browserSessionId === event.browserSessionId
+                && view.engineKind === 'streamedSurface' && event.engineKind === 'streamedSurface'
+                && view.target.kind === 'streamedBrowser' && event.target.kind === 'streamedBrowser'
+                && view.target.targetId === event.target.targetId;
+            const nextView = sameStream ? retainDeep(view, { ...view,
+                target: event.target, platform: event.platform, adapterKind: event.adapterKind,
+                engineKind: event.engineKind, adapterCapabilities: event.adapterCapabilities,
+                openerViewId: event.openerViewId ?? null,
+            }) : createViewFromOpenedEvent(event);
+            if (nextView === view) return state;
             const viewsById = {
                 ...state.viewsById,
-                [event.viewId]: createViewFromOpenedEvent(event),
+                [event.viewId]: nextView,
             };
             return {
                 sessionsById: state.sessionsById,
@@ -331,24 +345,26 @@ export function applyBrowserControlEvent(state: BrowserControlState, input: Brow
         case 'navigationStateChanged': {
             const view = state.viewsById[event.viewId];
             if (!view) return state;
+            const nextView = retainShallow(view, {
+                ...view,
+                currentUrl: event.currentUrl ?? view.currentUrl,
+                pendingUrl: event.pendingUrl ?? null,
+                navigationGeneration: event.navigationGeneration ?? resolveNextNavigationGeneration(view, event.currentUrl),
+                title: event.title ?? view.title,
+                faviconUrl: event.faviconUrl ?? view.faviconUrl,
+                loadingState: event.loadingState,
+                loadingProgress: event.loadingProgress ?? view.loadingProgress,
+                canGoBack: event.canGoBack,
+                canGoForward: event.canGoForward,
+                securityOrigin: event.securityOrigin ?? view.securityOrigin,
+                lastError: event.lastError ?? null,
+            });
+            if (nextView === view) return state;
             return {
                 ...state,
                 viewsById: {
                     ...state.viewsById,
-                    [event.viewId]: {
-                        ...view,
-                        currentUrl: event.currentUrl ?? view.currentUrl,
-                        pendingUrl: event.pendingUrl ?? null,
-                        navigationGeneration: event.navigationGeneration ?? resolveNextNavigationGeneration(view, event.currentUrl),
-                        title: event.title ?? view.title,
-                        faviconUrl: event.faviconUrl ?? view.faviconUrl,
-                        loadingState: event.loadingState,
-                        loadingProgress: event.loadingProgress ?? view.loadingProgress,
-                        canGoBack: event.canGoBack,
-                        canGoForward: event.canGoForward,
-                        securityOrigin: event.securityOrigin ?? view.securityOrigin,
-                        lastError: event.lastError ?? null,
-                    },
+                    [event.viewId]: nextView,
                 },
             };
         }

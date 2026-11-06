@@ -22,14 +22,16 @@ import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control
 import { listBrowserDaemonViewsViaMachineRpc, type BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { resolveBrowserDaemonStreamTarget } from '@/sync/domains/browser/store';
-import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import type { BrowserOpenFirstUse } from '@/sync/domains/browser/firstUse/browserFirstUse';
 
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 import { BrowserStreamedSurfaceScope } from './BrowserStreamedSurfaceScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createBrowserStreamInputRelay, saveBrowserStreamDownload } from './inputRelay';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { applyBrowserDiscoveryEvent, reconcileBrowserDiscovery } from './discovery';
 
 /** The live-stream family every browser capture source registers under (`_CONTRACTS.md`). */
 const BROWSER_STREAM_FAMILY = 'browser.streamed';
@@ -81,6 +83,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const serverId = input.serverId?.trim() ?? '';
     const browserSessionId = view?.browserSessionId ?? input.browserSessionId ?? null;
     const viewId = view?.viewId ?? null;
+    const {binding: accountBinding} = useServerCredentialAccountScopeBinding(serverId);
     const [discovery, setDiscovery] = React.useState<Discovery>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
     const [viewerMetadata, setViewerMetadata] = React.useState<Readonly<{
@@ -88,6 +91,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     }> | null>(null);
     const inputSequence = React.useRef(0);
     const inputRelayRef = React.useRef<ReturnType<typeof createBrowserStreamInputRelay> | null>(null);
+    const discoveryAccountId = accountBinding?.accountId ?? null;
+    const discoveryScope = JSON.stringify([discoveryAccountId, serverId, machineId, browserSessionId]);
+    const discoveryBaseline = React.useRef<Readonly<{ scope: string; views: readonly BrowserDaemonViewV1[] }> | null>(null);
     const onBrowserEventRef = React.useRef(input.onBrowserEvent);
     onBrowserEventRef.current = input.onBrowserEvent;
     const discoveredView = discovery.status === 'ready' && discovery.machineId === machineId && discovery.serverId === serverId
@@ -101,14 +107,24 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 occurredAt: Date.now(), browserSessionId: discoveredView.browserSessionId, viewId: discoveredView.viewId });
         }
     });
+    const reconcileDiscoveredViews = useEventCallback((views: readonly BrowserDaemonViewV1[]) => {
+        const previous = discoveryBaseline.current?.scope === discoveryScope ? discoveryBaseline.current.views : undefined;
+        const reconciled = reconcileBrowserDiscovery(previous, views);
+        discoveryBaseline.current = { scope: discoveryScope, views: reconciled.views };
+        for (const event of reconciled.events) onBrowserEventRef.current?.(event);
+        setDiscovery(previous => retainShallow(previous, { status: 'ready', machineId, serverId,
+            view: reconciled.views.find(candidate => candidate.viewId === viewId
+                && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null }));
+    });
 
     React.useEffect(() => {
         if (!browserSessionId || !machineId || !serverId) {
             setDiscovery({ status: 'idle' });
             return undefined;
         }
-        // Visibility suspends capture consumption, not the retained view/socket.
-        if (input.enabled === false) return undefined;
+        // Discovery's retained snapshot belongs to the resolved Account. Visibility and
+        // credential resolution suspend reads without discarding that snapshot.
+        if (!discoveryAccountId || input.enabled === false) return undefined;
         const abort = new AbortController();
         setDiscovery(previous => previous.status === 'ready' ? previous : { status: 'discovering' });
         void listBrowserDaemonViewsViaMachineRpc({ machineId, serverId, browserSessionId, signal: abort.signal })
@@ -117,34 +133,10 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 if (!result.ok) { setDiscovery({ status: 'failed', reason: result.reason }); return; }
                 const views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileClosedView(views);
-                for (const candidate of views) {
-                    const target = resolveBrowserDaemonStreamTarget(candidate);
-                    if (!target) continue;
-                    // Discovery already identifies the daemon's semantic owner. The viewer uses a
-                    // stream target for display, but must retain Chromium's capture/Action route.
-                    const adapterCapabilities = buildBrowserAdapterCapabilities({
-                        adapterKind: candidate.adapterKind,
-                        supportedTargetKinds: [target.kind],
-                        supportedRenderEngines: ['streamedSurface'],
-                    });
-                    const opened = candidate.events.find(event => event.kind === 'viewOpened');
-                    onBrowserEventRef.current?.({ kind: 'viewOpened', eventId: `browser-discovery:${candidate.sourceId}`,
-                        occurredAt: opened?.occurredAt ?? Date.now(), browserSessionId: candidate.browserSessionId,
-                        viewId: candidate.viewId, target, platform: candidate.platform,
-                        adapterKind: candidate.adapterKind, engineKind: 'streamedSurface',
-                        adapterCapabilities,
-                        ...(opened?.kind === 'viewOpened' && opened.openerViewId ? { openerViewId: opened.openerViewId } : {}),
-                        ...(opened?.kind === 'viewOpened' && opened.currentUrl ? { currentUrl: opened.currentUrl } : {}) });
-                    for (const event of candidate.events) {
-                        if (event.kind !== 'viewOpened' && event.browserSessionId === browserSessionId
-                            && (!('viewId' in event) || event.viewId === candidate.viewId)) onBrowserEventRef.current?.(event);
-                    }
-                }
-                setDiscovery({ status: 'ready', machineId, serverId, view: views.find(candidate => candidate.viewId === viewId
-                    && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null });
+                reconcileDiscoveredViews(views);
             });
         return () => abort.abort();
-    }, [attempt, browserSessionId, input.enabled, input.refreshKey, machineId, reconcileClosedView, serverId, viewId]);
+    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, machineId, reconcileClosedView, reconcileDiscoveredViews, serverId, viewId]);
 
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;
@@ -195,7 +187,13 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                         setAttempt(current => current + 1);
                         continue;
                     }
-                    if (event.browserSessionId === browserSessionId && 'viewId' in event && event.viewId === viewId) onBrowserEventRef.current?.(event);
+                    if (event.browserSessionId === browserSessionId && 'viewId' in event && event.viewId === viewId) {
+                        const baseline = discoveryBaseline.current;
+                        if (baseline?.scope === discoveryScope) discoveryBaseline.current = {
+                            scope: discoveryScope, views: applyBrowserDiscoveryEvent(baseline.views, event),
+                        };
+                        onBrowserEventRef.current?.(event);
+                    }
                 }
                 if (!sourceId || !streamId) return;
                 const resetTarget = batch.data.events.some(event => event.browserSessionId === browserSessionId
