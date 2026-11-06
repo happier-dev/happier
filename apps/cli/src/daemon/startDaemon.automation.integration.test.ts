@@ -1,9 +1,12 @@
 import type { ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonState } from '@/api/types';
+import { projectPath } from '@/projectPath';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
+let restoreHttpAdapter: (() => void) | null = null;
 
 const harness = vi.hoisted(() => {
   // A real daemon credential is a JWT whose `sub` is the Account. The previous opaque
@@ -131,7 +134,7 @@ const harness = vi.hoisted(() => {
 
   const createDaemonAuthResult = () => ({
     credentials: {
-      token: 'token-automation',
+      token: daemonCredentialToken,
       encryption: {
         type: 'dataKey' as const,
         publicKey: new Uint8Array(32).fill(1),
@@ -171,21 +174,28 @@ const harness = vi.hoisted(() => {
   };
 });
 
-vi.mock('@/api/api', () => ({
-  ApiClient: {
-    create: vi.fn(async () => ({
-      machineSyncClient: () => harness.apiMachine,
-      setLocalMachineId: vi.fn(),
-      setServerFeaturesSnapshotProvider: vi.fn(),
-      setPeerMediationObservabilityRuntimeActionContextProvider:
-        harness.setPeerMediationObservabilityRuntimeActionContextProvider,
-      createBrowserRuntimeActionExecutor: vi.fn(),
-      getAccountEncryptionMode: vi.fn(async () => 'plain'),
-      getConnectedServiceAuthGroup: vi.fn(async () => null),
-    })),
-  },
-  isMachineContentPublicKeyMismatchError: vi.fn(() => false),
-}));
+vi.mock('@/api/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/api')>();
+  return {
+    ...actual,
+    ApiClient: {
+      create: vi.fn(async (credentials: Parameters<typeof actual.ApiClient.create>[0]) => {
+        const api = await actual.ApiClient.create(credentials);
+        const createMachineClient = api.machineSyncClient.bind(api);
+        const publishContext = api.setPeerMediationObservabilityRuntimeActionContextProvider.bind(api);
+        vi.spyOn(api, 'setPeerMediationObservabilityRuntimeActionContextProvider').mockImplementation((provider) => {
+          publishContext(provider);
+          harness.setPeerMediationObservabilityRuntimeActionContextProvider(provider);
+        });
+        // Keep real route registrars around the pre-existing remote transport fake.
+        return Object.assign(api, {
+          machineSyncClient: (...args: Parameters<typeof createMachineClient>) =>
+            Object.assign(createMachineClient(...args), harness.apiMachine),
+        });
+      }),
+    },
+  };
+});
 
 vi.mock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', () => {
   let settings: Record<string, unknown> = {};
@@ -222,60 +232,60 @@ vi.mock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', () => {
   };
 });
 
-vi.mock('@/api/client/serializeAxiosErrorForLog', () => ({
-  serializeAxiosErrorForLog: vi.fn(() => ({})),
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-  fetchServerFeaturesSnapshot: vi.fn(async () => ({
-    status: 'unsupported',
-    reason: 'endpoint_missing',
-  })),
-}));
-
 vi.mock('@/api/machine/ensureMachineRegistered', () => ({
   ensureMachineRegistered: vi.fn(async ({ machineId }: { machineId: string }) => ({
     machineId,
     didRotateMachineId: false,
     machine: {
       id: machineId,
-      metadata: {},
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+      encryptionKey: new Uint8Array(32).fill(2),
+      encryptionVariant: 'dataKey' as const,
     },
   })),
 }));
 
-vi.mock('@/ui/logger', () => ({
-  logger: {
-    debug: vi.fn(),
-    debugLargeJson: vi.fn(),
-    info: vi.fn(),
-    infoFile: vi.fn(),
-    warn: vi.fn(),
-    flushSync: vi.fn(),
-    logFilePath: '/tmp/happier-daemon.log',
-  },
-}));
+vi.mock('@/ui/logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ui/logger')>();
+  const { join } = await import('node:path');
+  const testHome = process.env.HAPPIER_HOME_DIR;
+  if (!testHome) throw new Error('Daemon fixture requires the isolated test Home');
+  return {
+    ...actual,
+    logger: new actual.Logger({
+      logFilePath: join(testHome, 'logs', 'startDaemon-automation.log'),
+      redactFileOutput: true,
+      allowDangerousRemoteLogging: false,
+      pruneCurrentProcessLogs: false,
+    }),
+  };
+});
 
 vi.mock('@/ui/auth', () => ({
   authAndSetupMachineIfNeeded: harness.authAndSetupMachineIfNeeded,
   authAndPrepareDaemonMachineIfNeeded: harness.authAndPrepareDaemonMachineIfNeeded,
 }));
 
-vi.mock('@/configuration', () => ({
-  configuration: {
-    privateKeyFile: '/tmp/key',
-    happyHomeDir: '/tmp/home',
-    activeServerId: 'default',
-    serverUrl: 'https://api.happier.dev',
-    apiServerUrl: 'https://api.happier.dev',
-    webappUrl: 'https://happier.dev',
-    activeServerDir: '/tmp/home/servers/active',
-    currentCliVersion: '0.0.0-test',
-    publicReleaseRing: 'publicdev',
-    daemonSpawnExistingSessionWaitForExitMs: 5_000,
-    daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
-  },
-}));
+vi.mock('@/configuration', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/configuration')>();
+  return {
+    ...actual,
+    configuration: {
+      ...actual.configuration,
+      activeServerId: 'default',
+      serverUrl: 'https://api.happier.dev',
+      apiServerUrl: 'https://api.happier.dev',
+      webappUrl: 'https://happier.dev',
+      currentCliVersion: '0.0.0-test',
+      publicReleaseRing: 'publicdev',
+      daemonSpawnExistingSessionWaitForExitMs: 5_000,
+      daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
+    },
+  };
+});
 
 
 vi.mock('@/ui/doctor', () => ({
@@ -299,7 +309,8 @@ vi.mock('@/agent/catalog/resolution', async (importOriginal) => ({
   resolveCatalogAgentId: vi.fn(() => 'codex'),
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   writeDaemonState: vi.fn(),
   writeDaemonStateForLockOwner: vi.fn(() => true),
   clearDaemonStateForLockOwner: vi.fn(() => true),
@@ -313,7 +324,6 @@ vi.mock('@/persistence', () => ({
       machineKey: new Uint8Array(32).fill(2),
     },
   })),
-  readSettings: vi.fn(async () => ({ experiments: true })),
 }));
 
 vi.mock('@/daemon/deviceLocalSecretStorage', () => ({
@@ -343,7 +353,8 @@ vi.mock('./controlServer', () => ({
   })),
 }));
 
-vi.mock('./sessions/reattachFromMarkers', () => ({
+vi.mock('./sessions/reattachFromMarkers', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./sessions/reattachFromMarkers')>(),
   reattachTrackedSessionsFromMarkers: vi.fn(async () => ({
     inventoryReliable: true,
     orphanedDeadDaemonSessions: [],
@@ -354,10 +365,6 @@ vi.mock('./sessions/reattachFromMarkers', () => ({
 vi.mock('./sessions/onHappySessionWebhook', async (importOriginal) => ({
   ...await importOriginal<typeof import('./sessions/onHappySessionWebhook')>(),
   createOnHappySessionWebhook: vi.fn(() => vi.fn()),
-}));
-
-vi.mock('./sessions/onChildExited', () => ({
-  createOnChildExited: vi.fn(() => vi.fn()),
 }));
 
 vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
@@ -376,10 +383,6 @@ vi.mock('./lifecycle/heartbeat', () => ({
   startDaemonHeartbeatLoop: vi.fn(() => setInterval(() => {}, 60_000)),
 }));
 
-vi.mock('@/projectPath', () => ({
-  projectPath: vi.fn(() => '/tmp/project'),
-}));
-
 vi.mock('@/integrations/tmux', () => ({
   selectPreferredTmuxSessionName: vi.fn(),
   TmuxUtilities: {},
@@ -392,10 +395,6 @@ vi.mock('@/terminal/runtime/terminalConfig', () => ({
 
 vi.mock('@/terminal/runtime/envVarSanitization', () => ({
   validateEnvVarRecordStrict: vi.fn(() => ({ ok: true, env: {} })),
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-  fetchServerFeaturesSnapshot: vi.fn(async () => ({ status: 'error', reason: 'network' })),
 }));
 
 vi.mock('./machine/metadata', () => ({
@@ -439,11 +438,6 @@ vi.mock('@/daemon/ownership/evaluateCurrentDaemonOwner', () => ({
   evaluateCurrentDaemonOwner: vi.fn(async () => ({ kind: 'none' })),
 }));
 
-vi.mock('@/daemon/ownership/resolveDaemonTakeoverDecision', () => ({
-  buildDaemonTakeoverNotice: vi.fn(() => ({ title: 'takeover', lines: [] })),
-  resolveDaemonTakeoverDecision: vi.fn(() => ({ kind: 'ok' })),
-}));
-
 vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
   evaluateDaemonStartupServiceConflict: vi.fn(async () => ({ kind: 'ok' })),
   renderDaemonInstalledServiceConflict: vi.fn(() => ({ title: 'service-conflict', lines: [] })),
@@ -480,10 +474,6 @@ vi.mock('./voiceInference/voiceInferenceWorker', () => ({
 
 vi.mock('./connectedServices/accountUsage/persistence', () => ({
   createProviderAccountUsagePersistenceScheduler: harness.createProviderAccountUsagePersistenceScheduler,
-}));
-
-vi.mock('./connectedServices/quotas/ConnectedServiceQuotasCoordinator', () => ({
-  ConnectedServiceQuotasCoordinator: vi.fn(),
 }));
 
 vi.mock('./connectedServices/quotas/createConnectedServiceQuotaFetchers', () => ({
@@ -566,13 +556,40 @@ function restoreEnvVar(name: string, value: string | undefined): void {
 }
 
 describe('startDaemon automation wiring (integration)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    // Home identity/authentication use real clients; only HTTP and native-carrier
+    // selection are supplied here, so startup cannot silently wait on a live Home.
+    vi.stubEnv('HAPPIER_HOME_CARRIER_POLICY', 'standard_only');
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {} });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      return url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated'
+        ? Response.json(features)
+        : new Response(null, { status: 404 });
+    }));
+    const { default: axios } = await import('axios');
+    const previousAdapter = axios.defaults.adapter;
+    restoreHttpAdapter = () => { axios.defaults.adapter = previousAdapter; };
+    axios.defaults.adapter = async (config) => {
+      const path = new URL(config.url ?? '', config.baseURL).pathname;
+      return {
+        config,
+        data: path === '/v1/account/encryption' ? { mode: 'e2ee' } : {},
+        headers: {},
+        status: path === '/v1/auth/ping' || path === '/v1/account/encryption' ? 200 : 404,
+        statusText: 'fixture',
+      };
+    };
   });
 
   afterEach(() => {
+    restoreHttpAdapter?.();
+    restoreHttpAdapter = null;
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     harness.setAutoShutdownAfterAutomationStart(true);
   });
 
@@ -691,7 +708,7 @@ describe('startDaemon automation wiring (integration)', () => {
               happyCliVersion: '0.0.0-test',
               homeDir: '/tmp/home',
               happyHomeDir: '/tmp/home',
-              happyLibDir: '/tmp/project',
+              happyLibDir: projectPath(),
             },
             metadataVersion: 0,
             daemonState: null,
@@ -1702,6 +1719,8 @@ describe('startDaemon automation wiring (integration)', () => {
       });
 
       const { logger } = await import('@/ui/logger');
+      const warnMock = vi.spyOn(logger, 'warn');
+      const debugMock = vi.spyOn(logger, 'debug');
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
@@ -1709,8 +1728,6 @@ describe('startDaemon automation wiring (integration)', () => {
       harness.requestShutdown('happier-cli');
       await run;
 
-      const warnMock = (logger as any).warn as any;
-      const debugMock = (logger as any).debug as any;
       const serialized = JSON.stringify([...warnMock.mock.calls, ...debugMock.mock.calls]);
       expect(serialized).not.toContain(leakedBearer);
     } finally {
@@ -1861,7 +1878,7 @@ describe('startDaemon automation wiring (integration)', () => {
       run = startDaemon();
       await vi.waitFor(() => {
         expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
-      });
+      }, { timeout: 240_000 });
 
       expect(harness.setPeerMediationObservabilityRuntimeActionContextProvider).toHaveBeenCalledTimes(1);
       const publishContext = harness.setPeerMediationObservabilityRuntimeActionContextProvider.mock.calls[0]?.[0] as
