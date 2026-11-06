@@ -13351,6 +13351,11 @@
       "types": "./dist/usage/usageRecap.d.ts",
       "default": "./dist/usage/usageRecap.js"
     },
+    "./usage/usageSessionEvidence": {
+      "happier-source": "./src/usage/usageSessionEvidence.ts",
+      "types": "./dist/usage/usageSessionEvidence.d.ts",
+      "default": "./dist/usage/usageSessionEvidence.js"
+    },
     "./usage/usageSourceSummary": {
       "happier-source": "./src/usage/usageSourceSummary.ts",
       "types": "./dist/usage/usageSourceSummary.d.ts",
