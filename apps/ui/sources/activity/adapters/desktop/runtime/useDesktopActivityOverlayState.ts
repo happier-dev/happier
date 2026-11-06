@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 import {
     getDesktopActivityOverlayWindowState,
@@ -25,41 +27,18 @@ export type DesktopActivityOverlayFields = Readonly<{
     screenOrigin: NonNullable<DesktopActivityOverlayWindowStatePayload['frame']>['screenOrigin'];
 }>;
 
-function record(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Reconcile JSON transport values per field/entry instead of serializing the whole snapshot. */
-function share(previous: unknown, next: unknown, matchFacesByAddress = false): unknown {
-    if (Object.is(previous, next)) return previous;
-    if (Array.isArray(next) && Array.isArray(previous)) {
-        const byAddress = matchFacesByAddress ? new Map(previous.filter(record).map(face =>
-            [JSON.stringify([face.serverId, face.sessionId]), face])) : null;
-        const values = next.map((value, index) => share(byAddress && record(value)
-            ? byAddress.get(JSON.stringify([value.serverId, value.sessionId])) : previous[index], value));
-        return values.length === previous.length && values.every((value, index) => value === previous[index]) ? previous : values;
-    }
-    if (record(next) && record(previous)) {
-        const values: Record<string, unknown> = {};
-        const keys = Object.keys(next);
-        let unchanged = keys.length === Object.keys(previous).length;
-        for (const key of keys) {
-            values[key] = share(previous[key], next[key], key === 'faces');
-            if (!Object.hasOwn(previous, key) || values[key] !== previous[key]) unchanged = false;
-        }
-        return unchanged ? previous : values;
-    }
-    return next;
-}
-
 export function reconcileDesktopActivityOverlayState(
     previous: DesktopActivityOverlayWindowStatePayload | null,
     next: DesktopActivityOverlayWindowStatePayload,
 ): DesktopActivityOverlayWindowStatePayload {
     if (!previous) return next;
+    const faces = retainDeep(previous.model.faces, {
+        ...next.model.faces,
+        faces: retainKeyedRows(previous.model.faces.faces, next.model.faces.faces, sessionAddressKey),
+    });
     // generatedAt is a builder stamp, not a rendered fact or publication trigger.
-    const model = share(previous.model, { ...next.model, generatedAt: previous.model.generatedAt }) as Model;
-    return share(previous, { ...next, model: model === previous.model ? model : { ...model, generatedAt: next.model.generatedAt } }) as DesktopActivityOverlayWindowStatePayload;
+    const model = retainDeep(previous.model, { ...next.model, faces, generatedAt: previous.model.generatedAt });
+    return retainDeep(previous, { ...next, model: model === previous.model ? model : { ...model, generatedAt: next.model.generatedAt } });
 }
 
 function modelLeaf<K extends string>(model: Model, key: K): ModelLeaf<K> {

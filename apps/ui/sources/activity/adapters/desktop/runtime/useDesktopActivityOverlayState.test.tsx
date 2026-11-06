@@ -40,11 +40,25 @@ function windowState(overrides: Partial<DesktopActivityOverlayWindowStatePayload
 }
 
 describe('useDesktopActivityOverlayState', () => {
+    it('retains transport-equivalent optional facts and publishes a changed sibling', () => {
+        const previous = windowState({ frame: {
+            dock: 'top', growth: { x: null, y: 'down' }, anchorOffset: { x: 0, y: 0 },
+            screenOrigin: undefined,
+        } });
+        const next = windowState({ frame: {
+            dock: 'top', growth: { x: null, y: 'down' }, anchorOffset: { x: 0, y: 0 },
+        } });
+        expect(reconcileDesktopActivityOverlayState(previous, next)).toBe(previous);
+        const changed = reconcileDesktopActivityOverlayState(previous, { ...next, visible: false });
+        expect(changed.visible).toBe(false);
+        expect(changed.frame).toBe(previous.frame);
+    });
     it('keeps unchanged face identities when a changed Bot moves in the shared order', () => {
         const face = (sessionId: string) => ({ serverId: 'home', sessionId, face: { seed: sessionId, face: null },
             name: sessionId, activity: 'quiet' as const, currentLine: null, meaningfulActivityAt: 1,
             live: true, agentId: null, machineId: null });
-        const a = face('a'); const b = face('b'); const c = face('c');
+        // Same bare Session id on two Homes must remain two independent identities.
+        const a = face('a'); const b = { ...face('a'), serverId: 'other-home' }; const c = face('c');
         const initial = windowState();
         const previous = { ...initial, model: { ...initial.model, faces: { faces: [a, b, c], overflowCount: 0 } } };
         const next = { ...initial, model: { ...initial.model, faces: {
