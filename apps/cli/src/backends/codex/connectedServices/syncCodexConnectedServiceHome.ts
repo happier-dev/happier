@@ -11,7 +11,7 @@ import {
 
 import { codexConnectedServiceStateSharingDescriptor } from '@/backends/codex/connectedServices/codexConnectedServiceStateSharingDescriptor';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
-import { isMatchingCodexRolloutFileName, normalizeCodexVendorResumeId } from '@/backends/codex/utils/codexSessionFiles';
+import { isCodexRolloutFilePath, isMatchingCodexRolloutFileName, normalizeCodexVendorResumeId, parseCodexRolloutFilename } from '@/backends/codex/utils/codexSessionFiles';
 import { resolveConnectedServiceHomesDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { isConnectedServiceStateRootWithin } from '@/daemon/connectedServices/materialize/resolveConnectedServicePreviousStateRoot';
 import { ConnectedServiceSharedStateLinkUnavailableError } from '@/daemon/connectedServices/stateSharing/createSharedStateLink';
@@ -195,8 +195,8 @@ function resolveVendorResumeIdFromImportedRollout(
 ): string | null {
   const candidates = [basename(detail.sourcePath), basename(detail.destinationPath), detail.relativePath];
   for (const candidate of candidates) {
-    const match = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(candidate);
-    if (match) return match[1];
+    const threadId = parseCodexRolloutFilename(candidate)?.threadId;
+    if (threadId) return threadId;
   }
   return null;
 }
@@ -351,7 +351,7 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
           ]).flatMap((sessionSourceHome) => CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
             sourceRoot: join(sessionSourceHome, entryName),
             destinationRoot: join(sourceCodexHome, entryName),
-            includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
+            includeFile: isCodexRolloutFilePath,
           })))
           : [],
         resolveVendorResumeIdFromImportedFile: resolveVendorResumeIdFromImportedRollout,

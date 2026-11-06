@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
+import { resolveCodexLogicalRolloutPath, resolveExistingCodexRolloutPath } from '@/backends/codex/utils/codexSessionFiles';
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
 import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
 
@@ -42,7 +43,7 @@ export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
   try {
     database = openSqliteDatabaseSync(databasePath, { readOnly: true });
     const indexedPath = readRolloutPath(database, params.vendorResumeId);
-    return indexedPath && await isFile(indexedPath) ? indexedPath : null;
+    return indexedPath ? await resolveExistingCodexRolloutPath(indexedPath) : null;
   } catch {
     return null;
   } finally {
@@ -91,15 +92,16 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
 
     const indexedPath = readRolloutPath(database, params.vendorResumeId);
     if (!indexedPath || indexedPath === params.resolvedRolloutPath) return true;
-    if (await isFile(indexedPath)) return true;
+    if (await resolveExistingCodexRolloutPath(indexedPath)) return true;
+
+    const logicalRolloutPath = resolveCodexLogicalRolloutPath(params.resolvedRolloutPath);
 
     database
       .prepare('UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?')
-      .run(params.resolvedRolloutPath, params.vendorResumeId, indexedPath);
+      .run(logicalRolloutPath, params.vendorResumeId, indexedPath);
 
     const settledPath = readRolloutPath(database, params.vendorResumeId);
-    if (settledPath === params.resolvedRolloutPath) return true;
-    return settledPath !== null && await isFile(settledPath);
+    return settledPath !== null && await resolveExistingCodexRolloutPath(settledPath) !== null;
   } catch {
     return false;
   } finally {

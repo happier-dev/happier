@@ -5,10 +5,40 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
+import { resolveExistingCodexIndexedRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { verifyResumeReachableCodex } from './verifyResumeReachableCodex';
 
 describe('verifyResumeReachableCodex', () => {
-  it('repairs the exact stale shared SQLite rollout path after locating the promoted rollout', async () => {
+  it('accepts compressed state behind a plain SQLite path without rewriting the native index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-compressed-index-'));
+    const vendorResumeId = '019f2339-9299-7e51-b192-9751a0a03586';
+    const codexHome = join(root, 'codex-home');
+    const sqliteHome = join(root, 'sqlite');
+    const plain = join(codexHome, 'sessions', `rollout-2026-11-06T00-00-00-${vendorResumeId}.jsonl`);
+    const env = { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: sqliteHome };
+    try {
+      await mkdir(join(codexHome, 'sessions'), { recursive: true });
+      await mkdir(sqliteHome);
+      await writeFile(`${plain}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+      const database = openSqliteDatabaseSync(join(sqliteHome, 'state_5.sqlite'));
+      try {
+        database.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)');
+        database.prepare('INSERT INTO threads (id, rollout_path) VALUES (?, ?)').run(vendorResumeId, plain);
+        await expect(verifyResumeReachableCodex({ targetMaterializedRoot: root,
+          targetMaterializedEnv: env, vendorResumeId, cwd: root, candidatePersistedSessionFile: plain,
+        })).resolves.toEqual({ ok: true, resolvedPath: `${plain}.zst` });
+        expect(database.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(vendorResumeId))
+          .toEqual({ rollout_path: plain });
+        await expect(resolveExistingCodexIndexedRolloutPath({ env, vendorResumeId, cwd: root }))
+          .resolves.toBe(`${plain}.zst`);
+      } finally {
+        database.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it.each(['.jsonl', '.jsonl.zst'])('repairs a stale home path for a promoted %s rollout using the logical plain path', async (extension) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-reachable-sqlite-'));
     const vendorResumeId = '019f2339-9299-7e51-b192-9751a0a03586';
     const otherVendorResumeId = '019f2339-9299-7e51-b192-9751a0a03587';
@@ -22,7 +52,7 @@ describe('verifyResumeReachableCodex', () => {
       '2026',
       '09',
       '07',
-      `rollout-2026-09-07T10-00-00-${vendorResumeId}.jsonl`,
+      `rollout-2026-09-07T10-00-00-${vendorResumeId}${extension}`,
     );
 
     try {
@@ -53,7 +83,7 @@ describe('verifyResumeReachableCodex', () => {
       const verifiedDatabase = openSqliteDatabaseSync(databasePath);
       try {
         expect(verifiedDatabase.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(vendorResumeId))
-          .toEqual({ rollout_path: foundPath });
+          .toEqual({ rollout_path: foundPath.replace(/\.zst$/, '') });
         expect(verifiedDatabase.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(otherVendorResumeId))
           .toEqual({ rollout_path: otherStalePath });
       } finally {

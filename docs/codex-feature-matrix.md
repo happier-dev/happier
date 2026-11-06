@@ -23,6 +23,12 @@ oversized responses by request so the same client can issue a lean recovery read
 - `legacy`: still wired, but no longer the preferred path
 - `unsupported`: intentionally absent today
 
+## Compressed rollout continuation (development source)
+
+Connected-service continuation recognises both `.jsonl` and `.jsonl.zst` rollouts through the canonical filename/search owner. Imports preserve the physical bytes and exact thread mapping; discovery prefers a plain sibling when both representations exist. A native SQLite `rollout_path` ending in `.jsonl` remains valid when only its compressed sibling exists. Repair of a genuinely missing old-home path writes the logical `.jsonl` path through the existing exact-row compare-and-set.
+
+[Codex 0.166.0 owns compressed reads and append-time materialisation](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rollout/src/compression.rs). Happier does not decode or rewrite the rollout during reachability validation. Malformed content remains a native resume error. This continuation correction does not add compressed support to raw-byte transcript paging or prefix-based handoff exports.
+
 ## Runtime surfaces
 
 | Feature | Status | Exact source files | Special cases | Unified architecture migration notes |

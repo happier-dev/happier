@@ -141,6 +141,28 @@ describe('syncCodexConnectedServiceHome', () => {
     }
   });
 
+  it('preserves compressed rollouts and their exact thread mapping when sharing an isolated home', async () => {
+    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    const threadId = '019f2339-9299-7e51-b192-9751a0a03586';
+    const filename = `rollout-2026-11-06T00-00-00-${threadId}_019f2339-9299-7e51-b192-9751a0a03587.jsonl.zst`;
+    const bytes = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+    try {
+      await mkdir(join(destinationCodexHome, 'sessions'), { recursive: true });
+      await writeFile(join(destinationCodexHome, 'sessions', filename), bytes);
+      const sync = await loadSyncCodexConnectedServiceHome();
+      await sync({ destinationCodexHome, accountSettings: settings('isolated', 'shared'),
+        processEnv: { CODEX_HOME: sourceCodexHome } });
+      await expect(readFile(join(sourceCodexHome, 'sessions', filename))).resolves.toEqual(bytes);
+      const { readConnectedServiceStateSharingManifest } = await import('@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest');
+      const manifest = await readConnectedServiceStateSharingManifest(destinationCodexHome);
+      expect(manifest.sessionFileMappings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ vendorResumeId: threadId }),
+      ]));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('bootstraps a missing native sessions store before materializing shared Codex state', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {

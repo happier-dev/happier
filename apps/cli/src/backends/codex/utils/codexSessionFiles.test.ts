@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   findCodexRolloutFileById,
+  findCodexRolloutFileByIdSync,
   isMatchingCodexRolloutFileName,
   parseCodexRolloutFilename,
   resolveCodexNativeSessionsRoot,
@@ -72,6 +73,24 @@ describe('resolveCodexNativeSessionsRoot', () => {
 });
 
 describe('findCodexRolloutFileById', () => {
+  it('finds compressed-only rollouts and prefers an existing plain sibling in both catalog paths', async () => {
+    const sessionsRoot = await mkdtemp(join(tmpdir(), 'happier-codex-compressed-'));
+    const vendorResumeId = '019d94f3-0a6f-7c41-bb18-d26425384658';
+    const plain = join(sessionsRoot, `rollout-2026-11-06T00-00-00-${vendorResumeId}.jsonl`);
+    const input = { sessionsRoot, vendorResumeId };
+    try {
+      // Discovery is name-only. Codex owns decoding and validating the stream on resume.
+      await writeFile(`${plain}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+      await expect(findCodexRolloutFileById(input)).resolves.toBe(`${plain}.zst`);
+      expect(findCodexRolloutFileByIdSync(input)).toBe(`${plain}.zst`);
+      await writeFile(plain, '{}\n');
+      await expect(findCodexRolloutFileById(input)).resolves.toBe(plain);
+      expect(findCodexRolloutFileByIdSync(input)).toBe(plain);
+      expect(isMatchingCodexRolloutFileName(`${plain}.zst.tmp`, vendorResumeId)).toBe(false);
+    } finally {
+      await rm(sessionsRoot, { recursive: true, force: true });
+    }
+  });
   it('finds the date-partitioned native rollout by exact id suffix without reading file contents', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-find-'));
     try {

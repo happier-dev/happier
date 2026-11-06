@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 
 import type {
@@ -10,18 +10,10 @@ import {
   findCodexRolloutFileById,
   isMatchingCodexRolloutFileName,
   normalizeCodexVendorResumeId,
+  resolveExistingCodexRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
 import { reconcileCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
-
-async function statFile(path: string): Promise<boolean> {
-  try {
-    const metadata = await stat(path);
-    return metadata.isFile();
-  } catch {
-    return false;
-  }
-}
 
 function resolveMappingDestinationPaths(params: Readonly<{
   targetMaterializedRoot: string;
@@ -65,13 +57,15 @@ export async function verifyResumeReachableCodex(
     : join(input.targetMaterializedRoot, 'codex-home');
   const sessionsRoot = join(codexHome, 'sessions');
   const canonicalSessionsRoot = await realpath(sessionsRoot).catch(() => null);
-  const isVisibleTargetRollout = async (path: string): Promise<boolean> => {
-    if (!isMatchingCodexRolloutFileName(basename(path), vendorResumeId) || !await statFile(path)) return false;
+  const resolveVisibleTargetRollout = async (candidatePath: string): Promise<string | null> => {
+    if (!isMatchingCodexRolloutFileName(basename(candidatePath), vendorResumeId)) return null;
+    const path = await resolveExistingCodexRolloutPath(candidatePath);
+    if (!path) return null;
     const canonicalPath = await realpath(path).catch(() => null);
-    if (!canonicalPath || !canonicalSessionsRoot) return false;
+    if (!canonicalPath || !canonicalSessionsRoot) return null;
     const pathFromRoot = relative(canonicalSessionsRoot, canonicalPath);
     return pathFromRoot !== '' && pathFromRoot !== '..'
-      && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot);
+      && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot) ? path : null;
   };
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
@@ -87,8 +81,8 @@ export async function verifyResumeReachableCodex(
   };
 
   if (typeof input.candidatePersistedSessionFile === 'string' && input.candidatePersistedSessionFile.trim().length > 0) {
-    const candidatePath = input.candidatePersistedSessionFile.trim();
-    if (await isVisibleTargetRollout(candidatePath)) {
+    const candidatePath = await resolveVisibleTargetRollout(input.candidatePersistedSessionFile.trim());
+    if (candidatePath) {
       return await acceptReachablePath(candidatePath);
     }
   }
@@ -101,15 +95,17 @@ export async function verifyResumeReachableCodex(
       mapping: mapping as unknown as Record<string, unknown>,
     });
     for (const candidatePath of candidatePaths) {
-      if (await isVisibleTargetRollout(candidatePath)) {
-        return await acceptReachablePath(candidatePath);
+      const visiblePath = await resolveVisibleTargetRollout(candidatePath);
+      if (visiblePath) {
+        return await acceptReachablePath(visiblePath);
       }
     }
   }
 
   const discoveredPath = await findCodexRolloutFileById({ sessionsRoot, vendorResumeId });
-  if (discoveredPath && await isVisibleTargetRollout(discoveredPath)) {
-    return await acceptReachablePath(discoveredPath);
+  const visiblePath = discoveredPath && await resolveVisibleTargetRollout(discoveredPath);
+  if (visiblePath) {
+    return await acceptReachablePath(visiblePath);
   }
 
   return { ok: false, reason: 'codex_session_file_not_found' };
