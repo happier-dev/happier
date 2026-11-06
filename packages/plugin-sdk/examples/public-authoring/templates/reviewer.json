@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "Initial reviewer template",
+  "content": {
+    "v": 1,
+    "identity": { "name": "Reviewer", "description": "Review code against its intended behavior" },
+    "instructions": { "markdown": "Trace affected callers and report evidence-backed defects." },
+    "memoryRules": [],
+    "skills": [],
+    "needs": { "software": [], "connectedAccounts": [], "mcpServers": [] }
+  }
+}
