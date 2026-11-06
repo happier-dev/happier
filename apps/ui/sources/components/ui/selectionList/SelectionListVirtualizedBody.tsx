@@ -42,6 +42,7 @@ import {
 import { PlanOptionRow } from './SelectionListOptionRow';
 import { SelectionListPaginationFooter } from './SelectionListPaginationFooter';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
+import { SelectionListScrollIntoViewContext, type SelectionListRegisterScrollItemLayout } from './SelectionListScrollIntoViewContext';
 import {
     buildSelectionListGridRowModel,
     type SelectionListGridRowModel,
@@ -384,6 +385,7 @@ export function groupVirtualizedItemsIntoColumnRows(
 }
 
 type FlatRowRenderContext = Readonly<{
+    registerCellLayout?: SelectionListRegisterScrollItemLayout | null;
     rootTestID: string | undefined;
     stepId: string;
     selectedOptionIds: ReadonlySet<string>;
@@ -473,17 +475,19 @@ function renderVirtualizedListRow(
 
     if (item.kind === 'option-row') {
         return (
-            <SelectionListColumnRow
-                columnCount={item.columnCount}
-                columnGapPx={ctx.columnGapPx}
-                rowIndex={placement?.rowIndex}
-                optionRowIndex={placement?.optionRowIndex}
-            >
-                {item.options.map((cell, cellIndex) => renderVirtualizedOptionCell(cell, ctx, {
-                    columnIndex: (cellIndex % item.columnCount) + 1,
-                    columnSpan: item.columnSpan,
-                }))}
-            </SelectionListColumnRow>
+            <SelectionListScrollIntoViewContext.Provider value={ctx.registerCellLayout ?? null}>
+                <SelectionListColumnRow
+                    columnCount={item.columnCount}
+                    columnGapPx={ctx.columnGapPx}
+                    rowIndex={placement?.rowIndex}
+                    optionRowIndex={placement?.optionRowIndex}
+                >
+                    {item.options.map((cell, cellIndex) => renderVirtualizedOptionCell(cell, ctx, {
+                        columnIndex: (cellIndex % item.columnCount) + 1,
+                        columnSpan: item.columnSpan,
+                    }))}
+                </SelectionListColumnRow>
+            </SelectionListScrollIntoViewContext.Provider>
         );
     }
 
@@ -768,10 +772,12 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
         const row = flatItems[focusedItemIndex];
         return row?.kind === 'option-row' ? row.options.find((cell) => cell.option.id === focusedOptionId) : undefined;
     })();
-    const { onViewportLayout } = useSelectionListVirtualizedFocusReveal({
+    const { onViewportLayout, registerCellLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
         focusedItemIndex,
         focusedKey: focusedOptionId,
+        cellLayoutItems: flatItems,
+        optionPositions: optionPositions.byId,
         focusedCellDomId: focusedCell === undefined ? null : resolveSelectionListOptionDomId({
             option: focusedCell.option,
             rootTestID: props.rootTestID,
@@ -797,6 +803,7 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
     const renderItem = React.useCallback(
         ({ item }: { item: SelectionListBodyVirtualizedItem }) =>
             renderVirtualizedListRow(item, {
+                registerCellLayout,
                 rootTestID: props.rootTestID,
                 stepId: props.stepId,
                 selectedOptionIds: props.selectedOptionIds,
@@ -818,6 +825,7 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
             props.focusedOptionId,
             props.onSelect,
             props.onPushStep,
+            registerCellLayout,
             optionPositions,
             measureMode,
             columnCount,

@@ -30,6 +30,9 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
     LegendList: capturedLegendList.LegendList,
 }));
 
+// Cold module transforms belong to collection, outside each interaction test's deadline.
+await import('../SelectionListVirtualizedSection');
+
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
         id: `${prefix}-${i}`,

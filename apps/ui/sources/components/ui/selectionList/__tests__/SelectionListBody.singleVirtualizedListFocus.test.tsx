@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,7 +14,11 @@ import type {
     SelectionListVirtualizedOptionSource,
 } from '../_types';
 
-afterEach(() => act(() => setReducedMotionPreferenceOverride(null)));
+const initialPlatform = Platform.OS;
+afterEach(() => {
+    Platform.OS = initialPlatform;
+    act(() => setReducedMotionPreferenceOverride(null));
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -31,9 +36,12 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
     refHandle: { scrollToIndex, scrollToOffset },
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
+
+const { SelectionListBody } = await import('../SelectionListBody');
 
 function makeOptions(count: number, prefix: string): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
@@ -119,6 +127,47 @@ function buildDirectSource(): SelectionListVirtualizedOptionSource {
  * header offsets) so the focused row is centered in the viewport.
  */
 describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', () => {
+    it('reveals the actual cell offset inside a tall column block, including cells laid out after focus', async () => {
+        Platform.OS = 'ios';
+        const plan: ReadonlyArray<SectionRenderPlan> = [{ id: 'models', options: makeOptions(50, 'model'), virtualization: 'force' }];
+        const props = { step: buildBodyStep(), rootTestID: 'sl', selectedOptionIds: new Set<string>(), plan,
+            columnCount: 2, declaresColumns: true, listboxId: 'listbox', onSelect() {}, onPushStep() {} };
+        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionId="model-48" />);
+        legendListState.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 400 } } });
+        const last = screen.findByTestId('sl:root:option-wrapper:model-48')!;
+        // The option is inside a cell frame stacked 1,440px down the first column.
+        let cellFrame = last.parent;
+        while (cellFrame && !(typeof cellFrame.type === 'string' && typeof cellFrame.props.onLayout === 'function')) cellFrame = cellFrame.parent;
+        if (!cellFrame) throw new Error('Missing cell layout frame');
+        const lastCellFrame = cellFrame;
+        await act(async () => {
+            last.props.onLayout?.({ nativeEvent: { layout: { y: 0, height: 60 } } });
+            lastCellFrame.props.onLayout?.({ nativeEvent: { layout: { y: 1440, height: 60 } } });
+        });
+        expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: -1440, animated: true });
+        scrollToIndex.mockClear();
+        await screen.update(<SelectionListBody {...props} focusedOptionId="model-0" />);
+        const first = screen.findByTestId('sl:root:option-wrapper:model-0')!;
+        await act(async () => { first.props.onLayout?.({ nativeEvent: { layout: { y: 0, height: 60 } } }); });
+        expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: 0, animated: true });
+        // A label refresh does not cause native layout events for unchanged cell geometry.
+        const refreshedPlan = [{ ...plan[0]!, options: plan[0]!.options.map(option => ({ ...option, label: `Updated ${option.label}` })) }];
+        scrollToIndex.mockClear();
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" />);
+        const refreshedFirst = screen.findByTestId('sl:root:option-wrapper:model-0')!;
+        await act(async () => { refreshedFirst.props.onLayout?.({ nativeEvent: { layout: { y: 20, height: 60 } } }); });
+        expect(scrollToIndex).not.toHaveBeenCalled();
+        scrollToIndex.mockClear();
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-48" />);
+        expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: -1440, animated: true });
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" />);
+        scrollToIndex.mockClear();
+        const reorderedPlan = [{ ...plan[0]!, options: [...plan[0]!.options].reverse() }];
+        await screen.update(<SelectionListBody {...props} plan={reorderedPlan} focusedOptionId="model-0" />);
+        const moved = screen.findByTestId('sl:root:option-wrapper:model-0')!;
+        await act(async () => { moved.props.onLayout?.({ nativeEvent: { layout: { y: 1440, height: 60 } } }); });
+        expect(scrollToIndex).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         setReducedMotionPreferenceOverride(false);
         scrollToIndex.mockClear();
