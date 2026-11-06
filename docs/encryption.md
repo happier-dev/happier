@@ -3569,6 +3569,19 @@ digest before adoption, and persistent physical bytes are partitioned by server 
 Account rather than by projection generation or app/runtime compatibility metadata.
 
 ### Access keys
+
+For shared-Machine Workflows in unreleased 0.3, background execution retains the
+starting Account's Settings and saved-secret operation context. Connected-service
+materialization borrows that admitted Workflow's requester bootstrap only when
+its Run, process generation, Home, Machine, installation and attribution match.
+Capability preflight carries the same in-process Workflow Run identity.
+It cannot substitute the custodian's credential, and an ordinary detached Run
+cannot borrow another Account's Workflow custody. The runner-identity and
+requester-context owners are `daemon/connectedServices/runs/runnerIdentity.ts`
+and `requesterAccountContext.ts` under CLI source. This permits the requester's
+own selected Agent credential on the admitted installation; it grants neither
+new admission authority nor server read access to another person's private Runs.
+
 - `AccessKey.data` is treated as an **opaque encrypted string**.
 - The server does not decode it or inspect its contents.
 

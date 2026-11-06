@@ -48,6 +48,13 @@ guest. Guests can reach localhost services on that Machine, including the
 owner's and other guests' development servers. Use a separate sandbox when
 you need protection from an untrusted person.
 
+**Can manage** gives full Machine administration, including using the Machine
+and managing its access. It does not share another person's private Workflow
+Runs. The owner and managers can see the content-free work summary described
+below; administrators can inspect work and sign-in material delivered to the
+host. Revoking access refuses the next Start or Machine read, while finite work
+already admitted can finish. Private Run history is a separate permission.
+
 Guest execution placement is **unreleased 0.3 development behavior**. On Linux,
 when separate users are explicitly enabled, each requester gets their own
 operating-system user, private home and checkout. Enabling Agent isolation

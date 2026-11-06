@@ -2717,6 +2717,22 @@ pending; this describes current development ownership, not release readiness.
 
 ### Workflow loop decisions and context (0.3 development)
 
+Goal controls use `sessionGoalExecutionCapabilities` to choose the opened
+runtime's goal RPCs or the Machine goal route. Without native controls, including
+a retained Session absent from the UI's current Session map, the daemon's
+`sessionGoalControlRouter` can use `happierSessionGoalControlAdapter`; Happier
+owns the goal and Keep going supplies continuation. This requires a reachable
+Machine advertising daemon goal controls. Native goal ownership still excludes
+a second Keep going attachment.
+
+Workflow Session reuse treats omitted retained `profileId` as the authored
+no-profile choice; it still rejects a different named profile. Run detail uses
+the canonical final result for its producing invocation, rather than that
+invocation's intermediate progress result. Start failures pass through
+`resolveWorkflowProblemPresentation`, whose technical details retain the typed
+Workflow code and a supplied reason; unrecognized transport failures remain
+generic rather than acquiring an invented code.
+
 Agent-step engines may bind a declared input or the current item value, with an
 optional field path. `resolveWorkflowStepSelectionV1` resolves those choices at
 the existing accepted-snapshot materializer. Finite item choices and repeated
@@ -4500,6 +4516,13 @@ matching material.
   encoding, not an encryption claim. See `encryption.md`.
 
 ### Shared-Machine execution and filesystem custody (unreleased 0.3)
+
+The Workflow Run composer identifies the selected Machine's custodian before
+Start through `WorkflowRequesterDisclosure`; this is presentation of admitted
+Machine facts, not a second admission check. `Can manage` includes Machine use
+and administration, but neither Use nor Manage adds a private Run reader.
+Revocation is enforced at the next Start or fresh Machine read. Already-admitted
+finite work is not cancelled by withdrawing the grant.
 
 The shared `selectHostRequesterExecutionIdentity` selector qualifies the custodian
 and admitted Manage grantees on the physical Machine for unrestricted execution. A present person consumes

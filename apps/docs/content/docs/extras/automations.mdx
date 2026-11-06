@@ -23,6 +23,9 @@ its first prompt, select where it runs, and save explicitly. **Run now** opens
 the run composer to review the inputs and target before starting. **Run settings**
 in this destination controls capacity and retention.
 
+Before **Start**, the Run composer identifies the selected shared Machine and
+who owns it. Check that disclosure before sending your work and sign-in there.
+
 Existing schedule automations created by released 0.2 clients remain readable.
 Current 0.3 development source converts them to Workflows through the canonical
 trigger reader, with the retained encrypted case requiring your review below.
@@ -67,6 +70,21 @@ edits, and keeps the editor open. Step cards show the latest recorded occurrence
 status, output preview, and elapsed interval from creation to last update,
 including admission and waiting. This is not execution-only time. Open the step's
 details to review the full retained result or respond when the run needs you.
+
+In current 0.3 development source, a finished Run's producing step shows its
+final output. A Session started without a launch profile can be reused by a
+Workflow that also selects no profile; a different named profile still needs
+correction.
+
+If **Start** is refused, open **Technical details** beside the failure for its
+**Failure code** and, when supplied, **Cause**. If an Agent step cannot start,
+an unavailable Connected Account profile can report
+`connected_service_auth_group_authority_active_profile_missing`: choose a profile
+in your own Account and update the Workflow before a new Run. A missing
+credential requires reconnecting your own Connected Account.
+After Machine access is revoked, choose another Machine or ask its owner to
+restore access; a new Start can report `target_unavailable`. Revocation also
+refuses the next Machine read. Your own private Run history remains yours.
 
 **Start from an example** includes recipes to notify you when an agent waits,
 send a daily summary into a selected session, create a worktree and install
@@ -569,6 +587,10 @@ reviewed in the run composer. Built-in definitions are read-only; copy one into
 an unsaved draft when you want to change its recipe.
 
 ### Keep going until done
+
+In unreleased 0.3 source, Agents without native goal controls use a
+Happier-owned goal. Goal controls also work for retained Sessions when their
+Machine is reachable and supports Happier's goal controls.
 
 Choose a Session and set its goal through the Goal control. Where the opened
 Agent supports native goal continuation, the control uses that; otherwise it
