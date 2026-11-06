@@ -18,6 +18,8 @@ type SnapshotHydrationContext = Pick<Parameters<typeof fetchSessionByIdWithServe
     sessionDataKeys?: Map<string, Uint8Array>;
     sessionDataKeyEnvelopes?: Map<string, string>;
     awaitDisplayProjectionMaintenance?: true;
+    /** Read-only full snapshots can omit tuple writer inputs and maintenance. */
+    includeMetadataTupleMutationSnapshot?: false;
 }>;
 
 /**
@@ -61,6 +63,7 @@ export async function readSessionSnapshotForAuthority(params: Readonly<{
             sessionId: params.sessionId,
             prefetched: params.prefetched,
             awaitDisplayProjectionMaintenance: params.awaitDisplayProjectionMaintenance,
+            includeMetadataTupleMutationSnapshot: params.includeMetadataTupleMutationSnapshot,
             includeTurnsProjection: params.requireTurns ? 'required' : params.includeTurns,
             activeCredentials: credentials,
             activeRequest: params.authority.request,

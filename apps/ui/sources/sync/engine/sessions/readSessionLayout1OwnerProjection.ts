@@ -1,6 +1,7 @@
 import { openSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectSessionOwnerCompatibilityViewV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { projectAdmittedSessionOwnerCompatibilityViewV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { projectAccountEncryptionIdentity, sameAccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 import { isSessionAccessOwner, type NormalizedSessionAccessProjection } from './normalizeSessionAccessProjection';
@@ -116,6 +117,8 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
     access: NormalizedSessionAccessProjection | null;
     accountMode?: AccountEncryptionCurrentnessResponse['mode'];
     accountCurrentness?: AccountEncryptionCurrentnessResponse;
+    /** The containing finite Account read has already bound this material to its identity. */
+    readAccountMaterial?: () => AccountScopedCryptoMaterial | null;
     ownerMetadataEnvelope: unknown;
     credentials: AuthCredentials;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
@@ -162,6 +165,7 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
     const material = validated.envelope.t === 'encrypted'
         ? (() => {
             try {
+                if (params.readAccountMaterial) return params.readAccountMaterial();
                 return params.accountCurrentness
                     ? resolveCurrentAccountScopedCryptoMaterialSnapshot({ credentials: params.credentials, accountCurrentness: params.accountCurrentness })?.material ?? null
                     : null;
@@ -239,7 +243,7 @@ export function projectSessionLayout1OwnerMetadata(params: Readonly<{
         && params.ownerMetadataRead.admittedMetadataVersion === params.metadataVersion
         && params.ownerMetadataRead.sharedMetadataSignature === sharedMetadataSignature) return params.ownerMetadataRead;
     const ownerMetadataView = MetadataSchema.safeParse(
-        projectSessionOwnerCompatibilityViewV1({
+        projectAdmittedSessionOwnerCompatibilityViewV1({
             sharedMetadata: params.sharedMetadata,
             ownerMetadata: params.ownerMetadataRead.ownerMetadata,
         }),

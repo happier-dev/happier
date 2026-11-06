@@ -1,10 +1,16 @@
 import {
     SessionOwnerMetadataV1Schema,
+    createSessionOwnerMetadataV1,
+    projectSessionOwnerCompatibilityViewV1,
+    projectSessionSharedMetadataV1,
     createPlainSessionOwnerMetadataEnvelopeV1,
     sealSessionOwnerMetadataEnvelopeV1,
     projectLegacySessionAccessCapabilitiesV1,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { MetadataSchema } from '@happier-dev/session-core/state';
+import { createOperationAccountCurrentnessSource } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
 import tweetnacl from 'tweetnacl';
 
 import { encodeBase64 } from '@/encryption/base64';
@@ -26,6 +32,83 @@ const credentials = {
 };
 
 describe('readSessionLayout1OwnerMetadata', () => {
+    it('projects an admitted encrypted owner without reparsing its private body and preserves normalized mixed metadata', () => {
+        const flatMetadata = {
+            path: '/mixed/worktree', host: 'owner-host',
+            summary: { text: 'Shared summary', updatedAt: 10 },
+            runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { providerSessionId: 'thread', opaqueNativeState: { retained: true } } },
+            sessionModesV1: { v: 1, provider: 'codex', updatedAt: 10, currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan' }] },
+        };
+        const created = createSessionOwnerMetadataV1({ metadata: flatMetadata }, 'stored');
+        if (!created.ok) throw new Error('Expected admitted mixed metadata');
+        const sharedMetadata = projectSessionSharedMetadataV1({ metadata: flatMetadata });
+        const ownerMetadataRead = readSessionLayout1OwnerMetadata({
+            access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }),
+            credentials, accountMode: 'e2ee',
+            accountCurrentness: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            ownerMetadataEnvelope: sealSessionOwnerMetadataEnvelopeV1({
+                material: { type: 'legacy', secret }, ownerMetadata: created.ownerMetadata,
+                randomBytes: length => new Uint8Array(length).fill(4),
+            }),
+        });
+        if (ownerMetadataRead.kind !== 'owner') throw new Error('Expected decrypted admitted owner');
+        // Call-through telemetry: the real decryption owner has already validated this private body.
+        const parses = vi.spyOn(createStoredReadSchema(SessionOwnerMetadataV1Schema), 'parse');
+        try {
+            const projected = projectSessionLayout1OwnerMetadata({ sharedMetadata, ownerMetadataRead });
+            if (projected.kind !== 'owner') throw new Error('Expected projected owner');
+            expect(projected.ownerMetadataView).toMatchObject({ path: '/mixed/worktree', host: 'owner-host',
+                summary: flatMetadata.summary, runtimeDescriptorV1: flatMetadata.runtimeDescriptorV1,
+                sessionModesV1: { agentId: 'codex', currentModeId: 'plan' } });
+            expect(parses).toHaveBeenCalledTimes(0);
+            const publicProjection = MetadataSchema.parse(projectSessionOwnerCompatibilityViewV1({
+                sharedMetadata, ownerMetadata: ownerMetadataRead.ownerMetadata,
+            }));
+            expect(parses).toHaveBeenCalledTimes(1);
+            expect(projected.ownerMetadataView).toEqual(publicProjection);
+            expect(() => projectSessionOwnerCompatibilityViewV1({ sharedMetadata,
+                ownerMetadata: { ...ownerMetadataRead.ownerMetadata, workspace: { path: 42 } },
+            })).toThrow();
+        } finally { parses.mockRestore(); }
+    });
+
+    it.each(['legacy', 'dataKey'] as const)('proves %s Account material once for a finite cold owner batch', (mode) => {
+        const machineKey = new Uint8Array(32).fill(21);
+        const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+        const credentials: AuthCredentials = mode === 'legacy'
+            ? { token: 'batch-owner', secret: encodeBase64(secret, 'base64url') }
+            : { token: 'batch-owner', encryption: { machineKey: encodeBase64(machineKey, 'base64'), publicKey: encodeBase64(publicKey, 'base64') } };
+        const material = mode === 'legacy' ? { type: 'legacy' as const, secret } : { type: 'dataKey' as const, machineKey };
+        const accountCurrentness = mode === 'legacy'
+            ? createLegacyAccountEncryptionCurrentnessFixture({ secret })
+            : createDataKeyAccountEncryptionCurrentnessFixture({ machineKey, publicKey });
+        const envelopes = Array.from({ length: 8 }, (_, index) => sealSessionOwnerMetadataEnvelopeV1({
+            material, ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: { path: `/private/${index}` } }),
+            randomBytes: length => new Uint8Array(length).fill(index + 1),
+        }));
+        // Observe the real crypto boundary; encryption and schema admission remain real.
+        const derivations = vi.spyOn(tweetnacl.box.keyPair, 'fromSecretKey');
+        try {
+            const openBatch = () => {
+                const source = createOperationAccountCurrentnessSource({ credentials, initial: accountCurrentness,
+                    request: async () => Response.json(accountCurrentness) });
+                try {
+                    return envelopes.map(ownerMetadataEnvelope => readSessionLayout1OwnerMetadata({
+                        access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }),
+                        credentials, accountMode: accountCurrentness.mode, accountCurrentness, ownerMetadataEnvelope,
+                        readAccountMaterial: source.readAccountMaterial,
+                    }));
+                } finally { source.dispose(); }
+            };
+            expect(openBatch().map(result => result.kind === 'owner' ? result.ownerMetadata.workspace?.path : result.kind))
+                .toEqual(envelopes.map((_, index) => `/private/${index}`));
+            expect(derivations).toHaveBeenCalledTimes(1);
+            // A later finite read proves its own material rather than retaining an Account cache.
+            expect(openBatch().every(result => result.kind === 'owner')).toBe(true);
+            expect(derivations).toHaveBeenCalledTimes(2);
+        } finally { derivations.mockRestore(); }
+    });
+
     it('retains the same admitted plain owner facts only after validating fresh input', () => {
         const envelope = createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
         const params = { access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }),

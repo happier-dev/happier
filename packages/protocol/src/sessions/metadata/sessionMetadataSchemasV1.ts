@@ -1866,6 +1866,17 @@ export function projectSessionOwnerCompatibilityViewV1(
   const ownerMetadata = createStoredReadSchema(SessionOwnerMetadataV1Schema).parse(
     migrateRetainedSessionMetadataContextV1(params.ownerMetadata),
   );
+  return projectAdmittedSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata });
+}
+
+/** The containing owner read has already admitted both metadata components. */
+export function projectAdmittedSessionOwnerCompatibilityViewV1(
+  params: Readonly<{
+    sharedMetadata: SessionSharedMetadataV1;
+    ownerMetadata: SessionOwnerMetadataV1;
+  }>,
+): SessionOwnerCompatibilityViewV1 {
+  const { sharedMetadata, ownerMetadata } = params;
   const descriptor = ownerMetadata.nativeSession?.runtimeDescriptorV1;
   const runtimeDescriptorV1 = descriptor;
   const {

@@ -17,6 +17,15 @@ export type SessionDisplayCipher = Readonly<{
     decryptRaw?: (ciphertext: string) => Promise<unknown>;
 }>;
 
+/** One finite read proves its Account material once; the proof scales with reads, never rows. */
+export function createCurrentAccountMaterialReader(params: Readonly<{
+    credentials: AuthCredentials;
+    accountCurrentness: Pick<AccountEncryptionIdentity, 'mode' | 'contentKeyFingerprint'>;
+}>): () => AccountScopedCryptoMaterial | null {
+    let proved: { material: AccountScopedCryptoMaterial | null } | null = null;
+    return () => (proved ??= { material: resolveCurrentAccountScopedCryptoMaterialSnapshot(params)?.material ?? null }).material;
+}
+
 /** Thin adapters to the existing Session and Account key owners; modes are independent. */
 export function createSessionDisplayCrypto(params: Readonly<{
     sessionMode: 'plain' | 'e2ee';
@@ -55,11 +64,12 @@ export function createSessionDisplayCrypto(params: Readonly<{
                 } : {}),
             });
         },
-        openOwnerDisplay(envelope: unknown, accountCurrentness: AccountEncryptionIdentity) {
+        openOwnerDisplay(envelope: unknown, accountCurrentness: AccountEncryptionIdentity,
+            readMaterial = createCurrentAccountMaterialReader({ credentials: params.credentials, accountCurrentness })) {
             if (!params.accountMode || params.accountMode !== accountCurrentness.mode) return { ok: false as const, reason: 'crypto_unavailable' as const };
             let currentMaterial: AccountScopedCryptoMaterial | null = null;
             if (accountCurrentness.mode === 'e2ee') {
-                currentMaterial = resolveCurrentAccountScopedCryptoMaterialSnapshot({ credentials: params.credentials, accountCurrentness })?.material ?? null;
+                currentMaterial = readMaterial();
                 if (!currentMaterial) return { ok: false as const, reason: 'crypto_unavailable' as const };
             }
             return openSessionOwnerDisplayEnvelopeV1({

@@ -23,6 +23,38 @@ const initialState = storage.getState();
 let homes: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { await homes?.dispose(); homes = undefined; storage.setState(initialState, true); });
 
+it.each(['default', 'read-only'] as const)('retains full Session content with %s tuple-maintenance demand', async demand => {
+    const id = `full-${demand}`;
+    const persisted = createSessionMetadataHttpBoundary(() => ({}));
+    persisted.replaceSession(id, SessionCurrentProjectionRecordV1Schema.parse({ ...createPlainSessionCurrentProjectionRecordFixture({
+        id, metadataVersion: 7, agentStateVersion: 4,
+        metadata: { name: 'Private full Session', path: '/full/private', host: 'owner-host' },
+    }), agentState: JSON.stringify({ requests: {}, completedRequests: {} }) }));
+    const transport = createSessionReadBatchHttpBoundary(request => persisted.handle(request.url, {
+        method: request.method, headers: request.headers,
+        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+    }) ?? undefined);
+    homes = await serveAccountHomes({ homes: [{ key: 'owner', serverUrl: `https://display-${demand}.test`,
+        accountId: `display-${demand}`, currentAccount: true }], route: request => transport.handle(request) });
+    const result = await runWithServerRequestAuthorityForServerAccountScope({ serverId: homes.homes.owner!.id, activeRequest: serverFetch },
+        authority => readSessionSnapshotsForAuthority({ authority, sessionIds: [id], includeTurns: false,
+            awaitDisplayProjectionMaintenance: true,
+            ...(demand === 'read-only' ? { includeMetadataTupleMutationSnapshot: false as const } : {}),
+        }));
+    const opened = result.get(id);
+    expect(opened).toMatchObject({ ok: true, snapshot: { session: {
+        ownerMetadataView: { name: 'Private full Session', path: '/full/private', host: 'owner-host' },
+        agentState: { requests: {}, completedRequests: {} },
+    } } });
+    if (!opened?.ok) throw new Error('Expected admitted full Session');
+    expect(opened.snapshot.displayProjectionMaintenance).toBe(demand === 'read-only' ? undefined : 'satisfied');
+    expect(persisted.writes).toEqual(demand === 'read-only' ? [] : [id]);
+    expect(homes.requests.filter(request => request.path === `/v2/sessions/${id}` && request.method === 'PATCH'))
+        .toHaveLength(demand === 'read-only' ? 0 : 1);
+    expect(homes.requests.filter(request => request.path === '/v2/sessions/read-batch')).toHaveLength(1);
+    expect(homes.requests.filter(request => request.path === `/v2/sessions/${id}` && request.method === 'GET')).toHaveLength(0);
+});
+
 it('returns the readable full Session before a held maintenance PATCH and completes maintenance after the reader releases its authority', async () => {
     const id = 'retained-first-open';
     const persisted = createSessionMetadataHttpBoundary(() => ({}));

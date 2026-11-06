@@ -427,6 +427,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   /** Explicit bridge envelope: presence binds this read to a Session recipient. */
   sessionKey?: string | null;
   accountCurrentness?: AccountEncryptionCurrentnessResponse;
+  readAccountMaterial?: Parameters<typeof readSessionLayout1OwnerMetadata>[0]['readAccountMaterial'];
   accountMode?: AccountEncryptionCurrentnessResponse['mode'];
   composerOptionsInput?: import('@happier-dev/protocol/embed').ComposerOptionsInputV1 | null;
   fetchAccountCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
@@ -806,6 +807,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
         access,
         accountMode,
         accountCurrentness,
+        readAccountMaterial: params.readAccountMaterial,
         ownerMetadataEnvelope: row.ownerMetadata,
         credentials: params.credentials,
         composerOptionsInput: params.composerOptionsInput,

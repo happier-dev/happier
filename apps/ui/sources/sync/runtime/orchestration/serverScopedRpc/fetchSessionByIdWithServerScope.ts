@@ -67,6 +67,7 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
     let currentness = params.initial;
     let expected = params.initial;
     let inFlight: Promise<AccountEncryptionCurrentnessResponse> | null = null;
+    let proof: Readonly<{ accountCurrentness: AccountEncryptionCurrentnessResponse; snapshot: ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot> }> | undefined;
     let readWithdrawn = false;
     const observation = captureAccountEncryptionCurrentness(params.serverId, () => {
         currentness = undefined;
@@ -78,6 +79,15 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
     const assertCurrent = () => {
         if (!isCurrent()) throw Object.assign(new Error('Account encryption currentness changed'),
             { code: 'account_encryption_currentness_changed' });
+    };
+    // One proof for this finite operation, however many of its steps need the Account's material.
+    const readAccountMaterialProof = (accountCurrentness: AccountEncryptionCurrentnessResponse) => {
+        assertCurrent();
+        if (!proof || proof.accountCurrentness !== accountCurrentness) {
+            proof = { accountCurrentness, snapshot: resolveCurrentAccountOwnerMetadataMaterialSnapshot({
+                credentials: params.credentials, accountCurrentness }) };
+        }
+        return proof.snapshot;
     };
     const read = async (): Promise<AccountEncryptionCurrentnessResponse> => {
         assertCurrent();
@@ -105,6 +115,13 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
         assertCurrent,
         dispose: observation.dispose,
         peek: () => { assertCurrent(); return currentness; },
+        readAccountMaterial: () => {
+            assertCurrent();
+            if (!currentness) return null;
+            try { return readAccountMaterialProof(currentness).material; }
+            catch { return null; }
+        },
+        readAccountMaterialProof,
         ensureCurrent: async () => {
             assertCurrent();
             if (expected && !currentness) await read();
@@ -115,7 +132,7 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
 }
 
 function resolveOwnerMigrationCurrentness(params: Readonly<{
-    credentials: AuthCredentials;
+    readProof: (accountCurrentness: AccountEncryptionCurrentnessResponse) => ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot>;
     accountCurrentness: AccountEncryptionCurrentnessResponse;
 }>): SessionMetadataTupleWriterContext['ownerMigrationCurrentness'] {
     if (params.accountCurrentness.mode === 'plain') {
@@ -124,10 +141,7 @@ function resolveOwnerMigrationCurrentness(params: Readonly<{
             expectedAccountContentPublicKeyFingerprint: null,
         };
     }
-    const snapshot = resolveCurrentAccountOwnerMetadataMaterialSnapshot({
-        credentials: params.credentials,
-        accountCurrentness: params.accountCurrentness,
-    });
+    const snapshot = params.readProof(params.accountCurrentness);
     return {
         expectedAccountEncryptionMode: 'e2ee',
         expectedAccountContentPublicKeyFingerprint:
@@ -283,7 +297,12 @@ async function withMetadataTupleWriterContext<T extends Awaited<
         });
         const shared = linked.ok && (await displayCrypto.openSharedDisplay(linked.projection.shared)).ok;
         const owner = linked.ok && accountCurrentness !== undefined
-            && displayCrypto.openOwnerDisplay(linked.projection.owner, accountCurrentness).ok;
+            && displayCrypto.openOwnerDisplay(linked.projection.owner, accountCurrentness, accountCurrentness.mode === 'e2ee'
+                ? () => {
+                    try { return params.accountCurrentnessSource.readAccountMaterialProof(accountCurrentness).material; }
+                    catch { return null; }
+                }
+                : undefined).ok;
         await params.accountCurrentnessSource.ensureCurrent();
         mutationSnapshot = { ...mutationSnapshot, displayProjectionV1Availability: { shared, owner } };
         result = { ...params.result, metadataTupleMutationSnapshot: mutationSnapshot };
@@ -321,7 +340,7 @@ async function withMetadataTupleWriterContext<T extends Awaited<
         );
     }
     const ownerMigrationCurrentness = resolveOwnerMigrationCurrentness({
-        credentials: params.credentials, accountCurrentness,
+        readProof: params.accountCurrentnessSource.readAccountMaterialProof, accountCurrentness,
     });
     return {
         ...result,
@@ -343,11 +362,7 @@ async function withMetadataTupleWriterContext<T extends Awaited<
                 return accountCurrentness.mode === 'plain'
                     ? createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata)
                     : sealSessionOwnerMetadataEnvelopeV1({
-                        material:
-                            resolveCurrentAccountOwnerMetadataMaterialSnapshot({
-                                credentials: params.credentials,
-                                accountCurrentness,
-                            }).material,
+                        material: params.accountCurrentnessSource.readAccountMaterialProof(accountCurrentness).material,
                         ownerMetadata,
                         randomBytes: getRandomBytes,
                     });
@@ -468,6 +483,7 @@ async function completeAuthorizedFullRead(params: Parameters<typeof maintainAuth
         await maintainAuthorizedFullRead({ ...params, credentials, request: authority.request, accountCurrentnessSource: source,
             readParams: { ...params.readParams, request: authority.request, readTransport: authority.readTransport,
                 fetchAccountCurrentness: source.read, ensureAccountCurrentness: source.ensureCurrent,
+                readAccountMaterial: source.readAccountMaterial,
                 isCurrent: () => source.isCurrent() && params.isCurrent?.() !== false },
         });
     }).finally(() => source.dispose()), { onError: () => console.warn('[SessionDisplay] Owner display maintenance deferred; readable full Session retained') });
@@ -571,6 +587,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             credentials: params.activeCredentials,
             accountCurrentness: accountCurrentnessSource.peek(),
             fetchAccountCurrentness: accountCurrentnessSource.read,
+            readAccountMaterial: accountCurrentnessSource.readAccountMaterial,
             ensureAccountCurrentness: accountCurrentnessSource.ensureCurrent,
             encryption: activeEncryption,
             sessionDataKeys: params.sessionDataKeys,
@@ -586,8 +603,8 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             timeoutMs: params.timeoutMs,
             includeTurnsProjection: params.includeTurnsProjection,
             includeMetadataTupleMutationSnapshot:
-                params.includeMetadataTupleMutationSnapshot === true
-                || ((params.contentDemand === undefined || params.contentDemand === 'session')
+                params.includeMetadataTupleMutationSnapshot
+                ?? ((params.contentDemand === undefined || params.contentDemand === 'session')
                     && readCredentialAuthorityKind(params.activeCredentials.token) === 'account'),
             fresh: params.includeMetadataTupleMutationSnapshot === true,
             onSessionObservation: params.onSessionObservation,
@@ -643,6 +660,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         credentials: context.credentials,
         accountCurrentness: accountCurrentnessSource.peek(),
         fetchAccountCurrentness: accountCurrentnessSource.read,
+        readAccountMaterial: accountCurrentnessSource.readAccountMaterial,
         ensureAccountCurrentness: accountCurrentnessSource.ensureCurrent,
         encryption: scopedEncryption,
         sessionDataKeys: params.sessionDataKeys,
@@ -658,8 +676,8 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         timeoutMs: params.timeoutMs,
         includeTurnsProjection: params.includeTurnsProjection,
         includeMetadataTupleMutationSnapshot:
-            params.includeMetadataTupleMutationSnapshot === true
-            || ((params.contentDemand === undefined || params.contentDemand === 'session')
+            params.includeMetadataTupleMutationSnapshot
+            ?? ((params.contentDemand === undefined || params.contentDemand === 'session')
                 && readCredentialAuthorityKind(context.credentials.token) === 'account'),
         fresh: params.includeMetadataTupleMutationSnapshot === true,
             onSessionObservation: params.onSessionObservation,
