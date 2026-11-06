@@ -226,7 +226,7 @@ test('optional web renderers stay outside their entry static closures', async ()
     }
 });
 
-test('development splits web dynamic imports while native retains one graph', async () => {
+test('development includes dynamic imports in one graph on web and native', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-single-graph-'));
     let server;
     try {
@@ -237,8 +237,8 @@ test('development splits web dynamic imports while native retains one graph', as
         const rewrite = config.server.rewriteRequestUrl;
         const entryUrl = '/index.bundle?platform=web&dev=true&lazy=true&hot=false';
         const rewritten = new URL(rewrite(entryUrl), 'http://localhost');
-        assert.equal(rewritten.searchParams.get('lazy'), 'true',
-            'web development must preserve Expo lazy chunk requests');
+        assert.equal(rewritten.searchParams.get('lazy'), 'false',
+            'web development must not retain a second transitive graph for each dynamic import');
         assert.equal(rewritten.searchParams.get('hot'), 'false');
         for (const platform of ['ios', 'android']) {
             assert.equal(new URL(rewrite(`/index.bundle?platform=${platform}&dev=true&lazy=true`), 'http://localhost').searchParams.get('lazy'), 'false',
@@ -251,9 +251,9 @@ test('development splits web dynamic imports while native retains one graph', as
             '/index.bundle?platform=web&dev=0&lazy=true',
             '/assets/icon.png?platform=web&dev=true&lazy=true',
         ]) assert.equal(rewrite(unchanged), unchanged);
-        assert.equal(new URL(rewrite('http://localhost' + entryUrl), 'http://localhost').searchParams.get('lazy'), 'true');
-        assert.equal(new URL(rewrite('/index.map?platform=web&dev=true&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'true');
-        assert.equal(new URL(rewrite('/index.bundle?platform=web&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'true');
+        assert.equal(new URL(rewrite('http://localhost' + entryUrl), 'http://localhost').searchParams.get('lazy'), 'false');
+        assert.equal(new URL(rewrite('/index.map?platform=web&dev=true&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'false');
+        assert.equal(new URL(rewrite('/index.bundle?platform=web&lazy=true'), 'http://localhost').searchParams.get('lazy'), 'false');
         config.watchFolders = [...config.watchFolders, fixture];
         config.maxWorkers = 2;
         config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
@@ -276,13 +276,12 @@ test('development splits web dynamic imports while native retains one graph', as
             const graphs = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()];
             assert.equal(graphs.length, platformIndex + 1);
             const graph = graphs.at(-1);
-            const isWeb = platform === 'web';
-            assert.equal(graph.dependencies.has(path.join(fixture, 'detail.js')), !isWeb,
-                'web must exclude the dynamic module; native keeps it in the initial graph');
-            assert.equal(JSON.parse(result.map).sources.includes(path.join(fixture, 'detail.js')), !isWeb,
+            assert.equal(graph.dependencies.has(path.join(fixture, 'detail.js')), true,
+                'development includes the dynamic module in the shared graph');
+            assert.equal(JSON.parse(result.map).sources.includes(path.join(fixture, 'detail.js')), true,
                 'source maps follow the modules actually delivered in this response');
-            assert.equal(result.code.includes('detail.bundle?'), isWeb,
-                'web imports must carry an on-demand chunk URL while native resolves locally');
+            assert.equal(result.code.includes('detail.bundle?'), false,
+                'dynamic imports resolve locally without another entry graph');
             assert.doesNotThrow(() => new Script(result.code),
                 'the complete Metro script must parse even when a dynamic dependency uses import.meta');
         }

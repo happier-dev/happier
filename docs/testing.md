@@ -1188,11 +1188,11 @@ Start the canonical source UI preparation and Metro in one retained terminal:
   --host lan --port "$METRO_PORT" --scheme happier-dev
 ```
 
-Development web requests preserve Expo lazy chunks; fresh browsers do not force
-all dynamic modules into every initial response. Native development includes
-dynamic imports in one graph and evaluates them on demand. Production keeps
-Expo's bundling mode. Web lazy presentation graphs can still overlap, so this
-response-size fix does not establish bounded Metro heap retention.
+Development web and native requests include dynamic imports in one Metro graph
+and evaluate them on demand. Lazy development chunks create separate overlapping
+transitive graphs per entry; the live web trial stalled root and child requests
+for several minutes. The canonical request rewrite keeps bundle, map and HMR
+policy aligned. Production retains Expo's bundling mode.
 For stable native profiling, disable Fast Refresh in the React Native Dev Menu.
 That pauses update application; explicit reloads remain separate.
 

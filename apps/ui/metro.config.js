@@ -132,16 +132,17 @@ config.cacheVersion = JSON.stringify([
   config.projectRoot,
 ]);
 
-// Native development retains one graph for overlapping presentation entries.
-// Web preserves Expo's lazy mode: forcing a full serialization for every fresh
-// browser exhausted the live Metro heap. Maps and HMR use the same URL policy.
-// Production keeps Expo's mode.
+// Development presentation entries share most of their dependencies. Lazy chunk
+// requests create another transitive Metro graph per entry, repeating traversal
+// and retaining overlapping code/maps. Keep one graph; inlineRequires still
+// defers evaluation. HTTP, maps and HMR consume this URL policy. Production
+// keeps Expo's mode.
 const rewriteExpoRequestUrl = config.server.rewriteRequestUrl;
 config.server.rewriteRequestUrl = (requestUrl) => {
   const rewritten = rewriteExpoRequestUrl(requestUrl);
   const url = new URL(rewritten, 'http://localhost');
   const isDev = !url.searchParams.has('dev') || ['true', '1'].includes(url.searchParams.get('dev'));
-  if (!['ios', 'android'].includes(url.searchParams.get('platform')) || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
+  if (!['web', 'ios', 'android'].includes(url.searchParams.get('platform')) || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
     return rewritten;
   }
   url.searchParams.set('lazy', 'false');
