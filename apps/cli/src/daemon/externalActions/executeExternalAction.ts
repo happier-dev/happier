@@ -30,7 +30,7 @@ import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/au
 
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
 import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionAccountInvocationSurface } from '@/api/externalActionExecutionAuthorization';
-import type { ExternalActionRequesterAccountContextPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ExternalActionRequesterAccountContextPurposeV1, ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActionAdapter';
 import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
@@ -168,6 +168,8 @@ export async function executeExternalAction(input: Readonly<{
   machineAdmission?: RpcActionExecutorContext['machineAdmission'];
   /** Produced only by the authenticated installed private-root route. */
   authenticatedLocalRootCustody?: RpcActionExecutorContext['authenticatedLocalRootCustody'];
+  /** Stamped by authenticated private terminal ingress, never accepted from an envelope. */
+  localRootInvocation?: ExternalActionRequesterInvocationV1;
   /** Exact Home URL captured by the receiving host, never supplied by the envelope. */
   currentServerHttpBaseUrl?: string;
   /** Exact receiving installation, supplied by the host rather than the envelope. */
@@ -705,7 +707,7 @@ export async function executeExternalAction(input: Readonly<{
   if (envelope.data.pluginInvocation && !pluginCaller) return prepare({ v: 1, actionId: actionId.data,
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
     execution: { ok: false, errorCode: 'plugin_mounted_caller_unavailable', error: 'plugin_mounted_caller_unavailable' } });
-  const invocation = requesterContext?.invocation ?? controllerInvocation;
+  const invocation = requesterContext?.invocation ?? controllerInvocation ?? input.localRootInvocation;
   // A creation codec is the SOURCE's packet, which may belong to another person.
   // Surface selects this Account's Require and a named Session opens delegated
   // decisions, so those facts come only from this Account's own admitted invocation.

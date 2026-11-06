@@ -1272,6 +1272,7 @@ export function createDaemonControlApp({
             principal: {
               authority,
             },
+            localRootInvocation: { caller: { kind: 'host' }, surface, authority },
             surface,
             currentMachineId: machineId,
             currentServerId: externalActionApi.currentServerId,

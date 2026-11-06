@@ -18,6 +18,9 @@ import type {
 import { createDaemonControlApp } from './controlServer';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
 type ExternalActionApi = Readonly<{
   currentServerId: string;
@@ -60,6 +63,56 @@ function createApp(
 }
 
 describe('createDaemonControlApp external Action ingress', () => {
+  it('admits authenticated terminal transition through the real coordinator', async () => {
+    const accountId = 'terminal-transition-account';
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    const actionId = 'session.agent.transition';
+    resetServerFeaturesClientForTests();
+    // Home HTTP is the boundary. Root authentication, invocation admission,
+    // Action policy and the transition coordinator remain real.
+    let featureRequestObserved = false;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      featureRequestObserved = true;
+      return Response.json({ features: { sessions: { enabled: true, agentSwitching: { enabled: false } } }, capabilities: {} });
+    });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v2/sessions/c123456789012345678901234') return { status: 200, data: { session: {
+        id: 'c123456789012345678901234', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-local', flavor: 'codex' }),
+        metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+      } } };
+      throw new Error(`Unexpected HTTP GET ${path}`);
+    });
+    const app = createApp({
+      currentServerId: 'server-local', currentAccountId: accountId,
+      verifyPat: vi.fn(), resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+      executor: createCliActionExecutor({
+        token: credentials.token, credentials, serverId: 'server-local',
+        serverHttpBaseUrl: 'https://terminal-transition.test', sessionId: '', mode: 'plain', ctx: null,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {},
+          approvalWaivedSurfaces: { [actionId]: ['cli'] } }) },
+      }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/actions/root/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: { actionId, target: { kind: 'machine', machineId: 'machine-local' }, input: {
+          sessionId: 'c123456789012345678901234', expectedCurrentAgentId: 'codex',
+          selection: { v: 1, agentId: 'claude' }, input: { localId: 'terminal-first-input', text: 'Continue', meta: {} },
+        } },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json(), JSON.stringify({ errorCode: response.json().errorCode })).toMatchObject({ ok: true, result: {
+        type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none',
+      } });
+      expect(featureRequestObserved).toBe(true);
+    } finally { await app.close(); get.mockRestore(); fetch.mockRestore(); resetServerFeaturesClientForTests(); }
+  });
   it.each(['account-local', undefined])('binds narrowed terminal creation to the daemon Account without granting human authority (%s)', async (currentAccountId) => {
     const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-local' })).toString('base64url')}.signature`, encryption: null };
     const preparedTags: Array<string | undefined> = [];
