@@ -4,6 +4,9 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import type { NativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
+
 import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
 
 let claudeConfigDir: string;
@@ -81,6 +84,57 @@ describe('readClaudeApiKeyHelperCredential', () => {
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
       controller.abort();
+      await reading;
+    }
+  });
+
+  it('settles helper failure while retaining an observable denied-signal cleanup error', async () => {
+    const marker = join(claudeConfigDir, 'denied-pids.json');
+    const script = join(claudeConfigDir, 'denied.cjs');
+    await writeFile(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.ppid, process.pid])); setInterval(() => {}, 1000)`);
+    const afterScript = process.platform === 'win32' ? ' & rem fixture' : '; :';
+    await writeUserSettings({ apiKeyHelper: `"${process.execPath}" "${script}"${afterScript}` });
+    const ownedPids = async () => {
+      try {
+        const value: unknown = JSON.parse(await readFile(marker, 'utf8'));
+        if (!Array.isArray(value) || value.some(pid => !Number.isSafeInteger(pid) || pid <= 0)) {
+          throw new Error('Invalid owned helper PIDs');
+        }
+        return value as number[];
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return [];
+        throw error;
+      }
+    };
+    let pids: number[] = [];
+    const realKill = process.kill.bind(process);
+    const signals = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (signal !== 0 && pids.includes(pid)) {
+        throw Object.assign(new Error('fixture signal denied'), { code: 'EPERM' });
+      }
+      return realKill(pid, signal);
+    });
+    const controller = new AbortController();
+    let cleanup: NativeCatalogCleanup | undefined;
+    let settled = false;
+    const reading = readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env,
+      timeoutMs: 10_000, signal: controller.signal, onNativeCleanup: next => { cleanup = next; } })
+      .then(value => { settled = true; return value; });
+    try {
+      await vi.waitFor(async () => { pids = await ownedPids(); expect(pids).toHaveLength(2); });
+      controller.abort();
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 5_000 });
+      await expect(reading).resolves.toEqual({ status: 'failed' });
+      for (const pid of pids) expect(() => realKill(pid, 0)).not.toThrow();
+      await expect(cleanup?.()).rejects.toMatchObject({ code: 'process_tree_termination_incomplete' });
+    } finally {
+      signals.mockRestore();
+      controller.abort();
+      pids = await ownedPids();
+      for (const pid of pids) {
+        try { realKill(pid, 0); } catch { continue; }
+        await killProcessTree({ pid });
+      }
       await reading;
     }
   });

@@ -103,8 +103,9 @@ async function probeClaudeCli(params: RuntimeProbeParams & Readonly<{
       // longer ours to signal; close our readers so cleanup still observes child close.
       child?.stdout?.destroy();
       child?.stderr?.destroy();
-      await childClosed;
     }
+    // A failed termination may leave the child alive; preserve that error instead of joining it.
+    await childClosed;
   })();
 
   return await withCatalogProbeLifecycle(params, async (lifecycle) => {

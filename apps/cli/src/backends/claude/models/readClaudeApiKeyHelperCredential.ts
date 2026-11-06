@@ -35,8 +35,9 @@ export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifec
       // An exited shell may leave a background process holding this pipe. The shell's PID
       // is no longer ours to terminate, but closing our reader must still settle cleanup.
       child?.stdout?.destroy();
-      await childClosed;
     }
+    // A failed termination may leave the child alive; preserve that error instead of joining it.
+    await childClosed;
   })();
   try {
     const result = await withCatalogProbeLifecycle(params, async (lifecycle): Promise<ClaudeApiKeyHelperCredential> => {

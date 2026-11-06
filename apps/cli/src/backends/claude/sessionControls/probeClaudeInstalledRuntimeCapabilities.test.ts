@@ -338,6 +338,47 @@ describe('installed runtime real-process lifecycle', () => {
     }
   });
 
+  it.each([false, true])('settles denied process signals with caller-owned lifecycle=%s', async (callerOwned) => {
+    const runtime = fixture('hang-help');
+    const realKill = process.kill.bind(process);
+    logger.flushSync();
+    const before = existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8').length : 0;
+    // Deny only nonzero signals to PIDs recorded by this real runtime fixture.
+    const signals = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (signal !== 0 && runtime.pids().includes(pid)) {
+        throw Object.assign(new Error('fixture signal denied'), { code: 'EPERM' });
+      }
+      return realKill(pid, signal);
+    });
+    const controller = new AbortController();
+    let result: unknown;
+    let settled = false;
+    const operation = probeClaudeInstalledRuntimeCapabilities({
+      cwd: runtime.directory, timeoutMs: 1_000, processEnv: runtime.processEnv,
+      ...(callerOwned ? { signal: controller.signal } : {}),
+    }).then(value => { result = { status: 'fulfilled', value }; settled = true; },
+      (reason: unknown) => { result = { status: 'rejected', reason }; settled = true; });
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 5_000 });
+      expect(runtime.pids().map(isAlive)).toEqual([true]);
+      if (callerOwned) {
+        expect(result).toMatchObject({ status: 'rejected', reason: { code: 'process_tree_termination_incomplete' } });
+      } else {
+        expect(result).toEqual({ status: 'fulfilled', value: { supportsEffort: false, supportsUltracode: false } });
+      }
+      logger.flushSync();
+      const diagnostic = readFileSync(logger.getLogPath(), 'utf8').slice(before);
+      expect(diagnostic).toContain('process_tree_termination_incomplete');
+      if (!callerOwned) expect(diagnostic).toContain('[claude-runtime]');
+      expect(diagnostic).not.toContain(runtime.directory);
+    } finally {
+      signals.mockRestore();
+      controller.abort();
+      for (const pid of runtime.pids()) if (isAlive(pid)) await killProcessTree({ pid });
+      await operation;
+    }
+  });
+
   // Windows process enumeration uses its bundled executable, not PATH-resolved POSIX ps.
   it.skipIf(process.platform === 'win32').each([false, true])('keeps cleanup failure observable with caller-owned lifecycle=%s', async (callerOwned) => {
     const runtime = fixture('hang-help');
