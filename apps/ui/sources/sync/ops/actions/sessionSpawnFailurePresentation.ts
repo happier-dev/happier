@@ -4,6 +4,7 @@ import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/ope
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
 import { t } from '@/text';
 import type { SessionSpawnNewActionResult } from './sessionSpawnNewAction';
@@ -109,6 +110,10 @@ function sessionSpawnFailureDisplayCode(failure: Readonly<{ errorCode: string; d
 export function resolveSessionSpawnNewResultFailureMessage(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
+    if (result.type === 'error' && result.code === 'spawn_failed' && result.providerError) {
+        const presentation = presentProviderError(result.providerError);
+        return `${t(presentation.titleKey)}\n\n${t(presentation.descriptionKey)}`;
+    }
     const poolFailure = resolveSessionSpawnNewConnectedAccountFailure(result);
     if (poolFailure) return poolFailure.message;
     const key = resolveSessionSpawnNewResultFailureMessageKey(result);
