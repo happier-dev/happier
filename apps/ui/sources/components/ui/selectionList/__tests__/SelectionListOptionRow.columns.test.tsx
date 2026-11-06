@@ -2,10 +2,10 @@
  * Lane G4 — `PlanSuccessRows` row identity and column count.
  *
  * `PlanSuccessRows` uses no hooks, so it can be invoked as a plain function and
- * its returned element tree read directly: that is the only place a visual
- * row's React key is observable. The rendered layout itself — no column
- * wrapper at one column, row-major cells, disabled options kept as cells, a
- * trailing partial row — is proven through the public SelectionList by
+ * its returned element tree read directly: that is the only place a block's
+ * React key is observable. The rendered layout itself — no column wrapper at
+ * one column, independent column stacks, disabled options kept as cells — is
+ * proven through the public SelectionList by
  * `SelectionList.columns.test.tsx`, `SelectionListCardRowGap.test.tsx`,
  * `SelectionList.columnsWithExpandedContent.test.tsx` and
  * `SelectionList.a11yPatternStability.test.tsx`.
@@ -54,26 +54,23 @@ function childrenOf(element: React.ReactElement): React.ReactElement[] {
 }
 
 describe('PlanSuccessRows — multi-column layout', () => {
-    it('keys each visual row by its leading option so rows keep identity', () => {
+    it('keys each block by its leading option so blocks keep identity', () => {
         // Read the raw children array: `React.Children.toArray` rewrites keys
         // with its own prefix, which would hide the key we actually assign.
-        const visualRows = (PlanSuccessRows(makeProps({ columnCount: 2 }))
+        const blocks = (PlanSuccessRows(makeProps({ plan: makePlan(120), columnCount: 2 }))
             .props as { children: React.ReactElement[] }).children;
-        expect(visualRows.map((visualRow) => visualRow.key)).toEqual([
+        expect(blocks.map((block) => block.key)).toEqual([
             'column-row:opt-0',
-            'column-row:opt-2',
-            'column-row:opt-4',
+            'column-row:opt-50',
+            'column-row:opt-100',
         ]);
     });
 
-    it('carries three columns through when the layout resolved three', () => {
-        const visualRows = childrenOf(PlanSuccessRows(makeProps({ plan: makePlan(7), columnCount: 3 })));
-        expect(visualRows).toHaveLength(3);
-        expect(visualRows.map((visualRow) => (
-            (visualRow.props as { children: React.ReactElement[] }).children.length
-        ))).toEqual([3, 3, 1]);
-        for (const visualRow of visualRows) {
-            expect((visualRow.props as { columnCount: number }).columnCount).toBe(3);
-        }
+    it('stacks a short list as one block of independent columns, carrying the resolved column count', () => {
+        // Columns stack on their own (as 0.2): an open card never reserves height beside its neighbour.
+        const blocks = childrenOf(PlanSuccessRows(makeProps({ plan: makePlan(7), columnCount: 3 })));
+        expect(blocks).toHaveLength(1);
+        expect((blocks[0]!.props as { children: React.ReactElement[] }).children).toHaveLength(7);
+        expect((blocks[0]!.props as { columnCount: number }).columnCount).toBe(3);
     });
 });
