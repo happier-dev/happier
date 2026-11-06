@@ -127,6 +127,11 @@ export type FetchAnthropicModelsParams = Readonly<{
   accessToken?: string | null;
   /** Anthropic API key. Sent as `x-api-key` only when no bearer token is available. */
   apiKey?: string | null;
+  /**
+   * Output of Claude Code's `apiKeyHelper`. Sent as Claude Code sends it, as both `x-api-key` and
+   * `Authorization: Bearer`, without the subscription OAuth beta header.
+   */
+  apiKeyHelperValue?: string | null;
   /** Anthropic-compatible endpoint root (`ANTHROPIC_BASE_URL`). Defaults to the Anthropic host. */
   baseUrl?: string | null;
   timeoutMs: number;
@@ -148,7 +153,10 @@ export async function fetchAnthropicModels(
   const accessToken = typeof params.accessToken === 'string' && params.accessToken.trim().length > 0
     ? params.accessToken.trim()
     : null;
-  if (!apiKey && !accessToken) return null;
+  const apiKeyHelperValue = typeof params.apiKeyHelperValue === 'string' && params.apiKeyHelperValue.trim().length > 0
+    ? params.apiKeyHelperValue.trim()
+    : null;
+  if (!apiKey && !accessToken && !apiKeyHelperValue) return null;
 
   const fetchImpl = params.fetchImpl ?? fetch;
   const headers: Record<string, string> = {
@@ -159,6 +167,9 @@ export async function fetchAnthropicModels(
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
     headers['anthropic-beta'] = OAUTH_BETA_HEADER_VALUE;
+  } else if (apiKeyHelperValue) {
+    headers['Authorization'] = `Bearer ${apiKeyHelperValue}`;
+    headers['x-api-key'] = apiKeyHelperValue;
   } else if (apiKey) {
     headers['x-api-key'] = apiKey;
   }

@@ -74,6 +74,20 @@ describe('fetchAnthropicModels', () => {
     expect(headers['Authorization']).toBeUndefined();
   });
 
+  it('sends an apiKeyHelper value as both x-api-key and Bearer without the oauth beta header', async () => {
+    const fetchImpl = vi.fn<(input: unknown, init: { headers: Record<string, string> }) => Promise<Response>>(async () => okResponse());
+    await fetchAnthropicModels({
+      apiKeyHelperValue: 'helper-key',
+      baseUrl: 'https://gateway.example',
+      timeoutMs: 1_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const headers = fetchImpl.mock.calls[0]![1].headers;
+    expect(headers['Authorization']).toBe('Bearer helper-key');
+    expect(headers['x-api-key']).toBe('helper-key');
+    expect(headers['anthropic-beta']).toBeUndefined();
+  });
+
   it('sends Bearer + oauth beta header when an access token is provided', async () => {
     const fetchImpl = vi.fn<(input: unknown, init: { headers: Record<string, string> }) => Promise<Response>>(async () => okResponse());
     await fetchAnthropicModels({

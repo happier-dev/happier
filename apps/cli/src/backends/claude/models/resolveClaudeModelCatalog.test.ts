@@ -4,9 +4,15 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
-const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock } = vi.hoisted(() => ({
+const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock, readClaudeApiKeyHelperCredentialMock } = vi.hoisted(() => ({
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
   readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  readClaudeApiKeyHelperCredentialMock: vi.fn<(...args: unknown[]) => Promise<string | null>>(),
+}));
+
+// The helper is the developer's real shell command; keep it out of catalog tests.
+vi.mock('./readClaudeApiKeyHelperCredential', () => ({
+  readClaudeApiKeyHelperCredential: readClaudeApiKeyHelperCredentialMock,
 }));
 
 vi.mock('./fetchAnthropicModels', async (importOriginal) => {
@@ -52,6 +58,8 @@ beforeEach(() => {
   fetchAnthropicModelsMock.mockReset();
   readClaudeCodeNativeCredentialMock.mockReset();
   readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
+  readClaudeApiKeyHelperCredentialMock.mockReset();
+  readClaudeApiKeyHelperCredentialMock.mockResolvedValue(null);
   resetClaudeModelCatalogCacheForTests();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
@@ -231,6 +239,21 @@ describe('resolveClaudeModelCatalog', () => {
     });
     expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
     expect(boundResult.some((model) => model.id === 'claude-opus-9')).toBe(false);
+  });
+
+  it('discovers gateway models with the Claude Code apiKeyHelper key', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://gateway.example/anthropic';
+    readClaudeApiKeyHelperCredentialMock.mockResolvedValue('helper-key');
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'gateway/model', displayName: 'Gateway model' }]);
+
+    const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKeyHelperValue: 'helper-key',
+      baseUrl: 'https://gateway.example/anthropic',
+    }));
+    expect(resolution.source).toBe('dynamic');
+    expect(resolution.models.map((model) => model.id)).toContain('gateway/model');
   });
 
   it('refetches when the ambient credential changes', async () => {

@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
@@ -39,6 +43,48 @@ describe('resolveClaudeModelProbeTarget', () => {
       baseUrl: 'https://gateway.example/anthropic',
       credential: { kind: 'bearer', value: 'gateway-token' },
     });
+  });
+
+  it('uses the Claude Code apiKeyHelper for a gateway when no auth env is set', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-probe-'));
+    try {
+      await writeFile(join(claudeConfigDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'echo helper-key' }));
+
+      const target = await resolveClaudeModelProbeTarget({
+        processEnv: {
+          PATH: process.env.PATH,
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
+          ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic',
+        },
+      });
+
+      expect(target).toMatchObject({
+        baseUrl: 'https://gateway.example/anthropic',
+        credential: { kind: 'api_key_helper', value: 'helper-key' },
+      });
+    } finally {
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers auth env vars over the Claude Code apiKeyHelper', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-probe-'));
+    try {
+      await writeFile(join(claudeConfigDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'echo helper-key' }));
+
+      const target = await resolveClaudeModelProbeTarget({
+        processEnv: {
+          PATH: process.env.PATH,
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
+          ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic',
+          ANTHROPIC_AUTH_TOKEN: 'gateway-token',
+        },
+      });
+
+      expect(target?.credential).toEqual({ kind: 'bearer', value: 'gateway-token' });
+    } finally {
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    }
   });
 
   it('fails closed on an invalid explicit endpoint', async () => {

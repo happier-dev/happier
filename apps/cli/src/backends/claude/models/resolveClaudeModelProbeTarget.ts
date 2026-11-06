@@ -15,9 +15,13 @@ import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfile
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
 import { DEFAULT_ANTHROPIC_BASE_URL } from './fetchAnthropicModels';
+import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
+
+const API_KEY_HELPER_TIMEOUT_MS = 10_000;
 
 export type ClaudeModelProbeCredential = Readonly<{
-  kind: 'bearer' | 'api_key';
+  /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
+  kind: 'bearer' | 'api_key' | 'api_key_helper';
   value: string;
 }>;
 
@@ -176,7 +180,9 @@ export type ResolveClaudeModelProbeTargetParams = Readonly<{
  * Resolve the exact endpoint/credential pair used for model discovery.
  *
  * This is deliberately passive: it reads profiles and selected connected credentials but never
- * mutates process env, materializes auth homes, refreshes OAuth, or switches account groups.
+ * mutates process env, materializes auth homes, refreshes OAuth, or switches account groups. The
+ * only command it runs is the user's Claude Code `apiKeyHelper`, which Claude Code itself runs at
+ * session start.
  */
 export async function resolveClaudeModelProbeTarget(
   params: ResolveClaudeModelProbeTargetParams,
@@ -228,6 +234,18 @@ export async function resolveClaudeModelProbeTarget(
   const envCredential = readAuthFromEnv(effectiveEnv);
   if (envCredential) {
     return { baseUrl, credential: envCredential, cacheIdentity: targetCacheIdentity(baseUrl, envCredential) };
+  }
+
+  // Claude Code authenticates with its `apiKeyHelper` after the auth env vars and before a saved
+  // subscription login, for any endpoint; gateways use it to hand out short-lived keys.
+  const helperKey = await readClaudeApiKeyHelperCredential({
+    claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
+    env: effectiveEnv,
+    timeoutMs: API_KEY_HELPER_TIMEOUT_MS,
+  });
+  if (helperKey) {
+    const credential = { kind: 'api_key_helper' as const, value: helperKey };
+    return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
   }
 
   // Never pair a native saved subscription token with an explicitly configured third-party

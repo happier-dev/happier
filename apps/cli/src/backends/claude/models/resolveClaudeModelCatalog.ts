@@ -184,6 +184,7 @@ export async function resolveClaudeModelCatalogResolution(
     const entries = await fetchAnthropicModels({
       ...(target.credential.kind === 'api_key' ? { apiKey: target.credential.value } : {}),
       ...(target.credential.kind === 'bearer' ? { accessToken: target.credential.value } : {}),
+      ...(target.credential.kind === 'api_key_helper' ? { apiKeyHelperValue: target.credential.value } : {}),
       ...(target.baseUrl ? { baseUrl: target.baseUrl } : {}),
       timeoutMs: params.timeoutMs,
     });
