@@ -13,11 +13,69 @@ import {
   WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE,
   WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE,
   createWorkspaceBundleLockPriorityScope,
+  observeWorkspaceBundleLockPriority,
   withWorkspaceBundleLock,
   withWorkspaceBundleLockSync,
 } from './workspaceBundleLock.mjs';
 import { withOptionalCliSharedDepsBuildLock } from '../../apps/cli/scripts/optionalWorkspaceBundleLock.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
+
+for (const mode of ['async', 'sync']) {
+  test(`${mode} joint priority yields free resources while blocked and retains its age when ready`, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'workspace-priority-convoy-'));
+    const first = join(root, 'first.lock');
+    const second = join(root, 'second.lock');
+    const acquire = mode === 'async' ? withWorkspaceBundleLock : withWorkspaceBundleLockSync;
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => ++now);
+    let joint;
+    let blockedSnapshot;
+    const contenders = [];
+    const options = lockPath => {
+      const priorityScope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+      contenders.push(priorityScope);
+      return { lockPath, wait: false, priorityScope };
+    };
+    const expectPriority = attempt => mode === 'async'
+      ? assert.rejects(attempt, { code: 'EWORKSPACEBUNDLELOCKBUSY' })
+      : assert.throws(attempt, { code: 'EWORKSPACEBUNDLELOCKBUSY' });
+    try {
+      // The holder is a different operation even though this controlled fixture
+      // runs in one process. Only the clock is mocked; all leases are real.
+      await withWorkspaceBundleLock(async () => {
+        joint = createWorkspaceBundleLockPriorityScope({ resources: [{ path: first }, { path: second }] });
+        joint.activate();
+        blockedSnapshot = observeWorkspaceBundleLockPriority(second);
+        assert.equal(await acquire(() => 'newer completed before first released', options(second)),
+          'newer completed before first released');
+      }, { lockPath: first, wait: false });
+
+      assert.notEqual(observeWorkspaceBundleLockPriority(second), blockedSnapshot,
+        'the existing observation must expose the sibling release that restores eligibility');
+      // A stream of newer arrivals cannot erase the joint scope's original age.
+      for (let arrival = 0; arrival < 3; arrival++) {
+        await expectPriority(() => acquire(() => assert.fail('newer arrival passed a ready joint scope'), options(second)));
+      }
+      const runJoint = () => acquire(() => 'joint admitted', { lockPath: second, wait: false, priorityScope: joint });
+      if (mode === 'async') {
+        assert.equal(await acquire(async () => {
+          await expectPriority(() => acquire(() => assert.fail('newer arrival passed a partially acquired joint scope'), options(second)));
+          return runJoint();
+        }, { lockPath: first, wait: false, priorityScope: joint }), 'joint admitted');
+      } else {
+        assert.equal(acquire(() => {
+          assert.throws(() => acquire(() => assert.fail('newer arrival passed a partially acquired joint scope'), options(second)),
+            { code: 'EWORKSPACEBUNDLELOCKBUSY' });
+          return runJoint();
+        }, { lockPath: first, wait: false, priorityScope: joint }), 'joint admitted');
+      }
+    } finally {
+      for (const contender of contenders) contender.dispose();
+      joint?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 for (const mode of ['async', 'sync']) for (const blocker of ['priority scope', 'priority claim']) {
   test(`workspace bundle ${mode} busy diagnostic identifies the ${blocker} with no base lease`, async t => {

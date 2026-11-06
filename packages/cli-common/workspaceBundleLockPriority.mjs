@@ -96,13 +96,20 @@ export function createWorkspaceBundleLockPriorityOwner(policy) {
         ignored.push([id, 'ignored', 'invalid-owner-or-declaration']);
         continue;
       }
-      active.push({ id, createdAtMs: Number(anchor.owner.createdAtMs), resources, snapshot: anchor });
+      // Keep age on the contested resource, but do not reserve free siblings
+      // while another publication prevents the joint scope from progressing.
+      const blocked = resources.some(resource => {
+        if (!isPublication(resource) || resource.path === lockPath) return false;
+        const holder = policy.read(resource.path);
+        return holder.exists && holder.owner?.priorityScopeId !== id && !policy.reclaimable(holder, options);
+      });
+      active.push({ id, createdAtMs: Number(anchor.owner.createdAtMs), resources, snapshot: anchor, blocked });
     }
     return { active: active.sort(compare), ignored: ignored.sort((left, right) => left[0].localeCompare(right[0])) };
   }
 
   const observationSnapshot = ({ active, ignored }) => JSON.stringify([
-    ...active.map(({ id, createdAtMs, resources }) => [id, createdAtMs, resources]), ...ignored,
+    ...active.map(({ id, createdAtMs, resources, blocked }) => [id, createdAtMs, resources, blocked]), ...ignored,
   ]);
 
   function create({ resources, env = process.env, signal, isHeldResourceContinuation, ...options }) {
@@ -186,6 +193,9 @@ export function createWorkspaceBundleLockPriorityOwner(policy) {
 
   return {
     create,
+    scopeId(scope) {
+      return scopes.get(scope)?.id;
+    },
     isRelevant(lockPath, filename, scope) {
       const name = String(filename);
       return [indexPrefix(lockPath), `${basename(lockPath)}.priority-scope-`]
@@ -203,7 +213,7 @@ export function createWorkspaceBundleLockPriorityOwner(policy) {
       }
       const observed = inspect(lockPath, { ...options, priorityScope: scope });
       return {
-        predecessor: observed.active.find(candidate => candidate.id !== state.id && compare(candidate, state) < 0) ?? null,
+        predecessor: observed.active.find(candidate => !candidate.blocked && compare(candidate, state) < 0) ?? null,
         snapshot: observationSnapshot(observed),
       };
     },

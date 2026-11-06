@@ -365,14 +365,12 @@ test('in-process priority permits authenticated publication-holder continuation 
   const older = withWorkspaceBuildResources({ locks: [{ path: first }, { path: second }] }, () => { order.push('older'); });
   try {
     await waiting;
-    const unrelated = new AbortController();
-    await assert.rejects(withWorkspaceBundleLock(() => { throw new Error('unrelated operation borrowed another callback custody'); }, {
-      lockPath: first, signal: unrelated.signal,
-      onWait: () => unrelated.abort(new Error('unrelated waiter canceled')),
-    }), /unrelated waiter canceled/);
+    // joint-priority-convoy-1106: a group blocked on second must yield the
+    // free first resource to unrelated work, without losing its original age.
+    await withWorkspaceBundleLock(() => { order.push('unrelated'); }, { lockPath: first });
     continueWriter();
     await Promise.all([holder, older]);
-    assert.deepEqual(order, ['async-continuation', 'sync-continuation', 'older']);
+    assert.deepEqual(order, ['unrelated', 'async-continuation', 'sync-continuation', 'older']);
   } finally { continueWriter(); await Promise.allSettled([holder, older]); }
 });
 

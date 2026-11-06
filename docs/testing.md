@@ -449,6 +449,10 @@ its original age across publication contention without retaining actual leases
 or capacity. The admission client retains that same scope across busy resource
 attempts and withdraws it on acquisition, cancellation or exit. Dependency blockage or capacity denial suspends its preference;
 retrying restores the same age. Existing priority claims retain their handoff.
+A group blocked by another scope's publication lease yields its free sibling
+resources to newer work. Its original age remains on the contested resource,
+and resource-change observation restores preference when that blocker releases.
+The group's own partial leases do not make it ineligible.
 An authenticated holder of a resource needed by an older group may acquire a
 free prerequisite to finish and release that resource, but may not wait while
 holding it. Invalid soft-preference records grant no ordering authority and do

@@ -605,7 +605,7 @@ function recoverRetainedLockSnapshot(lockPath, classificationOptions) {
   return true;
 }
 
-function serializeLockOwner({ createdAtMs, updatedAtMs, ownerToken, processInstanceFingerprint }, options = {}) {
+function serializeLockOwner({ createdAtMs, updatedAtMs, ownerToken, processInstanceFingerprint, priorityScopeId }, options = {}) {
   const host = readCurrentProcessHostIdentity(options);
   return JSON.stringify({
     pid: process.pid,
@@ -613,6 +613,7 @@ function serializeLockOwner({ createdAtMs, updatedAtMs, ownerToken, processInsta
     updatedAtMs,
     token: ownerToken,
     processInstanceFingerprint: processInstanceFingerprint ?? null,
+    ...(priorityScopeId ? { priorityScopeId } : {}),
     ...(host ? {
       processMachineId: host.machineId,
       ...(host.bootId ? { processBootId: host.bootId } : {}),
@@ -1066,6 +1067,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
           updatedAtMs: createdAtMs,
           ownerToken,
           processInstanceFingerprint,
+          priorityScopeId: workspaceBundlePriority.scopeId(priorityScope),
         }, options);
         fd = openSync(lockPath, 'wx', 0o600);
         try {
@@ -1350,6 +1352,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
           updatedAtMs: Date.now(),
           ownerToken,
           processInstanceFingerprint,
+          priorityScopeId: workspaceBundlePriority.scopeId(priorityScope),
         }, options);
         fd = openSync(lockPath, 'wx', 0o600);
         try {
