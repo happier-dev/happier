@@ -31,7 +31,8 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { resolveMachineAdmission } from "@/app/machines/machineAccess";
 import { getAccountSessionSocketRoom } from "@/app/api/socketRooms";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
 import { log } from '@/utils/logging/log';
 import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
@@ -556,7 +557,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
     const getServerIdentityId = params.getServerIdentityId ?? getOrCreateServerIdentityId;
 
     return async (request, options = {}): Promise<ExternalActionDaemonDispatchResult> => {
-        const resolveTargetSessionMachine = request.actionId === 'session.message.send'
+        const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(request.actionId, request.envelope);
+        const resolveTargetSessionMachine = request.actionId === 'session.message.send' || machineRuntimeDemand === 'required'
             ? resolveSessionInputMachine : resolveSessionMachine;
         const target = request.envelope.target;
         if (!target) {
@@ -639,6 +641,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             const routing = {
                 serverIdentityId: await getServerIdentityId(), machineId,
                 actionId: request.actionId, requestId: request.envelope.requestId ?? randomUUID(),
+                ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target,
                 ...(request.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: request.envelope.idempotencyKey }),
                 ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
@@ -741,7 +744,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             : undefined;
         let finiteWake: Awaited<ReturnType<typeof prepareManagedFiniteActionWake>> | undefined;
         const finiteSignal = options.signal ?? new AbortController().signal;
-        if (target.kind === 'machine' && Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, request.actionId)) {
+        if (isExternalActionManagedWakeRootV1({ actionId: request.actionId, machineId, target, machineRuntimeDemand })) {
             const wake = await runDispatchPhase('managed_finite_wake', machineId, async () => {
                 executionAuthorization ??= await mint();
                 const originalAuthorization = executionAuthorization;

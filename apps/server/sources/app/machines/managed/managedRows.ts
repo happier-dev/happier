@@ -27,6 +27,7 @@ import { afterTx, inTx, TransactionReplayRequiredError, type ResolvedTransaction
 import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { serializeManagedMachineRef } from '@/app/machines/machineSerialization';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
 /** The persisted pair is absent for Account-controlled cloud resources. */
@@ -423,12 +424,18 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
             fresh ? fresh.admittedInput : row.admittedInput);
         const previous = readStoredManagedDevcontainerChild(row);
         const machineIds = new Set([row.enrolledMachineId, fresh?.enrolledMachineId].filter((id): id is string => typeof id === 'string'));
-        const children: Array<{ machineId: string; child: Awaited<ReturnType<typeof readMachineDevcontainerChildInTx>>; accountIds: string[] }> = [];
+        const enrollmentChanged = row.enrolledMachineId !== (fresh?.enrolledMachineId ?? null);
+        const observedMachines = enrollmentChanged ? await tx.machine.findMany({ where: { id: { in: [...machineIds] } },
+            select: { id: true, managedResource: { select: { id: true, homeId: true } } } }) : [];
+        const enrollmentReferences = new Map(observedMachines.map(machine => [machine.id, serializeManagedMachineRef(machine)]));
+        const children: Array<{ machineId: string; child: Awaited<ReturnType<typeof readMachineDevcontainerChildInTx>>;
+            managedMachineRef?: ReturnType<typeof serializeManagedMachineRef>; accountIds: string[] }> = [];
         for (const machineId of machineIds) {
             const child = await readMachineDevcontainerChildInTx(tx, machineId);
             const before = row.enrolledMachineId === machineId ? previous : null;
-            if (managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
-            children.push({ machineId, child, accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId) });
+            if (!enrollmentReferences.has(machineId) && managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
+            children.push({ machineId, child, ...(enrollmentReferences.has(machineId) ? { managedMachineRef: enrollmentReferences.get(machineId) } : {}),
+                accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId) });
         }
         return { accountIds: [...resourceAccountIds, ...children.flatMap(child => child.accountIds)], controllerAccountIds, resourceAccountIds,
             controllerReplaced: fresh !== null && fresh.controllerMachineId !== row.controllerMachineId, children };
@@ -440,14 +447,16 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
     if (controllerReplaced && row.controllerMachineId) await markAccountsChanged(tx, {
         accountIds: controllerAccountIds, kind: 'machine', entityId: row.controllerMachineId,
     });
-    for (const { machineId, child, accountIds: childAccountIds } of children) {
+    for (const { machineId, child, managedMachineRef, accountIds: childAccountIds } of children) {
         const cursors = await markAccountsChanged(tx, { accountIds: childAccountIds, kind: 'machine', entityId: machineId });
         for (const publication of cursors) {
             const { accountId } = publication;
             const access = await resolveMachineAccessInTx(tx, { actorAccountId: accountId, machineId });
             const devcontainerChild = access?.accessState === 'ready' ? child : null;
             afterTx(tx, () => eventRouter.emitUpdate({ userId: accountId,
-                payload: buildUpdateMachineUpdate(machineId, publication.resolveCursor(), randomKeyNaked(12), undefined, undefined, { devcontainerChild }),
+                payload: buildUpdateMachineUpdate(machineId, publication.resolveCursor(), randomKeyNaked(12), undefined, undefined, {
+                    devcontainerChild, ...(managedMachineRef !== undefined ? { managedMachineRef } : {}),
+                }),
                 recipientFilter: { type: 'machine-scoped-only', machineId } }));
         }
     }

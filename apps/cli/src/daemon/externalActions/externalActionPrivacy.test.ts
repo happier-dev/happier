@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
@@ -113,7 +114,7 @@ describe('private external Action origins with the real CLI executor', () => {
     const requestBinding = { ...binding, actionId: 'teams.archive', requestId: `unproven-relay-${version}` };
     const envelope = version === 1
       ? { v: 1 as const, requestId: requestBinding.requestId, target, input }
-      : sealExternalActionRequestV2({ binding: requestBinding, material, input,
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: requestBinding, material, input,
         randomBytes: (length) => new Uint8Array(length).fill(4) });
     try {
       await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)!({
@@ -532,7 +533,7 @@ describe('private external Action origins with the real CLI executor', () => {
       externalActionMachineInstallationId: 'machine-installation-1',
     })).executor };
     const poolBinding = { ...binding, actionId: 'machines.pools.update', requestId: 'pool-conflict' };
-    const request = sealExternalActionRequestV2({ binding: poolBinding, material, randomBytes: (length) => new Uint8Array(length).fill(4),
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: poolBinding, material, randomBytes: (length) => new Uint8Array(length).fill(4),
       input: { poolId, expectedRevision: 1, name: 'Requested private name', members: [] } });
     const poolAuthorization = executionAuthorization(poolBinding.actionId, request, 'pool-authorization');
     try {
@@ -605,7 +606,7 @@ describe('private external Action origins with the real CLI executor', () => {
     const app = fastify();
     registerDaemonExternalActionRoute(app, { ...owner(), currentMachineId: target.machineId,
       verifyPat: async () => ({ ...principal, ok: true, expiresAt: null }) });
-    const request = sealExternalActionRequestV2({ binding, material,
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { id: 'session.message.send' }, randomBytes: (length) => new Uint8Array(length).fill(2) });
     try {
       const response = await app.inject({ method: 'POST', url: '/v1/actions/action.spec.get', payload: request,
@@ -622,7 +623,7 @@ describe('private external Action origins with the real CLI executor', () => {
     registerExternalActionRpcHandler({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
       ...owner(), machineId: target.machineId, resolveAccountId: async () => principal.accountId,
     });
-    const request = sealExternalActionRequestV2({ binding, material,
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { id: 'session.message.send' }, randomBytes: (length) => new Uint8Array(length).fill(3) });
     const handle = handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)!;
     const dispatch = {

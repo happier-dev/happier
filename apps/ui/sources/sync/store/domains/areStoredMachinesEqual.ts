@@ -99,7 +99,7 @@ export function retainMachineRecord(previous: Machine | null | undefined, next: 
         if (retained === next) retained = { ...next };
         retained[key] = field;
     };
-    for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities'] as const) {
+    for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities', 'managedMachineRef'] as const) {
         retainField(key);
     }
     return retained;
@@ -146,6 +146,7 @@ function areStoredMachineValuesEqual(
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
     return previous.id === next.id
+        && areSessionValuesDeepEqual(previous.managedMachineRef, next.managedMachineRef)
         && previous.kind === next.kind
         && (!includeResources || previous.seq === next.seq)
         && previous.createdAt === next.createdAt

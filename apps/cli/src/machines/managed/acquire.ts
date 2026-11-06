@@ -4,6 +4,7 @@ import type { RuntimeProviderModelManagementServices } from '@/providers/modelMa
 import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
 import axios from 'axios';
+import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1 } from '@happier-dev/protocol';
 import { resolveManagedMachineEnrollmentAdminAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess } from '@/api/externalActionExecutionAuthorization';
@@ -425,7 +426,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const origin = options.actionOrigin?.binding;
                 if (!origin || origin.requestId !== purpose.target.origin.actionRequestId
                     || origin.serverIdentityId !== machine.homeId || origin.machineId !== machine.enrolledMachineId
-                    || origin.target.kind !== 'machine' || origin.target.machineId !== machine.enrolledMachineId) {
+                    || !isExternalActionManagedWakeRootV1(origin)) {
                     throw new ManagedMachineControllerError('admission_unavailable');
                 }
             }

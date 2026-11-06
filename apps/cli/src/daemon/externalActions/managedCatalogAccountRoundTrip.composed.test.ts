@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import '../../../../ui/sources/dev/vitestSetup';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -204,7 +205,7 @@ describe('managed catalog original Account transport', () => {
             requestId: 'fx18-terminal-catalog', target: { kind: 'machine' as const, machineId: controller.machineId },
             authentication: { kind: 'terminal' as const, tokenEpoch: account.tokenEpoch } };
           const material = { type: 'dataKey' as const, machineKey };
-          const envelope = sealExternalActionRequestV2({ binding, input: { homeId, controller }, material,
+          const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: { homeId, controller }, material,
             randomBytes: length => new Uint8Array(length).fill(17) });
           const minted = await mintExternalActionExecutionAuthorization({ actionId: binding.actionId, envelope,
             machineId: controller.machineId, pat: token, serverHttpBaseUrl: serverUrl });

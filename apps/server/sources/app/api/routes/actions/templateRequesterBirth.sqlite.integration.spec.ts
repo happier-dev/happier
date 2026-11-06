@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { encodeBase64 } from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
@@ -67,7 +68,7 @@ describe('requester template birth and asleep onboarding', () => {
             const target = { kind: 'machine' as const, machineId: f.machine.id };
             const originalActionEnvelope = encryptedMachineKey === null
                 ? ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input })
-                : sealExternalActionRequestV2({ binding: { serverIdentityId: await getOrCreateServerIdentityId(),
+                : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: await getOrCreateServerIdentityId(),
                     accountId: f.account.id, actionId: 'template.instantiate', requestId, target,
                     authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch } }, input,
                     material: { type: 'dataKey', machineKey: encryptedMachineKey.encryptionKey }, randomBytes });

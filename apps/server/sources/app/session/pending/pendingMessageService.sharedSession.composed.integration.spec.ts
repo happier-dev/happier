@@ -135,7 +135,7 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(mapPendingActivationAuthorization(active)).toEqual(authorization);
         expect(await readManagedWakeTargets({ actorAccountId: owner.id, request: { homeId,
             controller: { machineId: controller.id, installationId: controller.installationId! } } }))
-            .toMatchObject({ targets: [{ managedId: managed.id, origin: { pendingRequestId: localId } }] });
+            .toEqual({ targets: [] });
         const details = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED' };
         const body = { requestId: localId, requestedAt: authorization.requestedAt, failureCode: 'runtime_start_failed' };
         await withAuthenticatedTestApp(sessionPendingRoutes, async app => {

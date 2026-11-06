@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 /**
  * Generic RPC handler manager for session and machine clients
  * Manages RPC method registration, encryption/decryption, and handler execution
@@ -883,7 +884,7 @@ export class RpcHandlerManager {
                 if (envelope.v === 2) {
                     const encryption = await this.resolveExternalActionEncryption?.(controller.signal, authorization).catch(() => null);
                     if (encryption?.serverIdentityId === binding.serverIdentityId) {
-                        originalInput = openExternalActionRequestV2({ envelope, material: encryption.material, binding: {
+                        originalInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material: encryption.material, binding: {
                             serverIdentityId: binding.serverIdentityId, accountId: binding.accountId,
                             actionId: binding.actionId, requestId: binding.requestId, target: binding.target,
                             ...('authentication' in binding ? { authentication: {

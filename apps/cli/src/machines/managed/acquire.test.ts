@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -171,7 +172,7 @@ describe('creation environment stage', () => {
                 const binding = { serverIdentityId: 'srv_bootstrap', accountId: 'owner', actionId: 'machines.agentIsolation.preview',
                     requestId: 'fresh-retry', target: { kind: 'machine' as const, machineId: 'guest' },
                     authentication: { kind: 'account' as const, tokenEpoch: 1 } };
-                expect(openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input)
+                expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input)
                     .toEqual({ serverId: 'srv_bootstrap', machineId: 'guest', enabled: true });
                 previews++;
                 return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope, material,

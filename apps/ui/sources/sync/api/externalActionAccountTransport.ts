@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope, createTemplateRequesterExecutionHttpHeadersV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { type ActionAccountRequestAuthorization } from '@/sync/ops/actions/actionAccountContext';
@@ -129,7 +130,7 @@ export function createTemplateRequesterActionAdmissionScope(actionId: 'template.
             if (accountMode === 'e2ee' && !material) return failure('content_unavailable');
             const nativeInput = projectNativeJsonValueForTransport('creation' in parsed.data
                 ? projectBotTemplateInstantiationRequesterInputV1(parsed.data) : parsed.data);
-            const envelope = material ? sealExternalActionRequestV2({ binding, material, input: nativeInput, randomBytes: getRandomBytes })
+            const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: nativeInput, randomBytes: getRandomBytes })
                 : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target, input: nativeInput });
             const setup = parsed.data.setup?.software.some(item => item.selection.action === 'install') ? { kind: 'software' as const } : undefined;
             const initialAccess = 'creation' in parsed.data ? parsed.data.creation.initialAccess : undefined;
@@ -210,10 +211,12 @@ export function readOriginalAccountActionAuthentication(token: string) {
         ? authentication.data : null;
 }
 
-function projectActionMachine(source: Pick<MachinePublishedRowV1, 'id' | 'kind' | 'active' | 'revokedAt' | 'replacedByMachineId'
-    | 'installationId' | 'dataEncryptionKey' | 'runnerContentKeyBinding' | 'access' | 'installationPublicKey'> | null | undefined) {
+function projectActionMachine(source: (Pick<MachinePublishedRowV1, 'id' | 'kind' | 'active' | 'revokedAt' | 'replacedByMachineId'
+    | 'installationId' | 'dataEncryptionKey' | 'runnerContentKeyBinding' | 'access' | 'installationPublicKey'>
+    & Partial<Pick<MachinePublishedRowV1, 'managedMachineRef'>>) | null | undefined) {
     const projection = ExternalActionMachineBootstrapV1Schema.safeParse(source && {
         id: source.id, kind: source.kind, active: source.active, revokedAt: source.revokedAt,
+        managedMachineRef: source.managedMachineRef,
         replacedByMachineId: source.replacedByMachineId, installationId: source.installationId,
         dataEncryptionKey: source.dataEncryptionKey, runnerContentKeyBinding: source.runnerContentKeyBinding,
         ...(source.access ? { access: source.access } : {}),
@@ -297,7 +300,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
     };
     const sealed = material
-        ? sealExternalActionRequestV2({ binding, material, randomBytes: getRandomBytes, input, ...logsOperands,
+        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: getRandomBytes, input, ...logsOperands,
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) })
         : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...logsOperands,
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });

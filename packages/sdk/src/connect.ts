@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
@@ -783,7 +784,7 @@ function createClient(
             accountId: encryption.pins.accountId, credentialId: encryption.pins.tokenId,
             actionId, requestId: requestId!, target: target.data };
           try {
-            protectedInvocation = { material, binding, request: sealExternalActionRequestV2({ binding, input: requestInput, material,
+            protectedInvocation = { material, binding, request: sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: requestInput, material,
               randomBytes: (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)) }) };
           } catch {
             throw new HappierTransportError('The encrypted Action request could not be prepared.', {

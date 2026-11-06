@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { PassThrough } from 'node:stream';
 import * as accountUsageControlTransport from '@/daemon/controlClient';
 import { createNativeAgentAccountUsageService } from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
@@ -1866,7 +1867,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 if (request.envelope.v !== 2) throw new Error('Expected actual E2EE managed child');
                 const binding = { serverIdentityId: homeId, accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 1 },
                     actionId: 'session.spawn_new', requestId: 'private-acquire', target: { kind: 'machine' as const, machineId: 'private-guest' } };
-                childInput = openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input;
+                childInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input;
                 return { status: 200, data: prepareExternalActionResponseV2({ request: request.envelope, binding, material,
                     executedMachineId: 'private-guest',
                     execution: { ok: true, result: { type: 'success', disposition: 'rejoined', sessionId: 'bob-child',
@@ -2071,7 +2072,7 @@ describe('startDaemonSessionControlRuntime', () => {
         }
         if (!material) throw new Error('Expected encrypted managed child');
         const target = { kind: 'machine' as const, machineId };
-        const envelope = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: 'bob',
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: 'bob',
             authentication: { kind: 'account', tokenEpoch: 1 }, actionId: 'machines.managed.acquire',
             requestId: 'private-acquire', target }, input, material, randomBytes: tweetnacl.randomBytes });
         const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'private-root', binding: {
@@ -3123,7 +3124,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     machineId: 'machine-external-action-ingress',
                 },
             };
-            const protectedRequest = sealExternalActionRequestV2({
+            const protectedRequest = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                 binding: protectedBinding,
                 input: { sessionId: 'session-protected' },
                 material: encryption.material,
@@ -3167,7 +3168,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 serverIdentityId: 'srv_different_home',
                 requestId: 'legacy-protected-action-wrong-home',
             };
-            const wrongHomeRequest = sealExternalActionRequestV2({
+            const wrongHomeRequest = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                 binding: wrongHomeBinding,
                 input: { sessionId: 'session-protected' },
                 material: encryption.material,

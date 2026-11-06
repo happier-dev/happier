@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -66,7 +67,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   const encryptionBinding = { serverIdentityId: 'srv_home', accountId: 'member', authentication: { kind: 'account' as const, tokenEpoch: 2 },
     actionId: 'session.spawn_new', requestId: 'spawn-request', target };
   const originalActionEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'spawn-request', target, input: StrictJsonValueSchema.parse(spawnInput) }
-    : sealExternalActionRequestV2({ binding: encryptionBinding, material, input: spawnInput, randomBytes: nacl.randomBytes });
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, material, input: spawnInput, randomBytes: nacl.randomBytes });
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'approved-spawn', binding: {
     serverIdentityId: 'srv_home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 2 },
     actionId: 'session.spawn_new', requestId: originalActionEnvelope.requestId,
@@ -148,7 +149,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
       const expectedInput = releasing ? { ...input, operation: 'release' } : input;
       if (carrier.envelope.v === 2) {
         const responseBinding = { ...encryptionBinding, actionId: binding.actionId, requestId: binding.requestId, target: binding.target };
-        expect(openExternalActionRequestV2({ envelope: carrier.envelope, binding: responseBinding, material: codec })?.input).toEqual(expectedInput);
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: carrier.envelope, binding: responseBinding, material: codec })?.input).toEqual(expectedInput);
         return { status: 200, data: prepareExternalActionResponseV2({ request: carrier.envelope, binding: responseBinding,
           material: codec, executedMachineId: 'controller', randomBytes: nacl.randomBytes, execution }).response };
       }
@@ -259,7 +260,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   }
   const { teamCredentialBindings: _selected, ...withoutTeam } = spawnInput;
   const absentEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'spawn-request', target, input: StrictJsonValueSchema.parse(withoutTeam) }
-    : sealExternalActionRequestV2({ binding: encryptionBinding, material, input: withoutTeam, randomBytes: nacl.randomBytes });
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, material, input: withoutTeam, randomBytes: nacl.randomBytes });
   const absentAuthorization = await admit({ ...root, binding: { ...root.binding,
     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(absentEnvelope) } });
   const beforeAbsent = post.mock.calls.length;

@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { randomUUID } from 'node:crypto';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -300,7 +301,7 @@ describe('signed Account Discussion HTTP admission', () => {
             const actionCaller = sessionOrigin.caller;
             const origin = sessionOrigin;
             const buildEnvelope = (rootInput: typeof input) => encrypted
-                ? sealExternalActionRequestV2({ binding: { serverIdentityId: serverId, accountId: f.account.id,
+                ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: serverId, accountId: f.account.id,
                     actionId: 'deployments.prepare', requestId: origin.requestId,
                     target: { kind: 'machine', machineId: f.machine.id }, authentication: { kind: 'account', tokenEpoch: 0 } },
                     input: rootInput, material: { type: 'dataKey', machineKey: contentKeys.secretKey }, randomBytes: tweetnacl.randomBytes })

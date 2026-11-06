@@ -74,6 +74,7 @@ type MachineIdentityFieldSource = Readonly<Partial<Omit<MachineIdentityFields, '
 
 export type FetchedMachineRow = Readonly<{
     id: string;
+    managedMachineRef?: Machine['managedMachineRef'];
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: Machine['kind'];
     metadata: string | null;
@@ -151,6 +152,7 @@ function readMachineIdentityFields(source: MachineIdentityFieldSource): MachineI
 
 function readMachinePublishedContext(machine: FetchedMachineRow) {
     return {
+        ...(machine.managedMachineRef !== undefined ? { managedMachineRef: machine.managedMachineRef } : {}),
         dataEncryptionKey: machine.dataEncryptionKey ?? null,
         ...(machine.keyBasis !== undefined ? { keyBasis: machine.keyBasis } : {}),
         ...(machine.access !== undefined ? { access: machine.access } : {}),
@@ -256,6 +258,8 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
     // Create or update machine with all required fields
     const updatedMachine: Machine = {
         id: machineId,
+        ...(machineUpdate.managedMachineRef !== undefined ? { managedMachineRef: machineUpdate.managedMachineRef }
+            : existingMachine?.managedMachineRef !== undefined ? { managedMachineRef: existingMachine.managedMachineRef } : {}),
         // IMPORTANT: socket UpdateContainer.seq is an account cursor, not the machine entity seq.
         seq: existingMachine?.seq ?? 0,
         createdAt: existingMachine?.createdAt ?? updateCreatedAt,

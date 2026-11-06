@@ -289,6 +289,7 @@ export type MachineAvailability =
     }>;
 
 export interface Machine {
+    managedMachineRef?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineRefV1 | null;
     id: string;
     access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1;
     /** Inventory scope derived from the authenticated requester and projected custodian. */

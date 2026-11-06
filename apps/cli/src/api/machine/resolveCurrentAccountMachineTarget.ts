@@ -1,6 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
-import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBootstrapV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -31,6 +31,7 @@ export type CurrentAccountMachineTarget = Readonly<{
 }>;
 export type CurrentAccountMachineInventoryItem = Readonly<{
   id: string; label: string; kind: 'persistent' | 'ephemeral_session_runner';
+  managedMachineRef: ExternalActionMachineBootstrapV1['managedMachineRef'];
   installationId: string | null;
   active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
   activeAt?: number | null;
@@ -141,6 +142,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
         host: nameMetadata?.host,
         machine: {
           id: row.id, label: readMachineName(nameMetadata) ?? row.id, kind: row.kind, active: row.active,
+          managedMachineRef: row.managedMachineRef,
           installationId: row.installationId,
           revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
           ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),

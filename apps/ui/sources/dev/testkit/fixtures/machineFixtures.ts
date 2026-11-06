@@ -77,6 +77,7 @@ export function createMachineFixture(overrides: Partial<Machine> = {}): Machine 
 
     return {
         id: 'machine-1',
+        managedMachineRef: null,
         seq: 1,
         createdAt,
         updatedAt,
@@ -111,6 +112,7 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
     const machine = input.machine ?? createMachineFixture({ id: input.id, activeAt: Date.now() });
     return {
         id: machine.id, kind: 'persistent', seq: machine.seq,
+        managedMachineRef: machine.managedMachineRef ?? null,
         createdAt: machine.createdAt, updatedAt: machine.updatedAt,
         active: machine.active, activeAt: machine.activeAt,
         ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),

@@ -8,9 +8,11 @@ import { type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/m
 import * as privacyKit from 'privacy-kit';
 import type { MachineKeyBasisV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import type { DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import type { ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 export type MachineSerializationRow = Readonly<{
     id: string;
+    managedResource: Readonly<{ id: string; homeId: string }> | null;
     kind?: MachineKind;
     metadata: string;
     metadataVersion: number;
@@ -35,6 +37,10 @@ export type MachineSerializationRow = Readonly<{
     createdAt: Date;
     updatedAt: Date;
 }>;
+
+export function serializeManagedMachineRef(row: Pick<MachineSerializationRow, 'managedResource'>): ManagedMachineRefV1 | null {
+    return row.managedResource === null ? null : { homeId: row.managedResource.homeId, managedId: row.managedResource.id };
+}
 
 /** Publish the owner envelope, never the caller's recipient-specific wrapping. */
 export function serializeMachineKeyBasis(
@@ -104,6 +110,7 @@ export function serializeMachineRow(
     const dataEncryptionKey = keyBasis.dataEncryptionKey;
     return {
         id: row.id,
+        managedMachineRef: serializeManagedMachineRef(row),
         devcontainerChild: row.revokedAt === null && row.replacedByMachineId == null ? options.devcontainerChild ?? null : null,
         kind,
         ...(options.storageMode ? { storageMode: options.storageMode } : {}),
@@ -138,10 +145,10 @@ export function serializeMachineRow(
 
 /** Finite host selection consumes admitted identity, access and presence, never private bodies or wrapping keys. */
 export function serializeMachineHostFacts(
-    row: Pick<MachineSerializationRow, 'id' | 'kind' | 'active' | 'lastActiveAt' | 'revokedAt' | 'replacedByMachineId'>,
+    row: Pick<MachineSerializationRow, 'id' | 'managedResource' | 'kind' | 'active' | 'lastActiveAt' | 'revokedAt' | 'replacedByMachineId'>,
     access: AccessibleMachineAccessV1,
 ) {
-    return { id: row.id, kind: MachineKindFromLegacyProjectionSchema.parse(row.kind), ...serializeMachinePresence(row),
+    return { id: row.id, managedMachineRef: serializeManagedMachineRef(row), kind: MachineKindFromLegacyProjectionSchema.parse(row.kind), ...serializeMachinePresence(row),
         revokedAt: row.revokedAt?.getTime() ?? null,
         replacedByMachineId: row.replacedByMachineId ?? null, access };
 }
@@ -209,7 +216,7 @@ function runnerClaim(value: unknown) {
 export function serializeExternalActionMachineBootstrapRow(
     row: Pick<
         MachineSerializationRow,
-        "id" | "active" | "revokedAt" | "replacedByMachineId"
+        "id" | "managedResource" | "active" | "revokedAt" | "replacedByMachineId"
     > & Partial<Pick<
         MachineSerializationRow,
         "kind" | "installationId" | "dataEncryptionKey" | "runnerContentKeyBinding"
@@ -225,6 +232,7 @@ export function serializeExternalActionMachineBootstrapRow(
         : null;
     return ExternalActionMachineBootstrapV1Schema.parse({
         id: row.id,
+        managedMachineRef: serializeManagedMachineRef(row),
         active: row.active,
         revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
         replacedByMachineId: row.replacedByMachineId ?? null,

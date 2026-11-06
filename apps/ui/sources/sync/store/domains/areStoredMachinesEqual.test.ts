@@ -2,9 +2,18 @@ import { describe, expect, it } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit';
 
-import { areStoredMachinesEqual } from './areStoredMachinesEqual';
+import { areStoredMachinesEqual, retainMachineRecord } from './areStoredMachinesEqual';
 
 describe('areStoredMachinesEqual', () => {
+    it('publishes managed enrollment changes without changing private Machine content', () => {
+        const unknown = { ...createMachineFixture(), managedMachineRef: undefined };
+        const ordinary = { ...unknown, managedMachineRef: null };
+        const managed = { ...ordinary, managedMachineRef: { homeId: 'home', managedId: 'managed' } };
+        expect(areStoredMachinesEqual(unknown, ordinary)).toBe(false);
+        expect(retainMachineRecord(ordinary, managed)).toBe(managed);
+        expect(retainMachineRecord(managed, { ...managed, managedMachineRef: { ...managed.managedMachineRef } })).toBe(managed);
+        expect(retainMachineRecord(managed, ordinary)).toBe(ordinary);
+    });
     it('keeps changed encryption/access authority even when display content is equal', () => {
         const previous = createMachineFixture({ dataEncryptionKey: 'old', keyBasis: { dataEncryptionKey: 'owner-old', metadataVersion: 1, daemonStateVersion: 1 } });
         expect(areStoredMachinesEqual(previous, { ...previous, dataEncryptionKey: 'new' })).toBe(false);

@@ -18,6 +18,11 @@ export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollme
   type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
+/** Home's exact enrolled resource identity; absence is an observed null on Machine projections. */
+export const ManagedMachineRefV1Schema = lazyDefinition(() => z.strictObject({ homeId: id(), managedId: id() }));
+export type ManagedMachineRefV1 = z.infer<typeof ManagedMachineRefV1Schema>;
+/** Released 0.2 Home rows omit this projection; explicit invalid references still fail. */
+export const ManagedMachineRefReadV1Schema = lazyDefinition(() => z._default(z.nullable(ManagedMachineRefV1Schema), null));
 /** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
 export const ManagedMachineEnvironmentSetupV1Schema = lazyDefinition(() => z.strictObject({
   environment: MachineEnvironmentV1Schema,

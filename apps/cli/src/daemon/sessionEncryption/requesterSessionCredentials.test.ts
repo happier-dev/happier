@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import { logger } from '@/ui/logger';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
@@ -589,7 +590,7 @@ describe('requester Session lifecycle custody', () => {
     const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
     const binding = { serverIdentityId: 'srv_requester_home', accountId: 'bob', authentication,
       actionId: 'session.message.send', requestId: 'early-input-root', target };
-    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ binding, material, input, randomBytes: tweetnacl.randomBytes })
+    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, randomBytes: tweetnacl.randomBytes })
       : { v: 1 as const, requestId: binding.requestId, target, input };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-early-input', binding: {
       accountId: 'bob', custodianAccountId: 'alice', authentication, accountEncryptionMode: mode,
@@ -661,7 +662,7 @@ describe('requester Session lifecycle custody', () => {
       const nextBinding = { ...binding, target, accountId: change.accountId ?? binding.accountId,
         serverIdentityId: change.serverIdentityId ?? binding.serverIdentityId };
       const nextInput = { ...input, sessionId: target.sessionId };
-      const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ binding: nextBinding, material, input: nextInput, randomBytes: tweetnacl.randomBytes })
+      const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: nextBinding, material, input: nextInput, randomBytes: tweetnacl.randomBytes })
         : { v: 1 as const, requestId: binding.requestId, target, input: nextInput };
       return ExternalActionDaemonDispatchRequestSchema.parse({ ...dispatch, envelope,
         principal: { accountId: nextBinding.accountId, authentication, authority: 'present_user' },

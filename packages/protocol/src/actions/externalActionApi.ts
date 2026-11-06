@@ -33,6 +33,7 @@ export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccessibleMachineAccessV1Schema } from '../machines/machineAccessV1.js';
+import { ManagedMachineRefReadV1Schema } from '../machines/managed/managedMachineV1.js';
 import { z } from 'zod/mini';
 import { ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
@@ -615,6 +616,7 @@ const ExternalActionTargetIdV1Schema = lazyZodSchema(() => z.string().check(z.mi
  */
 export const ExternalActionMachineBootstrapV1Schema = lazyZodSchema(() => z.strictObject({
   id: ExternalActionTargetIdV1Schema,
+  managedMachineRef: ManagedMachineRefReadV1Schema,
   active: z.boolean(),
   revokedAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
   replacedByMachineId: z.nullable(ExternalActionTargetIdV1Schema),
@@ -870,6 +872,8 @@ export function projectExternalActionPendingResetStartAdmissionV1(input: unknown
 /** V2 is closed at every routing and encryption boundary; content is opaque. */
 export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), requestId: ExternalActionRequestIdV1Schema,
+  /** Declaration-derived pre-effect runtime demand; private operands remain sealed. */
+  machineRuntimeDemand: z.optional(z.literal('required')),
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
   target: z.optional(ExternalActionTargetV1Schema),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
@@ -1076,6 +1080,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
       creationTag: z.string().check(z.regex(/^create:v1:[A-Za-z0-9_-]{43}$/u)),
     })),
     actionId: ExternalActionActionIdV1Schema,
+    /** Original runtime demand, authenticated with the exact request digest and target. */
+    machineRuntimeDemand: z.optional(z.literal('required')),
     requestId: ExternalActionRequestIdV1Schema,
     requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     /** Exact run-now operand, stamped from the admitted plaintext request. */
@@ -1238,6 +1244,14 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
 })));
 export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof ExternalActionExecutionAuthorizationBindingV1Schema>;
 
+/** Existing finite roots and declared runtime work share one original-root wake bridge. */
+export function isExternalActionManagedWakeRootV1(root: Pick<ExternalActionExecutionAuthorizationBindingV1,
+  'actionId' | 'machineId' | 'target' | 'machineRuntimeDemand'>): boolean {
+  return (root.machineRuntimeDemand === 'required' || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, root.actionId))
+    && (root.target.kind === 'machine' ? root.target.machineId === root.machineId
+      : root.machineRuntimeDemand === 'required' && root.target.kind === 'session');
+}
+
 /** Authorization material: usable only together with the selected Machine's request signature. */
 export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -1260,7 +1274,7 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
   const wake = value.managedFiniteWake;
   if (!wake) return;
   const root = value.binding;
-  if (!Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, root.actionId)
+  if (!isExternalActionManagedWakeRootV1(root)
     || wake.target.origin.kind !== 'finite-command' || wake.target.origin.actionRequestId !== root.requestId
     || wake.target.homeId !== root.serverIdentityId || wake.target.enrolledMachineId !== root.machineId
     || root.target.kind !== 'machine' || root.target.machineId !== root.machineId

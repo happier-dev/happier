@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from './actionSpecs.js';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
   projectDeploymentNativeAdmissionV1 } from './externalActionApi.js';
 import { encodeReviewedActionChildHttpProofV1, decodeReviewedActionChildHttpProofV1 } from './externalActionExecutionAuthorization.js';
@@ -38,7 +39,7 @@ it.each([1, 2] as const)('binds the installed TARGET decryption attestation to t
       workspaceId: 'source-ref', machineId: 'source-child', rootPath: '/child/source' } },
     materialization: { kind: 'sync' as const, targetPath: '/child/target', workspaceAction: { kind: 'copy_once' as const } } };
   const originalActionEnvelope = version === 1 ? { v: 1 as const, requestId: 'original-open', target, input }
-    : sealExternalActionRequestV2({ binding: { serverIdentityId: input.serverId, accountId: 'requester',
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: input.serverId, accountId: 'requester',
       credentialId: '11111111-1111-4111-8111-111111111111', actionId: 'projects.open', requestId: 'original-open', target },
       input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(24) }, randomBytes: tweetnacl.randomBytes });
   const workspaceSyncSourceRouting = { ...WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare',
@@ -318,7 +319,7 @@ it.each(['plain', 'e2ee'] as const)('binds ingress preparation to the admitted E
     contentArtifactId: 'current-content', contentHeaderVersion: 1, contentBodyVersion: 1,
     patch: { ingress: { kind: 'cloudflareTunnel' } } };
   const envelope = mode === 'plain' ? { v: 1, requestId: 'ingress-root', target, input } as const
-    : sealExternalActionRequestV2({ binding: { serverIdentityId: 'srv_ingress', accountId: 'actor', actionId,
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: 'srv_ingress', accountId: 'actor', actionId,
       requestId: 'ingress-root', target, authentication: { kind: 'account', tokenEpoch: 1 } }, input,
       material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
   const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });

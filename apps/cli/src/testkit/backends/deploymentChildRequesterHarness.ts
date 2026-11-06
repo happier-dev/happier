@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import nacl from 'tweetnacl';
 import { vi } from 'vitest';
 import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, deploymentOperationForRootActionV1,
@@ -61,7 +62,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     const rootInput = getActionSpec(binding.actionId).inputSchema.parse(options.rootInput ?? job.input);
     const envelope = encryptionMode === 'plain'
         ? ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input: rootInput })
-        : sealExternalActionRequestV2({ binding, input: rootInput,
+        : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: rootInput,
             material: { type: 'dataKey', machineKey }, randomBytes: nacl.randomBytes });
     const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
     const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(binding.actionId, rootInput);

@@ -456,6 +456,7 @@ describe("eventRouter payloads (protocol container)", () => {
         const payload = buildNewMachineUpdate(
             {
                 id: "m1",
+                managedResource: null,
                 seq: 1,
                 metadata: "enc-meta",
                 metadataVersion: 1,

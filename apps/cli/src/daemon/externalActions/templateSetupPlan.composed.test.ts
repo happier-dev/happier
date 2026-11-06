@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import { getMachineSetupDesiredV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol';
@@ -36,7 +37,7 @@ it.each(['plain', 'e2ee'] as const)('runs only the exact issuer-derived template
     const opened = substituted ? { ...planInput, sources: [{ kind: 'direct' as const,
       setup: { scripts: [{ body: 'echo substituted', affects: 'none' as const }] } }] } : planInput;
     const envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input: opened }
-      : sealExternalActionRequestV2({ binding, material, input: opened, randomBytes: nacl.randomBytes });
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: opened, randomBytes: nacl.randomBytes });
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-derived-plan', binding: {
       ...binding, machineId: 'guest', installationId: 'guest-installation', custodianAccountId: 'recipient', accountEncryptionMode: mode, admittedMachineRole: 'manage',
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),

@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -126,7 +127,7 @@ describe('executeExternalAction', () => {
       const binding = { serverIdentityId: 'srv_logs_home', accountId: accountPrincipal.accountId,
         authentication: accountPrincipal.authentication, actionId, requestId, target };
       const envelope = mode === 'e2ee'
-        ? sealExternalActionRequestV2({ binding, material, input, ...protectedInput,
+        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, ...protectedInput,
           randomBytes: length => new Uint8Array(length).fill(46) })
         : { v: 1 as const, requestId: binding.requestId, target, input, ...protectedInput };
       const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-logs-proof', binding: {
@@ -181,7 +182,7 @@ describe('executeExternalAction', () => {
     const authentication = { kind, tokenEpoch: 3 };
     const binding = { serverIdentityId: 'srv_browser', accountId, authentication, actionId,
       requestId: `browser-own-${kind}`, target };
-    const envelope = sealExternalActionRequestV2({ binding, material, randomBytes: tweetnacl.randomBytes,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: tweetnacl.randomBytes,
       input: { browserSessionId: 'browser-session', viewId: 'browser-view' } });
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'browser-home-root', binding: { ...binding,
       custodianAccountId: accountId, machineId: target.machineId, installationId: 'browser-installation',
@@ -263,7 +264,7 @@ describe('executeExternalAction', () => {
     const principal = { accountId, authority: 'account_automation' as const, authentication };
     const binding = { serverIdentityId: 'srv_home', accountId, authentication, actionId,
       requestId: 'terminal-e2ee-request', target };
-    const envelope = sealExternalActionRequestV2({ binding, material, input: { homeId: 'srv_home' }, randomBytes: tweetnacl.randomBytes });
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: { homeId: 'srv_home' }, randomBytes: tweetnacl.randomBytes });
     const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'home-terminal-root', binding: {
       ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'alice', machineId: target.machineId,
       installationId: 'alice-installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -812,7 +813,7 @@ describe('executeExternalAction', () => {
     const binding = { accountId: accountPrincipal.accountId, authentication: accountPrincipal.authentication,
       serverIdentityId: 'srv_home', actionId, requestId: 'reviewed-request', target };
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(23) };
-    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ binding, material, input,
+    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input,
       randomBytes: length => new Uint8Array(length).fill(12),
       ...(actionId === 'machines.managed.acquire' ? { managedAdmission: {
         actionId: 'machines.managed.acquire' as const, input: ManagedAdmissionComputeInputV1Schema.parse(input), continuationPresent: false,
@@ -980,7 +981,7 @@ describe('executeExternalAction', () => {
     const executor = createActionExecutor({ ...createUnavailableHostActionDeps(), managedMachineAction });
     const run = async (actionId: 'machines.managed.list' | 'machines.managed.acquire', actionInput: unknown,
       projection?: Parameters<typeof executeExternalAction>[0]['envelope']) => {
-      const envelope = { ...sealExternalActionRequestV2({ binding: { accountId: accountPrincipal.accountId,
+      const envelope = { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { accountId: accountPrincipal.accountId,
         authentication: accountPrincipal.authentication, serverIdentityId: 'srv_home', actionId, requestId: 'ordinary', target },
         input: actionInput, material, randomBytes: length => new Uint8Array(length).fill(12) }),
         ...(projection && typeof projection === 'object' ? projection : {}),
@@ -1019,7 +1020,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_home', accountId: 'bob',
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.spawn_new',
       requestId: 'one-admission', target };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { creationKey: 'one-admission', agentTarget: { kind: 'agent',
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
@@ -1128,7 +1129,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_home', accountId: 'bob',
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.spawn_new',
       requestId: 'shared-machine-start', target };
-    const envelope = sealExternalActionRequestV2({ binding, material: machineMaterial,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material: machineMaterial,
       input: { creationKey: 'shared-start', agentTarget: { kind: 'agent',
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
@@ -1187,7 +1188,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.permission_mode.set',
       requestId: 'narrowed-send', target: { kind: 'session' as const, sessionId: 'session-1' } };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { sessionId: 'session-1', permissionMode: 'yolo' },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
     const authorization = { v: 1 as const, token: 'current-home-proof', binding: {
@@ -1226,7 +1227,7 @@ describe('executeExternalAction', () => {
     const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
     const executor = createActionExecutor({ ...createUnavailableHostActionDeps(), sessionSpawnNew });
     const run = async (directory: unknown) => {
-      const envelope = sealExternalActionRequestV2({ binding, material, input: {
+      const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: {
         creationKey: 'create-bound',
         agentTarget, directory, organizationPlacement: placement,
       }, randomBytes: (length) => new Uint8Array(length).fill(2) });
@@ -1501,7 +1502,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.message.send',
       requestId: 'wrong-receiver', target: { kind: 'machine' as const, machineId: 'other-machine' } };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { sessionId: 'session-1', message: 'private-input' }, randomBytes: (length) => new Uint8Array(length).fill(2) });
     const result = await executeExternalAction({ actionId: binding.actionId, envelope,
       principal: { ...principal, credentialId: binding.credentialId }, currentMachineId: 'machine-1',
@@ -1521,7 +1522,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.message.send',
       requestId: 'foreign-session', target: { kind: 'session' as const, sessionId: 'session-other' } };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { sessionId: 'session-other', message: 'private-input' },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
     const resolveTarget = vi.fn<ResolveExternalActionTarget>();
@@ -1550,7 +1551,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.message.send',
       requestId: 'foreign-session', target: { kind: 'session' as const, sessionId: 'session-other' } };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { sessionId: 'session-other', message: 'private-input' },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
     const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => null);
@@ -1569,7 +1570,7 @@ describe('executeExternalAction', () => {
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.message.send',
       requestId: 'own-session', target: { kind: 'session' as const, sessionId: 'session-own' } };
-    const envelope = sealExternalActionRequestV2({ binding, material,
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
       input: { sessionId: 'session-own', message: 'hello' },
       randomBytes: (length) => new Uint8Array(length).fill(2) });
     const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => binding.target);
@@ -1657,7 +1658,7 @@ describe('executeExternalAction', () => {
       actionId: 'session.message.send', requestId: 'protected-reconciliation',
       target: { kind: 'session' as const, sessionId: 'session-1' },
     };
-    const request = sealExternalActionRequestV2({
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding, material, randomBytes: (length) => new Uint8Array(length).fill(2),
       input: { sessionId: 'different-session', message: 'private-input-sentinel' },
     });
@@ -1687,7 +1688,7 @@ describe('executeExternalAction', () => {
       actionId: 'session.activity.get', requestId: 'protected-executor-failure',
       target: { kind: 'machine' as const, machineId: 'machine-1' },
     };
-    const request = sealExternalActionRequestV2({
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding,
       material,
       input: { sessionId: 'session-1' },

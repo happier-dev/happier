@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { sameMachineServiceLogsResourceInput, parseMachineServiceLogsResourceResponse } from './machineServiceLogsResource';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -446,7 +447,7 @@ export async function executeExternalAction(input: Readonly<{
       refuseExternalActionPhase('encryption_receiver', input.currentMachineId);
       return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
     }
-    const opened = openExternalActionRequestV2({ envelope: request, binding, material: encryption.material,
+    const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: encryption.material,
       onFailure: failure => { refuseExternalActionPhase(failure.phase, input.currentMachineId, failure.error, {
         ...readSessionInputAdmissionDiagnostic({ actionId: actionId.data, requestId: request.requestId,
           accountEncryptionMode: executionAuthorization?.success ? executionAuthorization.data.binding.accountEncryptionMode : undefined }),

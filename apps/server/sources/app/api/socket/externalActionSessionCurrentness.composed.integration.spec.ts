@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { randomUUID } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -306,7 +307,7 @@ describe('original external Session Action currentness composition', () => {
                 : { kind: 'machine' as const, machineId } };
         const input = { sessionId: session.id, message: 'QA8', localId: 'qa8-input', permissionModeOverride: 'read_only', wait: false };
         const envelope = accountMode === 'e2ee'
-            ? sealExternalActionRequestV2({ binding, material, randomBytes: length => new Uint8Array(length).fill(21), input })
+            ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: length => new Uint8Array(length).fill(21), input })
             : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId,
                 target: { kind: 'session', sessionId: session.id }, input });
         const relay = () => app.inject({ method: 'POST', url: '/v1/actions/session.message.send',
@@ -376,7 +377,7 @@ describe('original external Session Action currentness composition', () => {
                             expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text: 'Proposed fact' },
                         summary: 'Remember a fact', createdBy: { surface: 'agent' } };
                 const proposalTarget = { kind: 'machine' as const, machineId };
-                const proposal = accountMode === 'e2ee' ? sealExternalActionRequestV2({ material, randomBytes: nacl.randomBytes,
+                const proposal = accountMode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, material, randomBytes: nacl.randomBytes,
                     binding: { serverIdentityId: homeId, accountId: account.id, actionId, requestId: origin.requestId,
                         target: proposalTarget, authentication: { kind, tokenEpoch: account.tokenEpoch } }, input: proposalInput })
                     : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
@@ -516,7 +517,7 @@ describe('original external Session Action currentness composition', () => {
                     signedKey = idempotencyKey, credential = pat) => {
                     const root = { serverIdentityId: homeId, accountId: account.id, credentialId: credential.tokenId,
                         actionId: 'workflow.trigger.run_now', requestId: randomUUID(), target: { kind: 'machine' as const, machineId } };
-                    const sealed = sealExternalActionRequestV2({ binding: root, material, randomBytes: nacl.randomBytes,
+                    const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: root, material, randomBytes: nacl.randomBytes,
                         input: { ...(automationId === undefined ? {} : { automationId }),
                             ...(idempotencyKey === undefined ? {} : { idempotencyKey }) } });
                     const request = { ...sealed, ...(signedKey === undefined ? {} : { idempotencyKey: signedKey }) };

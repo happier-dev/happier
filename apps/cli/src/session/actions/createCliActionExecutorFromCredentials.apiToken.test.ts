@@ -300,6 +300,9 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) };
       if (String(url).includes(`/v2/sessions/${exactSessionId}`)) return { status: 200, data: { session } };
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
+        id: 'machine-1', active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null, managedMachineRef: null,
+      } } };
       throw new Error(`Unexpected fixture HTTP path: ${new URL(String(url)).pathname}`);
     });
     onTestFinished(() => get.mockRestore());

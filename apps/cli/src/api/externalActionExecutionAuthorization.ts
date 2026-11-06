@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildDeploymentPreparationBriefV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
@@ -127,7 +128,7 @@ export async function readReviewedExternalActionInput(input: Readonly<{
   if (envelope.data.v === 2) {
     const encryption = await requester.resolveEncryption(input.signal);
     if (encryption?.serverIdentityId !== binding.serverIdentityId) return null;
-    value = openExternalActionRequestV2({ envelope: envelope.data, material: encryption.material, binding: {
+    value = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: envelope.data, material: encryption.material, binding: {
       serverIdentityId: binding.serverIdentityId, accountId: binding.accountId, actionId: binding.actionId,
       requestId: binding.requestId, target: binding.target,
       ...('authentication' in binding ? { authentication: { kind: binding.authentication.kind,
@@ -575,7 +576,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const binding = mode.mode === 'e2ee' && material ? { serverIdentityId: input.serverIdentityId!, accountId, authentication: authentication.data,
     actionId, requestId: input.requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
-  const envelope = binding && material ? sealExternalActionRequestV2({ binding, material, input: input.input, randomBytes })
+  const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: input.input, randomBytes })
     : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: input.requestId, target: input.target, input: input.input,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
   let body: unknown = envelope;
@@ -1137,7 +1138,7 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
     if (!Number.isSafeInteger(authentication.tokenEpoch)) return null;
     if (input.accountEncryptionMode === 'e2ee') {
       if (!input.material) return null;
-      envelope = sealExternalActionRequestV2({
+      envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
         binding: { serverIdentityId: input.serverIdentityId, accountId: input.accountId, authentication,
           actionId, requestId: input.requestId, target: input.target },
         input: originalInput, material: input.material, randomBytes,
@@ -1415,7 +1416,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   // either Account's encryption key. Only the exact enrolled guest can open it.
   const childMaterial = managedChildCodec ? { type: 'dataKey' as const, machineKey: randomBytes(32) } : params.material;
   const baseEnvelope = ExternalActionRequestEnvelopeSchema.parse(projectNativeJsonValueForTransport(root.accountEncryptionMode === 'e2ee'
-    ? sealExternalActionRequestV2({ binding, input: actionInput, material: childMaterial!, randomBytes,
+    ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: actionInput, material: childMaterial!, randomBytes,
         ...(params.actionId === 'session.spawn_new' ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(SessionSpawnNewInputV2Schema.parse(input)) } : {}) })
     : { v: 1 as const, requestId, target, input: actionInput }));
   const envelope = recipient && params.actionId !== 'machines.environment.apply'
@@ -1675,7 +1676,7 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
       targetMachineId: admission.targetMachineId };
     if (binding.accountEncryptionMode === 'e2ee' && !input.material) return null;
     const envelope = binding.accountEncryptionMode === 'e2ee' && input.material
-      ? { ...sealExternalActionRequestV2({ binding: { serverIdentityId: binding.serverIdentityId,
+      ? { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: binding.serverIdentityId,
           accountId: binding.accountId,
           ...('authentication' in binding ? { authentication: binding.authentication }
             : { credentialId: binding.credentialId }), actionId, requestId: binding.requestId, target },

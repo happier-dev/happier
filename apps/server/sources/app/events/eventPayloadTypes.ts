@@ -4,6 +4,7 @@ import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { MachineKind } from '@happier-dev/protocol/machines/machineKind';
+import type { ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
@@ -211,6 +212,7 @@ export type UpdateEvent = {
     settingsVersion: number;
 } | {
     type: 'new-machine';
+    managedMachineRef: ManagedMachineRefV1 | null;
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     keyBasis?: MachineKeyBasisV1;
     kind?: MachineKind;
@@ -236,6 +238,7 @@ export type UpdateEvent = {
     updatedAt: number;
 } | {
     type: 'update-machine';
+    managedMachineRef?: ManagedMachineRefV1 | null;
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     keyBasis?: MachineKeyBasisV1;
     machineId: string;

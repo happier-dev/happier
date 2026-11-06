@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -147,7 +148,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       if (request.envelope.v === 2) {
         expect(request.envelope).toMatchObject({ pendingResetStartAdmission: admission });
         expect(JSON.stringify(request.envelope)).not.toContain('session-ciphertext');
-        expect(openExternalActionRequestV2({ envelope: request.envelope, material, binding: {
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, material, binding: {
           serverIdentityId: 'srv_bob_home', accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
           actionId: 'session.pending.resetStart.set', requestId: 'reset-request', target: resetTarget,
         } })).toEqual({ input: resetInput });
@@ -477,7 +478,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
             material: { type: 'legacy', secret: recoverySecret }, ciphertext: request.envelope.payload.c })?.value)
             .toMatchObject({ input: envelope.input, authentication: { kind: 'account', tokenEpoch: 7 } });
         }
-        expect(openExternalActionRequestV2({ envelope: request.envelope, material,
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, material,
           binding: { serverIdentityId: args.serverIdentityId, accountId: args.accountId,
             authentication: { kind: 'account', tokenEpoch: args.tokenEpochHint }, actionId: args.actionId,
             requestId: args.requestId, target } })?.input).toEqual(envelope.input);
@@ -494,7 +495,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     if (accountEncryptionMode === 'e2ee') {
       // Exercise fixture sealing outside the owner's fail-closed catch so a
       // malformed crypto fixture reports its actual canonical schema failure.
-      sealExternalActionRequestV2({ binding: { serverIdentityId: args.serverIdentityId, accountId: args.accountId,
+      sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: args.serverIdentityId, accountId: args.accountId,
         authentication: { kind: 'account', tokenEpoch: args.tokenEpochHint }, actionId: args.actionId,
         requestId: args.requestId, target }, input: args.input, material,
         randomBytes: (length) => new Uint8Array(length).fill(19) });

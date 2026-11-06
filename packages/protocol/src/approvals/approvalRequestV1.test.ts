@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '../actions/actionSpecs.js';
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from '../actions/actionIds.js';
@@ -215,7 +216,7 @@ it.each(['projects.compute.exec', 'projects.service.relocate'] as const)('retain
       cwd: '/source', declaration: { workspaceRefId: 'source-ref', selection: { kind: 'manifest', name: 'api' } } },
     destination: { kind: 'primary' }, selectedTarget: { machineId: 'next' }, desiredPlacement: { workspace, serviceName: 'api',
       expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: { kind: 'primary' }, unavailable: 'fail' } } };
-  const envelope = sealExternalActionRequestV2({ material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(2) },
+  const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(2) },
     randomBytes: tweetnacl.randomBytes, binding: { serverIdentityId: homeId, accountId: 'requester', actionId,
       requestId: 'finite-request', target, authentication: { kind: 'terminal', tokenEpoch: 1 } }, input });
   const origin = { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },

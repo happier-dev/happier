@@ -262,7 +262,7 @@ describe('daemon managed Machine Action factory', () => {
         expect(nativeEffects).toEqual([]);
     });
     it.each([
-        ['cleanup', false], ['cleanup', true], ['rearmed-wake', false], ['rearmed-wake', true], ['denied-wake', false], ['retired-wake', false],
+        ['cleanup', false], ['cleanup', true], ['rearmed-wake', false], ['rearmed-wake', true], ['stale-running-wake', false], ['denied-wake', false], ['retired-wake', false],
     ] as const)('resumes %s from a separate approving client through exact daemon replay (missing coordinator: %s)', async (purpose, missingCoordinator) => {
         const wake = !purpose.startsWith('cleanup');
         const denied = purpose === 'denied-wake';
@@ -277,14 +277,16 @@ describe('daemon managed Machine Action factory', () => {
         const signing = nacl.sign.keyPair();
         const effects: string[] = [];
         const native = nativeFixture({ privateNative: true, supportedIntents: ['start', 'delete'],
-            nativeRoleResults: wake ? { inspect: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained' } } : {},
+            nativeRoleResults: wake ? { get inspect() { return { observedAt: Date.now(), availability: 'present',
+                power: effects.includes('power') ? 'running' : 'stopped', storage: 'retained' }; } } : {},
             onNativeRole: role => { effects.push(role); } });
         let machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
             controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             creationState: wake ? 'active' : 'canceled', desired: wake ? 'stop' : 'delete', desiredWhen: 'now', intentRevision: 1,
-            ...(wake ? { enrolledMachineId: 'guest', observation: { observedAt: Date.now(), availability: 'present', power: 'stopped' } } : {}),
+            ...(wake ? { enrolledMachineId: 'guest', observation: { observedAt: Date.now(), availability: 'present',
+                power: purpose === 'stale-running-wake' ? 'running' : 'stopped', storage: 'retained' } } : {}),
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: wake });
         const target = ManagedWakeTargetV1Schema.parse({ homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
             controller: machine.controller, expectedIntentRevision: 1, reason: 'admitted-work',
@@ -501,7 +503,7 @@ describe('daemon managed Machine Action factory', () => {
             expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired ? { ok: false, errorCode: 'cancelled' }
                 : denied ? { ok: false, errorCode: 'approval_rejected' } : missingCoordinator
                 ? { ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } : { ok: true } });
-            expect(effects).toEqual(missingCoordinator || denied || retired ? [] : [wake ? 'power' : 'destroy']);
+            expect(effects).toEqual(missingCoordinator || denied || retired ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
             if (!wake && !missingCoordinator) {
                 expect(readRetirementApproval('matching-delete-approval')).toMatchObject({ status: 'canceled' });
                 expect(readRetirementApproval('other-delete-approval')).toMatchObject({ status: 'open' });

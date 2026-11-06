@@ -1,3 +1,4 @@
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import * as React from 'react';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -50,7 +51,7 @@ function inventoryKey(serverId: string, accountId: string | undefined, homeId: s
 
 function createInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
     includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, retained?: ManagedMachineInventoryEntry) {
-    const consumers = new Map<() => void, ServerCredentialAccountScopeBinding>();
+    const consumers = new Map<() => void, ServerAccountScopeLifetime>();
     let entry: ManagedMachineInventoryEntry = { accountId, homeId, managedId, includeArchived,
         machines: retained?.machines ?? EMPTY_ROWS, ...(retained?.asOf !== undefined ? { asOf: retained.asOf } : {}), status: 'loading' };
     let controller: AbortController | null = null;
@@ -158,9 +159,10 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
     };
     return {
         get: () => entry,
+        getMachine: (id: string) => entry.machines.find(machine => machine.id === id),
         isCurrent,
         refresh,
-        subscribe(binding: ServerCredentialAccountScopeBinding, listener: () => void) {
+        subscribe(binding: ServerAccountScopeLifetime, listener: () => void) {
             consumers.set(listener, binding);
             const release = () => {
                 consumers.delete(listener);
@@ -172,6 +174,35 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
             return () => { retirement.dispose(); release(); };
         },
     };
+}
+
+/** The hook and admitted executions borrow the same exact inventory reader. */
+function getInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
+    includeArchived: boolean, executeAction: InventoryExecute, current?: ManagedMachineInventoryEntry): InventoryReader {
+    const demand = inventoryDemand(executeAction);
+    const inventories = demand.readers;
+    const notify = () => { if (!managedId) for (const observer of demand.observers) observer(); };
+    const key = inventoryKey(serverId, accountId, homeId, managedId, includeArchived);
+    let reader = inventories.get(key);
+    if (!reader?.isCurrent()) {
+        const retained = current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId
+            && (current.includeArchived ?? false) === includeArchived ? current : undefined;
+        reader = createInventoryReader(serverId, accountId, homeId, managedId, includeArchived, executeAction,
+            () => { if (inventories.get(key) === reader) { inventories.delete(key); notify(); } }, notify, retained);
+        inventories.set(key, reader);
+    }
+    return reader;
+}
+
+/** Borrow the active inventory; its last current consumer releases reads and observation. */
+export function retainManagedMachineInventory(lifetime: ServerAccountScopeLifetime, listener: (entry: ManagedMachineInventoryEntry) => void,
+    selection?: Readonly<{ managedId?: string }>) {
+    const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId) || lifetime.scope.serverId;
+    const homeId = getServerProfileById(serverId)?.serverIdentityId;
+    if (!homeId || !lifetime.isCurrent()) throw Object.assign(new Error('Managed inventory Account is unavailable'), { code: 'plugin_resource_unavailable' });
+    const reader = getInventoryReader(serverId, lifetime.scope.accountId, homeId, selection?.managedId, false, execute);
+    const release = reader.subscribe(lifetime, () => listener(reader.get()));
+    return { getSnapshot: reader.get, getMachine: reader.getMachine, refresh: reader.refresh, dispose: release };
 }
 
 /** Observe only admitted resource absence, without starting or retaining list demand. */
@@ -231,20 +262,8 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
             const binding = bindings.get(serverId);
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
             if (!binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
-            const demand = inventoryDemand(executeAction);
-            const inventories = demand.readers;
-            const notify = () => { if (!managedId) for (const observer of demand.observers) observer(); };
             const key = keys.get(serverId)!;
-            let reader = inventories.get(key);
-            if (!reader?.isCurrent()) {
-                const current = entries[serverId];
-                const retained = current?.accountId === binding.accountId && current.homeId === homeId && current.managedId === managedId
-                    && (current.includeArchived ?? false) === includeArchived ? current : undefined;
-                const ownedInventories = inventories;
-                reader = createInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction,
-                    () => { if (ownedInventories.get(key) === reader) { ownedInventories.delete(key); notify(); } }, notify, retained);
-                inventories.set(key, reader);
-            }
+            const reader = getInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction, entries[serverId]);
             const ownedReader = reader;
             const release = reader.subscribe(binding, () => setEntries(previous => previous[serverId] === ownedReader.get()
                 ? previous : { ...previous, [serverId]: ownedReader.get() }));

@@ -1,3 +1,4 @@
+import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
 import { createTemplateRequesterActionAdmissionScope } from '@/sync/api/externalActionAccountTransport';
 import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
@@ -1078,6 +1079,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       call => actionMachineRpc({ serverId: accountContext?.serverId, accountId: accountContext?.accountId,
         machineId: call.machineId, method: call.method, payload: call.input,
         signal: context.signal, operationTimeoutMs: null }), context.signal),
+    prepareHostReviewedChildren: async request => {
+      const wake = await prepareUiManagedMachineWake(request, accountContext);
+      if (wake) return wake;
+      return null;
+    },
     buildApprovalPreview: async ({ actionId, input, context, defaultPreview }) => {
       if (actionId !== 'session.spawn_new' || !accountContext || !machineAccessAction) return defaultPreview;
       const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);

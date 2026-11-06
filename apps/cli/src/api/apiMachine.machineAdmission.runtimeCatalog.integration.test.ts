@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import axios, { AxiosHeaders, type AxiosRequestConfig } from 'axios';
@@ -190,7 +191,7 @@ describe('ApiMachineClient machine admission transport', () => {
           contentPolicy: { ...contentPolicy, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicy) } } } });
       const encryptionBinding = { serverIdentityId: workspaceTransportHomeId, accountId: 'borrower', credentialId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         actionId: 'projects.open', requestId: 'original-project-target-request', target: { kind: 'machine' as const, machineId } };
-      const envelope = encryption.sealExternalActionRequestV2({ binding: encryptionBinding, input,
+      const envelope = encryption.sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, input,
         material: { type: 'dataKey', machineKey }, randomBytes: tweetnacl.randomBytes });
       const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-project-target-root', binding: {
         accountId: 'borrower', principalId: 'borrower', credentialId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', grant: API_TOKEN_FULL_GRANT_V1,

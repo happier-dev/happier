@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -126,7 +127,7 @@ describe('paired terminal Action admission', () => {
                     authentication: { kind: 'account' as const, tokenEpoch: 4 }, actionId: 'session.message.send',
                     requestId: envelope.requestId, target };
                 expect(envelope.target).toEqual(target);
-                const decodedInput = openExternalActionRequestV2({ envelope, binding, material })?.input;
+                const decodedInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input;
                 const reconciliation = reconcileExternalActionTarget({ actionId: 'session.message.send', rawInput: decodedInput,
                     target: envelope.target, currentMachineId: machineId });
                 if (reconciliation.kind === 'ready') expect(decodedInput).toEqual({ ...input, sessionId });

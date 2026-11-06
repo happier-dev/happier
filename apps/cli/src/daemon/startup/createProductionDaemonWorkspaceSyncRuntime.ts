@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -1005,7 +1006,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     if (envelope.v === 2) {
       const encryption = await requester.resolveEncryption(context.signal);
       if (encryption?.serverIdentityId === semanticServerId) {
-        originalInput = openExternalActionRequestV2({ envelope, material: encryption.material, binding: {
+        originalInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material: encryption.material, binding: {
           serverIdentityId: binding.serverIdentityId, accountId: binding.accountId, actionId: binding.actionId,
           requestId: binding.requestId, target: binding.target,
           ...('authentication' in binding ? { authentication: { kind: binding.authentication.kind,

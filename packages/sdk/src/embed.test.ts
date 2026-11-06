@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // HTTP is the system boundary; SDK grant composition, identity binding and
@@ -166,7 +167,7 @@ describe('SDK embed helpers', () => {
       const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
         credentialId: context.tokenId, actionId: 'session.list' as const, requestId: request.requestId,
         target: request.target };
-      const opened = openExternalActionRequestV2({ envelope: request, binding, material: { type: 'dataKey', machineKey: accountKey } });
+      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: { type: 'dataKey', machineKey: accountKey } });
       expect(opened).not.toBeNull();
       requests.push(String(options.body));
       const execution = await executor.execute('session.list', opened!.input, {

@@ -3,6 +3,7 @@ import type { AccessibleMachineAccessV1 } from '@happier-dev/protocol';
 import { serializeAccessibleMachineRow, type MachineSerializationRow } from './machineSerialization';
 
 const row: MachineSerializationRow = {
+    managedResource: null,
     id: 'shared-machine', kind: 'persistent', metadata: 'resource-metadata', metadataVersion: 4,
     daemonState: 'resource-state', daemonStateVersion: 8, dataEncryptionKey: new Uint8Array([1, 2, 3]),
     installationId: 'current-installation', seq: 1, active: true,

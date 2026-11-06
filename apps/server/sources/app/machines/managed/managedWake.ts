@@ -1,6 +1,6 @@
 import { ManagedWakeTargetV1Schema, ManagedWakeTargetsReadRequestV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isExternalActionManagedWakeRootV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedFiniteWakeRequestV1Schema, MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -28,6 +28,9 @@ import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPre
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '@/app/api/socket/machineSocketInstallationProof';
 import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingInputAdmission';
+import { isManagedMachineWakeInspectionRequiredV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
     | Readonly<{ kind: 'unavailable' | 'submitted-unknown' }>;
@@ -39,8 +42,7 @@ export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Rea
 }>): Promise<NonNullable<ExternalActionExecutionAuthorizationV1['managedFiniteWake']> | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.actionOrigin.token);
     if (!binding || !sameManagedInput(binding, input.actionOrigin.binding)
-        || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
-        || !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId)
+        || !isExternalActionManagedWakeRootV1(binding)
         || await readCurrentServerIdentityId(process.env, tx) !== binding.serverIdentityId) return null;
     const target = input.target ?? await resolveManagedWakeTargetInTx(tx, {
         actorAccountId: binding.accountId, machineId: binding.machineId,
@@ -71,8 +73,7 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
 }>): Promise<FiniteWakePreparation> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.actionOrigin.token);
     if (input.signal.aborted || !binding || !sameManagedInput(binding, input.actionOrigin.binding)
-        || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
-        || !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId)
+        || !isExternalActionManagedWakeRootV1(binding)
         || !await verifyCurrentExternalActionPrincipal(binding)) return { kind: 'unavailable' };
     let target: ManagedWakeTargetV1 | undefined;
     const isCurrent = async (): Promise<boolean> => {
@@ -105,10 +106,10 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     };
     if (!await isCurrent()) return { kind: 'unavailable' };
     const initial = await inTx(async tx => {
-        const guest = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { active: true } });
-        if (guest?.active) return { online: true as const };
+        const guest = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { active: true, lastActiveAt: true } });
+        if (guest && isMachineReachableV1({ machine: serializeMachinePresence(guest) })) return { online: true as const };
         const wake = await resolveManagedWakeTargetInTx(tx, { actorAccountId: binding.accountId, machineId: binding.machineId,
-            origin: { kind: 'finite-command', actionRequestId: binding.requestId } });
+            origin: { kind: 'finite-command', actionRequestId: binding.requestId }, requireInspection: true });
         return { online: false as const, wake };
     });
     if (initial.online) return { kind: 'not-needed', isCurrent };
@@ -179,16 +180,18 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
     return { binding: { homeId, managedId: row.id, enrolledMachineId: input.machineId,
         expectedIntentRevision: row.intentRevision, controller, reason: 'admitted-work' as const }, controllerRole,
         wakeOnAcceptedMessage: row.wakeOnAcceptedMessage,
-        asleep: !projected.submittedNativeEffect && projected.observation?.availability === 'present'
-            && (projected.observation.power === 'stopped' || projected.observation.power === 'suspended') };
+        inspectionRequired: isManagedMachineWakeInspectionRequiredV1(projected, input.machineId,
+            guest !== null && isMachineReachableV1({ machine: serializeMachinePresence(guest) })) };
 }
 
 export async function resolveManagedWakeTargetInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineId: string; origin: ManagedWakeTargetV1['origin'];
     requireAcceptedInputWake?: boolean;
+    requireInspection?: boolean;
 }>): Promise<ManagedWakeTargetV1 | undefined> {
     const binding = await readManagedWakeTargetBindingInTx(tx, input);
-    if (input.requireAcceptedInputWake && !(binding?.asleep && binding.wakeOnAcceptedMessage)) return undefined;
+    if (input.requireInspection && !binding?.inspectionRequired) return undefined;
+    if (input.requireAcceptedInputWake && !(binding?.inspectionRequired && binding.wakeOnAcceptedMessage)) return undefined;
     return binding?.controllerRole === 'manage' ? ManagedWakeTargetV1Schema.parse({ ...binding.binding, origin: input.origin }) : undefined;
 }
 
@@ -197,7 +200,7 @@ export async function readManagedPendingActivationHoldReasonInTx(tx: Tx, input: 
     actorAccountId: string; machineId: string; homeId: string; resumeRequested: boolean;
 }>): Promise<PendingActivationHoldReasonV1 | undefined> {
     const current = await readManagedWakeTargetBindingInTx(tx, input);
-    if (!current?.asleep || current.binding.homeId !== input.homeId) return undefined;
+    if (!current?.inspectionRequired || current.binding.homeId !== input.homeId) return undefined;
     if (current.controllerRole !== 'manage') return 'managed_power_required';
     return input.resumeRequested ? undefined : 'resume_not_requested';
 }
@@ -388,9 +391,8 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
         const binding = supplied ? await auth.verifyExternalActionExecutionAuthorization(supplied.token) : null;
         if (!binding || !sameManagedInput(binding, supplied?.binding)
             || binding.requestId !== target.origin.actionRequestId || binding.serverIdentityId !== row.homeId
-            || !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId)
-            || binding.machineId !== target.enrolledMachineId || binding.target.kind !== 'machine'
-            || binding.target.machineId !== target.enrolledMachineId
+            || !isExternalActionManagedWakeRootV1(binding)
+            || binding.machineId !== target.enrolledMachineId
             || !await verifyCurrentExternalActionPrincipalInTx(tx, binding)) throw new ManagedMachineError('admission_unavailable');
         const admitted = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
             machineId: binding.machineId, actionId: binding.actionId });
@@ -441,7 +443,14 @@ export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: s
             OR: [{ controllerMachineId: request.controller.machineId, controllerInstallationId: request.controller.installationId },
                 { controllerMachineId: null }],
             custodianAccountId: input.actorAccountId, enrolledMachineId: { not: null }, archivedAt: null,
-            creationState: 'active', allocation: 'bound', wakeOnAcceptedMessage: true } });
+            creationState: 'active', allocation: 'bound', wakeOnAcceptedMessage: true },
+            include: { enrolledMachine: { select: { active: true, lastActiveAt: true } } } });
+        const candidateIds = new Set(managedRows.flatMap(row => {
+            const projected = projectManagedMachine(row);
+            return row.enrolledMachineId && (projected.submittedNativeEffect
+                || isManagedMachineWakeInspectionRequiredV1(projected, row.enrolledMachineId,
+                    row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) }))) ? [row.id] : [];
+        }));
         const machineIds = managedRows.flatMap(row => row.enrolledMachineId ? [row.enrolledMachineId] : []);
         const targets: ManagedWakeTargetV1[] = [];
         const originAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, request.controller.machineId);
@@ -472,6 +481,6 @@ export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: s
                 origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId: assignment.machineId } } });
             if (target) targets.push(target);
         }
-        return { targets };
+        return { targets: targets.filter(target => candidateIds.has(target.managedId)) };
     });
 }

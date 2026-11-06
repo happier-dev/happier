@@ -109,14 +109,6 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage, purpose: purpose.kind,
                 ...(purpose.kind === 'accepted-input-start' ? { origin: purpose.target.origin } : {}) };
             const prior = active.get(machine.id);
-            // Pending may remain authorized until its Agent actually claims it.
-            // Running compute already satisfies its wake; retire any incumbent
-            // pre-effect wait rather than creating another Start/Ask.
-            if (purpose.kind === 'accepted-input-start' && !machine.submittedNativeEffect
-                && machine.observation?.availability === 'present' && machine.observation.power === 'running') {
-                if (prior) abortPolicy(machine.id, prior.cancel, 'policy_replaced');
-                continue;
-            }
             // Native Stop, or Suspend where that is how the provider parks, satisfies a Stop policy until compute runs again.
             // A submitted native effect still needs its incumbent reconciliation,
             // and an accepted wake target takes precedence over retention above.

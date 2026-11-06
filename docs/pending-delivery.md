@@ -1044,3 +1044,11 @@ D2 integrates exact attempt context through Dev's Agent/plugin runtime owners. D
 V1 has no receipt history, provider evidence journal, provider capability ceremony, numeric protocol floor, promotion cohort, second claim gate, caller-local admission switch, mutable row-level attempt lifecycle, provider branch in shared core, or automatic resend after possible write.
 
 Secrets, raw provider evidence, content, and credentials never belong in public state, logs, metrics, transcript metadata, or UI.
+
+## Managed forwarding wake (0.3 development)
+
+Finite CLI/agent Machine forwarding declares runtime demand to the shared
+reviewed wake owner and waits for the enrolled guest before dispatching the
+original work. Forwarded Send retains accepted-input activation: enqueue and
+ACK precede wake. Passive list/get operations do not request power. See
+[Managed runtime demand](actions.md#managed-runtime-demand-03-development).

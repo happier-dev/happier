@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -402,7 +403,7 @@ describe('managed native UI Action frontdoor', () => {
             expect(String(init?.body)).not.toContain('private bootstrap instruction');
             const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(String(init?.body)));
             expect(envelope.managedAdmission).toEqual({ actionId: 'machines.managed.acquire', input: { selection }, continuationPresent: true });
-            expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+            expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
             admitted = true;
             if (responseKind === 'offline' || responseKind === 'uncorrelated') return Response.json({ error: 'invalid_request', code: 'target_unavailable',
                 ...(responseKind === 'offline' ? { requestId: binding.requestId } : {}),

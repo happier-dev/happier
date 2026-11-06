@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
@@ -82,7 +83,7 @@ describe('managed Machine rebuild origination', () => {
             if (path === `/v1/actions/${actionId}/execution-authorization`) {
                 const request = body as Readonly<{ envelope: unknown; machineId: string }>;
                 const envelope = ExternalActionRequestEnvelopeSchema.parse(request.envelope);
-                if (envelope.v === 2 && material) expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+                if (envelope.v === 2 && material) expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
                 expect(request.machineId).toBe(selectedController.machineId);
                 mintedEnvelope = envelope;
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {

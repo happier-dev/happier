@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { Server as NotificationServer } from 'socket.io';
@@ -208,7 +209,7 @@ async function serve(params: Readonly<{
       credentialId: pins.tokenId, actionId: decodeURIComponent(path.split('/').at(-1)!),
       requestId: envelope.requestId, target: envelope.target };
     const requestMaterial = params.requestMaterial ?? material;
-    const opened = openExternalActionRequestV2({ envelope, binding, material: requestMaterial });
+    const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material: requestMaterial });
     if (!opened) throw new Error('Request did not authenticate');
     if (binding.actionId === 'action.spec.get') {
       send(response, prepareExternalActionResponseV2({ binding, request: envelope, material: requestMaterial,
@@ -287,7 +288,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       // with it, and the plaintext never left the SDK.
       const actionCall = server.captured.find((call) => call.path.startsWith('/v1/actions/'));
       const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(actionCall!.body));
-      expect(openExternalActionRequestV2({ envelope, material,
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material,
         binding: { serverIdentityId: pins.serverIdentityId, accountId: pins.accountId,
           credentialId: pins.tokenId, actionId: 'teams.credentials.entitled.list',
           requestId: envelope.requestId, target: envelope.target! },
@@ -308,7 +309,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(actionCall!.body));
       expect(envelope.target).toEqual({ kind: 'session', sessionId: RUNNER_SESSION_ID });
       // The Account key never sealed it: only the Runner's own content key opens it.
-      expect(openExternalActionRequestV2({ envelope, material,
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material,
         binding: { serverIdentityId: pins.serverIdentityId, accountId: pins.accountId,
           credentialId: pins.tokenId, actionId: 'session.message.send',
           requestId: envelope.requestId, target: envelope.target! },
@@ -326,7 +327,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       expect(server.failures).toEqual([]);
       const actionCall = server.captured.find((call) => call.path.startsWith('/v1/actions/'));
       const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(actionCall!.body));
-      expect(openExternalActionRequestV2({ envelope, material,
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material,
         binding: { serverIdentityId: pins.serverIdentityId, accountId: pins.accountId,
           credentialId: pins.tokenId, actionId: 'session.message.send',
           requestId: envelope.requestId, target: envelope.target! },

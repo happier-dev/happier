@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';
+import { ManagedMachineRefV1Schema } from '../machines/managed/managedMachineV1.js';
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
 import { SessionViewerProjectionV1Schema } from '../sessions/personal/viewer.js';
 import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.js';
@@ -213,6 +214,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }),
   z.looseObject({
     t: z.literal('new-machine'),
+    managedMachineRef: z.optional(z.nullable(ManagedMachineRefV1Schema)),
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)),
     access: z.optional(AccessibleMachineAccessV1Schema),
     keyBasis: z.optional(MachineKeyBasisV1Schema),
@@ -232,6 +234,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }),
   z.looseObject({
     t: z.literal('update-machine'),
+    managedMachineRef: z.optional(z.nullable(ManagedMachineRefV1Schema)),
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)),
     access: z.optional(AccessibleMachineAccessV1Schema),
     keyBasis: z.optional(MachineKeyBasisV1Schema),

@@ -76,7 +76,9 @@ it('composes requester bound-v2 client, real Home sockets and guest inventory/pr
     const projection = await inTx(async tx => {
         const access = await machineAccess.readAccessibleMachineAccessInTx(tx, actor);
         if (!access) throw new Error('Current requester access is required');
-        return serializeAccessibleMachineRow(machine, { access, owned: false,
+        const published = await tx.machine.findUniqueOrThrow({ where: { id: machine.id },
+            include: { managedResource: { select: { id: true, homeId: true } } } });
+        return serializeAccessibleMachineRow(published, { access, owned: false,
             callerDataEncryptionKey: await machineAccess.readMachineDataKeyForCallerInTx(tx, actor) });
     });
     expect(projection.dataEncryptionKey).not.toBe(projection.keyBasis.dataEncryptionKey);

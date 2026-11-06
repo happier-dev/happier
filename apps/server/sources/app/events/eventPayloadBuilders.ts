@@ -22,8 +22,9 @@ import { type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/prot
 import { applySessionTranscriptPublicationCeiling } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
 import { projectSessionFollowWakeBatchDelivery } from "@/app/session/follow/projectSessionFollowWakeBatchDelivery";
-import { serializeMachineKeyBasis, serializeMachinePresence } from "@/app/machines/machineSerialization";
+import { serializeMachineKeyBasis, serializeMachinePresence, serializeManagedMachineRef } from "@/app/machines/machineSerialization";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
+import type { ManagedMachineRefV1 } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
@@ -593,6 +594,7 @@ export function buildAccountSettingsChangedUpdate(settingsVersion: number, updat
 
 export function buildNewMachineUpdate(machine: {
     id: string;
+    managedResource: Readonly<{ id: string; homeId: string }> | null;
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: MachineKind;
     seq: number;
@@ -620,6 +622,7 @@ export function buildNewMachineUpdate(machine: {
         seq: updateSeq,
         body: {
             t: 'new-machine',
+            managedMachineRef: serializeManagedMachineRef(machine),
             devcontainerChild: machine.devcontainerChild ?? null,
             kind: MachineKindFromLegacyProjectionSchema.parse(machine.kind),
             machineId: machine.id,
@@ -654,6 +657,7 @@ export function buildUpdateMachineUpdate(
     metadata?: { value: string; version: number },
     daemonState?: { value: string | null; version: number },
     extra?: {
+        managedMachineRef?: ManagedMachineRefV1 | null;
         devcontainerChild?: DevcontainerChildProjectionV1 | null;
         dataEncryptionKey?: string | null;
         keyBasis?: MachineKeyBasisV1;

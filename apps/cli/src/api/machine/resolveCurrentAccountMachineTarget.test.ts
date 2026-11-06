@@ -22,6 +22,7 @@ import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/accou
 function currentMachine(id: string, host?: string) {
   return {
     id,
+    managedMachineRef: null,
     ...(host ? { metadata: JSON.stringify({ host }) } : {}),
     active: true,
     revokedAt: null,
@@ -79,6 +80,17 @@ describe('plugin-aware Account administration Machine selection', () => {
 });
 
 describe('resolveCurrentAccountMachineTarget', () => {
+  it('reads released Home ordinary Machines without a managed reference and refuses malformed explicit references', async () => {
+    // 0.2 Home serializeMachineRow at 1321319f omits managedMachineRef.
+    const legacy = { id: 'legacy-machine', active: true, activeAt: Date.now(), revokedAt: null, replacedByMachineId: null };
+    boundaries.axiosGet.mockResolvedValue({ data: [legacy] });
+    expect(await listCurrentAccountMachines({ token: 'token', projection: 'hostFacts' })).toMatchObject([
+      { id: legacy.id, managedMachineRef: null },
+    ]);
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...legacy, managedMachineRef: { homeId: 'home' } }] });
+    await expect(listCurrentAccountMachines({ token: 'token', projection: 'hostFacts' }))
+      .rejects.toMatchObject({ code: 'machine_inventory_unavailable' });
+  });
   it.each(['plain', 'e2ee'] as const)('projects platform facts through the canonical %s Machine content reader', async mode => {
     const secret = new Uint8Array(32).fill(7);
     const metadata = MachinePublishedMetadataV1Schema.parse({ host: 'worker', platform: 'linux', arch: 'arm64',
@@ -122,7 +134,7 @@ describe('resolveCurrentAccountMachineTarget', () => {
     const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'e2ee', accessState: 'key_pending' };
     boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access }] });
     expect(await listCurrentAccountMachines({ token: 'token' })).toEqual([
-      { id: 'shared', label: 'shared', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, access },
+      { id: 'shared', label: 'shared', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, managedMachineRef: null, access },
     ]);
     expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({ kind: 'unavailable', code: 'no_current_machine' });
     boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access: { ...access, accessState: 'ready' } }] });
@@ -132,11 +144,11 @@ describe('resolveCurrentAccountMachineTarget', () => {
   it('projects the complete signed Account inventory without hiding revoked machines', async () => {
     boundaries.axiosGet.mockResolvedValue({ data: [
       currentMachine('machine-current', 'desk'),
-      { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
+      { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current', managedMachineRef: null },
     ] });
     await expect(listCurrentAccountMachines({ token: 'token-1' })).resolves.toEqual([
-      { id: 'machine-current', label: 'desk', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null },
-      { id: 'machine-old', label: 'old-desk', kind: 'persistent', installationId: null, active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
+      { id: 'machine-current', label: 'desk', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, managedMachineRef: null },
+      { id: 'machine-old', label: 'old-desk', kind: 'persistent', installationId: null, active: false, revokedAt: 7, replacedByMachineId: 'machine-current', managedMachineRef: null },
     ]);
   });
 

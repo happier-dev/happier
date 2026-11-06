@@ -18,6 +18,43 @@ import { ApiMachineClient } from '@/api/apiMachine';
 
 afterEach(() => vi.restoreAllMocks());
 describe('daemon managed policy census transport', () => {
+    it('executes the Home wake candidate despite a retained running native observation without private guest reads', async () => {
+        const signing = nacl.sign.keyPair();
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            controller, enrolledMachineId: 'requester-guest', enrollmentAccountId: 'requester',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { availability: 'present', power: 'running', storage: 'retained', observedAt: 1 } });
+        const target = ManagedWakeTargetV1Schema.parse({ homeId: 'home', managedId: machine.id,
+            enrolledMachineId: machine.enrolledMachineId, expectedIntentRevision: 0, controller, reason: 'admitted-work',
+            origin: { kind: 'session-input', session: { homeId: 'home', sessionId: 'session' }, pendingRequestId: 'pending', requestedAt: 1 } });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machines: [machine], targets: [target] } });
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner' });
+        // Runtime-registry acquisition is the installed-process boundary. The
+        // scheduler, operation lifecycle and policy Action stay real.
+        const adapter = createDaemonManagedMachineActionAdapter({ credentials: { token: 'token', encryption: null },
+            machineId: 'controller', serverId: 'home', serverBaseUrl: 'https://policy.example', installationIdentity: null,
+            acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
+            observeActionExecution: request => operations.observeExecution(request),
+            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+                context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
+        });
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
+                custodianAccountId: 'owner', privateKey: signing.secretKey, token: 'token', serverUrl: 'https://policy.example', signal }),
+            loadMachine: async () => { throw new Error('Requester-private guest content is unavailable to the controller'); },
+            executePolicy: adapter.executePolicy,
+        });
+        try {
+            await runtime.notifyChanged();
+            await vi.waitFor(async () => expect(ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items)
+                .toMatchObject([{ state: 'failed', error: { errorCode: 'admission_unavailable' },
+                    domainRef: { kind: 'managedMachine', id: machine.id } }]));
+        } finally { await runtime.stop(); }
+    });
     it('accepts an Account-owned row and target without assigning the observing daemon as controller', async () => {
         const signing = nacl.sign.keyPair();
         const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',

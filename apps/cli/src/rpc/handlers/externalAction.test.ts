@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   API_TOKEN_FULL_GRANT_V1,
   computeExternalActionRequestEnvelopeDigestV1,
@@ -132,7 +133,7 @@ describe('registerExternalActionRpcHandler', () => {
     const binding = { serverIdentityId: 'srv_peer_confirmation', accountId: 'account-1', authentication,
       actionId, requestId: 'peer-confirm', target };
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(24) };
-    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ binding, material, input, randomBytes: tweetnacl.randomBytes })
+    const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, randomBytes: tweetnacl.randomBytes })
       : { v: 1 as const, requestId: binding.requestId, target, input };
     const admittedDispatch = authorizedDispatch({ actionId, envelope,
       principal: { accountId: 'account-1', authentication, authority: 'account_automation' },

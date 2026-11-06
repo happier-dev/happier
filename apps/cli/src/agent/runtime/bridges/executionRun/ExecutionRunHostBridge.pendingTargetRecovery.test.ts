@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -677,7 +678,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
         authentication: { kind: 'account' as const, tokenEpoch: 1 }, actionId: 'session.message.send',
         requestId: envelope.requestId, target: { kind: 'session' as const, sessionId } };
       const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
-      const opened = openExternalActionRequestV2({ envelope, binding, material });
+      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material });
       if (!opened) throw new Error('Expected current original Account request');
       const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: async input => {
         receivedAuthorities.push(input.context?.authority);

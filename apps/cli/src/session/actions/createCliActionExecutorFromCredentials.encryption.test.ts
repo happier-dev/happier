@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -56,7 +57,7 @@ describe('CLI encrypted SDK transport through real HTTP', () => {
           const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
             credentialId: context.tokenId, actionId,
             requestId: envelope.requestId, target: envelope.target! };
-          const input = openExternalActionRequestV2({ envelope, binding, material })?.input;
+          const input = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input;
           const executionResult = actionId === 'session.list'
             ? { sessions: [{ id: 'c123456789012345678901234', tag: 'private-tag-sentinel', createdAt: 1, updatedAt: 2,
               active: true, activeAt: 2, share: null, encryption: null }], nextCursor: null, hasNext: false }
@@ -146,7 +147,7 @@ describe('CLI encrypted SDK transport through real HTTP', () => {
           expect(actionId).toBe('session.board.item.upsert');
           const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
             credentialId: context.tokenId, actionId, requestId: envelope.requestId, target: envelope.target! };
-          expect(openExternalActionRequestV2({ envelope, binding, material })?.input).toMatchObject({
+          expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input).toMatchObject({
             sessionId,
             itemId: 'private-item-sentinel',
             item: { title: 'private-title-sentinel' },

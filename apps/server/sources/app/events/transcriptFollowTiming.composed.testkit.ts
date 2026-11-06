@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from 'fastify';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -260,7 +261,7 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                 requestId: crypto.randomUUID(), target: { kind: 'machine' as const, machineId: machine.id },
                 credentialId: pat.tokenId };
             const input = { sessionId: session.id, cursor, leaseId: 'home-follow', waitForChanges: true };
-            const envelope = material ? sealExternalActionRequestV2({ binding, input, material, randomBytes: tweetnacl.randomBytes })
+            const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material, randomBytes: tweetnacl.randomBytes })
                 : { v: 1 as const, requestId: binding.requestId, target: binding.target, input };
             stamps.httpStart = performance.now();
             return fetch(`${endpoint}/v1/actions/transcript.follow`, { method: 'POST', headers, body: JSON.stringify(envelope) })

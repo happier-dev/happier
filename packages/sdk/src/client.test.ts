@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
@@ -453,7 +454,7 @@ describe('Happier SDK client', () => {
       const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
         credentialId: context.tokenId, actionId: 'session.list', requestId: request.requestId,
         target: { kind: 'machine' as const, machineId: 'machine-1' } };
-      expect(openExternalActionRequestV2({ envelope: request, binding, material })?.input).toEqual(expectedInput);
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })?.input).toEqual(expectedInput);
       const prepared = prepareExternalActionResponseV2({ binding, request, material,
         randomBytes: (length) => new Uint8Array(length).fill(4), executedMachineId: 'machine-1',
         execution: { ok: true, result: expectedResult } });
@@ -761,7 +762,7 @@ describe('Happier SDK client', () => {
       const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
         credentialId: context.tokenId, actionId: isRun ? 'workflow.trigger.run_now' : 'session.message.send',
         requestId: request.requestId, target: { kind: 'machine' as const, machineId: 'machine-1' } };
-      expect(openExternalActionRequestV2({ envelope: request, binding, material })?.input)
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })?.input)
         .toMatchObject(isRun ? { automationId: 'private-automation-sentinel', idempotencyKey: 'qa-run-retry' }
           : { message: 'private-input-sentinel' });
       if (isRun) expect(Reflect.get(request, 'idempotencyKey')).toBe('qa-run-retry');

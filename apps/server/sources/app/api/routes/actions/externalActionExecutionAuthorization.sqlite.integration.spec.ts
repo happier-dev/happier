@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -2256,7 +2257,7 @@ describe("external Action execution authorization", () => {
             recordId: 'paug_v1_abcdefgh', meterId: 'weekly', witness: { observedAtMs: 100, id: 'accepted-history' } };
         const plainEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target,
             input: { sessionId: session.id, localId: 'queued-work', ...(actionId.endsWith('.set') ? { reset } : {}) } };
-        const envelope = material ? sealExternalActionRequestV2({ binding: { serverIdentityId: await getOrCreateServerIdentityId(),
+        const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: await getOrCreateServerIdentityId(),
             accountId: fixture.account.id, authentication: { kind: 'account', tokenEpoch: fixture.account.tokenEpoch },
             actionId, requestId: plainEnvelope.requestId, target }, input: plainEnvelope.input, material, randomBytes: tweetnacl.randomBytes }) : plainEnvelope;
         try {
@@ -2357,7 +2358,7 @@ describe("external Action execution authorization", () => {
         const plain = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { sessionId: session.id, localId: 'queued-work', reset } };
         const binding = { serverIdentityId: await getOrCreateServerIdentityId(), accountId: fixture.account.id,
             authentication: { kind: 'account' as const, tokenEpoch: fixture.account.tokenEpoch }, actionId, requestId: plain.requestId, target };
-        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ binding, input: plain.input, material, randomBytes: tweetnacl.randomBytes }) : plain;
+        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: plain.input, material, randomBytes: tweetnacl.randomBytes }) : plain;
         const forwarded: ExternalActionDaemonDispatchRequest[] = [];
         const dispatch = createExternalActionDaemonDispatcher({ io: createSocketRoomDiscoveryHarness(async () => []),
             forwardRpc: async ({ callParams }) => {
@@ -4390,7 +4391,7 @@ describe("external Action execution authorization", () => {
                 { kind: 'terminal', authority: 'account_automation' }) : token;
             const target = { kind: 'machine' as const, machineId: fixture.machine.id };
             const rootRequestId = crypto.randomUUID();
-            const envelope = material ? sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: fixture.account.id,
+            const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: fixture.account.id,
                 actionId, requestId: rootRequestId, target, authentication: { kind: 'account', tokenEpoch: fixture.account.tokenEpoch } },
                 input, material, randomBytes: tweetnacl.randomBytes })
                 : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: rootRequestId, target, input });
@@ -4639,7 +4640,7 @@ describe("external Action execution authorization", () => {
             const selectedTarget = { kind: 'machine' as const, machineId: target.id };
             const encryptionBinding = { serverIdentityId: homeId, accountId: fixture.account.id, actionId: 'projects.open', requestId,
                 target: selectedTarget, authentication: { kind: 'account' as const, tokenEpoch: fixture.account.tokenEpoch } };
-            const originalActionEnvelope = material ? sealExternalActionRequestV2({ binding: encryptionBinding, input, material, randomBytes: tweetnacl.randomBytes })
+            const originalActionEnvelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, input, material, randomBytes: tweetnacl.randomBytes })
                 : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target: selectedTarget, input });
             const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.open'),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope: originalActionEnvelope } });
@@ -4653,7 +4654,7 @@ describe("external Action execution authorization", () => {
             if (material) {
                 // The actual installed-D owner verifies the whole envelope before
                 // this canonical V2 open; no plaintext/ciphertext digest substitution.
-                expect(openExternalActionRequestV2({ envelope: originalActionEnvelope, binding: encryptionBinding, material })?.input).toEqual(input);
+                expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: originalActionEnvelope, binding: encryptionBinding, material })?.input).toEqual(input);
                 expect(computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target: selectedTarget, input }))
                     .not.toBe(root.binding.requestEnvelopeDigest);
             }
@@ -6486,7 +6487,7 @@ describe("external Action execution authorization", () => {
                 authority: 'account_automation', sessionActionOrigin: origin,
             });
             expect(produced?.envelope.v).toBe(2);
-            expect(openExternalActionRequestV2({ envelope: produced!.envelope, material,
+            expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: produced!.envelope, material,
                 binding: { serverIdentityId: homeId, accountId: fixture.account.id,
                     authentication: { kind: 'account', tokenEpoch: fixture.account.tokenEpoch }, actionId,
                     requestId: origin.requestId, target } })?.input).toEqual(input);
@@ -7234,7 +7235,7 @@ describe("external Action execution authorization", () => {
         const input = SessionSpawnNewInputV2Schema.parse({ executionTarget: { serverId: homeId, machineId: fixture.machine.id },
             directory: { kind: 'path', path: '/workspace/terminal-session' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
-        const envelope = material ? sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+        const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
             accountId: fixture.account.id, actionId, requestId: fixture.envelope.requestId!, target: fixture.envelope.target!,
             authentication: { kind: 'terminal', tokenEpoch: fixture.account.tokenEpoch } },
             input, sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(input), material, randomBytes: tweetnacl.randomBytes })
@@ -7251,7 +7252,7 @@ describe("external Action execution authorization", () => {
                 if (!material) throw new Error('Protected terminal response requires the same Account material');
                 const binding = { serverIdentityId: root.serverIdentityId, accountId: root.accountId, authentication: root.authentication,
                     actionId: root.actionId, requestId: root.requestId, target: root.target };
-                expect(openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input).toEqual(input);
+                expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input).toEqual(input);
                 return { kind: 'response', prepared: prepareExternalActionResponseV2({ binding, request: request.envelope,
                     executedMachineId: fixture.machine.id, execution, material, randomBytes: tweetnacl.randomBytes }) };
             }

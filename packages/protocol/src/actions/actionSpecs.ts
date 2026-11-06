@@ -5,6 +5,7 @@ import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs
 import { MEDIA_ANNOTATION_ACTION_SPECS } from './mediaAnnotationAction.js';
 import { DESKTOP_WINDOWS_ACTION_SPECS } from './desktopWindowsAction.js';
 import { DESKTOP_SHELL_ACTION_SPECS } from './specs/desktopShell.js';
+import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { completeActionInputHints } from './schemaInputHints.js';
@@ -154,6 +155,7 @@ import {
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
   PLUGIN_DEV_LOOP_ACTION_IDS_V1,
+  SESSION_MESSAGE_SEND_ACTION_ID_V1,
   RUNTIME_ACTION_IDS_V1,
   type ActionId,
   type PluginDevLoopActionIdV1,
@@ -2306,6 +2308,29 @@ export function getActionSpec(id: ActionId): ActionSpec {
     throw new Error(`Unknown action spec: ${id}`);
   }
   return spec;
+}
+
+/** Public non-content demand comes only from the Action's declaration; accepted input keeps its own activation owner. */
+export function projectExternalActionMachineRuntimeDemandV1(actionId: string, input: unknown,
+  target: ExternalActionTargetV1 | undefined): 'required' | undefined {
+  const parsed = ActionIdSchema.safeParse(actionId);
+  if (!parsed.success) return undefined;
+  const demand = getActionSpec(parsed.data).machineRuntimeDemandForInput?.(input, {
+    ...(target ? { externalActionTarget: target } : {}),
+    ...(target?.kind === 'session' ? { defaultSessionId: target.sessionId } : {}),
+  });
+  return demand && demand.activation !== 'accepted-input' ? 'required' : undefined;
+}
+
+/** Home checks the declaration before consuming the sealed operand's authenticated projection. */
+export function readExternalActionMachineRuntimeDemandV1(actionId: string,
+  envelope: ExternalActionRequestEnvelope): 'required' | undefined {
+  if (envelope.v !== 2) return projectExternalActionMachineRuntimeDemandV1(actionId, envelope.input, envelope.target);
+  const parsed = ActionIdSchema.safeParse(actionId);
+  // Send activates only after its input is committed by the existing Pending owner.
+  if (!parsed.success || parsed.data === SESSION_MESSAGE_SEND_ACTION_ID_V1
+    || !getActionSpec(parsed.data).machineRuntimeDemandForInput) return undefined;
+  return envelope.machineRuntimeDemand;
 }
 
 /** Invocation and inspection prepare targets under their own admitted Action root. */

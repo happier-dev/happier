@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
@@ -223,7 +224,7 @@ describe("external Action server-to-daemon request carrier", () => {
             const request = ExternalActionDaemonDispatchRequestSchema.parse(raw.params);
             if (request.envelope.v !== 2 || !request.envelope.requestId || !request.executionAuthorization) throw new Error('Expected protected dispatch');
             const binding = bindingFor(request.envelope.requestId);
-            const opened = openExternalActionRequestV2({ envelope: request.envelope, binding, material });
+            const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material });
             const parsed = getActionSpec('session.message.send').inputSchema.parse(opened?.input);
             const reconciled = reconcileExternalActionTarget({ actionId: 'session.message.send', rawInput: parsed,
                 target: request.envelope.target, currentMachineId: machineId });
@@ -249,7 +250,7 @@ describe("external Action server-to-daemon request carrier", () => {
         });
         const relay = async (sessionId: string, requestId: string) => {
             const binding = bindingFor(requestId);
-            const envelope = sealExternalActionRequestV2({ binding, material, randomBytes: length => new Uint8Array(length).fill(4), input: {
+            const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: length => new Uint8Array(length).fill(4), input: {
                 sessionId, message: 'Reply without tools', localId: requestId, permissionModeOverride: 'read_only', wait: false,
             } });
             const response = await app.inject({ method: 'POST', url: '/v1/actions/session.message.send',
@@ -367,7 +368,7 @@ describe("external Action server-to-daemon request carrier", () => {
             const dispatch = ExternalActionDaemonDispatchRequestSchema.parse((request as SocketRpcRequestPayload).params);
             if (dispatch.envelope.v === 2) {
                 privateRequestBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
-                const opened = openExternalActionRequestV2({ envelope: dispatch.envelope, binding: privateBinding, material });
+                const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: dispatch.envelope, binding: privateBinding, material });
                 expect(opened).not.toBeNull();
                 const prepared = prepareExternalActionResponseV2({ binding: privateBinding, request: dispatch.envelope,
                     executedMachineId: machineId, execution: { ok: true, result: responseResult }, material,
@@ -521,7 +522,7 @@ describe("external Action server-to-daemon request carrier", () => {
 
             // The real socket must carry base64-expanded V2 bodies above V1's wire ceiling.
             const privateInput = { blob: 'x'.repeat(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES - 1024) };
-            const privateRequest = sealExternalActionRequestV2({ binding: privateBinding, input: privateInput,
+            const privateRequest = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: privateBinding, input: privateInput,
                 material, randomBytes: (length) => new Uint8Array(length).fill(2) });
             responseResult = exactResponseResult;
             const privateResponse = await app.inject({ ...responseBoundaryRequest,

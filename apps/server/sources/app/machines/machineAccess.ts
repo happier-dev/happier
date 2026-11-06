@@ -82,6 +82,7 @@ export function buildMachineAdmissionFactsSelect(actorAccountId: string) {
 }
 
 const MACHINE_OPENING_INCLUDE = {
+    managedResource: { select: { id: true, homeId: true } },
     account: MACHINE_RESOURCE_FACTS_SELECT.account,
     accountGrants: MACHINE_ACCESS_FACTS_SELECT.accountGrants,
     teamGrants: MACHINE_ACCESS_FACTS_SELECT.teamGrants,
@@ -337,7 +338,7 @@ async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: 
 }
 
 interface AccessibleMachineOpening {
-    machine: Machine;
+    machine: Machine & Pick<MachineOpeningRow, 'managedResource'>;
     access: AccessibleMachineAccessV1;
     owned: boolean;
     callerDataEncryptionKey: Uint8Array<ArrayBuffer> | null;

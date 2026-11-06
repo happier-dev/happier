@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createServer, type Server } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -199,7 +200,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
         const binding = { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 },
           actionId, requestId: 'request-1', target: { kind: 'machine' as const, machineId: 'alice-machine' } };
         const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)) };
-        expect(openExternalActionRequestV2({ envelope: original.data, binding, material })?.input)
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: original.data, binding, material })?.input)
           .toEqual(actionId === 'machines.work.summary.get' ? ownMachineInput : {});
         return respond(prepareExternalActionResponseV2({ request: original.data, binding, material,
           executedMachineId: 'alice-machine', randomBytes: length => new Uint8Array(length).fill(6), execution }).response);
@@ -809,7 +810,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     if (mode === 'e2ee') {
       expect(received.envelope.v).toBe(2);
       if (received.envelope.v !== 2 || !codec) throw new Error('Expected encrypted read and invocation codec');
-      expect(openExternalActionRequestV2({ envelope: received.envelope, material: codec,
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: received.envelope, material: codec,
         binding: { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
           actionId, requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } } })?.input).toEqual(input);
       expect(codec.machineKey).not.toEqual(deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)));
@@ -905,7 +906,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             authorizationToken: authorization.token, effectActionId: 'machines.managed.acquire', target: controller,
             installationId: 'controller-installation', requestId: 'request-1', method: 'POST',
             path: '/v1/actions/session.spawn_new', body, publicKey, signature });
-          opened = openExternalActionRequestV2({ envelope: parsed.envelope, binding, material })?.input;
+          opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: parsed.envelope, binding, material })?.input;
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify(prepareExternalActionResponseV2({ request: parsed.envelope, binding, material,
             executedMachineId: guest.machineId, randomBytes: length => new Uint8Array(length).fill(6),

@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify, { type InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Server } from 'socket.io';
@@ -220,7 +221,7 @@ describe('ordinary Account managed Action origination', () => {
         const input = { sessionId: source.session.id, message: 'queued during replacement', localId: 'restart-gap-input' };
         const requestId = crypto.randomUUID();
         const envelope = mode === 'plain' ? { v: 1 as const, requestId, target, input }
-            : sealExternalActionRequestV2({ binding: binding('session.message.send', requestId), material,
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: binding('session.message.send', requestId), material,
                 input, randomBytes: length => new Uint8Array(length).fill(9) });
         const send = (actionId = 'session.message.send') => instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
             headers: { authorization: `Bearer ${token}` }, payload: actionId === 'session.message.send' ? envelope
@@ -953,7 +954,7 @@ describe('ordinary Account managed Action origination', () => {
         const agentStart = { directory: { kind: 'path', path: '/repo' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } },
             creationKey: 'managed-agent-start', initialInput: { text: prompt } };
-        const sealed = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+        const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
             actionId: 'machines.managed.acquire', requestId: selected.requestId,
             target: { kind: 'machine', machineId: selected.controller.machineId },
             authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch } },
@@ -979,7 +980,7 @@ describe('ordinary Account managed Action origination', () => {
 
     it('refuses a sealed acquire with missing managed admission before retaining or forwarding it', async () => {
         const selected = await fixture(true, 'e2ee');
-        const sealed = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+        const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
             actionId: 'machines.managed.acquire', requestId: selected.requestId,
             target: { kind: 'machine', machineId: selected.controller.machineId },
             authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch } },
@@ -1022,7 +1023,7 @@ describe('ordinary Account managed Action origination', () => {
         const agentStart = { directory: { kind: 'path' as const, path: '/repo' },
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } },
             creationKey: 'retained-guest-start' };
-        const rootEnvelope = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+        const rootEnvelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
             accountId: selected.account.id, authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch },
             actionId: 'machines.managed.acquire', requestId: selected.requestId,
             target: { kind: 'machine', machineId: selected.controller.machineId } },
@@ -1045,7 +1046,7 @@ describe('ordinary Account managed Action origination', () => {
                     schemaVersion: 1, value: { id: 'retained-legacy-resource' } }, enrolledMachineId: guest.id,
                 retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
             const spawnInput = { ...agentStart, executionTarget: { serverId: homeId, machineId: guest.id } };
-            const envelope = { ...sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+            const envelope = { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
                 accountId: selected.account.id, authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch },
                 actionId: 'session.spawn_new', requestId: 'legacy-child', target: { kind: 'machine', machineId: guest.id } },
                 input: spawnInput, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
@@ -1311,7 +1312,7 @@ describe('ordinary Account managed Action origination', () => {
             } });
             const rootEnvelope = mode === 'plain' ? { v: 1 as const, requestId: selected.requestId,
                 target: { kind: 'machine' as const, machineId: selected.controller.machineId }, input: rootInput }
-                : sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                     authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'machines.managed.acquire',
                     requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId } },
                     input: rootInput, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
@@ -1345,7 +1346,7 @@ describe('ordinary Account managed Action origination', () => {
             const spawnPath = bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new');
             const spawnEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'setup-waiting-session',
                 target: { kind: 'machine' as const, machineId: guest.id }, input: spawnInput }
-                : { ...sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                : { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                     authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'session.spawn_new',
                     requestId: 'setup-waiting-session', target: { kind: 'machine', machineId: guest.id } }, input: spawnInput,
                     material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: length => new Uint8Array(length).fill(4) }),
@@ -1364,7 +1365,7 @@ describe('ordinary Account managed Action origination', () => {
             const target = { homeId, machineId: guest.id, presetId, presetRevision: 1 };
             const makeBody = (input = target) => ({ v: 1, machineId: input.machineId,
                 envelope: mode === 'plain' ? { v: 1 as const, requestId: 'creation-setup', target: { kind: 'machine' as const, machineId: input.machineId }, input }
-                    : sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                         authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'machines.environment.apply',
                         requestId: 'creation-setup', target: { kind: 'machine', machineId: input.machineId } }, input,
                         material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(8) },
@@ -1461,7 +1462,7 @@ describe('ordinary Account managed Action origination', () => {
                 directory: { kind: 'path' as const, path: '/repo' },
                 agentTarget: { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } },
                 creationKey: 'guest-start', initialInput: { text: privateText } };
-            const envelope = { ...sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+            const envelope = { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
                 accountId: selected.account.id, authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch },
                 actionId: 'session.spawn_new', requestId: childRequestId, target: { kind: 'machine', machineId: guest.id } },
                 input: spawnInput, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },

@@ -25,7 +25,7 @@ import {
   projectExternalActionPendingResetStartSessionDigestV1,
   projectExternalActionRunNowIdempotencyKeyV1,
   projectExternalActionManagedAdmissionV1,
-  type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2,
+  type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
   type PreparedExternalActionResponseEnvelope,
 } from './externalActionApi.js';
 
@@ -75,6 +75,7 @@ const ResponseSchema = lazyZodSchema(() => z.union([
 
 type Material = Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
 type SealOptions = Readonly<{ material: Material; randomBytes: (length: number) => Uint8Array }>;
+type MachineRuntimeDemandProjector = (actionId: string, input: unknown, target: ExternalActionTargetV1) => 'required' | undefined;
 const kind = 'external_action_transport' as const;
 
 function matches(actual: ExternalActionEncryptionBindingV2, expected: ExternalActionEncryptionBindingV2): boolean {
@@ -100,6 +101,7 @@ function open(ciphertext: string, material: Material, maximumPlaintextBytes: num
 
 export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   binding: ExternalActionEncryptionBindingV2; input: unknown;
+  projectMachineRuntimeDemand: MachineRuntimeDemandProjector;
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
@@ -116,7 +118,9 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   // Every encrypted producer needs the same Home-readable compute projection.
   // Agent instructions remain exclusively inside the sealed Action input.
   const managedAdmission = projectExternalActionManagedAdmissionV1(payload.actionId, payload.input);
+  const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const envelope: ExternalActionRequestEnvelopeV2 = { v: 2, requestId: payload.requestId, target: payload.target,
+    ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     payload: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ ...params, kind, payload }) },
     ...(managedAdmission ? { managedAdmission } : {}),
@@ -135,10 +139,11 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
 /** No error details from unauthenticated plaintext may cross this boundary. */
 export function openExternalActionRequestV2(params: Readonly<{
   envelope: unknown; binding: ExternalActionEncryptionBindingV2; material: Material;
+  projectMachineRuntimeDemand: MachineRuntimeDemandProjector;
   /** Host-local phase witness; never part of the transport response or opened content. */
   onFailure?: (failure: Readonly<{
     phase: 'envelope_parse' | 'envelope_binding' | 'ciphertext_open' | 'plaintext_parse'
-      | 'plaintext_binding' | 'reset_admission' | 'managed_admission' | 'plaintext_limit';
+      | 'plaintext_binding' | 'machine_runtime_demand' | 'reset_admission' | 'managed_admission' | 'plaintext_limit';
     error?: unknown;
   }>) => void;
 }>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema>;
@@ -168,6 +173,9 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (!decoded.success) return refused(decoded.error);
     phase = 'plaintext_binding';
     if (!matches(decoded.data, params.binding)) return refused();
+    phase = 'machine_runtime_demand';
+    if (params.projectMachineRuntimeDemand(decoded.data.actionId, decoded.data.input, decoded.data.target)
+      !== envelope.machineRuntimeDemand) return refused();
     phase = 'managed_admission';
     const managedAdmission = projectExternalActionManagedAdmissionV1(decoded.data.actionId, decoded.data.input);
     if ((managedAdmission && managedAdmission.actionId !== 'machines.managed.acquire'

@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
@@ -59,6 +60,7 @@ describe('original CLI Session Action delivery', () => {
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 1 } };
                 if (url.endsWith('/v1/machines')) return { status: 200, data: [{ id: machineId, active: !offline,
                     kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+                    managedMachineRef: null,
                     access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: mode, accessState: 'ready' } }] };
                 throw new Error(`Unexpected Home read: ${url}`);
             });
@@ -73,7 +75,7 @@ describe('original CLI Session Action delivery', () => {
                     requestId: envelope.requestId, execution: { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' } }) };
                 const binding = { serverIdentityId: 'srv_home', accountId: 'owner', authentication: { kind: 'account' as const, tokenEpoch: 4 },
                     actionId, requestId: envelope.requestId!, target };
-                const decoded = envelope.v === 2 ? openExternalActionRequestV2({ envelope, binding, material })?.input : envelope.input;
+                const decoded = envelope.v === 2 ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input : envelope.input;
                 expect(decoded).toEqual(input);
                 expect(reconcileExternalActionTarget({ actionId, rawInput: decoded, target, currentMachineId: machineId }))
                     .toMatchObject({ kind: 'ready', target: { kind: 'session', sessionId } });

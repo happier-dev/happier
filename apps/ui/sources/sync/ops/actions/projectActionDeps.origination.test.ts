@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -177,7 +178,7 @@ describe('original Account finite Project admission', () => {
                 ...binding, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             } });
             expect(request.executionAuthorization?.requesterAccountContext).toBeUndefined();
-            expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+            expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
             const response = prepareExternalActionResponseV2({ binding, material, request: envelope, executedMachineId: 'guest',
                 execution: { ok: true, result: { kind: 'notRequired', reviewedEffectDigest: 'reviewed' } }, randomBytes: length => new Uint8Array(length).fill(8) }).response;
             return Response.json(wrongResponse ? { ...response, requestId: 'unrelated-request' } : response);

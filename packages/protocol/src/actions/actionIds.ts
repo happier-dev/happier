@@ -1,3 +1,4 @@
+export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
   'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
@@ -329,7 +330,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'sessions.spawn.mcp_servers.preview',
   ],
   messaging: [
-    'session.message.send',
+    SESSION_MESSAGE_SEND_ACTION_ID_V1,
     'session.message.reply',
     'session.update.post',
   ],

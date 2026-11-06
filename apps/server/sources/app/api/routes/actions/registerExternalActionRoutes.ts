@@ -6,6 +6,8 @@ import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/ma
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions';
 import { verifyTemplateRequesterExecutionAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
+import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrace';
@@ -761,12 +763,14 @@ export function registerExternalActionRoutes(
             }
             try {
                 const { authority: _authority, ...provenance } = principal;
+                const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(actionId.data, body.data.envelope);
                 const mintInput = {
                     serverIdentityId: homeId,
                     ...provenance,
                     machineId: receivingMachineId,
                     ...('role' in admission ? { admittedMachineRole: admission.role } : {}),
                     actionId: actionId.data,
+                    ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                     requestId: body.data.envelope.requestId ?? randomUUID(),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.data.envelope),
                     ...(body.data.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: body.data.envelope.idempotencyKey }),
@@ -796,7 +800,7 @@ export function registerExternalActionRoutes(
                         : { ...mintInput, authentication: mintInput.authentication }
                     : mintInput, { input: body.data.envelope.v === 1 ? body.data.envelope.input : body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input,
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
-                const managedFiniteWake = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
+                const managedFiniteWake = isExternalActionManagedWakeRootV1(authorization.binding)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;
                 return reply.header("cache-control", "no-store").send(managedFiniteWake
                     ? { ...authorization, managedFiniteWake } : authorization);

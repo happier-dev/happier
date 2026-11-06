@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveMachineRpcWorkingDirectory } from '@/api/machine/resolveMachineRpcWorkingDirectory';
 import { expect, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
@@ -1161,7 +1162,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         destination: { kind: 'machine' as const, machineId: options.selectedMachineId ?? workerRef.machineId } } };
       if (options.protectedInput) await protectRequester();
       const requestId = randomUUID();
-      const envelope = protectedMoveCredentials ? sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+      const envelope = protectedMoveCredentials ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
         accountId: 'account', actionId: 'localServices.launcher.start', requestId, target,
         authentication: { kind: 'account', tokenEpoch: 1 } }, input,
         material: options.protectedInput === 'other material' ? { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) }
@@ -1220,7 +1221,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       const moveInstallation = options.sourceCoordinator ? sourceInstallation : installation;
       const moveKey = Buffer.from(moveInstallation.privateKey, 'base64url');
       const moveRequestId = randomUUID();
-      const envelope = protectedMoveCredentials ? sealExternalActionRequestV2({ binding: { serverIdentityId: homeId,
+      const envelope = protectedMoveCredentials ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId,
         accountId: 'account', actionId: 'projects.service.relocate', requestId: moveRequestId, target: moveTarget,
         authentication: { kind: 'account', tokenEpoch: 1 } }, input, material: options.protectedInput === 'other material'
           ? { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) } : protectedMoveCredentials.encryption,

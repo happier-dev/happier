@@ -41,6 +41,17 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
 }
 
 describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
+    it('applies explicit managed enrollment changes and retains the fact through content-only pushes', async () => {
+        const ordinary = createMachineFixture({ managedMachineRef: null });
+        const ref = { homeId: 'home', managedId: 'retained' };
+        const update = (existingMachine: Machine, patch: { managedMachineRef?: Machine['managedMachineRef'] }) =>
+            buildUpdatedMachineFromSocketUpdate({ existingMachine, machineUpdate: { machineId: ordinary.id, ...patch },
+                updateSeq: 2, updateCreatedAt: 2, getMachineEncryption: () => null });
+        const enrolled = await update(ordinary, { managedMachineRef: ref });
+        expect(enrolled?.managedMachineRef).toEqual(ref);
+        expect((await update(enrolled!, {}))?.managedMachineRef).toEqual(ref);
+        expect((await update(enrolled!, { managedMachineRef: null }))?.managedMachineRef).toBeNull();
+    });
     it.each((['plain', 'e2ee'] as const).flatMap(storageMode =>
         (['opened', 'unopened', 'locked', 'key-replaced'] as const).map(admission => ({ storageMode, admission })),
     ))('preserves only admitted same-key presentation during a pending $storageMode socket update: $admission', async ({ storageMode, admission }) => {

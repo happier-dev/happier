@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from './actionSpecs.js';
 import { expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
@@ -13,10 +14,10 @@ it.each(['stop', 'start', 'delete'] as const)('retains encrypted managed %s admi
   const binding = { serverIdentityId: input.homeId, accountId: 'account', actionId, requestId: 'request', target,
     authentication: { kind: 'terminal' as const, tokenEpoch: 0 } };
   const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
-  const envelope = sealExternalActionRequestV2({ binding, input, material,
+  const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material,
     randomBytes: length => new Uint8Array(length).fill(2) });
   expect(envelope.managedAdmission).toEqual({ actionId, input });
-  expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+  expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-proof', binding: {
     ...binding, machineId: target.machineId, custodianAccountId: binding.accountId, installationId: 'installation',
     accountEncryptionMode: 'e2ee', managedAdmission: envelope.managedAdmission,

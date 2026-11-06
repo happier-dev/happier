@@ -196,6 +196,7 @@ export type CliActionDepsParams = Readonly<{
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
   resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   prepareDeploymentAction?: ActionExecutorDeps['prepareDeploymentAction'];
+  prepareHostReviewedChildren?: ActionExecutorDeps['prepareHostReviewedChildren'];
   prepareDeploymentPublish?: ActionExecutorDeps['prepareDeploymentPublish'];
   deploymentPublish?: ActionExecutorDeps['deploymentPublish'];
   deploymentPrepare?: ActionExecutorDeps['deploymentPrepare'];

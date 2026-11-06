@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { symbols, type DestinationStream } from 'pino';
 import { Server } from 'socket.io';
@@ -1086,7 +1087,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             requestId: "protected-cancellation",
             target: { kind: "machine" as const, machineId: "machine-1" },
         };
-        const envelope = sealExternalActionRequestV2({
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
             binding,
             input: { actionId: "session.message.send" },
             material: protectedMaterial,

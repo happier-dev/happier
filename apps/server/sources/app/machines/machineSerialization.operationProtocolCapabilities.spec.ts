@@ -4,6 +4,7 @@ import { serializeAccessibleMachineRow, serializeMachineRow, type MachineSeriali
 
 const baseMachineRow: MachineSerializationRow = {
     id: 'machine-1',
+    managedResource: null,
     metadata: 'encrypted-metadata',
     metadataVersion: 3,
     daemonState: null,

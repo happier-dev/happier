@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -108,7 +109,7 @@ describe('template initial access signed HTTP purposes', () => {
             const input = { source: { kind: 'artifact', serverId: 'home', artifactId: randomUUID() }, expectedVersion: '1.0.0',
                 expectedRevision: { headerVersion: 1, bodyVersion: 1 }, creation: { executionTarget: { serverId: 'home', machineId: f.machine.id },
                     directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, initialAccess } };
-            const originalActionEnvelope = sealExternalActionRequestV2({ binding: { serverIdentityId: await getOrCreateServerIdentityId(),
+            const originalActionEnvelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: await getOrCreateServerIdentityId(),
                 accountId: f.account.id, actionId: 'template.instantiate', requestId: randomUUID(), target,
                 authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch } }, input, material, randomBytes });
             const bearer = { authorization: `Bearer ${f.presentUserToken}`, 'x-happier-account-stored-content-protocol': '2' };

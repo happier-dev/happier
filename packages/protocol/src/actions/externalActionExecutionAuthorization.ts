@@ -97,6 +97,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
   return binding.actionId === input.actionId && binding.machineId === input.machineId
     && binding.requestId === input.envelope.requestId
     && binding.idempotencyKey === input.envelope.idempotencyKey
+    && (input.envelope.v !== 2 || binding.machineRuntimeDemand === input.envelope.machineRuntimeDemand)
     && (input.envelope.target?.kind === 'session'
       || input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId)
     && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)

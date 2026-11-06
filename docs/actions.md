@@ -7829,3 +7829,24 @@ workspace and brief. Its existing creation tag rejoins the same child on retry;
 it does not authorize a second Session. The original source installation is never
 impersonated. Workflow-origin integration remains pending with the existing
 Workflow admission and protected-input owners.
+
+## Managed runtime demand (0.3 development)
+
+Standalone Sync flush declares its controller Machine through the Action spec's
+`machineRuntimeDemandForInput`, as Send, Run and Terminal do. Shared wake
+preparation first reads the exact target's Home-owned managed enrollment
+reference. An ordinary Machine returns without managed inventory or a wake
+continuation. Passive reads declare no runtime demand.
+
+Finite CLI/agent Machine forwarding retains its original target and declares
+runtime need through the sealed V2 operand and signed execution binding. Home's
+existing finite-wake custody owner first verifies that the Action spec declares
+finite runtime demand before consuming the sealed flag; native power still
+requires managed access and Action policy. Send activates through its existing
+accepted-input owner. The receiving opener checks the declaration against the
+original Action spec. Invocation-private child ports
+never travel to another host.
+
+The shared native power owner inspects vendor power before Start or Resume.
+Confirmed-running resources skip native power and retain the existing guest
+daemon startup path. A stored running observation cannot hide a vendor-side stop.

@@ -16,7 +16,7 @@ import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationCont
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '@happier-dev/protocol/auth/authToken';
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
 import { CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
-import { ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionMachineRpcExecutionV1Schema, isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -1758,7 +1758,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             let finiteWake: Awaited<ReturnType<typeof prepareManagedFiniteActionWake>> | undefined;
             if (machinePrefix && verifiedExternalAction && externalActionExecution?.success
-                && Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, verifiedExternalAction.binding.actionId)) {
+                && isExternalActionManagedWakeRootV1(verifiedExternalAction.binding)) {
                 // Only the already verified original Action can prepare its stopped guest.
                 // Account CALL credentials alone never mint finite wake authority.
                 if (!cancellation) { callback?.(buildForbiddenRpcResponse()); return; }

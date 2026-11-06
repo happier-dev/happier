@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { Buffer } from "node:buffer";
 import type { FastifyRequest, RouteOptions } from "fastify";
 
@@ -265,7 +266,7 @@ describe("registerExternalActionRoutes", () => {
         const binding = { serverIdentityId: "srv_test", accountId: "account-1",
             credentialId: "00000000-0000-4000-8000-000000000001", actionId: "session.message.send",
             requestId: "private-relay", target };
-        const request = sealExternalActionRequestV2({ binding, material,
+        const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material,
             input: { sessionId: "session-1", message: "private-input-sentinel" },
             randomBytes: (length) => new Uint8Array(length).fill(2) });
         const prepared = prepareExternalActionResponseV2({ binding, material, request,

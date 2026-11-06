@@ -156,6 +156,9 @@ export async function createMachineWithInstallationIdentityInTx(
         : null;
 
     if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id);
+    const enrolled = await tx.machine.findUniqueOrThrow({ where: { id: machine.id }, select: {
+        managedResource: { select: { id: true, homeId: true } },
+    } });
     const child = await readMachineDevcontainerChildInTx(tx, machine.id);
     const access = await resolveMachineAccessInTx(tx, { actorAccountId: params.accountId, machineId: machine.id });
     const devcontainerChild = access?.accessState === 'ready' ? child : null;
@@ -168,7 +171,7 @@ export async function createMachineWithInstallationIdentityInTx(
     afterTx(tx, () => {
         // Legacy inventory subscribers cannot distinguish temporary Machines.
         if (isPersistentMachine(machine)) {
-            const newMachinePayload = buildNewMachineUpdate({ ...machine, devcontainerChild }, cursor.resolveCursor(), randomKeyNaked(12));
+            const newMachinePayload = buildNewMachineUpdate({ ...machine, managedResource: enrolled.managedResource, devcontainerChild }, cursor.resolveCursor(), randomKeyNaked(12));
             eventRouter.emitUpdate({
                 userId: params.accountId,
                 payload: newMachinePayload,

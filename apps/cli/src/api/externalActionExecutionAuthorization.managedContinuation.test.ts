@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { dispatchManagedMachineAdminAccess, verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolationInput,
     projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -71,7 +72,7 @@ describe('managed continuation through the ordinary public Action transport', ()
                 const binding = { serverIdentityId: 'srv_home', accountId: 'account',
                     actionId: 'machines.setup.adminAccess.set', requestId: bootstrapRetry ? 'retry' : 'creation', target: { kind: 'machine' as const, machineId: 'guest' },
                     authentication: { kind: 'account' as const, tokenEpoch: 2 } };
-                expect(openExternalActionRequestV2({ envelope: carrier.envelope, material, binding })?.input).toEqual(request);
+                expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: carrier.envelope, material, binding })?.input).toEqual(request);
                 expect(config?.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
                 return { status: 200, data: prepareExternalActionResponseV2({ binding, request: carrier.envelope, material,
                     randomBytes: length => new Uint8Array(length).fill(4), executedMachineId: 'guest',
@@ -244,7 +245,7 @@ describe('managed continuation through the ordinary public Action transport', ()
             const binding = { serverIdentityId: 'srv_home', accountId: 'account', authentication: { kind: 'account' as const, tokenEpoch: 2 },
                 actionId: 'machines.environment.apply', requestId: 'creation', target: { kind: 'machine' as const, machineId: 'guest' } };
             if (request.envelope.v !== 2) throw new Error('Expected sealed setup');
-            opened = openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input;
+            opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input;
             return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope, material,
                 randomBytes: length => new Uint8Array(length).fill(4), executedMachineId: 'guest',
                 execution: { ok: true, result: { operationId: 'setup-operation' } } }).response };
@@ -288,7 +289,7 @@ describe('managed continuation through the ordinary public Action transport', ()
             const binding = { serverIdentityId: root.binding.serverIdentityId, accountId: root.binding.accountId,
                 authentication: { kind: 'account' as const, tokenEpoch: 2 }, actionId: 'session.spawn_new',
                 requestId: request.envelope.requestId, target: { kind: 'machine' as const, machineId: 'guest' } };
-            openedInput = openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input;
+            openedInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input;
             admissionFacts = request.envelope.sessionSpawnAdmission;
             return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope,
                 material, randomBytes: length => new Uint8Array(length).fill(4), executedMachineId: 'guest',

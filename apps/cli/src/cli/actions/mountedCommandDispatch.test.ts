@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Buffer } from 'node:buffer';
 import nacl from 'tweetnacl';
@@ -86,7 +87,7 @@ describe('compiled mounted-client CLI command daemon ingress', () => {
         actionId: 'session.message.send' as const, requestId: envelope.requestId,
         target: { kind: 'session' as const, sessionId } };
       const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
-      const opened = openExternalActionRequestV2({ envelope, binding, material });
+      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material });
       expect(opened).not.toBeNull();
       const execution = await daemon.execute('session.message.send', opened!.input, {
         surface: 'cli', authority: 'present_user', actionRequestId: envelope.requestId,

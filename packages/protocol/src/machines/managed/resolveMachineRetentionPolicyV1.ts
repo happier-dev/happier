@@ -18,17 +18,32 @@ export function isMachineRetainedWakeEligibleV1(retention: RetentionV1, nativeCa
     && (!nativeCapabilities || nativeCapabilities.supportedIntents.some(intent => intent === 'start' || intent === 'resume'));
 }
 
+function isManagedMachineWakeTargetV1(machine: ManagedMachineV1, enrolledMachineId: string): boolean {
+  return machine.creationState === 'active' && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
+    && machine.allocation === 'bound' && Boolean(machine.resource) && machine.observation?.availability === 'present'
+    && machine.observation.storage !== 'lost' && machine.desired !== 'delete' && !machine.cleanup
+    && machine.submittedNativeEffect?.intent !== 'delete';
+}
+
 /** Current retained power facts, shared by INT presentation and finite placement; not dispatch authority. */
 export function resolveManagedMachineWakeStateV1(machine: ManagedMachineV1, enrolledMachineId: string): 'asleep' | 'starting' | null {
-  if (machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.enrolledMachineId !== enrolledMachineId
-    || machine.allocation !== 'bound' || !machine.resource || machine.observation?.availability !== 'present'
-    || machine.observation.storage === 'lost' || machine.desired === 'delete' || machine.cleanup
-    || machine.submittedNativeEffect?.intent === 'delete') return null;
-  if (machine.observation.power !== 'running' && machine.submittedNativeEffect?.intent === 'start') return 'starting';
-  return machine.observation.storage === 'retained'
+  if (!isManagedMachineWakeTargetV1(machine, enrolledMachineId)) return null;
+  if (machine.observation?.power !== 'running'
+    && (machine.submittedNativeEffect?.intent === 'start' || machine.submittedNativeEffect?.intent === 'resume')) return 'starting';
+  return machine.observation?.storage === 'retained'
     && (machine.observation.power === 'stopped' || machine.observation.power === 'suspended')
-    && machine.wakeOnAcceptedMessage && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities)
+    && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities)
     ? 'asleep' : null;
+}
+
+/** Offline runtime demand must not trust a retained running observation after a vendor stop. */
+export function isManagedMachineWakeInspectionRequiredV1(machine: ManagedMachineV1, enrolledMachineId: string,
+  machineReachable: boolean): boolean {
+  const state = resolveManagedMachineWakeStateV1(machine, enrolledMachineId);
+  return state === 'asleep' || state !== 'starting' && !machineReachable
+    && isManagedMachineWakeTargetV1(machine, enrolledMachineId)
+    && machine.observation?.storage === 'retained' && machine.observation.power === 'running'
+    && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities);
 }
 
 type RetentionEffectV1 = Extract<RetentionV1, { effect: unknown }>['effect'];

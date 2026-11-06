@@ -59,9 +59,14 @@ import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachi
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
+import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { PendingActivationHoldReasonV1Schema, ManagedPendingActivationFailureRequestV1Schema,
     PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { markPendingActivationAuthorizationFailedInTx, mapPendingActivationAuthorization } from '@/app/session/pending/pendingActivationAuthorization';
+import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 
 describe('finite managed wake original Action authority (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -156,10 +161,11 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
     });
 
     it.each([
-        { power: 'stopped', wakeOnAcceptedMessage: true, arms: true },
-        { power: 'running', wakeOnAcceptedMessage: true, arms: false },
-        { power: 'stopped', wakeOnAcceptedMessage: false, arms: false },
-    ] as const)('keeps collaborator input queued unless managed wake applies ($power, wake=$wakeOnAcceptedMessage)', async ({ power, wakeOnAcceptedMessage, arms }) => {
+        { power: 'stopped', reachable: false, wakeOnAcceptedMessage: true, arms: true },
+        { power: 'running', reachable: true, wakeOnAcceptedMessage: true, arms: false },
+        { power: 'running', reachable: false, wakeOnAcceptedMessage: true, arms: true },
+        { power: 'stopped', reachable: false, wakeOnAcceptedMessage: false, arms: false },
+    ] as const)('keeps collaborator input queued unless managed wake applies ($power, reachable=$reachable, wake=$wakeOnAcceptedMessage)', async ({ power, reachable, wakeOnAcceptedMessage, arms }) => {
         const test = await setup();
         await db.managedMachine.update({ where: { id: test.row.id }, data: { wakeOnAcceptedMessage,
             observation: { observedAt: 1, availability: 'present', power, storage: 'retained' },
@@ -169,7 +175,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         expect(projectManagedMachine(managed).submittedNativeEffect).toBeUndefined();
         const collaborator = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.machine.update({ where: { id: test.guest.id }, data: {
-            active: power === 'running',
+            active: reachable,
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
         } });
         const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
@@ -199,6 +205,18 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 status: 'queued', deliveryState: null, content: input.content }] });
             expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request: { homeId,
                 controller: { machineId: test.controller.id, installationId: test.controller.installationId! } } })).targets).toHaveLength(arms ? 1 : 0);
+            if (arms) {
+                await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                    observation: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' },
+                } });
+                await db.machine.update({ where: { id: test.guest.id }, data: { active: true } });
+                expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request: { homeId,
+                    controller: { machineId: test.controller.id, installationId: test.controller.installationId! } } })).targets).toEqual([]);
+                await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                    observation: { observedAt: 3, availability: 'present', power, storage: 'retained' },
+                } });
+                await db.machine.update({ where: { id: test.guest.id }, data: { active: reachable } });
+            }
             expect(await updatePendingRequestedAction({ ...input, requestedAction: { v: 1, kind: 'enqueue' },
                 resumeWhenAvailable: true })).toMatchObject({ ok: true });
             expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingActivationRequestId)
@@ -427,6 +445,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             await db.managedMachine.update({ where: { id: test.row.id }, data: { observation: {
                 observedAt: 20, availability: 'present', power: 'running', storage: 'retained', daemon: 'connected',
             } } });
+            await db.machine.update({ where: { id: test.guest.id }, data: { active: true } });
             const running = await listPendingMessages(input);
             if (!running.ok) throw new Error('Accepted queue disappeared');
             expect(running.pending[0]).not.toHaveProperty('activationHoldReason');
@@ -468,6 +487,9 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             resolveCurrentSessionMachineFromServer({ io, presence, ...params });
         app.decorate('resolveCurrentSessionMachine', resolveSource);
         sessionPendingRoutes(app);
+        registerSessionListingRoutes(app);
+        registerAccountEncryptionRoutes(app);
+        machinesRoutes(app);
         try {
             expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
             const first = await db.session.findUniqueOrThrow({ where: { id: session.id } });
@@ -479,6 +501,8 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             const importCli = async <T,>(path: string) => await import(path) as T;
             const { createCliActionDeps } = await importCli<{ createCliActionDeps: (options: unknown) => ActionExecutorDeps }>(
                 '../../../../../cli/src/session/actions/createCliActionDeps');
+            const { runWithServerHttpBaseUrl } = await importCli<{ runWithServerHttpBaseUrl: <T>(url: string, run: () => T) => T }>(
+                '../../../../../cli/src/api/client/serverHttpBaseUrl');
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
             const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
             const actionId = ActionIdSchema.parse('session.pending.action.set');
@@ -501,17 +525,19 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: actionInput }) },
                 { resolveCurrentSessionMachine: resolveSource });
             const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+                defaultSessionId: sourceSession.id,
                 externalActionTarget: target, externalActionExecutionAuthorization: authorization,
                 actionCaller: sessionActionOrigin.caller, actionsSettings: normalizeActionsSettingsV1({ v: 1,
                     approvalWaivedSurfaces: { [actionId]: ['agent'] } }) };
             const missing = createActionExecutor({ ...deps, sessionPendingActionSet: undefined });
-            expect(await missing.execute(actionId, actionInput, context)).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+            expect(await runWithServerHttpBaseUrl(origin, () => missing.execute(actionId, actionInput, context)))
+                .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(before);
             const executor = createActionExecutor(deps);
-            expect(await executor.execute(actionId, actionInput, { ...context, actionsSettings: normalizeActionsSettingsV1({ v: 1,
-                actions: { [actionId]: { enabled: false } } }) })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(await runWithServerHttpBaseUrl(origin, () => executor.execute(actionId, actionInput, { ...context, actionsSettings: normalizeActionsSettingsV1({ v: 1,
+                actions: { [actionId]: { enabled: false } } }) }))).toMatchObject({ ok: false, errorCode: 'action_disabled' });
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(before);
-            const result = await executor.execute(actionId, actionInput, context);
+            const result = await runWithServerHttpBaseUrl(origin, () => executor.execute(actionId, actionInput, context));
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { didUpdate: true, requestedAction: input.requestedAction } });
             if (!result.ok) throw new Error('Expected same-input rearm');
             getActionSpec(actionId).outputSchema!.parse(result.result);
@@ -528,8 +554,8 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 .toMatchObject({ desired: 'stop', intentRevision: test.row.intentRevision });
             // A retained signed root cannot outlive its installed signer.
             await db.machine.update({ where: { id: test.guest.id }, data: { installationId: randomUUID() } });
-            expect(await executor.execute(actionId, actionInput, context))
-                .toMatchObject({ ok: false, errorCode: 'action_failed' });
+            expect(await runWithServerHttpBaseUrl(origin, () => executor.execute(actionId, actionInput, context)))
+                .toMatchObject({ ok: false, errorCode: 'ERR_BAD_REQUEST' });
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(retried);
         } finally { await app.close(); restoreEnv(envBefore); }
     });
@@ -956,7 +982,77 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         } finally { await app.close(); }
     });
 
-    it('preserves both installed custody boxes and the original root through actual finite wake and guest relay', async () => {
+    it('leaves passive file discovery asleep through the real Home route', async () => {
+        const test = await setup();
+        const methods: string[] = [];
+        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
+            methods.push(request.method);
+            throw new Error('Passive discovery must not contact the stopped guest or its controller');
+        } });
+        const token = await auth.createToken(test.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app); registerExternalActionRoutes(app, { dispatch });
+        await app.ready();
+        try {
+            const result = await app.inject({ method: 'POST', url: '/v1/actions/daemon.filesystem.listDirectory',
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${token}` },
+                payload: { v: 1, requestId: test.requestId, target: { kind: 'machine', machineId: test.guest.id },
+                    input: { rootPath: '/work', path: '.' } } });
+            expect(result.json()).toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
+            expect(methods).toEqual([]);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).desired).toBe('stop');
+        } finally { await app.close(); }
+    });
+
+    it('leaves a restricted passive PAT read asleep when its sealed envelope forges runtime demand', async () => {
+        const test = await setup();
+        const keys = tweetnacl.box.keyPair();
+        const requester = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(keys.publicKey) } });
+        for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: test.account.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin',
+        }));
+        const actionId = 'daemon.filesystem.listDirectory' as const;
+        const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] },
+            targets: { sessions: [], machines: [test.guest.id] } };
+        const pat = await auth.createApiToken({ accountId: requester.id, tokenId: randomUUID(), label: 'passive only', grant });
+        const envelope = { ...sealExternalActionRequestV2({
+            binding: { serverIdentityId: homeId, accountId: requester.id, credentialId: pat.tokenId,
+                actionId, requestId: test.requestId, target: { kind: 'machine', machineId: test.guest.id } },
+            input: { rootPath: '/work', path: '.' },
+            material: { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) }, randomBytes: tweetnacl.randomBytes,
+            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        }), machineRuntimeDemand: 'required' as const };
+        const methods: string[] = [];
+        const admittedRoots: ExternalActionExecutionAuthorizationV1[] = [];
+        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
+            methods.push(request.method);
+            if (request.method === `${test.controller.id}:${MANAGED_FINITE_WAKE_RPC_METHOD}`) {
+                const root = ExternalActionExecutionAuthorizationV1Schema.parse(
+                    (request.callParams as { actionOrigin: unknown }).actionOrigin);
+                await test.check(root);
+                admittedRoots.push(root);
+            }
+            return { ok: false, error: 'passive_guest_unavailable' };
+        } });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app); registerExternalActionRoutes(app, { dispatch });
+        await app.ready();
+        try {
+            const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${pat.token}` },
+                payload: envelope });
+            expect(response.json()).toMatchObject({ code: 'target_unavailable' });
+            expect(admittedRoots.map(root => ({ actionId: root.binding.actionId, credentialId: root.binding.credentialId })))
+                .toEqual([]);
+            expect(methods).toEqual([]);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).desired).toBe('stop');
+        } finally { await app.close(); }
+    });
+
+    it.each(['projects.script.run', 'daemon.filesystem.readFile', 'session.open'] as const)('preserves both installed custody boxes and the original root through actual %s wake and guest relay', async actionId => {
         const test = await setup();
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         for (const machine of [test.controller, test.guest]) {
@@ -964,8 +1060,20 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
         }
         const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const session = actionId === 'session.open' ? await db.session.create({ data: {
+            accountId: requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false,
+        } }) : undefined;
+        if (session) {
+            expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: requester.id,
+                sessionId: session.id, machineId: test.guest.id, data: 'opaque-session-key' }))).toMatchObject({ ok: true });
+            await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+                homeId, accountId: requester.id, sessionId: session.id,
+                machineId: test.guest.id, installationId: test.guest.installationId!,
+            } } });
+        }
         const envelope = { v: 1 as const, requestId: test.requestId,
-            target: { kind: 'machine' as const, machineId: test.guest.id }, input: { retained: 'original private finite request' } };
+            target: session ? { kind: 'session' as const, sessionId: session.id } : { kind: 'machine' as const, machineId: test.guest.id },
+            input: session ? { sessionId: session.id, intent: 'resume' } : { rootPath: '/work', path: 'original-private-file' } };
         let carrier: ExternalActionExecutionAuthorizationV1 | undefined;
         const methods: string[] = [];
         const boundaryErrors: unknown[] = [];
@@ -983,7 +1091,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 expect(request.callParams).toMatchObject({ envelope, executionAuthorization: carrier,
                     principal: { accountId: requester.id, authority: 'present_user' } });
                 return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
-                    v: 1, actionId: 'projects.script.run', requestId: test.requestId, execution: { ok: true, result: { ran: true } },
+                    v: 1, actionId, requestId: test.requestId, execution: { ok: true, result: { ran: true } },
                 })) };
             } catch (error) { boundaryErrors.push(error); throw error; }
         } });
@@ -993,7 +1101,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         await app.ready();
         try {
             const headers = { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${token}` };
-            const minted = await app.inject({ method: 'POST', url: '/v1/actions/projects.script.run/execution-authorization',
+            const minted = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
                 headers, payload: { v: 1, machineId: test.guest.id, envelope } });
             expect(minted.statusCode, minted.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
@@ -1003,7 +1111,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 managedFiniteWake: { ...root.managedFiniteWake, requesterAccountContext: {
                     kind: 'installation_sealed_v1', installationId: root.managedFiniteWake.target.controller.installationId, ciphertext: 'controller_box',
                 } } };
-            const result = await app.inject({ method: 'POST', url: '/v1/actions/projects.script.run', headers,
+            const result = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers,
                 payload: { v: 1, machineId: test.guest.id, envelope, executionAuthorization: carrier } });
             if (boundaryErrors.length > 0) throw boundaryErrors[0];
             expect(result.statusCode, result.body).toBe(200);
@@ -1080,14 +1188,20 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         expect(methods).toHaveLength(1);
     });
 
-    it.each(['current', 'publisher-during-eligibility'] as const)('preserves the original signed Socket finite custody carrier and refuses retired Session authority (%s)', async disposition => {
+    it.each([
+        { actionId: 'projects.script.run', disposition: 'current' },
+        { actionId: 'projects.script.run', disposition: 'publisher-before-wake' },
+        { actionId: 'daemon.filesystem.readFile', disposition: 'current' },
+    ] as const)('preserves the original signed Socket finite custody carrier and refuses retired Session authority ($actionId/$disposition)', async ({ actionId, disposition }) => {
         const test = await setup();
         const envBefore = snapshotEnv();
         applyEnvValues({ AUTH_REQUIRED_LOGIN_PROVIDERS: '', AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: '0' });
         const methods: string[] = [];
         const boundaryErrors: unknown[] = [];
-        const original = { opaque: 'same caller-owned Project input' };
-        const guestMethod = `${test.guest.id}:${RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN}`;
+        const original = actionId === 'daemon.filesystem.readFile' ? { rootPath: '/workspace', path: 'retained.txt' }
+            : { opaque: 'same caller-owned Project input' };
+        const guestMethod = `${test.guest.id}:${actionId === 'daemon.filesystem.readFile'
+            ? RPC_METHODS.DAEMON_FILESYSTEM_READ_FILE : RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN}`;
         const wakeMethod = `${test.controller.id}:${MANAGED_FINITE_WAKE_RPC_METHOD}`;
         const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
             metadata: '{}', encryptionMode: 'plain', active: true, lastActiveAt: new Date() } });
@@ -1102,7 +1216,6 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         let carrier: ExternalActionExecutionAuthorizationV1 | undefined;
         let initialEligibilityReached = false;
         let wakeEligibilityDue = false;
-        let wakeEligibilityReached = false;
         const controllerSocket = { id: 'finite-controller', data: { clientType: 'machine-scoped', userId: test.account.id,
             machineId: test.controller.id, verifiedMachineInstallationId: test.controller.installationId }, timeout: () => ({
             emitWithAck: async (_event: string, request: { method: string; params: { actionOrigin: ExternalActionExecutionAuthorizationV1 } }) => {
@@ -1125,12 +1238,13 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         const io = createSocketRoomDiscoveryHarness(async room => {
             if (room === getAccountSessionSocketRoom(test.account.id, session.id)) {
                 if (initialEligibilityReached && !wakeEligibilityDue) {
-                    // The original RPC verifier has completed real eligibility
-                    // before its final source read. Make the persisted offboarding
-                    // check due before wake's separate eligibility await.
+                    // The original RPC verifier has admitted the principal. Its
+                    // source boundary still observes a retired publisher before
+                    // any controller effect, without re-admitting the principal.
                     await db.accountIdentity.updateMany({ where: { accountId: test.account.id, provider: 'github' },
                         data: { eligibilityNextCheckAt: new Date(0) } });
                     wakeEligibilityDue = true;
+                    if (disposition === 'publisher-before-wake') publisherVisible = false;
                 }
                 return publisherVisible ? [publisher] : [];
             }
@@ -1159,10 +1273,10 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             const source = { machineId: test.controller.id, installationId: test.controller.installationId! };
             const installationProof = signMachineInstallationProof({ privateKey: test.controllerKeys.secretKey,
                 payload: { version: 1, accountId: test.account.id, ...source, externalActionOrigin: { homeId,
-                    actionId: 'projects.script.run', requestId: test.requestId,
+                    actionId, requestId: test.requestId,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
             const token = await auth.createToken(test.account.id, undefined, { kind: 'account', authority: 'present_user' });
-            const minted = await app.inject({ method: 'POST', url: '/v1/actions/projects.script.run/execution-authorization',
+            const minted = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
                 headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${token}` },
                 payload: { v: 1, machineId: test.guest.id, envelope, sessionActionOrigin: origin,
                     sessionActionSource: source, installationProof } });
@@ -1182,24 +1296,19 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             applyEnvValues({ AUTH_REQUIRED_LOGIN_PROVIDERS: 'github', AUTH_GITHUB_ALLOWED_USERS: '',
                 AUTH_GITHUB_ALLOWED_ORGS: 'finite-requesters', AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: 'oauth_user_token',
                 AUTH_OFFBOARDING_ENABLED: 'true' });
-            // Retire only at the demonstrably due wake eligibility boundary,
-            // after the real original RPC/source verification has succeeded.
+            // Eligibility is evaluated once at original Socket admission.
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
                 expect(String(url)).toBe(`https://api.github.com/orgs/finite-requesters/members/${providerLogin}`);
-                if (!initialEligibilityReached) initialEligibilityReached = true;
-                else {
-                    expect(wakeEligibilityDue).toBe(true);
-                    wakeEligibilityReached = true;
-                    if (disposition === 'publisher-during-eligibility') publisherVisible = false;
-                }
+                expect(initialEligibilityReached).toBe(false);
+                initialEligibilityReached = true;
                 return new Response(null, { status: 204 });
             });
             restoreFetch = () => fetchSpy.mockRestore();
-            const execution = { v: 1 as const, authorization: carrier, effectActionId: 'projects.script.run',
+            const execution = { v: 1 as const, authorization: carrier, effectActionId: actionId,
                 target: carrier.binding.target, installationId: test.guest.installationId!,
                 machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: carrier.token,
                     requesterAccountContext: carrier.requesterAccountContext,
-                    effectActionId: 'projects.script.run', target: carrier.binding.target,
+                    effectActionId: actionId, target: carrier.binding.target,
                     installationId: test.guest.installationId!, requestId: test.requestId, method: guestMethod,
                     params: original, privateKey: test.controllerKeys.secretKey }),
             };
@@ -1208,7 +1317,8 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 params: original, externalActionExecution: execution }, (value: unknown) => { response = value; });
             if (boundaryErrors.length > 0) throw boundaryErrors[0];
             expect(wakeEligibilityDue, JSON.stringify({ initialEligibilityReached, response, methods })).toBe(true);
-            expect(wakeEligibilityReached).toBe(true);
+            expect(initialEligibilityReached).toBe(true);
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
             if (disposition === 'current') {
                 expect(response).toEqual({ ok: true, result: { completed: true } });
                 expect(methods).toEqual([wakeMethod, guestMethod]);

@@ -1,3 +1,5 @@
+import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
+import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
 
 
 
@@ -291,6 +293,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     await params.resolveServerFeaturesSnapshot?.();
   const projectHomeId = params.serverId ?? configuration.activeServerId;
   const actionHomeId = params.serverIdentityId ?? projectHomeId;
+  const localMachineId = params.machineActionDirectTargetTransport?.machineId
+    ?? params.sessionSpawnDirectTargetTransport?.machineId;
   const { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact } = createCliProjectAdmission(params, { projectHomeId, actionHomeId, executionRunActionFailure });
 
   const isSameActionHomeId = (serverId: string) => areServerProfileIdentifiersEquivalent(actionHomeId, serverId, identifier =>
@@ -1390,6 +1394,22 @@ export function createCliActionDeps(params: CliActionDepsParams,
       || request.context.externalActionExecutionAuthorization?.binding.workflowActionOrigin
       || request.context.externalActionExecutionAuthorization?.binding.managedContinuation
       ? machineDeps.machineSetupApply!(request) : setupDeps.machineSetupApply!(request),
+    prepareHostReviewedChildren: async request => {
+      const wake = await prepareCliManagedMachineWake(request, {
+        localMachineId,
+        provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
+        managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
+        readSessionMachineId: async (target, context) => {
+          const transport = await resolveTransportForSession(target.sessionId, context.signal,
+            { actionId: request.actionId, context }, context.expectedSessionAddress);
+          if (!transport.ok) return executionRunActionFailure(transport.code);
+          return resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
+            decryptedMetadata: readTransportSessionOwnerMetadata(transport) });
+        },
+      });
+      if (wake) return wake;
+      return await params.prepareHostReviewedChildren?.(request) ?? null;
+    },
     buildApprovalPreview: approvalActionDeps.buildApprovalPreview,
     settingsDeclarationAction: settingsDeps.settingsDeclarationAction,
     resetGlobalVoiceAgent: () => {},

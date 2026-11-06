@@ -2,6 +2,69 @@ import type { ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS } from '@happier-dev/cli-common/connectedAccounts';
 
+/** Passed by the suite's hoisted packaged-inventory and native asset IO mocks. */
+export type ConnectedAccountAuthenticationPackagedBoundary = {
+    artifacts: unknown[];
+    declarations: unknown[];
+    files: Map<number, Uint8Array>;
+    reads: number;
+};
+
+const { compileUniversalPluginUiCommonJs } = await import('../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler');
+
+/** Packaged inventory is the boundary; normalization and compilation stay real. */
+export async function prepareAuthenticationInventory(packaged: ConnectedAccountAuthenticationPackagedBoundary,
+    input: Readonly<{ manifest: unknown; target: Readonly<{ artifactId: string; exportName: string }>;
+        projectPath: string; entryPath: string; packageName: string;
+        additionalArtifacts?: readonly Readonly<{ target: Readonly<{ artifactId: string; exportName: string }>; entryPath: string }>[];
+        deferDeclaration?: boolean; onDeclarationLoad?: () => void }>) {
+    const { resolve } = await import('node:path');
+    const { readWorkspacePackages, packageNameOfSpecifier, resolveWorkspaceSource } = await import('../../../../../../packages/cli-common/sourceRuntimeEntries.mjs');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+    const { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
+        PluginUiArtifactsManifestEntryV2Schema } = await import('@happier-dev/protocol/plugins/ui');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(input.manifest);
+    const root = resolve(import.meta.dirname, '../../../../../..');
+    const packages = await readWorkspacePackages(root);
+    const graphs: ReturnType<typeof PluginUiArtifactsManifestEntryV2Schema.parse>[] = [];
+    for (const artifact of [{ target: input.target, entryPath: input.entryPath }, ...(input.additionalArtifacts ?? [])]) {
+        const compiled = await compileUniversalPluginUiCommonJs({
+            projectRoot: resolve(root, input.projectPath), entryPath: resolve(root, artifact.entryPath),
+            artifactId: artifact.target.artifactId, requestedExports: [artifact.target.exportName], exportConditions: ['happier-source'],
+            resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
+                ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+        });
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: compiled.artifactId, tier: 'reactNative',
+            entry: compiled.relativePath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: compiled.relativePath, bytes: compiled.bytes }]),
+            files: [{ relativePath: compiled.relativePath, digest: computePluginUiArtifactSha256DigestV1(compiled.bytes), byteSize: compiled.bytes.length }],
+            builtWith: { bundler: 'esbuild', version: compiled.esbuildVersion }, executable: { exports: compiled.exports }, hostUiApiRange: '^1.0.0' });
+        const asset = packaged.files.size + 1;
+        packaged.files.set(asset, compiled.bytes);
+        packaged.artifacts.push({ pluginId: manifest.id, artifactId: graph.artifactId, tier: 'reactNative',
+            digest: graph.digest, releaseVersion: manifest.version, artifactGraph: graph,
+            files: [{ relativePath: compiled.relativePath, asset }] });
+        graphs.push(graph);
+    }
+    const declaration = { pluginId: manifest.id, pluginVersion: manifest.version, displayName: 'Public authentication',
+        packageName: input.packageName, normalizedManifest: manifest,
+        entriesById: projectPluginPortableUiDeclarationsV1(manifest, graphs), artifactGraphs: graphs };
+    if (input.deferDeclaration) {
+        const empty = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: manifest.id,
+            version: manifest.version, displayName: manifest.displayName, runtime: { apiVersion: 1 }, contributes: {} });
+        const { connectedAccountDescriptors: _descriptors, ...otherContributions } = manifest.contributes;
+        const { connectedAccountDescriptors: _emptyDescriptors, ...emptyContributions } = empty.contributes;
+        if (JSON.stringify(otherContributions) !== JSON.stringify(emptyContributions)) {
+            throw new Error('Deferred authentication presentation fixture must be descriptor-only');
+        }
+        // This descriptor-only presentation equals the admitted manifest;
+        // every unrelated contribution family has its canonical empty value.
+        packaged.declarations.push({ ...declaration, normalizedManifest: undefined, presentationManifest: manifest,
+            loadDeclaration: async () => { input.onDeclarationLoad?.(); return declaration; } });
+    } else packaged.declarations.push(declaration);
+    return { pluginId: manifest.id, localId: 'example' };
+}
+
 /** Stateful HTTP/database boundary for the actual addressed transaction API. */
 export async function answerAttemptTransaction(request: URL, init: RequestInit | undefined,
     transactions: Map<string, ConnectedAccountAttemptTransactionRecord>): Promise<Response | null> {

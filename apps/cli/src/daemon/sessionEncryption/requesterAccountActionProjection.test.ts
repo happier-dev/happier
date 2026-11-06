@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
@@ -412,7 +413,7 @@ describe('admitted requester Action projection', () => {
       } });
       if (envelope.v === 2) {
         if (credentials.encryption?.type !== 'legacy') throw new Error('Expected fixture encryption material');
-        expect(openExternalActionRequestV2({ envelope, binding: { serverIdentityId: 'srv_fx45_home', accountId: 'bob',
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: { serverIdentityId: 'srv_fx45_home', accountId: 'bob',
           authentication: { kind: 'account', tokenEpoch: 7 }, actionId: 'session.message.send', requestId: 'correction', target },
           material: { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(credentials.encryption.secret) } }))
           .toEqual({ input });
@@ -645,7 +646,7 @@ describe('admitted requester Action projection', () => {
       const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
       const binding = { accountId: 'bob', credentialId: '00000000-0000-4000-8000-000000000018', actionId: 'browser.diagnostics.snapshot',
         requestId: 'fx18-test-request', serverIdentityId: 'srv_fx18_test_home', target: { kind: 'machine' as const, machineId: 'machine' } };
-      const envelope = sealExternalActionRequestV2({ binding, material, randomBytes: nacl.randomBytes,
+      const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: nacl.randomBytes,
         input: { browserSessionId: 'test-browser', viewId: 'test-view' } });
       const grant = ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: [binding.actionId] },
         targets: { sessions: [], machines: ['machine'] }, approve: false, origins: [], models: null,

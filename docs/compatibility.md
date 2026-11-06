@@ -5625,3 +5625,15 @@ Older strict readers reject the new field; new readers accept its absence withou
 inventing an address. This is an in-place development change with no persisted
 format change, migration or protocol epoch. UUID-only administration keeps its
 existing lifecycle-index lookup.
+
+## Machine managed-resource classification (unreleased 0.3)
+
+Current Home Machine rows publish `managedMachineRef` as an exact
+`{ homeId, managedId }` or null. Readers accept the omitted field emitted by
+supported 0.2 Homes as null through the canonical Protocol read projection;
+explicit malformed references still fail parsing. The strict current published
+row writer requires the field. Cached UI rows may retain unknown until the exact
+canonical read. Omission in a legacy full row has ordinary-Machine meaning:
+the inspected 0.2 frontier `1321319f311da3d44931afd39eeac7252b6350a4` has no
+managed-resource producer. This preserves the Home-presence coexistence contract
+above; it does not promise managed wake against an older development Home.

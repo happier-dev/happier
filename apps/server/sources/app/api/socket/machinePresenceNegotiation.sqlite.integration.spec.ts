@@ -15,7 +15,8 @@ describe('Home-owned Machine presence publication (real SQLite)', () => {
     it('keeps Home-owned presence through host selection and new-Machine publication', async () => {
         const owner = await db.account.create({ data: {} });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
-            metadata: 'metadata', active: true, lastActiveAt: new Date(100_000) } });
+            metadata: 'metadata', active: true, lastActiveAt: new Date(100_000) },
+            include: { managedResource: { select: { id: true, homeId: true } } } });
         const access = { custodian: { accountId: owner.id, displayName: 'Owner' }, role: 'manage' as const,
             resourceMode: 'plain' as const, accessState: 'ready' as const };
         const host = serializeMachineHostFacts(machine, access);
@@ -33,7 +34,8 @@ describe('Home-owned Machine presence publication (real SQLite)', () => {
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             installationId: 'presence-installation', metadata: 'metadata', active: true, lastActiveAt: new Date(100_000) } });
         const read = async () => MachinePublishedRowV1Schema.parse(serializeMachineRow(
-            await db.machine.findUniqueOrThrow({ where: { id: machine.id } })));
+            await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                include: { managedResource: { select: { id: true, homeId: true } } } })));
         // The Home owns the timeout even when a 0.2 daemon cannot advertise capabilities.
         expect(isMachineOnlineV1({ ...await read(), active: true }, 160_001)).toBe(true);
         const admitted = await read();

@@ -31,6 +31,7 @@ import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { withAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { machinesRoutes } from './machinesRoutes';
+import { invalidateManagedMachineInTx } from '@/app/machines/managed/managedRows';
 
 vi.mock('axios', async importOriginal => {
     const actual = await importOriginal<typeof import('axios')>();
@@ -66,6 +67,38 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         } });
         return { owner, recipient, other, machine };
     }
+
+    it('publishes enrollment identity changes to the existing Machine refresh feed in both directions', async () => {
+        const { owner, machine } = await fixture();
+        const managed = await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        } });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            let cursor = 0;
+            for (const enrolledMachineId of [machine.id, null]) {
+                await inTx(async tx => {
+                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                    await tx.managedMachine.update({ where: { id: managed.id }, data: { enrolledMachineId } });
+                    await invalidateManagedMachineInTx(tx, previous);
+                });
+                const changed = await db.accountChange.findFirst({ where: {
+                    accountId: owner.id, kind: 'machine', entityId: machine.id,
+                } });
+                expect(changed?.cursor).toBeGreaterThan(cursor);
+                cursor = changed!.cursor;
+                const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: {
+                    ...headers(owner.id), accept: 'application/json;happier-machine-projection=host-facts',
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ machine: { managedMachineRef: enrolledMachineId === null
+                    ? null : { homeId: managed.homeId, managedId: managed.id } } });
+            }
+        });
+    });
 
     it('acquires recipient-work facts for UI census reads but not API-token bootstrap', async () => {
         const keys = tweetnacl.box.keyPair();

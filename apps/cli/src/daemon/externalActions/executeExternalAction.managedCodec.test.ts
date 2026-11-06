@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '@happier-dev/protocol';
 import axios from 'axios';
@@ -39,7 +40,7 @@ describe('managed controller invocation codec', () => {
       actionId, requestId: 'codec-inspect', target };
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
     const envelope = ExternalActionRequestEnvelopeSchema.parse(accountEncryptionMode === 'e2ee'
-      ? sealExternalActionRequestV2({ binding, material, input: actionInput, randomBytes: tweetnacl.randomBytes })
+      ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: actionInput, randomBytes: tweetnacl.randomBytes })
       : { v: 1 as const, requestId: binding.requestId, target, input: actionInput });
     const authorization = sealManagedControllerActionCodecV1({ authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-managed-root', binding: {
       ...binding, custodianAccountId: 'company', accountEncryptionMode,

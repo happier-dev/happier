@@ -982,8 +982,10 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.post.mock.calls).toEqual([]);
     });
 
-    it('retains the original finite wake authority in every signed native policy phase', async () => {
-        const test = setup(undefined, undefined, 'start', { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' });
+    it.each(['project-machine', 'demanded-session'] as const)('retains the original finite wake authority in every signed native policy phase (%s)', async root => {
+        const observation: ProviderObservationV1 = { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' };
+        const test = setup(undefined, undefined, 'start', observation,
+            () => Object.assign(observation, { observedAt: 2, power: 'running' }));
         test.setMachine({ wakeOnAcceptedMessage: true });
         const machine = test.readMachine();
         // Only Home/native network boundaries are substituted. This is the exact
@@ -991,15 +993,25 @@ describe('managed native intent through the accepted Action', () => {
         const actionOrigin = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-finite-authority', binding: {
             accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
             accountEncryptionMode: 'plain', machineId: 'guest', installationId: 'guest-installation', serverIdentityId: machine.homeId,
-            actionId: 'projects.script.run', requestId: 'original-finite', requestEnvelopeDigest: 'a'.repeat(43),
-            target: { kind: 'machine', machineId: 'guest' },
+            actionId: root === 'demanded-session' ? 'session.open' : 'projects.script.run',
+            requestId: 'original-finite', requestEnvelopeDigest: 'a'.repeat(43),
+            ...(root === 'demanded-session' ? { machineRuntimeDemand: 'required', target: { kind: 'session', sessionId: 'sleeping-session' } }
+                : { target: { kind: 'machine', machineId: 'guest' } }),
         } });
         const target = { homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
             expectedIntentRevision: machine.intentRevision, controller: machine.controller,
             origin: { kind: 'finite-command' as const, actionRequestId: actionOrigin.binding.requestId }, reason: 'admitted-work' as const };
+        if (root === 'demanded-session') {
+            const passiveOrigin = ExternalActionExecutionAuthorizationV1Schema.parse({ ...actionOrigin,
+                binding: { ...actionOrigin.binding, machineRuntimeDemand: undefined } });
+            await expect(test.driver.executePolicy(machine, { kind: 'accepted-input-start', target },
+                { ...test.options, actionOrigin: passiveOrigin })).rejects.toMatchObject({ code: 'admission_unavailable' });
+            expect(test.effects).toEqual([]);
+            expect(test.post).not.toHaveBeenCalled();
+        }
         await expect(test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, { ...test.options, ...{ actionOrigin } }))
             .resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
-        expect(test.effects).toEqual(['power']);
+        expect(test.effects).toEqual(['power', 'bootstrap']);
         const phases = test.post.mock.calls.filter(([url]) => ['/admit-policy', '/current', '/submit-intent', '/report-intent']
             .some(phase => String(url).endsWith(phase)));
         expect(phases.length).toBeGreaterThan(2);

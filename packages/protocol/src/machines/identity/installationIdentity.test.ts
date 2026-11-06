@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '../../actions/actionSpecs.js';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
 
@@ -59,7 +60,7 @@ describe('machine installation identity protocol', () => {
         const input = { serverId: homeId, machineId: target.machineId, source: { kind: 'workspace', workspaceId: 'source-ref' },
             materialization: { kind: 'sync', targetPath: '/child/target', workspaceAction: { kind: 'copy_once' } } };
         const originalActionEnvelope = version === 1 ? { v: 1 as const, requestId: 'original-open', target, input }
-            : sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: 'requester',
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: 'requester',
                 credentialId: '11111111-1111-4111-8111-111111111111', actionId: 'projects.open', requestId: 'original-open', target },
                 input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(25) }, randomBytes: tweetnacl.randomBytes });
         const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'canonical-project-wire-root', binding: {

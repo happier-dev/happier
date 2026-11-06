@@ -129,12 +129,18 @@ function isMachineRevokedError(value: unknown): value is { error: 'machine_revok
 }
 
 async function serializeMachineRowForRequest(
-    row: MachineSerializationRow,
+    row: Omit<MachineSerializationRow, 'managedResource'>,
     request: FastifyRequest,
     storageMode?: "plain" | "e2ee",
 ) {
-    return serializeMachineRow(row, {
-        devcontainerChild: await inTx(tx => readMachineDevcontainerChildInTx(tx, row.id)),
+    const projection = await inTx(async tx => ({
+        machine: await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
+            managedResource: { select: { id: true, homeId: true } },
+        } }),
+        devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
+    }));
+    return serializeMachineRow({ ...row, managedResource: projection.machine.managedResource }, {
+        devcontainerChild: projection.devcontainerChild,
         ...(storageMode ? { storageMode } : {}),
         recipientAccountStoredContentProtocolVersion:
             readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -528,7 +534,7 @@ export function machinesRoutes(app: Fastify) {
             log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
 
             type UpdatedMachineRow =
-                | Parameters<typeof serializeMachineRow>[0]
+                | Parameters<typeof serializeMachineRowForRequest>[0]
                 | null
                 | { error: 'machine_revoked' }
                 | { error: 'invalid_installation_identity'; reason: string }

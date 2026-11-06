@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
@@ -171,7 +172,7 @@ describe('original CLI Account finite Project admission', () => {
       if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
       expect(url).toBe('https://home-a.test/v1/actions/projects.prepare/execution-authorization');
       const envelope = ExternalActionRequestEnvelopeV2Schema.parse((body as Readonly<{ envelope: unknown }>).envelope);
-      expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
       return { status: 200, data: { v: 1, token: 'home-terminal-origin', binding: {
         ...binding, machineId: 'guest', installationId: 'guest-installation', custodianAccountId: 'terminal-owner', accountEncryptionMode: 'e2ee',
         ...(returnedAccountAlias ? { authentication: { kind: 'account', tokenEpoch: 4 } } : {}),
@@ -271,7 +272,7 @@ describe('original CLI Account finite Project admission', () => {
       const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const envelope = ExternalActionRequestEnvelopeV2Schema.parse(carrier.envelope);
       expect(JSON.stringify(body)).not.toContain('/private-repo');
-      expect(openExternalActionRequestV2({ envelope, binding, material })).toEqual({ input });
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })).toEqual({ input });
       if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-encrypted-origin', binding: {
         ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'encrypted-owner', machineId: machine.id,
         installationId: machine.installationId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),

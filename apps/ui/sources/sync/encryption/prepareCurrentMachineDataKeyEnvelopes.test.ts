@@ -38,7 +38,7 @@ describe('Machine current key preparation', () => {
         const encryption = await Encryption.createFromContentKeyPair({ publicKey: holder.publicKey, machineKey: holder.secretKey });
         const rawPrivate = { status: 'running', privateWorkspace: { token: 'must-not-disclose' } };
         const historical = new AES256Encryption(holder.secretKey);
-        let row: MachinePublishedRowV1 = { id: 'machine', dataEncryptionKey: null, metadataVersion: 3, daemonStateVersion: 4,
+        let row: MachinePublishedRowV1 = { id: 'machine', managedMachineRef: null, dataEncryptionKey: null, metadataVersion: 3, daemonStateVersion: 4,
             metadata: encodeBase64((await historical.encrypt([{ host: 'host', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }]))[0]!),
             daemonState: encodeBase64((await historical.encrypt([rawPrivate]))[0]!), storageMode: 'e2ee' };
         let transmissions = 0;

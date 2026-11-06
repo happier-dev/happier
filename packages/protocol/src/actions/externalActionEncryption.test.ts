@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1, readExternalActionMachineRuntimeDemandV1 } from './actionSpecs.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenResponseSchema,
   DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchCloseRequestSchema } from '../daemon/contributionRegistryProjection.js';
@@ -30,6 +31,31 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it.each([
+    { actionId: 'daemon.filesystem.listDirectory', expected: undefined },
+    { actionId: 'session.message.send', expected: undefined },
+    { actionId: 'daemon.filesystem.readFile', expected: 'required' },
+  ] as const)('admits sealed runtime demand only for a declared finite root: $actionId', ({ actionId, expected }) => {
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { ...binding, actionId }, input: { rootPath: '/work', path: '.', message: 'private' }, material, randomBytes });
+    expect(readExternalActionMachineRuntimeDemandV1(actionId, { ...envelope, machineRuntimeDemand: 'required' })).toBe(expected);
+  });
+  it.each([
+    { actionId: 'session.open', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', intent: 'resume' }, demanded: true },
+    { actionId: 'session.open', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen' }, demanded: false },
+    { actionId: 'session.message.send', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', message: 'private input' }, demanded: false },
+    { actionId: 'daemon.filesystem.readFile', target: binding.target, input: { rootPath: '/work', path: 'private-file' }, demanded: true },
+    { actionId: 'daemon.filesystem.listDirectory', target: binding.target, input: { rootPath: '/work', path: '.' }, demanded: false },
+  ])('projects only explicit pre-effect runtime demand for $actionId ($demanded)', ({ actionId, target, input, demanded }) => {
+    const root = { ...binding, actionId, target };
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: root, input, material, randomBytes });
+    expect(envelope).toMatchObject(demanded ? { machineRuntimeDemand: 'required' } : {});
+    if (!demanded) expect(envelope).not.toHaveProperty('machineRuntimeDemand');
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: root, envelope, material })?.input).toEqual(input);
+    const forged = { ...envelope, machineRuntimeDemand: demanded ? undefined : 'required' };
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: root, envelope: forged, material })).toBeNull();
+  });
+
   it('requires the full native identity for OPEN, joined reads and disposal', () => {
     const input = { serverId: 'home', machineId: 'machine-1', serviceId: 'worker' };
     const resource = { hostRead: 'machines.services.logs', input, expectedGeneration: 'generation',
@@ -42,8 +68,8 @@ describe('whole external Action encryption', () => {
     const { resourceContinuation } = ExternalActionRequestEnvelopeV1Schema.parse(plain);
     const args = { binding: { ...binding, actionId: 'machines.services.logs.read' }, input,
       resourceContinuation, material, randomBytes };
-    const request = sealExternalActionRequestV2(args);
-    expect(openExternalActionRequestV2({ envelope: request, binding: args.binding, material }))
+    const request = sealExternalActionRequestV2({ ...args, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: args.binding, material }))
       .toEqual({ input, resourceContinuation });
     expect(ExternalActionRequestEnvelopeV1Schema.safeParse({ ...plain, resourceContinuation: {
       ...candidate, params: { ...candidate.params, resource: withoutRevision },
@@ -86,9 +112,9 @@ describe('whole external Action encryption', () => {
     const { resourceContinuation } = ExternalActionRequestEnvelopeV1Schema.parse(plain);
     const args = { binding: { ...binding, actionId: 'machines.services.logs.read' }, input,
       resourceContinuation, material, randomBytes };
-    const request = sealExternalActionRequestV2(args);
+    const request = sealExternalActionRequestV2({ ...args, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
     expect(request).not.toHaveProperty('resourceContinuation');
-    expect(openExternalActionRequestV2({ envelope: request, binding: args.binding, material }))
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: args.binding, material }))
       .toEqual({ input, resourceContinuation });
     expect(ExternalActionRequestEnvelopeV1Schema.safeParse({ ...plain, resourceContinuation: {
       ...resourceContinuation, params: { ...resourceContinuation.params, authority: 'present_user' },
@@ -96,20 +122,20 @@ describe('whole external Action encryption', () => {
   });
 
   it('reports only the failed opening phase while preserving opaque public refusal', () => {
-    const request = sealExternalActionRequestV2({ binding, material, randomBytes, input: { privateInput: 'private-content' } });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes, input: { privateInput: 'private-content' } });
     const failures: unknown[] = [];
-    expect(openExternalActionRequestV2({ envelope: request, binding,
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding,
       material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(3) },
       onFailure: failure => { failures.push(failure); },
     })).toBeNull();
     expect(failures).toEqual([{ phase: 'ciphertext_open' }]);
     failures.length = 0;
-    expect(openExternalActionRequestV2({ envelope: request, binding: { ...binding, accountId: 'different' }, material,
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: { ...binding, accountId: 'different' }, material,
       onFailure: failure => { failures.push(failure); },
     })).toBeNull();
     expect(failures).toEqual([{ phase: 'plaintext_binding' }]);
     expect(JSON.stringify(failures)).not.toContain('private-content');
-    expect(openExternalActionRequestV2({ envelope: request, binding, material })).toEqual({ input: { privateInput: 'private-content' } });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toEqual({ input: { privateInput: 'private-content' } });
   });
   it('retains narrowing mounted provenance beside E2EE content through the root codec', () => {
     const pluginInvocation = { kind: 'mountedPluginSurface' as const, mountedBinding: {
@@ -118,10 +144,10 @@ describe('whole external Action encryption', () => {
       materializationRef: { machineId: binding.target.machineId, pluginId: 'happier.inspector', materializationId: 'installed' },
     } };
     const input = { privateInput: 'account content' };
-    const request = sealExternalActionRequestV2({ binding, material, randomBytes, input, pluginInvocation });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes, input, pluginInvocation });
     expect(request.pluginInvocation).toEqual(pluginInvocation);
     expect(JSON.stringify(request)).not.toContain(input.privateInput);
-    expect(openExternalActionRequestV2({ envelope: request, binding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toEqual({ input });
   });
   it('binds fresh reset preparatory facts to the encrypted input without exposing initial content', () => {
     const reset = { source: { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'connected' } },
@@ -129,16 +155,16 @@ describe('whole external Action encryption', () => {
     const resetBinding = { ...binding, actionId: 'session.pending.resetStart.set', target: { kind: 'session' as const, sessionId: 'session' } };
     const input = { sessionId: 'session', localId: 'prepared', reset,
       initialInput: { content: { t: 'encrypted' as const, c: 'private-session-ciphertext' } } };
-    const request = sealExternalActionRequestV2({ binding: resetBinding, input, material, randomBytes });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: resetBinding, input, material, randomBytes });
     expect(request).toMatchObject({ pendingResetStartAdmission: projectExternalActionPendingResetStartAdmissionV1(input) });
     expect(JSON.stringify(request)).not.toContain('weekly');
     expect(JSON.stringify(request)).not.toContain('private-session-ciphertext');
-    expect(openExternalActionRequestV2({ envelope: request, binding: resetBinding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: resetBinding, material })).toEqual({ input });
     // Strict JSON preserves lone UTF-16 surrogates; digest encoding must not
     // collapse distinct accepted identities into TextEncoder's replacement character.
     const surrogateInput = { ...input, reset: { ...reset, meterId: '\ud800' } };
-    const surrogateRequest = sealExternalActionRequestV2({ binding: resetBinding, input: surrogateInput, material, randomBytes });
-    expect(openExternalActionRequestV2({ envelope: { ...surrogateRequest,
+    const surrogateRequest = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: resetBinding, input: surrogateInput, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: { ...surrogateRequest,
       pendingResetStartAdmission: projectExternalActionPendingResetStartAdmissionV1({ ...surrogateInput,
         reset: { ...reset, meterId: '\ufffd' } }) }, binding: resetBinding, material })).toBeNull();
     for (const substituted of [
@@ -149,19 +175,19 @@ describe('whole external Action encryption', () => {
       { ...input, reset: { ...reset, source: { ...reset.source, ref: { ...reset.source.ref, accountId: 'another' } } } },
       { ...input, reset: { ...reset, recordId: 'paug_v1_anotherrecord' } },
       { ...input, reset: { ...reset, witness: { ...reset.witness, observedAtMs: 101 } } },
-    ]) expect(openExternalActionRequestV2({ envelope: { ...request,
+    ]) expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: { ...request,
       pendingResetStartAdmission: projectExternalActionPendingResetStartAdmissionV1(substituted) }, binding: resetBinding, material })).toBeNull();
     const { pendingResetStartAdmission: _admission, ...missing } = request;
-    expect(openExternalActionRequestV2({ envelope: missing, binding: resetBinding, material })).toBeNull();
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: missing, binding: resetBinding, material })).toBeNull();
   });
   it('retains terminal authentication kind across encrypted finite requests and responses without an Account upgrade', () => {
     const { credentialId: _credentialId, ...routing } = binding;
     const terminal = { ...routing, actionId: 'projects.script.run', authentication: { kind: 'terminal' as const, tokenEpoch: 7 } };
     const account = { ...terminal, authentication: { kind: 'account' as const, tokenEpoch: 7 } };
     const input = { privateCommand: 'caller-owned finite work' };
-    const request = sealExternalActionRequestV2({ binding: terminal, input, material, randomBytes });
-    expect(openExternalActionRequestV2({ envelope: request, binding: terminal, material })).toEqual({ input });
-    expect(openExternalActionRequestV2({ envelope: request, binding: account, material })).toBeNull();
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: terminal, input, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: terminal, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: account, material })).toBeNull();
     const response = prepareExternalActionResponseV2({ binding: terminal, request,
       executedMachineId: binding.target.machineId, execution: { ok: true, result: { finite: true } }, material, randomBytes });
     expect(openExternalActionResponseV2({ envelope: response.response, binding: terminal, request, material }))
@@ -172,11 +198,11 @@ describe('whole external Action encryption', () => {
     const { credentialId: _credentialId, ...routing } = binding;
     const accountBinding = { ...routing, authentication: { kind: 'account' as const, tokenEpoch: 7 } };
     const input = { privateStartupInstructions: 'Do not expose this to the Home' };
-    const request = sealExternalActionRequestV2({ binding: accountBinding, input, material, randomBytes });
-    expect(openExternalActionRequestV2({ envelope: request, binding: accountBinding, material })).toEqual({ input });
-    expect(openExternalActionRequestV2({ envelope: request, binding: { ...accountBinding,
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: accountBinding, input, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: accountBinding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: { ...accountBinding,
       authentication: { kind: 'account', tokenEpoch: 8 } }, material })).toBeNull();
-    expect(openExternalActionRequestV2({ envelope: request, binding, material })).toBeNull();
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toBeNull();
     const response = prepareExternalActionResponseV2({ binding: accountBinding, request,
       executedMachineId: binding.target.machineId, execution: { ok: true, result: { managedId: 'waiting' } }, material, randomBytes });
     expect(openExternalActionResponseV2({ envelope: response.response, binding: accountBinding, request, material }))
@@ -202,13 +228,13 @@ describe('whole external Action encryption', () => {
       expect(isExternalActionRequestWithinLimit(completeEnvelope)).toBe(true);
 
       const completeBinding = { ...binding, target: completeTarget };
-      const sealed = sealExternalActionRequestV2({
+      const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
         binding: completeBinding,
         input: completeInput,
         material,
         randomBytes,
       });
-      const opened = openExternalActionRequestV2({
+      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
         envelope: sealed,
         binding: completeBinding,
         material,
@@ -226,9 +252,9 @@ describe('whole external Action encryption', () => {
     const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, requestId: binding.requestId, target, input })).byteLength;
     input.reset.meterId = 'x'.repeat(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES - bytes);
     const resetBinding = { ...binding, actionId: 'session.pending.resetStart.set', target };
-    const sealed = sealExternalActionRequestV2({ binding: resetBinding, input, material, randomBytes });
+    const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: resetBinding, input, material, randomBytes });
     expect(isExternalActionRequestWithinLimit(sealed)).toBe(true);
-    expect(openExternalActionRequestV2({ envelope: sealed, binding: resetBinding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: sealed, binding: resetBinding, material })).toEqual({ input });
   }, 120_000);
 
   it('rejects before transmission when duplicated visible routing metadata exceeds the V2 body ceiling', () => {
@@ -251,7 +277,7 @@ describe('whole external Action encryption', () => {
       ...baseEnvelope,
       target: completeTarget,
     })).toBe(true);
-    expect(() => sealExternalActionRequestV2({
+    expect(() => sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: { ...binding, target: completeTarget },
       input: {},
       material,
@@ -260,7 +286,7 @@ describe('whole external Action encryption', () => {
   }, 120_000);
 
   it('preserves the complete decoded V1 response budget', () => {
-    const request = sealExternalActionRequestV2({ binding, input: {}, material, randomBytes });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: {}, material, randomBytes });
     const fixedResponseBytes = measureExternalActionResponseEnvelopeUtf8BytesV1({
       v: 1,
       actionId: binding.actionId,
@@ -295,7 +321,7 @@ describe('whole external Action encryption', () => {
   }, 30_000);
 
   it('rejects an authenticated response that exceeds the existing decoded response budget', () => {
-    const request = sealExternalActionRequestV2({ binding, input: {}, material, randomBytes });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: {}, material, randomBytes });
     const fixed = measureExternalActionResponseEnvelopeUtf8BytesV1({ v: 1, actionId: binding.actionId,
       requestId: binding.requestId, execution: { ok: true, result: '' } });
     const c = sealAccountScopedBlobCiphertext({ kind: 'external_action_transport', material, randomBytes,
@@ -308,44 +334,44 @@ describe('whole external Action encryption', () => {
 
   it('protects complete input and result and binds a response to exact ciphertext', () => {
     const input = { sessionId: 'session-1', message: 'private request sentinel' };
-    const request = sealExternalActionRequestV2({ binding, input, material, randomBytes });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material, randomBytes });
     expect(JSON.stringify(request)).not.toContain(input.message);
-    expect(openExternalActionRequestV2({ envelope: request, binding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toEqual({ input });
     const execution = { ok: false as const, errorCode: 'conflict', error: 'private error sentinel',
       details: { document: 'private conflict sentinel' } };
     const response = prepareExternalActionResponseV2({ binding, request, executedMachineId: 'machine-1',
       execution, material, randomBytes });
     expect(response.body).not.toContain('sentinel');
     expect(openExternalActionResponseV2({ envelope: response.response, binding, request, material })).toEqual(execution);
-    const changed = sealExternalActionRequestV2({ binding, input: { ...input, message: 'other' }, material, randomBytes });
+    const changed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: { ...input, message: 'other' }, material, randomBytes });
     expect(openExternalActionResponseV2({ envelope: response.response, binding, request: changed, material })).toBeNull();
-    const resealed = sealExternalActionRequestV2({ binding, input, material,
+    const resealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material,
       randomBytes: (length) => new Uint8Array(length).fill(3) });
     expect(openExternalActionResponseV2({ envelope: response.response, binding, request: resealed, material })).toBeNull();
   });
 
   it.each(['serverIdentityId', 'accountId', 'credentialId', 'actionId', 'requestId'] as const)(
     'rejects a different authenticated %s', (field) => {
-      const request = sealExternalActionRequestV2({ binding, input: {}, material, randomBytes });
-      expect(openExternalActionRequestV2({ envelope: request, binding: { ...binding, [field]: 'different' }, material })).toBeNull();
+      const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: {}, material, randomBytes });
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: { ...binding, [field]: 'different' }, material })).toBeNull();
     },
   );
 
   it('rejects target swapping, wrong key, unknown fields and response direction as input', () => {
-    const request = sealExternalActionRequestV2({ binding, input: {}, material, randomBytes });
-    expect(openExternalActionRequestV2({ envelope: { ...request, target: { kind: 'session', sessionId: 'other' } }, binding, material })).toBeNull();
-    expect(openExternalActionRequestV2({ envelope: request, binding, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(1) } })).toBeNull();
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: {}, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: { ...request, target: { kind: 'session', sessionId: 'other' } }, binding, material })).toBeNull();
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(1) } })).toBeNull();
     for (const extra of [{ direction: 'response' }, { authority: 'present_user' }]) {
       const c = sealAccountScopedBlobCiphertext({ kind: 'external_action_transport', material, randomBytes,
         payload: { v: 2, direction: 'request', ...binding, input: {}, ...extra } });
-      expect(openExternalActionRequestV2({ envelope: { ...request, payload: { t: 'encrypted', c } }, binding, material })).toBeNull();
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: { ...request, payload: { t: 'encrypted', c } }, binding, material })).toBeNull();
     }
   });
 
   it('binds every Machine target field inside the encrypted request', () => {
     const projectBinding = { ...binding, target: { ...binding.target, project: { machineId: 'machine-1', directory: '/repo/a', workspaceRefId: 'workspace-1' } } };
-    const request = sealExternalActionRequestV2({ binding: projectBinding, input: {}, material, randomBytes });
-    expect(openExternalActionRequestV2({ envelope: request, binding: projectBinding, material })).toEqual({ input: {} });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: projectBinding, input: {}, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: projectBinding, material })).toEqual({ input: {} });
     for (const target of [
       { kind: 'machine' as const, machineId: 'machine-2', project: { ...projectBinding.target.project, machineId: 'machine-2' } },
       { ...projectBinding.target, project: { ...projectBinding.target.project, directory: '/repo/b' } },
@@ -353,12 +379,12 @@ describe('whole external Action encryption', () => {
       { kind: 'machine' as const, machineId: 'machine-1' },
       { kind: 'session' as const, sessionId: 'session-1' },
     ]) {
-      expect(openExternalActionRequestV2({ envelope: request, binding: { ...projectBinding, target }, material })).toBeNull();
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding: { ...projectBinding, target }, material })).toBeNull();
     }
   });
 
   it('retains nested stored ciphertext and protects approval results', () => {
-    const request = sealExternalActionRequestV2({ binding, input: {}, material, randomBytes });
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: {}, material, randomBytes });
     for (const result of [
       { content: { t: 'encrypted', c: 'stored ciphertext stays byte exact' } },
       { kind: 'approval_request_created', artifactId: 'private-artifact', actionId: binding.actionId },
