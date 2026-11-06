@@ -31,6 +31,7 @@ export const PUBLIC_RPC_HANDLER_ERROR_CODES = {
   STRUCTURED_QUESTION_LEGACY_INVALID: 'STRUCTURED_QUESTION_LEGACY_INVALID',
   STRUCTURED_QUESTION_LEGACY_AMBIGUOUS: 'STRUCTURED_QUESTION_LEGACY_AMBIGUOUS',
   STRUCTURED_QUESTION_RECEIVER_NOT_OWNER: 'STRUCTURED_QUESTION_RECEIVER_NOT_OWNER',
+  STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED',
 } as const;
 
 export type PublicRpcHandlerErrorCode =
@@ -91,6 +92,13 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
     return new RpcError(opts.error, opts.errorCode);
   }
   return new Error(opts.error);
+}
+
+export function interpretRpcResult<T>(value: T): T {
+  if (isSocketRpcTargetFailureV1(value)) {
+    throw createRpcCallError({ error: value.error, errorCode: value.errorCode });
+  }
+  return value;
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {

@@ -296,6 +296,14 @@ If typing Happier's freeform answer scrolls the entire heading above the viewpor
 the same resolver retains the already identified page only while its complete
 choices and Happier-owned draft still match. A headingless preexisting draft
 does not establish a new question identity.
+The pending hook-correlated question retains Happier's own draft and identified
+page across an interrupted answer attempt. Publication and answer navigation
+consume that same context; a changed terminal draft still belongs to the terminal
+user. The driver waits within the existing terminal verification window for each
+rendered transition instead of treating the first stale capture as a failed write.
+After final Submit, it retains the submitted answers and waits for the exact
+provider result. A retry checks confirmation without typing or submitting again;
+delayed confirmation remains pending and the app offers terminal recovery.
 Long reviews may clip earlier questions above the viewport. The same parser
 recognizes complete visible entries as a suffix of the hook-owned questions;
 the answer driver submits only after visiting every question page and matching

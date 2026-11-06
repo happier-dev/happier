@@ -1,4 +1,4 @@
-import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createRpcCallError, interpretRpcResult } from '@/sync/runtime/rpcErrors';
 import { t } from '@/text';
 import { decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -61,13 +61,13 @@ export class MachineEncryption {
     }
 
     async decodeRpcResult(value: unknown): Promise<unknown> {
-        if (this.mode === 'plain') return value;
+        if (this.mode === 'plain') return interpretRpcResult(value);
         const encrypted = Array.isArray(value) && value.length === 1 ? value[0] : value;
         const decoded = typeof encrypted === 'string' ? await this.decryptRaw(encrypted) : null;
         if (decoded === null || decoded === undefined) {
             throw createRpcCallError({ error: t('errors.machineRpcDecryptionFailed'), errorCode: 'machine_rpc_decryption_failed' });
         }
-        return decoded;
+        return interpretRpcResult(decoded);
     }
 
     /**

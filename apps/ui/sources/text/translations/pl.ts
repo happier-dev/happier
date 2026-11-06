@@ -7421,6 +7421,7 @@ export const pl: TranslationStructure = {
         dismiss: 'Odrzuć pytanie',
         dismissed: 'Pytanie odrzucone',
         submissionFailures: {
+            unconfirmed: "Odpowiedzi wysłano do Claude, ale nadal czekamy na potwierdzenie. Spróbuj ponownie, aby sprawdzić, lub otwórz terminal Claude.",
             update: "Zaktualizuj Happier CLI i spróbuj ponownie.",
             reconnect: "Połącz ponownie tę sesję i spróbuj jeszcze raz.",
             retry: "Nie udało się przyjąć odpowiedzi. Sprawdź ją i spróbuj ponownie.",

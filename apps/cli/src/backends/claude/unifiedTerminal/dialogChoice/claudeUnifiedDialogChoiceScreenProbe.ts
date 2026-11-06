@@ -7,6 +7,7 @@ import {
 } from '../tuiControls/controlRuntime';
 import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer';
 import { answerClaudeNativeQuestion } from '../tuiControls/nativeQuestion';
+import { PublicRpcHandlerError, PUBLIC_RPC_HANDLER_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import {
   getClaudeUnifiedDialogIdentity,
   type ClaudeUnifiedDialogId,
@@ -119,6 +120,7 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
             const result = dialog.dialogId === 'ask_user_question' && decision.structuredAnswersV1
               ? await answerClaudeNativeQuestion({
                 port: params.port, questions: dialog.questions, answers: decision.structuredAnswersV1,
+                state: params.broker.getNativeQuestionAnswerState(dialog),
                 isCurrent: () => params.broker.isCurrentNativeDialog(dialog),
                 verifyApplied: () => params.broker.verifyNativeQuestionAnswer(dialog, decision.structuredAnswersV1!),
                 onFailure: (failure) => logger.infoFile('[claude-unified-dialog-choice] Native question answer failed', failure),
@@ -134,6 +136,10 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
                 wait: params.wait, settleMs: params.settleMs,
                 verifyPollIntervalMs: params.verifyPollIntervalMs, verifyPollTimeoutMs: params.verifyPollTimeoutMs,
               });
+            if (result.status === 'submitted' || result.status === 'failed' && result.reason === 'native_question_already_submitted') {
+              logger.infoFile('[claude-unified-dialog-choice] Native question submitted; provider confirmation pending');
+              throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED);
+            }
             if (result.status !== 'answered') throw new Error(
               result.status === 'failed' ? result.reason : 'claude_native_prompt_changed',
             );

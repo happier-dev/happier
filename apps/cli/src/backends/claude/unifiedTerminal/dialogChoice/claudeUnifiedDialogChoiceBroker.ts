@@ -7,7 +7,7 @@ import { normalizeLegacyStructuredQuestionAnswers, normalizeStructuredQuestionAn
 import { normalizeClaudeAskUserQuestionInputForPublication } from '../../utils/normalizeClaudeAskUserQuestionInput';
 import { buildNativeAskUserQuestionAnswersForClaude } from '../../utils/askUserQuestionAnswersForClaude';
 import { isClaudeSidechainRuntimeEvidence, isSidechainSessionHook } from '../../utils/sessionHookAttribution';
-import { matchesClaudeNativeQuestionScreen } from '../tuiControls/nativeQuestionScreen';
+import { resolveClaudeNativeQuestionWithAnswerState, type ClaudeNativeQuestionAnswerState } from '../tuiControls/nativeQuestion';
 import { parseClaudeNativePermissionScreen } from '../tuiControls/nativePermissionScreen';
 import { clearClaudePlanModeMetadataBestEffort } from '../../utils/clearPlanModeMetadataBestEffort';
 import { getToolDescriptor } from '../../utils/getToolDescriptor';
@@ -88,6 +88,7 @@ type NativePrompt = Readonly<{
   responseLocation: 'app_and_terminal' | 'terminal_only';
   observedAnswers?: unknown;
   observedApproval?: boolean;
+  questionAnswerState: ClaudeNativeQuestionAnswerState;
 };
 
 type RequestOption = Readonly<{
@@ -239,6 +240,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
       this.nativePrompt = {
         occurrenceId: toolUseId ?? randomUUID(), toolUseId, sessionId, toolName, toolInput,
         responseLocation,
+        questionAnswerState: { drafts: new Map(), questionIndex: -1 },
       };
       this.publishNativeLifecycle(this.nativePrompt, 'PermissionRequest');
       if (previous && !this.applyingNativeAnswer) {
@@ -311,6 +313,10 @@ export class ClaudeUnifiedDialogChoiceBroker {
     return deepEqual(prompt.observedAnswers, buildNativeAskUserQuestionAnswersForClaude(dialog.questions, answers)) ? 'matched' : 'mismatched';
   }
 
+  getNativeQuestionAnswerState(dialog: ClaudeUnifiedVisibleNativeToolDialog): ClaudeNativeQuestionAnswerState | undefined {
+    return this.nativePromptForTool(dialog.occurrenceId)?.questionAnswerState;
+  }
+
   private async retireNativeTool(toolUseId: string, approved: boolean): Promise<void> {
     const prompt = this.nativePromptForTool(toolUseId);
     if (!prompt) return;
@@ -354,7 +360,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
         const normalized = readObject(normalizeClaudeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput, { native: true }));
         // The canonical publication normalizer validates the external provider question schema.
         const questions = Array.isArray(normalized?.questions) ? normalized.questions as readonly StructuredQuestionLike[] : [];
-        if (prompt.toolUseId && matchesClaudeNativeQuestionScreen(state.nativeQuestionPresentation, questions)) {
+        if (prompt.toolUseId && resolveClaudeNativeQuestionWithAnswerState(state.nativeQuestionPresentation, questions, prompt.questionAnswerState)) {
           return {
             ...prompt, kind: 'native', dialogId: 'ask_user_question', owner: null,
             questions, questionId: 'claudeNativeQuestion', requestReason: 'claude_native_question',

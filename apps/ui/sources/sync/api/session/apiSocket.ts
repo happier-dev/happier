@@ -2,7 +2,7 @@ import { Socket } from 'socket.io-client';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
-import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createRpcCallError, interpretRpcResult } from '@/sync/runtime/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { serverFetch, StaleServerGenerationError, type ServerReadRequestInit } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -384,7 +384,7 @@ class ApiSocket {
         }
 
         if (result.ok) {
-            if (usePlaintextParams) return result.result as R;
+            if (usePlaintextParams) return interpretRpcResult(result.result) as R;
             if (!sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
             const decrypted = await sessionEncryption.decryptRaw(result.result);
             if (scmDebug) {
@@ -401,7 +401,7 @@ class ApiSocket {
                     ),
                 });
             }
-            return decrypted as R;
+            return interpretRpcResult(decrypted) as R;
         }
         throw createRpcCallError({
             error: typeof result.error === 'string' ? result.error : 'RPC call failed',

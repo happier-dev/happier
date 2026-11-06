@@ -587,6 +587,7 @@ describe('AskUserQuestionView', () => {
         ['STRUCTURED_QUESTION_LEGACY_INVALID', 'tools.askUserQuestion.submissionFailures.retry'],
         ['STRUCTURED_QUESTION_LEGACY_AMBIGUOUS', 'tools.askUserQuestion.submissionFailures.retry'],
         ['STRUCTURED_QUESTION_RECEIVER_NOT_OWNER', 'tools.askUserQuestion.submissionFailures.reconnect'],
+        ['STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED', 'tools.askUserQuestion.submissionFailures.unconfirmed'],
         ['RPC_METHOD_NOT_AVAILABLE', 'tools.askUserQuestion.submissionFailures.update'],
         ['RPC_METHOD_NOT_FOUND', 'tools.askUserQuestion.submissionFailures.update'],
     ])('keeps the pending answer selected and shows inline guidance for %s', async (rpcErrorCode, guidanceKey) => {

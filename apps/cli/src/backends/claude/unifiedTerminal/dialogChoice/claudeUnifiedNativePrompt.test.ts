@@ -512,6 +512,67 @@ describe('native prompts through the existing terminal dialog owner', () => {
     await broker.dispose();
   });
 
+  it('keeps a question answerable after its own draft clips the heading during an interrupted attempt', async () => {
+    const { session, broker, client } = createHarness();
+    const initial = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform.initial.txt', import.meta.url), 'utf8');
+    const filled = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform.filled.txt', import.meta.url), 'utf8');
+    const input = JSON.parse(readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform-input.json', import.meta.url), 'utf8'));
+    session.onClaudeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'claude-native-session',
+      tool_use_id: 'toolu-clipped-draft', tool_name: 'AskUserQuestion', tool_input: input,
+    });
+    const port = createFakeControlPort({ captures: [initial, initial, initial, ''] });
+    const probe = createClaudeUnifiedDialogChoiceScreenProbe({
+      broker, port, wait: async () => {}, graceMs: 0, settleMs: 1,
+      verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2, isDialogOwned: () => false,
+    });
+    await probe.probe();
+    await vi.waitFor(() => expect(client.agentState.requests['toolu-clipped-draft']).toBeDefined());
+    const text = ('This is harmless synthetic freeform text for an isolated diagnostic. The public fixture should preserve the selected status and explain each ordinary display change without changing any real settings. '.repeat(4)).trim();
+    await expect(client.rpcHandlerManager.getHandler('permission')!({
+      id: 'toolu-clipped-draft', approved: true, structuredAnswersV1: { [input.questions[0].question]: [text] },
+    })).resolves.toMatchObject({ ok: false });
+    expect(broker.resolveVisibleDialog(parseClaudeScreenState(filled))).toMatchObject({ kind: 'native', occurrenceId: 'toolu-clipped-draft' });
+    expect(port.sentKeys).toEqual([]);
+    probe.dispose();
+    await broker.dispose();
+  });
+
+  it('keeps a sent native answer pending until the provider confirms and never submits it again on retry', async () => {
+    const { session, broker, client, observe } = createHarness();
+    observe('toolu-native-1');
+    const port = createFakeControlPort({ captures: [SCREEN] });
+    const probe = createClaudeUnifiedDialogChoiceScreenProbe({
+      broker, port, wait: async () => {}, graceMs: 0, settleMs: 1,
+      verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2, isDialogOwned: () => false,
+    });
+    await probe.probe();
+    await vi.waitFor(() => expect(client.agentState.requests['toolu-native-1']).toBeDefined());
+    const request = client.agentState.requests['toolu-native-1'];
+    const occurrenceId = request && typeof request === 'object' && 'occurrenceId' in request ? request.occurrenceId : null;
+    const respond = client.rpcHandlerManager.getHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1)!;
+    if (typeof occurrenceId !== 'string') throw new Error('expected published occurrence identity');
+    const response = { id: 'toolu-native-1', occurrenceId, approved: true, structuredAnswersV1: { 'Which probe color?': ['Amber'] } };
+    await expect(respond(response)).rejects.toMatchObject({
+      publicErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED,
+    });
+    expect(client.agentState.requests['toolu-native-1']).toBeDefined();
+    await expect(respond(response)).rejects.toMatchObject({
+      publicErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED,
+    });
+    expect(port.sentKeys).toEqual(['Enter']);
+    session.onClaudeSessionHook({
+      hook_event_name: 'PostToolUse', session_id: 'claude-native-session',
+      tool_use_id: 'toolu-native-1', tool_name: 'AskUserQuestion',
+      tool_response: { answers: { 'Which probe color?': 'Amber' } },
+    });
+    await vi.waitFor(() => expect(client.agentState.requests['toolu-native-1']).toBeUndefined());
+    expect(client.agentState.completedRequests['toolu-native-1']).toMatchObject({
+      status: 'approved', answers: { 'Which probe color?': 'Amber' },
+    });
+    probe.dispose();
+    await broker.dispose();
+  });
+
   it.each([false, true])('records the actual native answer without a stale waiter (next occurrence: %s)', async (nextOccurrence) => {
     const { session, broker, client, observe } = createHarness();
     observe('toolu-native-1');

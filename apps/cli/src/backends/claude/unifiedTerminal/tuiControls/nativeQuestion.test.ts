@@ -36,6 +36,54 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+  it('waits for delayed text rendering without typing or submitting twice', async () => {
+    const empty = freeform.replace('Otter freeform probe', 'Type something.');
+    const port = createFakeControlPort({ captures: [empty, empty, '', freeform, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, verifyPollTimeoutMs: 5, port,
+      questions: [{ question: 'Which probe animal?', header: 'Animal', options: ['Cat', 'Dog'] }],
+      answers: { 'Which probe animal?': ['Otter freeform probe'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentLiteral).toEqual(['Otter freeform probe']);
+    expect(port.sentKeys).toEqual(['Enter']);
+  });
+
+  it('resumes its unchanged wrapped draft after an interrupted attempt', async () => {
+    const filled = fixture('wrapped');
+    const text = Array.from({ length: 32 }, (_, index) => `word${String(index + 1).padStart(2, '0')}`).join(' ');
+    const shown = parseClaudeNativeQuestionScreen(filled)!.options.at(-1)!.label;
+    const empty = filled.replace(shown.split('\n').join('\n     '), 'Type something.');
+    const state = { drafts: new Map<number, string>(), questionIndex: -1 };
+    const params = { ...controls, state,
+      questions: [{ question: 'Which comma probe?', header: 'Comma', options: ['Alpha, beta', '雪 🦦'] }],
+      answers: { 'Which comma probe?': [text] },
+    };
+    const first = createFakeControlPort({ captures: [empty, ''] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: first })).resolves.toMatchObject({ status: 'failed' });
+    const retry = createFakeControlPort({ captures: [filled, idle] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry })).resolves.toEqual({ status: 'answered' });
+    expect(retry.sentLiteral).toEqual([]);
+    expect(retry.sentKeys).toEqual(['Enter']);
+    const changed = createFakeControlPort({ captures: [filled.replace('word01', 'edited')] });
+    await expect(answerClaudeNativeQuestion({ ...params, state: { drafts: state.drafts, questionIndex: state.questionIndex }, port: changed })).resolves.toMatchObject({ status: 'failed' });
+    expect(changed.sentKeys).toEqual([]);
+  });
+
+  it('reports sent-but-unconfirmed answers and makes a retry verification-only', async () => {
+    const state = { drafts: new Map<number, string>(), questionIndex: -1 };
+    const params = { ...controls, state, questions, answers: { 'Which probe color?': ['Amber'] } };
+    const port = createFakeControlPort({ captures: [single] });
+    await expect(answerClaudeNativeQuestion({ ...params, port, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'submitted' });
+    const retry = createFakeControlPort({ captures: [single] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry, verifyApplied: () => 'matched' })).resolves.toEqual({ status: 'answered' });
+    expect(retry.sentKeys).toEqual([]);
+    expect(retry.sentLiteral).toEqual([]);
+    expect(retry.captureCount()).toBe(0);
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry,
+      answers: { 'Which probe color?': ['Blue'] }, verifyApplied: () => 'pending',
+    })).resolves.toEqual({ status: 'failed', reason: 'native_question_already_submitted' });
+    expect(retry.sentKeys).toEqual([]);
+  });
+
   it('reports the failed answer state without recording question or answer content', async () => {
     const failures: unknown[] = [];
     const text = 'Private freeform answer';
@@ -578,7 +626,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     await expect(answerClaudeNativeQuestion({ ...controls, port: mismatched, questions, answers: { 'Which probe color?': ['Amber'] }, verifyApplied: () => 'mismatched' })).resolves.toEqual({ status: 'failed', reason: 'native_answer_mismatch' });
     const pending = createFakeControlPort({ captures: [single], onSendSpecialKey: () => { current = false; } });
     current = true;
-    await expect(answerClaudeNativeQuestion({ ...controls, port: pending, questions, answers: { 'Which probe color?': ['Amber'] }, isCurrent: () => current, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'failed', reason: 'native_answer_unverified' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: pending, questions, answers: { 'Which probe color?': ['Amber'] }, isCurrent: () => current, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'submitted' });
   });
 
   it('leaves the multiline editor through Next and verifies complete multiline review before final Submit', async () => {

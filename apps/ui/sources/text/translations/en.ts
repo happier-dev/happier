@@ -6995,6 +6995,7 @@ export const en = {
             dismiss: 'Dismiss question',
             dismissed: 'Question dismissed',
             submissionFailures: {
+                unconfirmed: "Submit was sent to Claude, but confirmation is still pending. Try again to check, or open the Claude terminal.",
                 update: 'Update Happier CLI, then try again.',
                 reconnect: 'Reconnect this session, then try again.',
                 retry: 'The answer could not be accepted. Review it and try again.',

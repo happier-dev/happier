@@ -255,6 +255,12 @@ encryption variant; it excludes payloads, ciphertext, keys, and Machine/Session
 identifiers. This is a diagnostic for rejected input, which can also be malformed,
 rather than proof of a key mismatch or a migration of existing device keys.
 
+Development clients interpret the canonical safe target-failure envelope after
+decoding Session and Machine RPC responses. A successful relay acknowledgment
+does not make a target failure successful. Encrypted target failures remain inside
+the encrypted response; the relay does not need access to their content. Ordinary
+business results, including `{ ok: false }`, retain their method-defined meaning.
+
 #### Plain Machines (development)
 
 Current 0.2 development source adds genuine plain Machine metadata, daemon state,

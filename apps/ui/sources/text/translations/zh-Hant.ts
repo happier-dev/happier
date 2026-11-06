@@ -6238,6 +6238,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             submit: '提交答案',
             dismiss: '關閉問題',
             dismissed: '問題已關閉',
+            submissionFailures: {
+                unconfirmed: '已向 Claude 傳送提交操作，但仍在等待確認。請重試以檢查確認狀態，或開啟 Claude 終端。',
+            },
             claudeDialogNotice: {
                 header: 'Claude 對話框',
                 question: 'Claude 正在顯示對話框。請開啟終端機查看並選擇如何繼續。',

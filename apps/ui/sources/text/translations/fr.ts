@@ -6950,6 +6950,7 @@ export const fr: TranslationStructure = {
             dismiss: 'Ignorer la question',
             dismissed: 'Question ignorée',
             submissionFailures: {
+                unconfirmed: "La validation a été envoyée à Claude, mais la confirmation est encore en attente. Réessayez pour vérifier ou ouvrez le terminal Claude.",
                 update: 'Mets à jour le CLI Happier, puis réessaie.',
                 reconnect: 'Reconnecte cette session, puis réessaie.',
                 retry: 'La réponse n’a pas pu être acceptée. Vérifie-la et réessaie.',

@@ -7194,6 +7194,7 @@ export const zhHans: TranslationStructure = {
         dismiss: '关闭问题',
         dismissed: '问题已关闭',
         submissionFailures: {
+            unconfirmed: "已向 Claude 发送提交操作，但仍在等待确认。请重试以检查确认状态，或打开 Claude 终端。",
             update: "请更新 Happier CLI，然后重试。",
             reconnect: "请重新连接此会话，然后重试。",
             retry: "无法接受该答案。请检查后重试。",

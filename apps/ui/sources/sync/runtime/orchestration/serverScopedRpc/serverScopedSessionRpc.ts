@@ -1,7 +1,7 @@
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createRpcCallError, interpretRpcResult } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveScopedSessionCryptoContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
@@ -75,7 +75,7 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
                 params.operationTimeoutMs ?? undefined,
             )) as SocketRpcResult;
 
-      if (result.ok) return result.result as R;
+      if (result.ok) return interpretRpcResult(result.result) as R;
 
       throw createRpcCallError({
         error: typeof result.error === 'string' ? result.error : 'RPC call failed',
@@ -115,7 +115,7 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
     )) as SocketRpcResult;
 
     if (result.ok) {
-      return (await sessionEncryption.decryptRaw(result.result)) as R;
+      return interpretRpcResult(await sessionEncryption.decryptRaw(result.result)) as R;
     }
 
     throw createRpcCallError({

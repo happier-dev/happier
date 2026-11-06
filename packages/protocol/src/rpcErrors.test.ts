@@ -9,11 +9,38 @@ import {
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
   isRpcSessionMachineControlUnavailableError,
+  interpretRpcResult,
+  PUBLIC_RPC_HANDLER_ERROR_CODES,
+  PublicRpcHandlerError,
   RpcError,
   readRpcErrorCode,
+  toSocketRpcTargetFailureV1,
 } from './rpcErrors.js';
 
 describe('rpcErrors', () => {
+  it('interprets the exact safe target failure as a typed RPC error', () => {
+    const errorCode = PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED;
+    const failure = toSocketRpcTargetFailureV1(new PublicRpcHandlerError(errorCode));
+
+    expect(() => interpretRpcResult(failure)).toThrow(expect.objectContaining({
+      name: 'RpcError', rpcErrorCode: errorCode, message: failure.error,
+    }));
+  });
+
+  it('preserves business results and values outside the safe target failure contract', () => {
+    const failure = toSocketRpcTargetFailureV1(new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID));
+    for (const result of [
+      null, undefined, false, 0, 'value',
+      { ok: false, error: 'business failure' },
+      { error: failure.error, errorCode: failure.errorCode },
+      { ...failure, errorCode: 'unknown_code' },
+      { ...failure, error: 'other message' },
+      { ...failure, extra: true },
+    ]) {
+      expect(interpretRpcResult(result)).toBe(result);
+    }
+  });
+
   it('recognizes Socket.IO ACK timeouts without classifying other transport failures', () => {
     expect(isSocketIoAckTimeoutError(new Error('operation has timed out'))).toBe(true);
     expect(isSocketIoAckTimeoutError(createSocketIoAckTimeoutError())).toBe(true);

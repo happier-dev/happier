@@ -62,7 +62,7 @@ interface AskUserQuestionInput {
     happierDialog?: unknown;
 }
 
-type SubmissionFailureGuidance = 'update' | 'reconnect' | 'retry';
+type SubmissionFailureGuidance = 'update' | 'reconnect' | 'retry' | 'unconfirmed';
 
 function resolveSubmissionFailureGuidance(error: unknown): SubmissionFailureGuidance | null {
     switch (readRpcErrorCode(error)) {
@@ -71,6 +71,8 @@ function resolveSubmissionFailureGuidance(error: unknown): SubmissionFailureGuid
             return 'update';
         case PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER:
             return 'reconnect';
+        case PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED:
+            return 'unconfirmed';
         case PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID:
         case PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID:
         case PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_AMBIGUOUS:
