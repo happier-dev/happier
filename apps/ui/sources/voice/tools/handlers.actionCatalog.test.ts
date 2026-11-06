@@ -30,6 +30,8 @@ import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolRe
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
+  NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -42,6 +44,56 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it.each(['completed', 'cancelled', 'end', 'unavailable'] as const)(
+    'settles native host-summary playback through the real Action owner (%s)', async playback => {
+      const serverId = await home.addHome({ name: 'Native readback', serverUrl: 'https://native-readback.test', accountId: 'alice', currentAccount: true });
+      const features = createRootLayoutFeaturesResponse();
+      tryWriteServerEnabledBitInPlace(features, 'voice', true);
+      home.answer(serverId, '/v1/features', { body: features });
+      home.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: {
+        t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: true } },
+      } } });
+      home.answer(serverId, 'POST /v2/account/settings', { body: { success: true, version: 2 } });
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests, getVoiceSessionSpokenActionConfirmation } = await import('@/voice/session/voiceSessionStore');
+      setVoiceSessionSnapshot({ adapterId: 'native-conversation', sessionId: 'native-call', status: 'connected', mode: 'listening', canStop: true });
+      let finish!: () => void;
+      let started!: () => void;
+      const speaking = new Promise<void>(resolve => { started = resolve; });
+      const drain = new Promise<void>(resolve => { finish = resolve; });
+      const controller = new AbortController();
+      const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+        playHostText: async ({ text }: { text: string; signal: AbortSignal }) => {
+          if (playback === 'unavailable') return { status: 'unavailable' as const, code: 'host_text_playback_unavailable' as const };
+          expect(text).toBe(getVoiceSessionSpokenActionConfirmation()?.readPending()?.operation.summary);
+          started();
+          await drain;
+          return { status: playback === 'cancelled' ? 'cancelled' as const : 'completed' as const };
+        },
+      });
+      let noteApproval!: () => void;
+      const approval = new Promise<void>(resolve => { noteApproval = resolve; });
+      home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
+      const pending = handlers.action_execute!({ actionId: 'settings.set', input: { anchor: 'voiceConversations.minSpeechMs', value: 1100 } },
+        { serverId, effectId: 'native-readback-request', signal: controller.signal, turnOrigin: 'person' });
+      try {
+        if (playback === 'unavailable') {
+          const observed = await Promise.race([approval.then(() => 'ask'), pending.then(() => 'unexpected_settlement')]);
+          expect(observed).toBe('ask');
+          expect(getVoiceSessionSpokenActionConfirmation()?.readPending()).toBeNull();
+        } else {
+          expect(await Promise.race([speaking.then(() => 'speaking'), pending.then(() => 'unexpected_settlement')])).toBe('speaking');
+          expect(home.requests.filter(request => request.method === 'POST')).toEqual([]);
+          if (playback === 'end') resetVoiceSessionStoreForTests();
+          finish();
+          const outcome = JSON.parse(await pending);
+          expect(outcome).toMatchObject(playback === 'completed' ? { ok: true } : { ok: false, errorCode: 'cancelled' });
+          expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/account/settings')).toHaveLength(playback === 'completed' ? 1 : 0);
+          expect(home.artifacts(serverId).list()).toEqual([]);
+        }
+      } finally {
+        finish(); controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests();
+      }
+    });
   it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent'] as const)(
     'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
       const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
@@ -109,6 +161,91 @@ describe('Voice Action reference catalog', () => {
       }
     },
   );
+  it.each([
+    { actionId: 'settings.set', input: { anchor: 'voiceConversations.canApproveRequests', value: false } },
+    { actionId: 'notifications.webhooks.remove', input: { channelId: 'spoken-webhook-removal' } },
+    { actionId: 'session.manager.set', input: { sessionId: { selector: 'self' },
+      managerSessionId: null, expectedManagerSessionId: 'previous-manager' } },
+  ] as const)('asks for a spoken read-back before the exact consequential operation ($actionId)', async operation => {
+    const serverId = await home.addHome({ name: 'Read-back Home', serverUrl: 'https://spoken-readback.test',
+      accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'voice', true)).toBe(true);
+    home.answer(serverId, '/v1/features', { body: features });
+    let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
+      t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: true } },
+    };
+    let version = 1;
+    let catalog = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [{ v: 1,
+      id: 'spoken-webhook-removal', kind: 'webhook', url: 'https://spoken-hook.test/notify', enabled: true,
+      topics: {}, readyIncludeMessageText: false, requestIncludeMessageText: false, signingSecretRef: null }] });
+    let revision = 1;
+    home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { version, content } }) });
+    home.answer(serverId, 'POST /v2/account/settings', { select: raw => {
+      const update = AccountSettingsV2UpdateRequestSchema.parse(raw);
+      expect(update.expectedVersion).toBe(version);
+      if (update.content?.t !== 'plain') throw new Error('Expected Plain settings');
+      content = update.content;
+      return { body: { success: true, version: ++version } };
+    } });
+    home.answer(serverId, `GET ${NOTIFICATION_CHANNELS_ROUTE_V1}`, {
+      select: () => ({ body: { status: 'present', revision, content: { t: 'plain', v: catalog } } }),
+    });
+    home.answer(serverId, `POST ${NOTIFICATION_CHANNELS_ROUTE_V1}`, { select: raw => {
+      const mutation = NotificationChannelCatalogMutationV1Schema.parse(raw);
+      expect(mutation.expectedRevision).toBe(revision);
+      if (mutation.content?.t !== 'plain') throw new Error('Expected Plain notification catalog');
+      catalog = mutation.content.v;
+      return { body: { status: 'updated', revision: ++revision, cursor: revision } };
+    } });
+    home.answer(serverId, 'POST /v1/sessions/original/manager', {
+      body: { ok: true, sessionId: 'original', managerSessionId: null, attachedAt: null },
+    });
+    home.answer(serverId, 'POST /v1/sessions/replacement/manager', {
+      body: { ok: true, sessionId: 'replacement', managerSessionId: null, attachedAt: null },
+    });
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'live-readback-call',
+      status: 'connected', mode: 'listening', canStop: true });
+    const effects = () => home.requests.filter(request => request.method === 'POST' || request.method === 'DELETE');
+    let selectedSessionId = 'original';
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => selectedSessionId, currentServerId: serverId,
+      playHostText: async ({ text }) => {
+        expect(text).toBeTruthy();
+        expect(effects()).toEqual([]);
+        // A pane change during playback never changes the captured operation.
+        selectedSessionId = 'replacement';
+        return { status: 'completed' as const };
+      },
+    });
+    let noteApproval!: () => void;
+    const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
+    home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
+    const controller = new AbortController();
+    const pending = handlers.action_execute!(operation, { serverId, effectId: 'readback-request', signal: controller.signal, turnOrigin: 'person' });
+    try {
+      const outcome = await Promise.race([
+        pending.then(value => JSON.parse(value)),
+        approvalCreated.then(() => ({ kind: 'unexpected_approval_artifact' })),
+      ]);
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: operation.actionId === 'settings.set'
+        ? { anchor: operation.input.anchor, value: false } : operation.actionId === 'notifications.webhooks.remove'
+          ? { channelId: operation.input.channelId } : {} });
+      expect(home.artifacts(serverId).list()).toEqual([]);
+      expect(effects()).toHaveLength(1);
+      if (operation.actionId === 'settings.set') expect(version).toBe(2);
+      else if (operation.actionId === 'notifications.webhooks.remove') {
+        expect(revision).toBe(2); expect(catalog.channels).toEqual([]);
+      } else {
+        expect(home.requestsFor('/v1/sessions/original/manager')).toHaveLength(1);
+        expect(home.requestsFor('/v1/sessions/replacement/manager')).toHaveLength(0);
+      }
+    } finally {
+      controller.abort();
+      await pending.catch(() => undefined);
+      resetVoiceSessionStoreForTests();
+    }
+  });
   it('projects every public review-comment operation through the same Voice resolver and handler', () => {
     const tools = listVoiceToolActionSpecs();
     const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
