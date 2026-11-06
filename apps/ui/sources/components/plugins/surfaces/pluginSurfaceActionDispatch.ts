@@ -4,6 +4,7 @@ import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEv
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
 import { readActionSecretInputAdmission } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
+import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -1644,7 +1645,10 @@ async function executeClientContributedAction(
                     || snapshot.data.observedRevision !== reference.observedRevision) {
                     throw new PluginError({ code: 'plugin_message_action_unavailable' });
                 }
-                return invokeHandler(snapshot.data);
+                return invokeHandler({
+                    ...snapshot.data,
+                    visibleText: snapshot.data.visibleText === null ? null : projectMarkdownFindText(snapshot.data.visibleText).text,
+                });
             });
         },
     });

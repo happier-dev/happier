@@ -44,4 +44,19 @@ describe('session state selectors', () => {
             .toEqual({ value: 'Saved title', updatedAt: 2 });
         expect(readSessionDisplayTitleField({ metadata: null }, { messages }).value).toBeNull();
     });
-});
+
+    it.each([
+        {
+            text: '# **Plan release**\n\n<options>\n<option>Review changes</option>\n<option>Run checks</option>\n</options>',
+            title: 'Plan release Review changes Run checks',
+        },
+        {
+            text: '```xml\n<options><option>literal</option></options>\n```',
+            title: '<options><option>literal</option></options>',
+        },
+    ])('projects a transient title from rendered transcript text: $title', ({ text, title }) => {
+        const messages: Message[] = [{
+            id: 'first-prompt', kind: 'user-text', localId: null, createdAt: 1, text,
+        }];
+        expect(readSessionDisplayTitleField({ metadata: { path: '/tmp' } }, { messages }).value).toBe(title);
+    });});

@@ -1,6 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@happier-dev/session-core/messages';
 import { prepareTranscriptMessageBody, readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
+import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 
 type SessionMetadataCarrier = Readonly<{
     metadata?: unknown;
@@ -23,7 +24,8 @@ function readFirstUserMessageTitle(messages: ReadonlyArray<Message> | undefined)
     if (!messages) return null;
     for (const message of messages) {
         if (message.kind !== 'user-text') continue;
-        return normalizeTransientTitleText(prepareTranscriptMessageBody(message).text);
+        const text = prepareTranscriptMessageBody(message).text;
+        return normalizeTransientTitleText(text === null ? null : projectMarkdownFindText(text).text);
     }
     return null;
 }

@@ -1542,7 +1542,8 @@ describe('plugin contributed Action controller', () => {
             const messageAction = MessageActionAvailableSnapshotV1Schema.parse({
                 sessionId: SESSION_ID, messageId: 'message-a', observedRevision: 'revision-a',
                 role: 'agent', contentCategory: 'text', seq: 12,
-                visibleText: 'Selected answer\nwith details', structuredPresentationSummary: null,
+                visibleText: '# **Selected answer**\n\n```xml\n<options><option>literal</option></options>\n```\n\n<options>\n<option>Review changes</option>\n<option>Run checks</option>\n</options>',
+                structuredPresentationSummary: null,
                 provenanceCategory: 'owner',
             });
             const reference = { v: 1 as const, sessionId: SESSION_ID,
@@ -1584,7 +1585,10 @@ describe('plugin contributed Action controller', () => {
                 });
                 expect(received).toHaveLength(1);
                 if (placement === 'message.menu') {
-                    expect(received[0]).toHaveProperty('messageAction', messageAction);
+                    expect(received[0]).toHaveProperty('messageAction', {
+                        ...messageAction,
+                        visibleText: 'Selected answer\n<options><option>literal</option></options>\nReview changes\nRun checks',
+                    });
                     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
                         payload: expect.objectContaining({ messageActionReference: reference,
                             resolveClientMessageContext: true,
