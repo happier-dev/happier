@@ -495,24 +495,34 @@ type SessionInputLoadRequest = Readonly<{
 /** Collect only this finite phase's cache misses; the existing reader owns reuse and retirement. */
 async function readSessionInputPhase(ids: readonly string[], readTranscript: boolean, readSession: SessionInputReader,
     onFailure: (error: SessionPartsHttpError) => void,
-    loadBatch: (requests: readonly SessionInputLoadRequest[]) => Promise<void>,
+    loadBatch: (requests: readonly SessionInputLoadRequest[], signal: AbortSignal) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
     admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: (sessionId: string) => string, sourceReferenceKey?: string,
-    isAdmissionCurrent?: () => boolean) {
+    demandSignal?: AbortSignal) {
     const requests: SessionInputLoadRequest[] = [];
     const reads = ids.map(sessionId => readSession(sessionId, readTranscript,
         (assertCurrent, signal, retained, publish) => new Promise((resolve, reject) => {
             requests.push({ sessionId, assertCurrent, signal, retained, publish, resolve, reject });
-        }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey?.(sessionId), sourceReferenceKey, isAdmissionCurrent,
+        }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey?.(sessionId), sourceReferenceKey,
+        demandSignal,
     ).catch(error => {
         if (!(error instanceof SessionPartsHttpError)) throw error;
         onFailure(error);
         return null;
     }).then(value => { onValue(sessionId, value); return [sessionId, value] as const; }));
-    const loading = requests.length ? loadBatch(requests).catch(error => {
+    // One physical batch serves every collected Session read. It ends only when
+    // each of those reads has lost all of its borrowers (or the Account retired).
+    const batchAbort = new AbortController();
+    let borrowed = requests.length;
+    const leave = () => { if (--borrowed === 0) batchAbort.abort(); };
+    for (const request of requests) {
+        if (request.signal.aborted) leave();
+        else request.signal.addEventListener('abort', leave, { once: true });
+    }
+    const loading = requests.length ? loadBatch(requests, batchAbort.signal).catch(error => {
         for (const request of requests) request.reject(error);
-    }) : Promise.resolve();
+    }).finally(() => { for (const request of requests) request.signal.removeEventListener('abort', leave); }) : Promise.resolve();
     const [values] = await Promise.all([Promise.all(reads), loading]);
     return new Map(values);
 }
@@ -528,11 +538,14 @@ function sessionEvidenceReadError(error: unknown): unknown {
         ? new RetryableServerResponseError(error.httpStatus, 'Session input evidence unavailable') : error;
 }
 
+type SelectionInputs = Readonly<{ inputs: ReadonlyMap<string, { value: SessionInputEvidence } | { error: unknown }>;
+    isInputCurrent(sessionId: string): boolean }>;
+
 async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: UsageQuery,
     accounting: readonly UsageAccountingSourceSnapshot[], readSession: SessionInputReader, readSelection: SessionInputSelectionReader,
     readAccountCurrentnessSource: () => Promise<SessionAccountCurrentnessSource>,
     nowMs: number,
-    isAdmissionCurrent: () => boolean, signal?: AbortSignal,
+    signal?: AbortSignal,
     onProgress?: (snapshots: readonly HowYouWorkReadSnapshot[], sources: readonly UsageQuerySourceState[]) => void): Promise<HowYouWorkReadSnapshot[]> {
     const queries = [query];
     const active = captureActiveServerAccountScopeLifetime();
@@ -543,9 +556,11 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         sessionMembership: readUsageAccountingSessionMembership(byQuery.get(getUsageQueryKey(query))) })]));
     const readProjected = async (query: UsageQuery, sessionIds: readonly string[] | undefined,
         phaseSignal = signal,
-        consumeResult?: (row: UsageSessionEvidenceResponse['results'][number]) => Promise<void>): Promise<UsageSessionEvidenceResponse> => {
+        consumeResult?: (row: UsageSessionEvidenceResponse['results'][number]) => Promise<void>,
+        candidateSessionIds?: readonly string[]): Promise<UsageSessionEvidenceResponse> => {
         const currentness = await readAccountCurrentnessSource();
-        const input = UsageSessionEvidenceRequestSchema.parse({ nowMs, requests: [{ query, ...(sessionIds ? { sessionIds } : {}) }] });
+        const input = UsageSessionEvidenceRequestSchema.parse({ nowMs, requests: [{ query, ...(sessionIds ? { sessionIds } : {}),
+            ...(candidateSessionIds ? { candidateSessionIds } : {}) }] });
         const init = { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
             body: JSON.stringify(input), signal: phaseSignal };
         const consume = async (response: Response) => {
@@ -629,7 +644,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         return context.readTransport ? await context.readTransport.read(USAGE_SESSION_EVIDENCE_PATH, init, undefined, consume)
             : await consume(await context.request(USAGE_SESSION_EVIDENCE_PATH, init));
     };
-    const readSummary = async (query: UsageQuery, sessionIds: readonly string[] | undefined, ownerSignal?: AbortSignal) => {
+    const readSummary = async (query: UsageQuery, sessionIds: readonly string[] | undefined, ownerSignal?: AbortSignal,
+        candidateSessionIds?: readonly string[]) => {
         const [{ captureServerRequestAuthorityForServerAccountScope }, { readSessionSnapshotsForAuthority },
             { readSessionDetailAccessProjectionVersion }, accountCurrentnessSource] = await Promise.all([
             import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
@@ -657,21 +673,25 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     inputs.set(row.sessionId, { value: { session, callerDataKeyEnvelope: result.snapshot.callerDataKeyEnvelope,
                         detail: projectSessionUsageWorkEvidence(session), completeMessageCoverage: false } });
                 } catch (error) { inputs.set(row.sessionId, { error }); }
-            });
+            }, candidateSessionIds);
             return { body, inputs };
         } finally { await authority?.release(); }
     };
-    const discovered = new Map<string, Awaited<ReturnType<typeof readSummary>> & { isInputCurrent(sessionId: string): boolean }>();
+    const discovered = new Map<string, SelectionInputs>();
     for (const query of queries) {
         const key = getUsageQueryKey(query);
         if (idsByQuery.has(key)) continue;
         try {
             const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
-            const discoveredIds = await readSelection(getUsageSessionEvidenceDemandKey(summaryQuery, nowMs), async (isInputCurrent, ownerSignal) => {
-                const summary = await readSummary(summaryQuery, undefined, ownerSignal);
-                discovered.set(key, { ...summary, isInputCurrent });
-                return summary.body.requests[0]!.sessionIds;
-            }, isAdmissionCurrent);
+            const selection = await readSelection(getUsageSessionEvidenceDemandKey(summaryQuery, nowMs), async (isInputCurrent, ownerSignal, candidates) => {
+                const summary = await readSummary(summaryQuery, undefined, ownerSignal, candidates);
+                return { ids: summary.body.requests[0]!.sessionIds, rows: { inputs: summary.inputs, isInputCurrent } satisfies SelectionInputs };
+            }, signal);
+            // Every borrower of one selection read shares the rows it opened, not only
+            // the batch that started it (that batch may have left before it settled).
+            // This loader is the only writer of rows for Usage evidence demand keys.
+            if (selection.rows) discovered.set(key, selection.rows as SelectionInputs);
+            const discoveredIds = selection.ids;
             const selectedIds = selectUsageQueryWorkEvidenceSessionIds({ query,
                 sessions: discoveredIds.map(id => ({ id })),
                 contributions: byQuery.get(key)?.contributions,
@@ -857,8 +877,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         // identical completion turns one refresh into N full-corpus passes.
         if (changed || settled.size === selectedIds.length) publish();
     };
-    const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordReadFailure, async requests => {
-        const ownerSignal = requests[0]!.signal;
+    const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordReadFailure, async (requests, ownerSignal) => {
         try {
             const discovery = discovered.get(getUsageQueryKey(query));
             const inputs = new Map(discovery ? [...discovery.inputs].filter(([id]) => discovery.isInputCurrent(id)) : []);
@@ -901,11 +920,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 else request.resolve(null);
             }
         }
-    }, (id, value) => onValue(id, value, !readTranscript || !value), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), isAdmissionCurrent);
+    }, (id, value) => onValue(id, value, !readTranscript || !value), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), signal);
     // Private facts follow the same Usage window and admitted population.
     // Held private evidence never holds interval publication.
-    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => summaries.get(id)), true, readSession, recordReadFailure, async requests => {
-        const ownerSignal = requests[0]!.signal;
+    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => summaries.get(id)), true, readSession, recordReadFailure, async (requests, ownerSignal) => {
         const messageIds = requests.filter(request => {
                 const admitted = summaries.get(request.sessionId)!;
                 return admitted.session.access?.capabilities.readTranscript !== false
@@ -937,7 +955,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             requireCurrent(context, ownerSignal);
             for (const request of requests) request.reject(sessionEvidenceReadError(error));
         }
-    }, (id, value) => onValue(id, value, true), (id, value) => { selected.set(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), isAdmissionCurrent);
+    }, (id, value) => onValue(id, value, true), (id, value) => { selected.set(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), signal);
     requireCurrent(context, signal);
     return project();
 }
@@ -1000,7 +1018,6 @@ export async function readUiUsageQueryBatch(
     getUsageQueryResourceStore(context);
     const accountOwner = accountStores.get(resolveUsageOwnerLifetime(context))!;
     const accountingInstants = new Map(queries.map(query => [getUsageQueryKey(query), accountOwner.readAccountingInstant(query)]));
-    const isSessionAdmissionCurrent = accountOwner.captureSessionEvidenceAdmission();
     const accountingNowMs = Math.max(...accountingInstants.values());
     const reads = [...new Map(queries.flatMap(query => resolveUsagePageAccountingReads([query], accountingInstants.get(getUsageQueryKey(query))!)
         .map(read => [getUsageQueryKey(read.query), read] as const))).values()];
@@ -1177,7 +1194,7 @@ export async function readUiUsageQueryBatch(
             let snapshots: Awaited<ReturnType<typeof readHowYouWorkEvidence>>;
             try {
                 snapshots = await readHowYouWorkEvidence(context, query, [...accounting.values()], sessionInputReader, accountOwner.readSessionSelection, readSessionCurrentness,
-                    accountingInstants.get(getUsageQueryKey(query))!, isSessionAdmissionCurrent, signal,
+                    accountingInstants.get(getUsageQueryKey(query))!, signal,
                     (snapshots, sources) => {
                         requireCurrent(context, signal);
                         const key = getUsageQueryKey(query);
@@ -1298,7 +1315,6 @@ type UsageAccountingAnswer = {
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
     readSessionSelection: SessionInputSelectionReader;
-    captureSessionEvidenceAdmission(): () => boolean;
     /** The instant this read resolves its accounting windows at. */
     readAccountingInstant(query: UsageQuery): number;
     readAccounting(request: Parameters<typeof queryUsageAnalytics>[1], query: UsageQuery, signal?: AbortSignal,
@@ -1431,10 +1447,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     };
     const owner: AccountResourceOwner = {
         projectionDocuments,
-        captureSessionEvidenceAdmission() {
-            const admitted = sessionEvidenceInputs;
-            return () => admitted === sessionEvidenceInputs;
-        },
         readAccountingInstant(query) {
             const nowMs = Date.now();
             if (!query.includeAccounting) return nowMs;
