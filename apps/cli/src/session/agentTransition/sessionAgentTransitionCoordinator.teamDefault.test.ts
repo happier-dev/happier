@@ -6,7 +6,9 @@ import * as persistence from '@/persistence';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 /**
  * The transition's TARGET connected-service binding, through the real
@@ -148,6 +150,29 @@ afterEach(() => { vi.restoreAllMocks(); resetInMemoryAccountSettingsContextForTe
  * with the Session already committed to it.
  */
 describe('runSessionAgentTransition — the target binding comes from the one spawn-defaulting owner', () => {
+  it.each([true, false])('uses requester custody rather than the daemon bearer when custody is current=%s', async current => {
+    hasTeamDefault = false;
+    vi.mocked(persistence.readStoredCredentials).mockResolvedValue({ ...TEST_CREDENTIALS, token: 'daemon-local-bearer' });
+    const snapshot = await bootstrapAccountSettingsContext({ credentials: TEST_CREDENTIALS,
+      mode: 'blocking', publication: 'invocation', deps: { applySideEffects: () => undefined } });
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials: TEST_CREDENTIALS,
+      snapshot, serverHttpBaseUrl: resolveServerHttpBaseUrl(), isCurrent: async () => current });
+    const { harness, captured } = createHarness({ readTeamCatalog: async () => buildTeamCatalog([]) });
+    const invocation = { credentials: TEST_CREDENTIALS, request: buildTransitionRequest(),
+      operationContext, deps: harness.deps };
+
+    const result = await runSessionAgentTransition(invocation);
+
+    if (current) {
+      expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+      expect(readSealedMetadata(captured.currentView).connectedServices).toBeUndefined();
+    } else {
+      expect(result).toEqual({ type: 'rejected', code: 'target_unavailable', sourceEffect: 'none' });
+      expect(captured.currentView).toBeNull();
+      expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+    }
+  });
+
   it('refuses typed, with the source untouched, when the target Team default no longer resolves', async () => {
     // The Home no longer offers the resource from that Team.
     const { harness, captured, readTeamCatalog } = createHarness({

@@ -36,6 +36,7 @@ import {
   generateConnectedServiceMaterializationIdentityV1,
 } from '@/daemon/connectedServices/materialization/identity';
 import type { StoredCredentials } from '@/persistence';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import {
   ConnectedServicesDefaultUnavailableError,
   createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
@@ -162,6 +163,8 @@ export type SessionAgentTransitionDeps = Readonly<{
 
 export type SessionAgentTransitionParams = Readonly<{
   credentials: StoredCredentials;
+  /** Retain the admitted requester's Account custody through target defaulting. */
+  operationContext?: SavedSecretOperationContextV1;
   request: SessionAgentTransitionRequestV1;
   signal?: AbortSignal;
   /** Host-private authenticated input provenance and permission ceiling. */
@@ -353,6 +356,7 @@ function buildTargetCurrentViewProjection(params: Readonly<{
  */
 async function resolveTargetConnectedServiceBinding(params: Readonly<{
   credentials: StoredCredentials;
+  operationContext?: SavedSecretOperationContextV1;
   targetAgentId: AgentId;
   signal?: AbortSignal;
   deps: Pick<
@@ -379,6 +383,7 @@ async function resolveTargetConnectedServiceBinding(params: Readonly<{
     resolved = await params.deps.resolveSpawnConnectedServicesDefaults({
       agentId: params.targetAgentId,
       credentials: params.credentials,
+      ...(params.operationContext ? { operationContext: params.operationContext } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog } : {}),
     });
@@ -867,6 +872,7 @@ export async function runSessionAgentTransition(
   const sourceAgentId = currentAgentId;
   const targetConnectedServices = await resolveTargetConnectedServiceBinding({
     credentials,
+    ...(params.operationContext ? { operationContext: params.operationContext } : {}),
     targetAgentId: target.agentId,
     ...(params.signal ? { signal: params.signal } : {}),
     deps,
