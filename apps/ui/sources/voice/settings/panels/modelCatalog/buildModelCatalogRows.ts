@@ -46,6 +46,12 @@ export type ModelCatalogRow = Readonly<{
   progress: number | null;
   /** Declared size of the artifact whose daemon runtime is loaded, or null; not RSS. */
   loadedArtifactBytes: number | null;
+  /** Verified upstream language codes, or null when unknown. */
+  languages: readonly string[] | null;
+  /** Compressed upstream archive bytes, not installed size, transfer bytes or RAM. */
+  archiveBytes: number | null;
+  /** Daemon-owned active/queued inference lease at observation time, or unknown. */
+  inUse: boolean | null;
   /** Daemon-reported install error message, or null. */
   lastError: string | null;
   /** Whether this pack is the selected default for its kind. */
@@ -160,6 +166,8 @@ function buildRowsForKind(
       external: true as const,
       publicationAvailable: true,
       streamingCapable: status.runtimeFamily === 'sherpa_zipformer_streaming',
+      languages: undefined,
+      archiveSizeBytes: undefined,
     }));
   return [...builtIns, ...external].flatMap((entry): readonly ModelCatalogRow[] => {
     const status = statusByPackId.get(entry.packId);
@@ -202,6 +210,9 @@ function buildRowsForKind(
       progress,
       loadedArtifactBytes:
         typeof status?.loadedArtifactBytes === 'number' ? status.loadedArtifactBytes : null,
+      languages: entry.languages ?? null,
+      archiveBytes: entry.archiveSizeBytes ?? null,
+      inUse: !statusUnavailable && typeof status?.inUse === 'boolean' ? status.inUse : null,
       lastError: status?.lastError ?? null,
       isDefault: defaultPackId === entry.packId,
       canInstall: entry.publicationAvailable

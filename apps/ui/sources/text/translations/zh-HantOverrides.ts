@@ -11218,6 +11218,12 @@ settingsSession: {
                 installSubtitle: '點按以安裝到你的 Voice 機器',
                 setDefaultSubtitle: "點按以設為預設",
                 modelFiles: ({ size }: { size: string }) => `模型檔案 ${size}`,
+                languagesUnknown: "未列出語言",
+                languageCount: ({ count }: { count: number }) => `${count} 種語言`,
+                downloadSize: ({ size }: { size: string }) => `下載 ${size}`,
+                downloadSizeUnknown: "下載大小未知",
+                inUse: "使用中",
+                dictationOnly: "僅限聽寫",
                 removeConfirmTitle: "移除模型包",
                 removeConfirmBody: ({ name }: { name: string }) => `從你的機器上刪除 ${name} 的模型檔案?`,
                 state: {

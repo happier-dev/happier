@@ -31,6 +31,43 @@ function status(
 }
 
 describe('buildModelCatalogRows', () => {
+  it('projects sourced multilingual archive facts without treating selection or residency as active use', () => {
+    const packId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
+    const selected = buildModelCatalogRows({
+      statuses: [status(packId, { installState: 'installed', runtimeState: 'ready' })],
+      selectedSttPackId: packId,
+      selectedTtsPackId: null,
+    }).stt.find(row => row.packId === packId)!;
+    expect(selected).toMatchObject({
+      archiveBytes: 487_170_055,
+      languages: expect.arrayContaining(['nl', 'en', 'uk']),
+      inUse: null,
+      // Installed published packs can refresh through the existing installer.
+      canInstall: true,
+    });
+    expect(selected.languages).toHaveLength(25);
+    const unknown = buildModelCatalogRows({
+      statuses: [status('acme.speech/model', {
+        pluginIdentity: { pluginId: 'acme.speech', packId: 'model' },
+      })], selectedSttPackId: null, selectedTtsPackId: null,
+    }).stt.find(row => row.packId === 'acme.speech/model');
+    expect(unknown).toMatchObject({ archiveBytes: null, languages: null, inUse: null });
+  });
+
+  it('preserves the daemon active-use fact separately from selected and installed state', () => {
+    const packId = getDefaultModelPackId('stt_sherpa')!;
+    const row = buildModelCatalogRows({
+      statuses: [status(packId, { installState: 'installed', runtimeState: 'ready', inUse: true })],
+      selectedSttPackId: null, selectedTtsPackId: null,
+    }).stt.find(row => row.packId === packId);
+    expect(row).toMatchObject({ languages: ['en'], archiveBytes: null, inUse: true });
+    const unavailable = buildModelCatalogRows({
+      statuses: [status(packId, { inUse: true })], statusUnavailable: true,
+      selectedSttPackId: null, selectedTtsPackId: null,
+    }).stt.find(row => row.packId === packId);
+    expect(unavailable).toMatchObject({ state: 'unknown', inUse: null });
+  });
+
   it('keeps an installed batch-only pack removable without promoting it to the streaming conversation default', () => {
     const batchId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
     const streamingId = getDefaultModelPackId('stt_sherpa')!;

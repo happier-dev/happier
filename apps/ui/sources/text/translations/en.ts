@@ -16883,6 +16883,12 @@ const enSettingsVoice = {
       installSubtitle: 'Tap to install it on your Voice machine',
       setDefaultSubtitle: 'Tap to use as the default',
       modelFiles: ({ size }: { size: string }) => `${size} model files`,
+      languagesUnknown: "Languages not listed",
+      languageCount: ({ count }: { count: number }) => `${count} languages`,
+      downloadSize: ({ size }: { size: string }) => `${size} download`,
+      downloadSizeUnknown: "Download size unknown",
+      inUse: "In use",
+      dictationOnly: "Dictation only",
       download: "Download",
       removeConfirmTitle: 'Remove model pack',
       removeConfirmBody: ({ name }: { name: string }) =>

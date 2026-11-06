@@ -142,6 +142,8 @@ export const DaemonVoiceInferenceModelStatusSchema = lazyZodSchema(() => z.objec
   runtimeState: z.optional(DaemonVoiceInferenceModelRuntimeStateSchema),
   /** Declared bytes of the model-pack artifact whose runtime is currently loaded; not RSS. */
   loadedArtifactBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
+  /** Active or queued inference/stream lease at observation time; omission means unknown. */
+  inUse: z.optional(z.boolean()),
   /** Exact external-pack consent binding. Absent for built-in packs and licenses without consent. */
   licenseReview: z.optional(z.nullable(DaemonVoiceModelPackLicenseReviewV1Schema)),
   /** TTS voices declared by this exact pack. Empty for packs without a catalog. */

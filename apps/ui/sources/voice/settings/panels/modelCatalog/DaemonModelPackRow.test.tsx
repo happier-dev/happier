@@ -75,6 +75,7 @@ describe('DaemonModelPackRow', () => {
         const row: ModelCatalogRow = {
             packId: 'pack-unknown', kind: 'stt_sherpa', displayName: 'Unknown Pack', model: 'zipformer',
             state: 'unknown', progress: null, lastError: null, loadedArtifactBytes: null,
+            languages: null, archiveBytes: null, inUse: null,
             canSetDefault: false,
             isDefault: false, canInstall: false, canRemove: false, licenseReview: null, sourcePluginId: null,
         };
@@ -88,10 +89,30 @@ describe('DaemonModelPackRow', () => {
         expect(item.props.subtitle).toBeUndefined();
     });
 
+    it('lets Download say the model is missing, while a failed install keeps its state beside Retry', async () => {
+        const base: ModelCatalogRow = {
+            packId: 'pack-missing', kind: 'stt_sherpa', displayName: 'Parakeet', model: 'parakeet',
+            state: 'not_installed', progress: null, lastError: null, loadedArtifactBytes: null,
+            languages: ['en'], archiveBytes: 487_170_055, inUse: null, canSetDefault: false,
+            isDefault: false, canInstall: true, canRemove: false, licenseReview: null, sourcePluginId: null,
+        };
+        const detailOf = async (row: ModelCatalogRow) => {
+            const screen = await renderScreen(
+                <DaemonModelPackRow row={row} actionInFlight={false}
+                    onSetDefault={() => undefined} onInstall={() => undefined} onRemove={() => undefined} />,
+            );
+            return screen.tree.root.findAll((node) => node.props.testID === `voice-model-row-${row.packId}` && 'title' in node.props)[0].props.detail;
+        };
+        expect(await detailOf(base)).toBeUndefined();
+        expect(await detailOf({ ...base, packId: 'pack-failed', state: 'error', lastError: 'Network lost' }))
+            .toBe(t('settingsVoice.local.models.state.error'));
+    });
+
     it('keeps an accessible cancel action visible for the active install', async () => {
         const row: ModelCatalogRow = {
             packId: 'pack-active', kind: 'tts_sherpa', displayName: 'Active Pack', model: 'kokoro',
             state: 'downloading', progress: 0.5, lastError: null, loadedArtifactBytes: null,
+            languages: null, archiveBytes: null, inUse: null,
             canSetDefault: false,
             isDefault: false, canInstall: false, canRemove: false, licenseReview: null, sourcePluginId: null,
         };
@@ -120,6 +141,7 @@ describe('DaemonModelPackRow', () => {
             progress: null,
             lastError: null,
             loadedArtifactBytes: null,
+            languages: null, archiveBytes: null, inUse: null,
             isDefault: false,
             canSetDefault: true,
             canInstall: false,
@@ -176,6 +198,7 @@ describe('DaemonModelPackRow', () => {
             progress: null,
             lastError: null,
             loadedArtifactBytes: null,
+            languages: null, archiveBytes: null, inUse: null,
             isDefault: true,
             canSetDefault: true,
             canInstall: false,
@@ -248,6 +271,7 @@ describe('DaemonModelPackRow', () => {
         ));
         expect(screen.tree.root.findAllByProps({ nativeID: anchor })).toHaveLength(0);
     });
+
     it('updates an installed web Kokoro pack from its visible row and observes refreshed named voices', async () => {
         const { Platform } = await import('react-native');
         const previousPlatform = { ...Platform };

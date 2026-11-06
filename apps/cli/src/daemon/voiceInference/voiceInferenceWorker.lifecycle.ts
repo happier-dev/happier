@@ -412,6 +412,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       // Additive readiness snapshot fields (T6). The declared artifact byte count is only
       // meaningful while that pack's runtime is loaded; it is not process-memory telemetry.
       runtimeState: resolveRuntimeStateForPack(packId),
+      inUse: (inUseCountByPackId.get(packId) ?? 0) > 0,
       ...(loadedArtifactBytesByPackId.has(packId)
         ? { loadedArtifactBytes: loadedArtifactBytesByPackId.get(packId) ?? 0 }
         : {}),

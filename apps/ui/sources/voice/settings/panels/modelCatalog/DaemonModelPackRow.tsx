@@ -13,7 +13,7 @@ import type { ModelPackKind } from '@happier-dev/protocol/voice/modelPacks/manif
 
 import type { ModelCatalogRow } from './buildModelCatalogRows';
 import { buildModelCatalogRows } from './buildModelCatalogRows';
-import { formatModelCatalogRowDetail } from './formatModelCatalogRowDetail';
+import { formatModelCatalogRowDetail, formatModelCatalogRowFacts, formatModelCatalogRowValue } from './formatModelCatalogRowDetail';
 import { useDaemonVoiceModelCatalogController } from './DaemonVoiceModelCatalogContext';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -40,7 +40,6 @@ export function DaemonModelPackRow(props: Readonly<{
     const installed = row.state === 'installed' || row.state === 'ready' || row.state === 'warming' || row.state === 'evicted';
     const isDiscard = row.state === 'error';
     const actionLabel = isDiscard ? t('common.discard') : t('common.remove');
-
     const installLabel = row.state === 'error' ? t('common.retry')
         : installed ? t('common.update') : t('settingsVoice.local.models.download');
 
@@ -77,7 +76,6 @@ export function DaemonModelPackRow(props: Readonly<{
         />
     ) : null;
 
-
     const rightElement = props.actionInFlight && props.onCancel ? (
         <IconButton
             testID={`voice-model-cancel-${row.packId}`}
@@ -107,21 +105,31 @@ export function DaemonModelPackRow(props: Readonly<{
         }
     };
 
+    // Line 1: what the model covers and costs to fetch. Line 2: the one thing to know about it now.
+    const consequence = row.state === 'error' && row.lastError
+        ? row.lastError
+        : row.isDefault
+            ? t('settingsVoice.local.models.defaultSubtitle')
+            : canPromoteToDefault
+                ? t('settingsVoice.local.models.setDefaultSubtitle')
+                : installed && row.kind === 'stt_sherpa' && !row.canSetDefault
+                    ? t('settingsVoice.local.models.dictationOnly')
+                    : null;
+    // A missing model's Download already says it is missing; a failed one keeps its state beside Retry.
+    const value = row.state === 'downloading' && typeof row.progress === 'number'
+        ? `${formatModelCatalogRowValue(row)} ${Math.round(row.progress * 100)}%`
+        : row.state === 'not_installed' && installButton
+            ? undefined
+            : formatModelCatalogRowValue(row);
+
     return (
         <Item
             testID={`voice-model-row-${row.packId}`}
             title={row.displayName}
             // An unknown status is already the row's value; the description stays empty rather than repeat it.
-            subtitle={isUnknown
-                ? undefined
-                : row.isDefault
-                    ? t('settingsVoice.local.models.defaultSubtitle')
-                    : row.canInstall && !installed
-                        ? t('settingsVoice.local.models.installSubtitle')
-                        : canPromoteToDefault
-                            ? t('settingsVoice.local.models.setDefaultSubtitle')
-                            : undefined}
-            detail={formatModelCatalogRowDetail(row)}
+            subtitle={isUnknown ? undefined : [formatModelCatalogRowFacts(row), consequence].filter(Boolean).join('\n')}
+            subtitleLines={0}
+            detail={value}
             rightElement={isUnknown ? undefined : rightElement}
             rightElementOutsidePressable={showRemove || row.canInstall || props.actionInFlight}
             onPress={onPress}

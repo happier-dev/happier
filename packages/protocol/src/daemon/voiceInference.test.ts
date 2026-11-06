@@ -328,10 +328,12 @@ describe('daemonVoiceInference schemas', () => {
             updatedAtMs: 1,
             runtimeState: 'ready',
             loadedArtifactBytes: 64 * 1024 * 1024,
+            inUse: true,
         });
 
         expect(parsed.runtimeState).toBe('ready');
         expect(parsed.loadedArtifactBytes).toBe(64 * 1024 * 1024);
+        expect(parsed).toHaveProperty('inUse', true);
     });
 
     it('omits the additive readiness fields entirely when not provided so existing callers stay unaffected', () => {
@@ -349,6 +351,7 @@ describe('daemonVoiceInference schemas', () => {
 
         expect('runtimeState' in parsed).toBe(false);
         expect('loadedArtifactBytes' in parsed).toBe(false);
+        expect('inUse' in parsed).toBe(false);
     });
 
     it('exposes the canonical model runtime-state enum', () => {

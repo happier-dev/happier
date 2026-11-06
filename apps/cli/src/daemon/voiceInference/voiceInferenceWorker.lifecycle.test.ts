@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getModelPackCatalogEntry, type ModelPackManifest } from '@happier-dev/protocol';
+import { DaemonVoiceInferenceModelStatusSchema, getModelPackCatalogEntry, type ModelPackManifest } from '@happier-dev/protocol';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -310,6 +310,43 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
         await Promise.all([...retainedRuntimeHomes].map((dir) => rm(dir, { recursive: true, force: true })));
         retainedRuntimeHomes.clear();
       }
+    }
+  });
+
+  it('reports model use from overlapping leases and clears it after success or failure', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const lifecycle = createVoiceInferenceWorkerLifecycle();
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const read = async () => DaemonVoiceInferenceModelStatusSchema.parse(
+      (await lifecycle.getModelsStatus([ZIPFORMER_PACK_ID]))[0],
+    );
+    const firstUse = lifecycle.runWithModelLease(ZIPFORMER_PACK_ID, async () => {
+      firstStarted.resolve();
+      await first.promise;
+    });
+    const secondUse = lifecycle.runWithModelLease(ZIPFORMER_PACK_ID, async () => {
+      secondStarted.resolve();
+      await second.promise;
+      throw new Error('native_operation_failed');
+    }).catch((error: unknown) => error);
+    try {
+      await Promise.all([firstStarted.promise, secondStarted.promise]);
+      expect(await read()).toMatchObject({ inUse: true });
+      first.resolve();
+      await firstUse;
+      expect(await read()).toMatchObject({ inUse: true });
+      second.resolve();
+      expect(await secondUse).toBeInstanceOf(Error);
+      expect(await read()).toMatchObject({ inUse: false });
+    } finally {
+      first.resolve();
+      second.resolve();
+      await Promise.all([firstUse, secondUse]);
+      await lifecycle.stop();
     }
   });
 

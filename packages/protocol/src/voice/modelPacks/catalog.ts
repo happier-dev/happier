@@ -36,6 +36,8 @@ type ModelPackCatalogEntryBase = Readonly<{
   sizeBytes: number | null;
   /** Upstream language codes; omitted when no verified model-card fact is available. */
   languages?: readonly string[];
+  /** Compressed upstream archive size, distinct from installed files, transfer bytes and RAM. */
+  archiveSizeBytes?: number;
   /** Whether the canonical manifest and every integrity-declared asset are currently published. */
   publicationStatus: 'published' | 'unavailable';
   /** Exact non-runtime files admitted and installed with this pack. */
@@ -144,6 +146,8 @@ export const MODEL_PACK_CATALOG = [
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     displayName: 'Parakeet v2 (0.6B, int8)',
     languages: ['en'],
+    // k2-fsa/sherpa-onnx asr-models asset 283097678 (verified 2026-10-30).
+    archiveSizeBytes: 482_468_385,
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },
@@ -164,6 +168,8 @@ export const MODEL_PACK_CATALOG = [
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     displayName: 'Parakeet v3 (0.6B, int8)',
     languages: ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'],
+    // k2-fsa/sherpa-onnx asr-models asset 283097583 (verified 2026-10-30).
+    archiveSizeBytes: 487_170_055,
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },

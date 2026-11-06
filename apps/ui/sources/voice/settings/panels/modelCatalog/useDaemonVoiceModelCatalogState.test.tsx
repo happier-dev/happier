@@ -331,6 +331,21 @@ describe('useDaemonVoiceModelCatalogState', () => {
         }
     });
 
+    it('exposes the same sourced model facts through the existing model inspection Action without per-row reads', async () => {
+        catalogReply([status(STT_PACK, { installState: 'installed', runtimeState: 'ready', inUse: true })]);
+        const result = await createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: 'voiceAdvanced.speechModels',
+        }, { surface: 'ui' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'completed', value: {
+            machineId: 'machine-a', catalog: { stt: expect.arrayContaining([
+                expect.objectContaining({ packId: STT_PACK, languages: ['en'], archiveBytes: null, inUse: true }),
+            ]) },
+        } } });
+        expect(listingRequests()).toHaveLength(1);
+        expect(requests.filter(request => request.method.endsWith('.status'))).toHaveLength(1);
+        expect(mutations()).toHaveLength(0);
+    });
+
     it('refuses manual model mutations when settings.invoke is disabled while settings.set remains admitted', async () => {
         const scope = storage.getState().settingsScope!;
         const settings = settingsParse({ ...storage.getState().settings, actionsSettingsV1: { v: 1,
