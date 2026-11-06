@@ -1,5 +1,9 @@
 import * as React from 'react';
 
+import { storage } from '@/sync/domains/state/storageStore';
+import type { StorageState } from '@/sync/store/types';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
+
 import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
 import { readSessionPersonalAttentionExpirationsForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 
@@ -14,6 +18,7 @@ import {
 import {
     useActivityAttentionSource,
     useActivityAttentionSummarySource,
+    useActivityAttentionStoreSelector,
 } from './useActivityAttentionSource';
 
 export type MountedActivityOverview = Readonly<{
@@ -107,6 +112,48 @@ export function useMountedActivityOverviewSummary(): MountedActivityOverviewSumm
     return React.useMemo(() => ({ source, nowMs, summary }), [source, nowMs, summary]);
 }
 
+/** A projection of the summary attention source, with the facts it needs to project. */
+export type ActivitySourceProjectionInput = Readonly<{
+    source: ActivityAttentionSource;
+    nowMs: number;
+    state: StorageState;
+}>;
+
+/**
+ * One store-selector projection of the summary attention source on the canonical boundary clock: the
+ * selector projects only when the source moves, `retain` keeps the previous value while it reads the
+ * same (so a Session row write that changes nothing projected renders no consumer), and a freshness
+ * boundary re-creates the selector so an expiry re-projects at the new instant. `project` must be stable.
+ */
+export function useActivitySourceProjection<T extends Readonly<{ nextAttentionBoundaryMs: number | null }>>(
+    project: (input: ActivitySourceProjectionInput) => T,
+    retain: (previous: T | undefined, next: T) => T,
+): T {
+    const [boundaryVersion, advanceBoundary] = React.useReducer((value: number) => value + 1, 0);
+    const selectSource = useActivityAttentionStoreSelector(false);
+    // The selector is re-created when membership changes; the published value outlives it.
+    const published = React.useRef<T | undefined>(undefined);
+    const select = React.useMemo(() => {
+        let previousSource: ReturnType<typeof selectSource> | undefined;
+        return (state: StorageState) => {
+            const selected = selectSource(state);
+            if (published.current && previousSource === selected) return published.current;
+            previousSource = selected;
+            published.current = retain(published.current,
+                project({ source: selected, nowMs: Date.now(), state }));
+            return published.current;
+        };
+    }, [boundaryVersion, project, retain, selectSource]);
+    const value = storage(select);
+    useActivityBoundaryRefresh(value.nextAttentionBoundaryMs, advanceBoundary);
+    return value;
+}
+
+function projectActivityOverviewSummary(input: ActivitySourceProjectionInput): ActivityOverviewSummary {
+    return buildActivityOverviewSummaryFromSource({ source: input.source, nowMs: input.nowMs, includeWarmSourceWhenNotReady: true });
+}
+
+/** Count-only chrome (rail badge, dots, status lines) subscribes to the summary itself. */
 export function useActivityOverviewSummary(): ActivityOverviewSummary {
-    return useMountedActivityOverviewSummary().summary;
+    return useActivitySourceProjection(projectActivityOverviewSummary, retainIfEqual);
 }

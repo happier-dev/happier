@@ -7,7 +7,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
 import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
-import { useActivityOverview } from './useActivityOverview';
+import { useActivityOverview, useActivityOverviewSummary } from './useActivityOverview';
 import { buildPendingNavigationFromSource } from './buildPendingNavigationFromSource';
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
@@ -171,4 +171,38 @@ describe('mounted Activity overview boundary clock', () => {
         expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
     });
+    it('renders a summary consumer only when the summary changes, not for every Session row write', async () => {
+        let renders = 0;
+        // Written by the probe's render; a mutable holder keeps TypeScript from narrowing it to its initial null.
+        const probe: { latest: ReturnType<typeof useActivityOverviewSummary> | null } = { latest: null };
+        function SummaryProbe() {
+            renders += 1;
+            probe.latest = useActivityOverviewSummary();
+            return null;
+        }
+        await renderScreen(<SummaryProbe />);
+        const baseline = probe.latest;
+        expect(baseline?.totalAttentionCount).toBe(1);
+        const rowWrite = (patch: Partial<ReturnType<typeof createSessionFixture>>) => {
+            const state = storage.getState();
+            const session = { ...state.sessions['legacy-session']!, ...patch };
+            storage.setState({
+                sessions: { ...state.sessions, [session.id]: session },
+                sessionListRowsByServerId: { 'server-a': {
+                    [session.id]: buildSessionListRenderableFromSession(session, state.sessionListRowsByServerId['server-a']?.[session.id]),
+                } },
+            });
+        };
+        const before = renders;
+        // A row write that moves no summary fact (the Session list churns like this constantly).
+        await act(async () => { rowWrite({ metadata: { ...storage.getState().sessions['legacy-session']!.metadata!, name: 'Unrelated rename 1' } }); });
+        await act(async () => { rowWrite({ metadata: { ...storage.getState().sessions['legacy-session']!.metadata!, name: 'Unrelated rename 2' } }); });
+        expect(renders).toBe(before);
+        expect(probe.latest).toBe(baseline);
+        // A write that does move a fact renders it once.
+        await act(async () => { rowWrite({ agentState: { requests: {}, completedRequests: {} } }); });
+        expect(renders).toBe(before + 1);
+        expect(probe.latest?.totalAttentionCount).toBe(0);
+    });
+
 });

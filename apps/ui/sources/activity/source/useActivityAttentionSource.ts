@@ -4,6 +4,7 @@ import { buildSessionListHomeObservations } from '@/sync/domains/session/listing
 import * as React from 'react';
 
 import { storage } from '@/sync/domains/state/storage';
+import type { StorageState } from '@/sync/store/types';
 import {
     getActiveServerSnapshot,
     getServerProfilesGeneration,
@@ -17,7 +18,11 @@ import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { createActivityAttentionStoreSourceSelector } from './createActivityAttentionStoreSourceSelector';
 import { useActivityPersonalSessionMembership } from './activityPersonalSessionMembership';
 
-function useActivityAttentionStoreSource(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[]): ActivityAttentionSource {
+/** Select at the subscription owner, before a changed source can render closed chrome. */
+export function useActivityAttentionStoreSelector(
+    includeSessionMessages: boolean,
+    detailAddresses?: readonly SessionAddress[],
+): (state: StorageState) => ActivityAttentionSource {
     const personalMembership = useActivityPersonalSessionMembership();
     const includeFollowRuleFacts = Object.values(personalMembership.followRulesByServerId ?? {}).some(snapshot =>
         snapshot.status === 'ready' && snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled));
@@ -35,21 +40,34 @@ function useActivityAttentionStoreSource(includeSessionMessages: boolean, detail
         getActiveServerSnapshot,
         getActiveServerSnapshot,
     );
-    const storeSource = storage(storeSourceSelector);
-    return React.useMemo(() => ({
-        ...storeSource,
-        activeServer,
-        activeServerId: activeServer.serverId,
-        personalSessionListMembershipByServerId: personalMembership.membershipByServerId,
-        personalSessionListQueryStatesByServerId: personalMembership.statesByServerId,
-        personalSessionListCoverageComplete: personalMembership.coverageComplete,
-        personalFollowRulesByServerId: personalMembership.followRulesByServerId,
-        accountDeliveryMutesByServerId: personalMembership.accountDeliveryMutesByServerId,
-        sessionListHomeObservationByServerId: buildSessionListHomeObservations({
-            concurrentSessionListCacheByServerId: storeSource.concurrentSessionListCacheByServerId,
-            queryStatesByServerId: personalMembership.statesByServerId,
-        }),
-    }), [activeServer, personalMembership, storeSource]);
+    return React.useMemo(() => {
+        let previousSource: ReturnType<typeof storeSourceSelector> | undefined;
+        let selected: ActivityAttentionSource | undefined;
+        return (state: StorageState) => {
+            const storeSource = storeSourceSelector(state);
+            if (previousSource === storeSource && selected) return selected;
+            previousSource = storeSource;
+            selected = {
+                ...storeSource,
+                activeServer,
+                activeServerId: activeServer.serverId,
+                personalSessionListMembershipByServerId: personalMembership.membershipByServerId,
+                personalSessionListQueryStatesByServerId: personalMembership.statesByServerId,
+                personalSessionListCoverageComplete: personalMembership.coverageComplete,
+                personalFollowRulesByServerId: personalMembership.followRulesByServerId,
+                accountDeliveryMutesByServerId: personalMembership.accountDeliveryMutesByServerId,
+                sessionListHomeObservationByServerId: buildSessionListHomeObservations({
+                    concurrentSessionListCacheByServerId: storeSource.concurrentSessionListCacheByServerId,
+                    queryStatesByServerId: personalMembership.statesByServerId,
+                }),
+            };
+            return selected;
+        };
+    }, [activeServer, personalMembership, storeSourceSelector]);
+}
+
+function useActivityAttentionStoreSource(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[]): ActivityAttentionSource {
+    return storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses));
 }
 
 /** Summary surfaces never subscribe to or scan detailed transcript messages. */
