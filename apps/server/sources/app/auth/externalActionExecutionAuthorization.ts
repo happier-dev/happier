@@ -1,3 +1,4 @@
+import { isManagedMachineCreator } from '@/app/machines/managed/managedRead';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
@@ -868,10 +869,13 @@ async function readCurrentExternalActionPrincipal(
                 machineId: binding.machineId, actionId: binding.actionId });
             if (guestAdmission.kind !== 'admitted' || guestAdmission.custodianAccountId !== binding.custodianAccountId
                 || guestAdmission.installationId !== binding.installationId) return null;
-            const controller = await resolveMachineAdmissionInTx(reader, { actorAccountId: binding.accountId,
-                machineId: continuation.controller.machineId, actionId: 'machines.managed.acquire', requiredRole: 'manage' });
-            if (controller.kind !== 'admitted' || controller.custodianAccountId !== binding.custodianAccountId
-                || controller.installationId !== continuation.controller.installationId) return null;
+            if (continuation.controller) {
+                const controller = await resolveMachineAdmissionInTx(reader, {
+                    actorAccountId: isManagedMachineCreator(row, binding.accountId) ? row.custodianAccountId : binding.accountId,
+                    machineId: continuation.controller.machineId, actionId: 'machines.managed.acquire', requiredRole: 'manage' });
+                if (controller.kind !== 'admitted' || controller.custodianAccountId !== row.custodianAccountId
+                    || controller.installationId !== continuation.controller.installationId) return null;
+            }
         } catch (error) {
             if (!(error instanceof ManagedMachineError)) throw error;
             return null;

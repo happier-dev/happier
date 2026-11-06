@@ -1037,7 +1037,7 @@ export const ExternalActionManagedContinuationV1Schema = lazyZodSchema(() => z.s
   managedId: ExternalActionTargetIdV1Schema,
   creationRequestId: ExternalActionRequestIdV1Schema,
   expectedIntentRevision: z.number().check(z.int(), z.nonnegative()),
-  controller: ManagedControllerV1Schema,
+  controller: z.optional(ManagedControllerV1Schema),
   acquireRequestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
 export type ExternalActionManagedContinuationV1 = z.infer<typeof ExternalActionManagedContinuationV1Schema>;
