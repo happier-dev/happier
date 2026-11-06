@@ -136,8 +136,7 @@ describe("qualified Connected Account V4 credential routes", () => {
                 ? route.method
                 : [route.method];
             for (const method of methods) {
-                // Explicit HEAD handlers are part of the contract; Fastify's
-                // automatic GET aliases are intentionally omitted.
+                // Fastify's automatic GET aliases are not census entries.
                 if (method !== "HEAD" || Array.isArray(route.method)) registered.push([method, route.url]);
             }
         });
@@ -145,7 +144,8 @@ describe("qualified Connected Account V4 credential routes", () => {
         connectRoutes(app);
         await app.ready();
 
-        expect(app.hasRoute({ method: 'HEAD', url: '/v4/connect/qualified/provider-account-usage/history/document' })).toBe(true);
+        expect(app.hasRoute({ method: 'HEAD', url: '/v4/connect/qualified/provider-account-usage/history' })).toBe(false);
+        expect(app.hasRoute({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/history/document' })).toBe(false);
         expect(resolveConnectedServicesFeature(process.env).capabilities
             ?.connectedServices?.qualifiedAccounts?.protocolVersion).toBe(4);
 

@@ -22,6 +22,7 @@ import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protoco
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openProviderAccountUsagePageProjectionV1, sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { buildProviderAccountUsagePageProjectionV1, StoredProviderAccountUsagePageProjectionV1Schema,
     ProviderAccountUsagePageProjectionV1Schema, PackedProviderAccountUsagePageProjectionV1Schema,
     ProviderAccountUsagePageProjectionContentV1Schema, ProviderAccountUsagePageProjectionReadV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
@@ -29,7 +30,8 @@ import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolve
 import { UsageCoachEvaluationSchema } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { getProviderAccountUsageQuotaHistoryV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { getProviderAccountUsageQuotaHistoryV1, QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { projectUsagePlanInsights } from '../../../../../../../../packages/protocol/src/usage/usagePlanInsights';
 import { projectUsagePlans, projectUsagePastCycles, projectUsageEarlierCurves, summarizeUsagePlanFit,
     resolveUsageResetStartBinding, adviseUsageBankedReset } from '../../../../../../../ui/sources/components/settings/usage/widgets/plans/usagePlansModel';
@@ -90,7 +92,7 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-projection-', initAuth: true, initEncrypt: true }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it.each(['plain', 'e2ee'] as const)('recovers when another %s reader replaces the document between demand HEAD and GET', async accountMode => {
+    it.each(['plain', 'e2ee'] as const)('revalidates a %s demand and recovers when another reader replaces its accepted prefix', async accountMode => {
         const account = await db.account.create({ data: accountMode === 'plain'
             ? { publicKey: null, encryptionMode: 'plain' }
             : { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true } });
@@ -122,35 +124,65 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 } });
                 expect(written.statusCode, written.body).toBe(200);
             }
-            let afterHead: (() => Promise<void>) | undefined;
             let exactReads = 0;
+            const demandMethods: string[] = [];
+            let writeEtag: string | undefined;
             const request = async (path: string, init?: RequestInit): Promise<Response> => {
-                if (path.includes('/history?') && init?.method !== 'HEAD'
-                    && JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!).history) exactReads++;
-                const response = await app.inject({ method: init?.method === 'PUT' ? 'PUT' : init?.method === 'HEAD' ? 'HEAD' : 'GET',
-                    url: path, headers: { ...headers, ...(init?.body ? { 'content-type': 'application/json' } : {}) },
-                    ...(typeof init?.body === 'string' ? { payload: init.body } : {}) });
-                if (init?.method === 'HEAD' && afterHead) {
-                    expect(response.headers['x-happier-usage-projection-complete']).toBe('true');
-                    const hook = afterHead; afterHead = undefined; await hook();
+                if (path.includes('/history?')) {
+                    const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
+                    if (query.history) exactReads++;
+                    else demandMethods.push(init?.method ?? 'GET');
                 }
+                const response = await app.inject({ method: init?.method === 'PUT' ? 'PUT' : init?.method === 'HEAD' ? 'HEAD' : 'GET',
+                    url: path, headers: { ...headers, ...(init?.body ? { 'content-type': 'application/json' } : {}),
+                        ...(new Headers(init?.headers).has('if-none-match') ? { 'if-none-match': new Headers(init?.headers).get('if-none-match')! } : {}) },
+                    ...(typeof init?.body === 'string' ? { payload: init.body } : {}) });
+                if (init?.method === 'PUT') writeEtag = String(response.headers.etag);
                 const responseHeaders = new Headers();
                 for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) responseHeaders.set(name, String(value));
-                return new Response(init?.method === 'HEAD' ? null : response.body, { status: response.statusCode, headers: responseHeaders });
+                return new Response(response.statusCode === 304 ? null : response.body, { status: response.statusCode, headers: responseHeaders });
             };
             const read = (projection = demand) => getProviderAccountUsageQuota({ token: 'test' }, { source, projection },
                 { accountMode, material, request, nowMs: now, includePendingWork: false });
             const complete = await read();
             expect(complete.pageFacts?.resetWitness?.observedAtMs).toBe(late.observedAtMs);
-            afterHead = async () => {
-                const earlier = await read(earlierDemand);
-                expect(earlier.pageFacts?.resetWitness?.observedAtMs).toBe(first.observedAtMs);
-            };
+            expect(demandMethods).toEqual(['GET']);
+            // One atomic demand GET owns both the protected body and coverage.
+            // Revalidate its actual response, not a separate document or HEAD.
+            const demandUrl = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({
+                query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+                    { recordId: first.recordId, projection: demand }),
+            }).toString()}`;
+            const demandRead = await app.inject({ method: 'GET', url: demandUrl, headers });
+            expect(demandRead.statusCode, demandRead.body).toBe(200);
+            expect(ProviderAccountUsagePageProjectionReadV1Schema.parse(demandRead.json()))
+                .toMatchObject({ complete: true, projection: { recordId: first.recordId } });
+            expect(demandRead.headers.etag).toEqual(expect.any(String));
+            const unchangedDemand = await app.inject({ method: 'GET', url: demandUrl,
+                headers: { ...headers, 'if-none-match': String(demandRead.headers.etag) } });
+            expect(unchangedDemand.statusCode, unchangedDemand.body).toBe(304);
+            expect(unchangedDemand.body).toBe('');
+            expect(unchangedDemand.headers.etag).toBe(demandRead.headers.etag);
+            expect(unchangedDemand.headers['cache-control']).toBe('private, no-cache');
+            expect(unchangedDemand.headers.vary).toContain('Authorization');
+            const stored = ProviderAccountUsagePageProjectionReadV1Schema.parse(demandRead.json()).projection!;
+            const opened = openProviderAccountUsagePageProjectionV1({ recordId: first.recordId, accountMode, material, content: stored.content });
+            const resealed = { ...stored, content: sealProviderAccountUsagePageProjectionV1({ projection: opened, accountMode, material,
+                randomBytes: length => new Uint8Array(length).fill(3) }) };
+            const acknowledged = await app.inject({ method: 'PUT', url: '/v4/connect/qualified/provider-account-usage/history', headers, payload: resealed });
+            expect(acknowledged.statusCode, acknowledged.body).toBe(200);
+            expect(acknowledged.headers.etag).toBe(writeEtag); // Actual stored seal, not this client's new ciphertext.
+            const retained = await app.inject({ method: 'GET', url: demandUrl, headers });
+            expect(retained.json().projection).toEqual(stored);
+            expect(retained.headers.etag).toBe(demandRead.headers.etag);
+            expect(acknowledged.headers.etag).not.toBe(retained.headers.etag); // GET also validates complete coverage.
+            const earlier = await read(earlierDemand);
+            expect(earlier.pageFacts?.resetWitness?.observedAtMs).toBe(first.observedAtMs);
             exactReads = 0;
             const recovered = await read();
             expect(recovered.pageFacts?.historyStatus).toBe('complete');
             expect(recovered.pageFacts?.resetWitness).toEqual(complete.pageFacts?.resetWitness);
-            expect(exactReads).toBe(2); // The competing backfill and this reader's missing tail.
+            expect(exactReads).toBe(1); // Recover only this reader's missing tail.
         });
     });
 
@@ -204,14 +236,12 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             const traffic: { kind: 'projection' | 'exact' | 'put'; cursor?: { id: string; observedAtMs: number }; status: number }[] = [];
             let beforePut: (() => Promise<void>) | undefined;
             let afterExact: (() => Promise<void>) | undefined;
-            // The HTTP transport boundary models Fetch's standard conditional
-            // representation handling; the production B reader owns no cache.
-            let heldDocument: { body: string; etag: string } | undefined;
+            // Forward actual 304s; Fetch body replay is not assumed. B retains
+            // the already-admitted representation at its existing Resource.
             let documentBytes = 0;
             const projectionDocuments: NonNullable<ProviderAccountUsageQuotaReadOptions['projectionDocuments']> = new Map();
-            let unchangedHeads = 0;
+            let unchangedGets = 0;
             const request = async (path: string, init?: RequestInit): Promise<Response> => {
-                const document = path.includes('/history/document?');
                 const query = path.includes('/history?') && init?.method !== 'PUT'
                     ? JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!) : null;
                 const hook = beforePut;
@@ -219,26 +249,19 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 const response = await app.inject({ method: init?.method === 'PUT' ? 'PUT' : init?.method === 'HEAD' ? 'HEAD' : 'GET', url: path, headers: {
                     ...headers, ...(init?.body ? { 'content-type': 'application/json' } : {}),
                     ...(new Headers(init?.headers).has('if-none-match') ? { 'if-none-match': new Headers(init?.headers).get('if-none-match')! } : {}),
-                    ...(document && heldDocument ? { 'if-none-match': heldDocument.etag } : {}),
                 }, ...(typeof init?.body === 'string' ? { payload: init.body } : {}) });
                 if (path.includes('/history') && init?.method !== 'HEAD') traffic.push({ kind: init?.method === 'PUT' ? 'put' : query?.history ? 'exact' : 'projection',
                     ...(query?.history?.cursor ? { cursor: query.history.cursor } : {}), status: response.statusCode });
                 const responseHeaders = new Headers();
                 for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) responseHeaders.set(name, String(value));
-                if (document && response.statusCode === 304) {
-                    if (!heldDocument) throw new Error('HTTP revalidation without a held document');
-                    expect(response.body).toBe('');
-                    return new Response(heldDocument.body, { headers: responseHeaders });
-                }
-                if (document) {
+                if (query?.projection) {
                     documentBytes += Buffer.byteLength(response.body);
-                    if (response.statusCode === 200 && typeof response.headers.etag === 'string') heldDocument = { body: response.body, etag: response.headers.etag };
                 }
-                if (init?.method === 'HEAD' && response.statusCode === 304) unchangedHeads++;
+                if (query?.projection && response.statusCode === 304) unchangedGets++;
                 if (query?.history && afterExact) {
                     const hook = afterExact; afterExact = undefined; await hook();
                 }
-                return new Response(init?.method === 'HEAD' ? null : response.body, { status: response.statusCode, headers: responseHeaders });
+                return new Response(response.statusCode === 304 ? null : response.body, { status: response.statusCode, headers: responseHeaders });
             };
             const read = (documents = projectionDocuments) => getProviderAccountUsageQuota({ token: 'test' }, { source, projection: demand },
                 { accountMode, material, request, projectionDocuments: documents, nowMs: now, includePendingWork: false });
@@ -250,10 +273,13 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             };
             await append(); await read();
             const bytesAfterOwnPut = documentBytes;
-            const headsBeforeOwnPutRead = unchangedHeads;
             await read();
-            expect(unchangedHeads - headsBeforeOwnPutRead).toBe(1);
-            expect(documentBytes).toBe(bytesAfterOwnPut);
+            expect(documentBytes).toBeGreaterThan(bytesAfterOwnPut); // Admit the actual stored winner after PUT.
+            const admittedBytes = documentBytes;
+            const getsBeforeRepeat = unchangedGets;
+            await read();
+            expect(unchangedGets - getsBeforeRepeat).toBe(1);
+            expect(documentBytes).toBe(admittedBytes);
             const shortPrefix = projectionDocuments.get(base.recordId)!.projection;
             await append();
             await getProviderAccountUsageQuota({ token: 'test' }, { source,
@@ -262,8 +288,9 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             const beforeWiderWriter = documentBytes;
             traffic.length = 0;
             const narrowRead = await read();
-            expect(documentBytes).toBe(beforeWiderWriter);
-            expect(traffic).toEqual([{ kind: 'exact', cursor: shortPrefix.frontier, status: 200 }]);
+            expect(documentBytes).toBeGreaterThan(beforeWiderWriter);
+            expect(traffic).toEqual([{ kind: 'projection', status: 200 },
+                { kind: 'exact', cursor: shortPrefix.frontier, status: 200 }, { kind: 'put', status: 200 }]);
             expect(projectionDocuments.get(base.recordId)!.projection.observationCount).toBe(accepted);
             expect(narrowRead.pageFacts?.resetWitness?.observedAtMs).toBe(base.fetchedAtMs);
             for (let cycle = 0; cycle < 5; cycle++) {
@@ -273,10 +300,9 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 traffic.length = 0;
                 expect((await read()).pageFacts?.historyStatus).toBe('complete');
                 expect(traffic).toEqual([
-                    { kind: 'exact', cursor: prefix.frontier, status: 200 }, { kind: 'put', status: 200 },
+                    { kind: 'projection', status: 200 }, { kind: 'exact', cursor: prefix.frontier, status: 200 }, { kind: 'put', status: 200 },
                 ]);
                 expect((await coverage()).observationCount).toBe(accepted);
-                expect(documentBytes).toBe(beforeWiderWriter);
             }
             const prefix = await coverage();
             await append();
@@ -286,8 +312,7 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             // and must reconstruct the complete new tail after its conflict.
             beforePut = async () => {
                 await append();
-                // Both tabs already hold this immutable prefix, with independent
-                // publication custody. Reusing the Map would await this outer read.
+                // Both tabs hold the immutable prefix, with independent reads.
                 await read(new Map(projectionDocuments));
                 expect((await coverage()).frontier).not.toEqual(prefix.frontier);
                 await append();
@@ -295,7 +320,9 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             traffic.length = 0;
             expect((await read()).pageFacts?.historyStatus).toBe('complete');
             expect(traffic.filter(item => item.kind === 'put').map(item => item.status)).toEqual([200, 409, 200]);
-            expect(traffic.filter(item => item.kind === 'projection')).toHaveLength(0);
+            expect(traffic.filter(item => item.kind === 'projection')).toEqual([
+                { kind: 'projection', status: 200 }, { kind: 'projection', status: 200 }, { kind: 'projection', status: 200 },
+            ]);
             expect(traffic.filter(item => item.kind === 'exact')).toEqual([
                 { kind: 'exact', cursor: prefix.frontier, status: 200 }, { kind: 'exact', cursor: prefix.frontier, status: 200 },
                 { kind: 'exact', cursor: prefix.frontier, status: 200 },
@@ -309,10 +336,11 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 expect((await read()).pageFacts?.historyStatus).toBe('complete');
             }
             expect(documentBytes - beforeUnchanged).toBe(0);
-            expect(traffic).toEqual([]);
+            expect(traffic).toEqual(Array.from({ length: 5 }, () => ({ kind: 'projection', status: 304 })));
             // Independent tabs share accepted history, not Resource custody.
-            // A writer's extension needs one small exact tail in the other tab,
-            // without downloading or publishing the same protected document.
+            // A changed representation is one GET200, followed only by the
+            // exact missing tail and server-admitted publication. Unchanged
+            // reads remain GET304 without transferring a protected body.
             const otherDocuments: NonNullable<ProviderAccountUsageQuotaReadOptions['projectionDocuments']> = new Map();
             const otherRead = () => getProviderAccountUsageQuota({ token: 'test' }, { source, projection: demand },
                 { accountMode, material, request, projectionDocuments: otherDocuments, nowMs: now, includePendingWork: false });
@@ -325,12 +353,18 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 traffic.length = 0;
                 const extended = await read();
                 expect(extended.pageFacts?.historyStatus).toBe('complete');
+                expect(documentBytes - beforeOtherWriter).toBeGreaterThan(0);
+                expect(traffic).toEqual([{ kind: 'projection', status: 200 },
+                    { kind: 'exact', cursor: heldPrefix.frontier, status: 200 }, { kind: 'put', status: 200 }]);
                 expect(extended.pageFacts?.resetWitness).toEqual((await otherRead()).pageFacts?.resetWitness);
-                expect(documentBytes - beforeOtherWriter).toBe(0);
-                expect(traffic).toEqual([{ kind: 'exact', cursor: heldPrefix.frontier, status: 200 }]);
                 traffic.length = 0;
+                await read(); // Admit the actual server winner after our PUT.
+                expect(traffic).toEqual([{ kind: 'projection', status: 200 }]);
+                traffic.length = 0;
+                const beforeRepeat = documentBytes;
                 await read();
-                expect(traffic).toEqual([]);
+                expect(traffic).toEqual([{ kind: 'projection', status: 304 }]);
+                expect(documentBytes).toBe(beforeRepeat);
             }
             // A newly accepted witness inside the held prefix invalidates it.
             // Even after the other tab has rebuilt, the stale reader must open
@@ -341,9 +375,9 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             expect((await read()).pageFacts?.historyStatus).toBe('complete');
             expect(documentBytes - beforeBackdated).toBeGreaterThan(0);
             expect(traffic).toEqual([{ kind: 'projection', status: 200 }]);
-            // The original HEAD admitted an extension, but a backdated witness
-            // arrives after its exact tail is captured. Skipping a redundant
-            // PUT must still re-admit the representation actually derived.
+            // A backdated witness arrives after the exact tail is captured.
+            // The server PUT must reject that superseded derivation; the same
+            // canonical demand loop then opens the current accepted prefix.
             await append(); await otherRead();
             afterExact = async () => { await append(-2); await otherRead(); };
             await read();
@@ -361,7 +395,7 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
         });
     });
 
-    it.each(['plain', 'e2ee'] as const)('reuses persisted %s bodies across cold reads when the metadata marker is missing', async accountMode => {
+    it.each(['plain', 'e2ee'] as const)('reuses current %s bodies without a metadata marker and refuses unsupported protected bodies', async accountMode => {
         const account = await db.account.create({ data: accountMode === 'plain'
             ? { publicKey: null, encryptionMode: 'plain' }
             : { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true } });
@@ -418,8 +452,8 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 expect(repeated).toEqual(first);
             }
             expect({ exactGets, puts }).toEqual({ exactGets: 0, puts: 0 });
-            // A genuinely superseded body, not just a missing metadata hint,
-            // must still backfill and replace once at equal accepted coverage.
+            // The P5 contract refuses authenticated unsupported bodies rather
+            // than rebuilding them (docs/encryption.md, B page-projection format).
             const accepted = await db.providerAccountUsageHistory.findFirstOrThrow({ where: { accountId: account.id, recordId: snapshot.recordId } });
             const obsolete = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range: input.projection.range,
                 history: { entries: [{ id: accepted.id, observedAtMs: accepted.observedAt.getTime(), snapshot }], nextCursor: null } });
@@ -427,24 +461,10 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'provider_account_usage_page_projection', material,
                     payload: obsolete, randomBytes: length => new Uint8Array(length).fill(3) }) };
             await db.providerAccountUsageRecord.update({ where, data: { metadata } });
-            // The database is the refusing system boundary; a failed durable
-            // write cannot be reported as settlement or spin into another read.
-            await db.$executeRawUnsafe(`CREATE TRIGGER usage_projection_refused BEFORE UPDATE OF metadata ON ProviderAccountUsageRecord
-                BEGIN SELECT RAISE(ABORT, 'projection_write_refused'); END`);
             const retainedRetryOptions = { ...options, projectionDocuments: new Map() };
-            try {
-                await expect(getProviderAccountUsageQuota({ token: 'test' }, input, retainedRetryOptions)).rejects.toMatchObject({
-                    code: 'provider_account_usage_projection_write_failed',
-                });
-                expect({ exactGets, puts }).toEqual({ exactGets: 1, puts: 1 });
-                expect((await db.providerAccountUsageRecord.findUniqueOrThrow({ where })).metadata).toEqual(metadata);
-            } finally { await db.$executeRawUnsafe('DROP TRIGGER usage_projection_refused'); }
-            exactGets = 0; puts = 0;
-            expect(await getProviderAccountUsageQuota({ token: 'test' }, input, retainedRetryOptions)).toEqual(first);
-            expect({ exactGets, puts }).toEqual({ exactGets: 1, puts: 1 });
-            exactGets = 0; puts = 0;
-            for (let index = 0; index < 5; index++) expect(await getProviderAccountUsageQuota({ token: 'test' }, input, options)).toEqual(first);
+            await expect(getProviderAccountUsageQuota({ token: 'test' }, input, retainedRetryOptions)).rejects.toThrow();
             expect({ exactGets, puts }).toEqual({ exactGets: 0, puts: 0 });
+            expect((await db.providerAccountUsageRecord.findUniqueOrThrow({ where })).metadata).toEqual(metadata);
         });
     });
 
@@ -513,17 +533,15 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             let projectionWrites = 0;
             let projectionBytes = 0;
             let exactBytes = 0;
-            let conditionalHeads = 0;
+            let conditionalGets = 0;
             // Only network/authentication and unrelated A/feature services are fixture boundaries.
             // B reads and writes use the real registered handler, admission and disposable SQLite.
             const request = async (path: string, init?: RequestInit) => {
                 const query = path.includes('/history?') && init?.method !== 'PUT'
                     ? JSON.parse(new URL(path, 'https://usage-projection.test').searchParams.get('query')!) : null;
-                const document = path.includes('/history/document?');
                 if (path.includes('/history') && init?.method === 'PUT') projectionWrites++;
                 if (init?.method !== 'HEAD' && init?.method !== 'PUT') {
                     if (query?.history) exactPages++;
-                    if (query?.projection || document) projectionReads++;
                 }
                 const response = await app.inject({ method: init?.method === 'PUT' ? 'PUT' : init?.method === 'HEAD' ? 'HEAD' : 'GET', url: path,
                     headers: { ...headers, ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
@@ -531,12 +549,15 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                     ...(typeof init?.body === 'string' ? { payload: init.body } : {}) });
                 if (init?.method !== 'HEAD' && init?.method !== 'PUT') {
                     if (query?.history) exactBytes += Buffer.byteLength(response.body);
-                    if (query?.projection || document) projectionBytes += Buffer.byteLength(response.body);
+                    if (query?.projection) {
+                        if (response.statusCode === 200) projectionReads++;
+                        projectionBytes += Buffer.byteLength(response.body);
+                    }
                 }
                 const responseHeaders = new Headers();
                 for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) responseHeaders.set(name, String(value));
-                if (init?.method === 'HEAD' && response.statusCode === 304) conditionalHeads++;
-                return new Response(init?.method === 'HEAD' ? null : response.body, { status: response.statusCode, headers: responseHeaders });
+                if (query?.projection && response.statusCode === 304) conditionalGets++;
+                return new Response(response.statusCode === 304 ? null : response.body, { status: response.statusCode, headers: responseHeaders });
             };
             const baseline = await getProviderAccountUsageQuota({ token: 'test' }, { source,
                 history: { range: { startAtMs: period.startMs, endAtMs: period.endMs }, pageSize: 45_000 } },
@@ -679,7 +700,7 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                 for (const tab of tabs) for (const row of tab.results) expect(facts(row.quota![0]!)).toEqual(facts(baseline));
                 const before = exactPages;
                 await entry.refresh();
-                expect(conditionalHeads).toBeGreaterThan(0);
+                expect(conditionalGets).toBeGreaterThan(0);
                 expect(projectionReads).toBe(beforeTabs.projectionReads);
                 expect(entry.getSnapshot().error).toBeUndefined();
                 expect(entry.getSnapshot().pending).toBe('idle');

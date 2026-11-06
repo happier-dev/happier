@@ -176,7 +176,7 @@ describe('apiProviderAccountUsage', () => {
         expect(reads).toBe(2);
     });
 
-    it.each(['plain', 'e2ee'] as const)('deduplicates concurrent %s backfill publication without holding independent reads', async accountMode => {
+    it.each(['plain', 'e2ee'] as const)('keeps concurrent %s backfills independent and delegates publication to the server', async accountMode => {
         await activateTestHome();
         const { ProviderAccountUsagePageProjectionWriteV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
         const snapshot = makeSnapshot();
@@ -188,22 +188,17 @@ describe('apiProviderAccountUsage', () => {
             metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] };
         let persisted: ReturnType<typeof ProviderAccountUsagePageProjectionWriteV1Schema.parse> | null = null;
         let writes = 0;
-        let failedHeads = 0;
+        let failedReads = 0;
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/sources/resolve')) return Response.json({ source, recordId: snapshot.recordId,
                 providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 });
             if (path.includes('/record?')) return Response.json(record);
-            if (init?.method === 'HEAD') {
-                if (failedHeads > 0) { failedHeads--; return new Response(null, { status: 500 }); }
-                return new Response(null, { headers: {
-                    'x-happier-usage-projection-complete': String(persisted !== null), ...(persisted ? { etag: '"one"' } : {}),
-                } });
-            }
             if (init?.method === 'PUT') {
                 writes++; persisted = ProviderAccountUsagePageProjectionWriteV1Schema.parse(JSON.parse(String(init.body)));
                 return Response.json({ success: true }, { headers: { etag: '"one"' } });
             }
             const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
+            if (query.projection && failedReads > 0) { failedReads--; return new Response(null, { status: 500 }); }
             return Response.json(query.projection ? { projection: persisted, complete: persisted !== null }
                 : { entries: [{ id: 'accepted', observedAtMs: 1, record }], nextCursor: null });
         };
@@ -211,23 +206,23 @@ describe('apiProviderAccountUsage', () => {
         const projectionDocuments: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
         const input = { source, projection: { range: { startAtMs: 0, endAtMs: 5 }, resolution: 'accepted_observations' as const } };
         const options = { accountMode, material, request, nowMs: 1, includePendingWork: false, projectionDocuments };
-        // Randomness is the crypto boundary: an identical locally accepted
-        // publication must not repack/seal a second ciphertext that is discarded.
+        // Randomness is the crypto boundary. Each independent writer seals its
+        // submission; canonical server CAS, not a client queue, deduplicates storage.
         const cryptoRandom = await import('@/platform/cryptoRandom');
         const randomBytes = vi.spyOn(cryptoRandom, 'getRandomBytes');
         try {
             const values = await Promise.all([getProviderAccountUsageQuota({ token: 'test-token' }, input, options),
                 getProviderAccountUsageQuota({ token: 'test-token' }, input, options)]);
             expect(values.map(value => value.pageFacts?.resetWitness?.id)).toEqual(['accepted', 'accepted']);
-            expect(writes).toBe(1);
-            expect(randomBytes).toHaveBeenCalledTimes(accountMode === 'e2ee' ? 1 : 0);
+            expect(writes).toBe(2);
+            expect(randomBytes).toHaveBeenCalledTimes(accountMode === 'e2ee' ? 2 : 0);
         } finally { randomBytes.mockRestore(); }
         await getProviderAccountUsageQuota({ token: 'test-token' }, input, options);
-        expect(writes).toBe(1);
+        expect(writes).toBe(2);
         const narrow = await getProviderAccountUsageQuota({ token: 'test-token' }, { ...input,
             projection: { ...input.projection, range: { startAtMs: 2, endAtMs: 5 } } }, options);
         expect(narrow.pageFacts?.resetWitness).toBeNull();
-        failedHeads = 1;
+        failedReads = 1;
         const recovered = await Promise.allSettled([getProviderAccountUsageQuota({ token: 'test-token' }, input, options),
             getProviderAccountUsageQuota({ token: 'test-token' }, input, options)]);
         expect(recovered.map(value => value.status)).toEqual(['rejected', 'fulfilled']);
@@ -243,8 +238,9 @@ describe('apiProviderAccountUsage', () => {
         const range = { startAtMs: 0, endAtMs: 5 };
         let etag = '"one"';
         let mode = accountMode;
-        let headStatus = 200;
+        let responseStatus = 200;
         let bodyReads = 0;
+        const projectionRequests: string[] = [];
         let includeCurrent = true;
         const record = () => {
             const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
@@ -254,7 +250,8 @@ describe('apiProviderAccountUsage', () => {
         };
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/history')) {
-                if (init?.method === 'HEAD') return new Response(null, { status: headStatus,
+                projectionRequests.push(init?.method ?? 'GET');
+                if (responseStatus !== 200) return new Response(null, { status: responseStatus,
                     headers: { etag, 'x-happier-usage-projection-complete': 'true' } });
                 bodyReads++;
                 const projection = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range,
@@ -274,11 +271,16 @@ describe('apiProviderAccountUsage', () => {
         const input = { source, projection: { range, resolution: 'accepted_observations' as const } };
         const first = await getProviderAccountUsageQuota({ token: 'test-token' }, input, options);
         expect(first.pageFacts?.resetWitness?.id).toBe('accepted');
-        headStatus = 304;
+        expect(projectionRequests, 'one atomic demand read, without HEAD or document choreography').toEqual(['GET']);
+        responseStatus = 304;
         const second = await getProviderAccountUsageQuota({ token: 'test-token' }, input, options);
         expect(bodyReads).toBe(1);
         expect(second.pageFacts).toBe(first.pageFacts);
         expect(second.unusedCapacity).toBe(first.unusedCapacity);
+        const requestsBeforeUnheld304 = projectionRequests.length;
+        await expect(getProviderAccountUsageQuota({ token: 'test-token' }, input, { ...options, projectionDocuments: new Map() }))
+            .rejects.toThrow('provider_account_usage_content_unavailable');
+        expect(projectionRequests.length - requestsBeforeUnheld304).toBe(1); // No second GET or consumer fallback.
         const targets = [{ id: 'target', scope: { kind: 'personal' as const }, utilizationFraction: 0.75 }];
         const changedTargets = await getProviderAccountUsageQuota({ token: 'test-token' }, input, { ...options,
             readPacingTargets: async () => targets });
@@ -296,7 +298,7 @@ describe('apiProviderAccountUsage', () => {
         const narrower = await getProviderAccountUsageQuota({ token: 'test-token' }, { ...input,
             projection: { ...input.projection, range: { startAtMs: 2, endAtMs: 5 } } }, options);
         expect(narrower.pageFacts?.resetWitness).toBeNull();
-        etag = '"two"'; headStatus = 200;
+        etag = '"two"'; responseStatus = 200;
         const replaced = await getProviderAccountUsageQuota({ token: 'test-token' }, input, options);
         expect(bodyReads).toBe(2);
         expect(replaced.pageFacts).not.toBe(first.pageFacts);
@@ -309,12 +311,20 @@ describe('apiProviderAccountUsage', () => {
                 .rejects.toThrow('provider_account_usage_content_unavailable');
             includeCurrent = true;
         }
-        headStatus = 401;
+        responseStatus = 401;
         await expect(getProviderAccountUsageQuota({ token: 'test-token' }, input, options)).rejects.toMatchObject({ code: 'denied' });
-        headStatus = 304;
+        responseStatus = 304;
         mode = accountMode === 'plain' ? 'e2ee' : 'plain';
         await expect(getProviderAccountUsageQuota({ token: 'test-token' }, input, { ...options, accountMode: mode }))
             .rejects.toThrow('provider_account_usage_content_mode_mismatch');
+        mode = accountMode;
+        responseStatus = 200;
+        const beforeStateless = projectionRequests.length;
+        for (let index = 0; index < 2; index++) {
+            const stateless = await getProviderAccountUsageQuota({ token: 'test-token' }, input, { ...options, projectionDocuments: undefined });
+            expect(stateless.pageFacts?.resetWitness?.id).toBe('accepted');
+        }
+        expect(projectionRequests.slice(beforeStateless)).toEqual(['GET', 'GET']);
     });
 
     it.each(['plain', 'e2ee'] as const)('derives unchanged %s observations once across rolling range and clock reads, but keeps reset and stale transitions', async accountMode => {
@@ -338,12 +348,20 @@ describe('apiProviderAccountUsage', () => {
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/history')) {
                 if (init?.method === 'PUT') { writes++; etag = '"two"'; return Response.json({ ok: true }, { headers: { etag } }); }
-                if (init?.method === 'HEAD') return new Response(null, { status: bodyReads ? 304 : 200,
-                    headers: { etag, 'x-happier-usage-projection-complete': backfill ? 'false' : 'true' } });
-                if (backfill) return Response.json({ entries: [], nextCursor: null });
+                const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
+                if (query.history) return Response.json({ entries: [], nextCursor: null });
+                const complete = !backfill;
+                const validator = complete ? etag : '"incomplete"';
+                if (new Headers(init?.headers).get('if-none-match') === validator) return new Response(null, { status: 304,
+                    headers: { etag: validator, 'x-happier-usage-projection-complete': String(complete) } });
                 bodyReads++;
                 return Response.json({ projection: { recordId: snapshot.recordId, demand: { range, resolution: 'accepted_observations' },
-                    observationCount: 1, frontier: { id: 'accepted', observedAtMs: 1 }, content }, complete: true }, { headers: { etag: '"one"' } });
+                    observationCount: 1, frontier: { id: 'accepted', observedAtMs: 1 }, content }, complete }, { headers: { etag: validator,
+                    ...(query.heldProjection ? { 'x-happier-usage-projection-prefix': encodeURIComponent(JSON.stringify({
+                        held: query.heldProjection, complete, published: { demand: { range, resolution: 'accepted_observations' },
+                            frontier: { id: 'accepted', observedAtMs: 1 }, observationCount: 1,
+                            contentMode: accountMode === 'plain' ? 'plain' : 'encrypted' },
+                    })) } : {}) } });
             }
             const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
             return Response.json(path.includes('/sources/resolve') ? { source, recordId: snapshot.recordId,
@@ -373,6 +391,7 @@ describe('apiProviderAccountUsage', () => {
         expect(historyMeterReads).toBe(0);
         expect(bodyReads).toBe(1);
         // Re-admitting an empty tail changes publication custody, not its observations.
+        const beforeCoverageChange = bodyReads;
         backfill = true;
         const extended = await read(7, 0, 501);
         backfill = false;
@@ -380,7 +399,9 @@ describe('apiProviderAccountUsage', () => {
         expect(extended.pageFacts).toBe(first.pageFacts);
         expect(extended.pace).toBe(first.pace);
         expect(extended.unusedCapacity).toBe(first.unusedCapacity);
+        expect(bodyReads - beforeCoverageChange).toBe(1); // Changed coverage arrives in one demand GET200.
         const reset = await read(100);
+        const afterCanonicalWinner = bodyReads;
         expect(reset.pace[0]?.value).toEqual({ status: 'unavailable', reason: 'outside_window' });
         expect(reset.unusedCapacity?.windows).toHaveLength(1);
         const stale = await read(1_001);
@@ -395,7 +416,7 @@ describe('apiProviderAccountUsage', () => {
         expect(changed.current?.fetchedAtMs).toBe(2);
         const narrower = await read(3, 2);
         expect(narrower.pageFacts?.resetWitness).toBeNull();
-        expect(bodyReads).toBe(1);
+        expect(bodyReads).toBe(afterCanonicalWinner);
     });
 
     it('derives pace and unused capacity once per read: later facets of the same read share its instant', async () => {
@@ -407,7 +428,6 @@ describe('apiProviderAccountUsage', () => {
         const range = { startAtMs: 0, endAtMs: 5 };
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/history')) {
-                if (init?.method === 'HEAD') return new Response(null, { headers: { etag: '"one"', 'x-happier-usage-projection-complete': 'true' } });
                 const projection = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range,
                     history: { entries: [{ id: 'accepted', observedAtMs: 1, snapshot }], nextCursor: null } });
                 return Response.json({ projection: { recordId: snapshot.recordId, demand: { range, resolution: 'accepted_observations' },
@@ -447,25 +467,11 @@ describe('apiProviderAccountUsage', () => {
         let puts = 0;
         let projectionReads = 0;
         let exactReads = 0;
-        let headStatus = 200;
-        let invalidateAfterHead = false;
+        let responseStatus = 200;
+        let invalidateBeforeRead = false;
         const projectionBodyUrls: string[] = [];
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/history')) {
-                if (init?.method === 'HEAD') return new Response(null, { status: headStatus, headers: {
-                    'x-happier-usage-projection-complete': persisted !== null ? 'true' : 'false',
-                    ...(persisted ? { etag: '"held-document"' } : {}),
-                } });
-                if (path.includes('/history/document?')) {
-                    projectionReads++;
-                    projectionBodyUrls.push(path);
-                    // A backdated accepted observation can invalidate the
-                    // stored prefix after HEAD admitted the previous one.
-                    if (invalidateAfterHead) { persisted = null; invalidateAfterHead = false; }
-                    return Response.json({ projection: persisted, complete: persisted !== null }, {
-                        headers: persisted ? { etag: '"held-document"' } : {},
-                    });
-                }
                 if (init?.method === 'PUT') {
                     puts++;
                     // Another tab committed this same accepted coverage while
@@ -475,6 +481,9 @@ describe('apiProviderAccountUsage', () => {
                 }
                 const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
                 if (query.projection) {
+                    if (responseStatus !== 200) return new Response(null, { status: responseStatus });
+                    // A changed accepted prefix is admitted atomically with its coverage.
+                    if (invalidateBeforeRead) { persisted = null; invalidateBeforeRead = false; }
                     projectionReads++;
                     projectionBodyUrls.push(path);
                     return Response.json({ projection: persisted, complete: persisted !== null });
@@ -491,25 +500,57 @@ describe('apiProviderAccountUsage', () => {
         const first = await getProviderAccountUsageQuota({ token: 'test-token' }, input, options);
         expect(first.pageFacts?.historyStatus).toBe('complete');
         expect(projectionReads).toBe(2);
-        projectionBodyUrls.length = 0; // Compare stable URLs after the initial absent-document read.
+        projectionBodyUrls.length = 0;
         for (let index = 0; index < 10; index++) expect(await getProviderAccountUsageQuota({ token: 'test-token' }, {
             ...input, projection: { ...input.projection, range: { ...input.projection.range, endAtMs: 5 + index } },
         }, options)).toEqual(first);
-        expect(new Set(projectionBodyUrls).size).toBe(1);
+        expect(projectionBodyUrls.every(path => new URL(path, 'https://test.invalid').pathname
+            === '/v4/connect/qualified/provider-account-usage/history')).toBe(true);
         expect(puts).toBe(1);
         expect(exactReads).toBe(1);
-        invalidateAfterHead = true;
+        invalidateBeforeRead = true;
         expect((await getProviderAccountUsageQuota({ token: 'test-token' }, input, options)).pageFacts?.historyStatus).toBe('complete');
         expect(exactReads).toBe(2);
         expect(puts).toBe(2);
         const bodyReadsBeforeDenial = projectionReads;
-        headStatus = 401;
+        responseStatus = 401;
         await expect(getProviderAccountUsageQuota({ token: 'test-token' }, input, options)).rejects.toMatchObject({ code: 'denied' });
-        headStatus = 409;
+        responseStatus = 409;
         await expect(getProviderAccountUsageQuota({ token: 'test-token' }, input, options)).rejects.toMatchObject({
             code: 'provider_account_usage_content_mode_mismatch',
         });
         expect(projectionReads).toBe(bodyReadsBeforeDenial);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('refuses corrupt protected %s projections without publishing a replacement', async accountMode => {
+        await activateTestHome();
+        const { sealAccountScopedBlobCiphertext } = await import('@happier-dev/protocol/crypto/accountScopedCipher');
+        const snapshot = makeSnapshot();
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const range = { startAtMs: 0, endAtMs: 5 };
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const malformed = { v: 1, recordId: snapshot.recordId, encoding: 'meter_readings_runs_v1' };
+        const content = accountMode === 'plain' ? { t: 'plain', v: malformed } : { t: 'encrypted',
+            c: sealAccountScopedBlobCiphertext({ kind: 'provider_account_usage_page_projection', material,
+                randomBytes: length => new Uint8Array(length).fill(9), payload: malformed }) };
+        const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
+        let writes = 0;
+        const request = async (path: string, init?: RequestInit) => {
+            if (init?.method === 'PUT') { writes++; throw new Error('Invalid content must not be replaced'); }
+            if (path.includes('/history')) return Response.json({ projection: { recordId: snapshot.recordId,
+                demand: { range, resolution: 'accepted_observations' }, frontier: null, observationCount: 0, content }, complete: true });
+            return Response.json(path.includes('/sources/resolve') ? { source, recordId: snapshot.recordId,
+                providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 }
+                : { content: accountMode === 'plain' ? { t: 'plain', v: snapshot }
+                    : { t: 'encrypted', c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails },
+                    metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] });
+        };
+        const { getProviderAccountUsageQuota } = await loadApi();
+        await expect(getProviderAccountUsageQuota(credentials, { source, projection: { range, resolution: 'accepted_observations' } }, {
+            accountMode, material, request, includePendingWork: false, readPacingTargets: async () => [],
+            readEnteredMonthlyPrice: async () => undefined,
+        })).rejects.toMatchObject({ name: '$ZodError' });
+        expect(writes).toBe(0);
     });
 
     it.each(['plain', 'e2ee'] as const)('backfills a protected %s page projection once and reuses it without replaying exact history', async accountMode => {

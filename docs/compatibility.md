@@ -2584,46 +2584,31 @@ semantics and exact witness reads remain unchanged.
 The development V4 history operation also admits
 `{ recordId, projection: { range, resolution: 'accepted_observations' } }`.
 Its closed read result is `{ projection, complete }`; a missing materialization
-is explicitly incomplete. HEAD on this demand returns no body and exposes
-`x-happier-usage-projection-complete` and its representation's `ETag` under
-`Cache-Control: no-store`. The client
-then reads the stable `/history/document?recordId=…` resource, which carries the
-protected prefix and conservatively reports `complete: false`. Only the demand
-operation asserts coverage. The client uses the HEAD result for the actual demand
-only when both ETags match. A mismatched document read falls
-back to the original atomic demand GET, then the existing backfill path when
-incomplete. A now-null document also backfills instead of inheriting completeness.
-The document supports standard HTTP revalidation with `ETag`,
-`Cache-Control: private, no-cache` and `Vary: Authorization`. Matching conditional
-reads return an empty 304 only after qualified source, Account-mode and
-accepted-prefix admission. Moving range endpoints do not change the document URL.
-The existing Account Resource retains the admitted document and validator beside
-its B read state, shared across batches and retired with Account/credential authority.
-A successful PUT acknowledges the actual stored document's ETag when its exact
-range/count/frontier matches the submitted cohort, including when an equivalent
-write retained existing ciphertext. A competing wider document is re-read instead
-of binding its validator to the producer's smaller body. The Resource can therefore retain
-the document it just produced without downloading it again. Conditional HEAD
-returns an empty 304 with freshly admitted demand coverage when that document is
-unchanged; current-record/freshness changes and new accepted tails do not change
-the document identity. An incomplete demand extends the held prefix through exact
-tail reads. A reader can include its content-free `heldProjection` coverage in
-the demand HEAD. The same storage owner checks that held count/frontier against
-accepted history and returns `x-happier-usage-projection-prefix`, bound to that
-coverage rather than the other writer's ETag. A compatible extension uses exact
-tail pages without downloading the other body. If that writer already published
-the derived range, the reader re-admits its actual derived prefix and omits the
-duplicate PUT. Its locally sealed body never borrows the other ciphertext's ETag.
-A changed accepted prefix, range origin or Account mode retains the full
-read/backfill or typed refusal path. Backdated or removed witnesses arriving
-during tail acquisition therefore cannot inherit the earlier HEAD's completeness.
-No separate response cache or timer is added. Browser preflights admit
-`If-None-Match`; the original demand GET separately exposes the document validator
-as `x-happier-usage-projection-document-etag`, because its own body also carries
-changing demand coverage. Missing HEAD support or an unexposed coverage/ETag header uses the original
-GET contract. Stateless transports without HTTP caching still receive a full document.
-Stateless callers can use the platform HTTP cache; a cold or evicted representation
-can still transfer a body. A successful PUT does not prime that platform cache.
+is explicitly incomplete. One conditional demand GET returns that atomic result,
+with `ETag`, `Cache-Control: private, no-cache` and `Vary: Authorization`.
+Matching conditional reads return an empty 304 only after qualified source,
+Account-mode and accepted-prefix admission. The validator includes demand
+completion: a newly accepted tail changes it even when the protected prefix is
+unchanged. A changed representation returns its body with 200. Explicit HEAD and
+the separate `/history/document` ladder were undeployed 0.3 work and are removed
+without a compatibility shim or a third confirmation GET.
+The existing Account Resource retains its admitted B representation, validator
+and opened/derived facts, shared across batches and retired with Account/credential
+authority. The captured HTTP owner does not guarantee automatic 304-body replay;
+this is the same retained B state, not a second cache or read authority. Stateless
+or cold readers receive the full 200 result rather than inventing held coverage.
+A reader can include content-free `heldProjection` coverage in the same demand
+GET. The storage owner checks its count/frontier against accepted history and
+returns `x-happier-usage-projection-prefix` for exact-tail reuse. Changed or removed
+witnesses, range origins and Account modes still force full backfill or refusal.
+Backdated changes during tail acquisition cannot inherit earlier completeness.
+Backfill publication goes directly to the server prefix/CAS owner; no client
+publish queue or parallel duplicate-write decision remains. A successful PUT
+acknowledges the actual stored document's ETag, including equivalent reseals that
+retain existing ciphertext. That stored-document acknowledgement is distinct from
+the demand GET validator, which also covers completion. A locally sealed body
+never borrows another writer's ciphertext validator. Browser preflights admit
+`If-None-Match`; no timer, fallback route or replacement cache is added.
 A qualified PUT to that same route accepts a closed
 Account-mode protected projection with its record, range, accepted count and
 frontier. The server admits only a complete accepted range and preserves other
@@ -2638,13 +2623,9 @@ No retention horizon or polling policy is introduced.
 Existing records without this metadata remain readable and backfill on demand.
 The current encoding marker is required on new development projection writes
 and in the packed body. Stored reads tolerate a missing metadata hint: the
-protected body's encoding determines whether it is current. The server retires
-recognized superseded plain bodies; the authorized client classifies opaque
-bodies only after authenticated opening. Superseded bodies are repacked from
-exact history through the same qualified replacement path, even at unchanged
-accepted count/frontier; an unmarked opaque document cannot suppress that write.
-Mode, authentication and malformed current-body failures do not become backfill.
-No decoder for superseded development encodings is retained. The plain/E2EE content
+protected body's encoding determines whether it is current. Mode, authentication
+and malformed-body failures do not become backfill. Superseded development bodies
+have no compatibility decoder or special recovery classification. The plain/E2EE content
 envelope, exact-history API and immutable reset witnesses are unchanged.
 This is an undeployed 0.3 read materialization, not a predecessor writer, a second
 allowance authority or a promise of reverse 0.2 process compatibility.

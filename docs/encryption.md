@@ -439,11 +439,12 @@ The protected body's closed `meter_readings_runs_v1` encoding marker identifies
 the current development materialization. New writes also carry that marker in
 metadata, but a missing metadata hint does not retire a current protected body.
 The server can classify plain bodies; only the authorized client can classify
-encrypted bodies after authenticated opening. Recognized superseded bodies are
-rebuilt from exact accepted history through the existing backfill/replace path,
-including at unchanged coverage. Authentication, mode and current-body schema
-failures remain errors. No legacy projection decoder is retained, and exact
-history is not rewritten or compacted.
+encrypted bodies after authenticated opening. A missing projection can be
+backfilled from exact accepted history. An authenticated malformed or unsupported
+body is refused by the current schema; it is not classified as a superseded body
+or silently rebuilt. Authentication and mode failures also remain errors. No
+legacy projection decoder is retained, and exact history is not rewritten or
+compacted.
 
 Unchanged polls update current-record freshness without appending history.
 Material equality ignores HTTP observation clocks and headers, while retaining

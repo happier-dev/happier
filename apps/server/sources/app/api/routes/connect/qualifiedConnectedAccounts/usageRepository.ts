@@ -1350,8 +1350,7 @@ export async function readQualifiedProviderAccountUsageRecord(
         await admitQualifiedProviderAccountUsageRecordInTx(tx, params));
 }
 
-export async function readQualifiedProviderAccountUsageHistory(params: Readonly<{ accountId: string }> & (ReturnType<typeof import('@happier-dev/protocol/connect/providerAccountUsageHistory').QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>
-    | Readonly<{ recordId: string; document: true }>)): Promise<
+export async function readQualifiedProviderAccountUsageHistory(params: Readonly<{ accountId: string }> & ReturnType<typeof import('@happier-dev/protocol/connect/providerAccountUsageHistory').QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>): Promise<
     Exclude<QualifiedProviderAccountUsageAdmission, { status: 'resolved' }>
     | ({ status: 'resolved' } & Awaited<ReturnType<typeof readProviderAccountUsagePageProjection>>)
     | Readonly<{ status: 'resolved'; entries: ReturnType<typeof parseProviderAccountUsageHistoryEntry>[];
@@ -1361,11 +1360,11 @@ export async function readQualifiedProviderAccountUsageHistory(params: Readonly<
         let admitted;
         try { admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, params); }
         catch (error) {
-            if (('projection' in params || 'document' in params) && error instanceof ProviderAccountUsagePayloadInvariantError) return { status: 'storage_mode_mismatch' as const };
+            if ('projection' in params && error instanceof ProviderAccountUsagePayloadInvariantError) return { status: 'storage_mode_mismatch' as const };
             throw error;
         }
         if (admitted.status !== 'resolved') return admitted;
-        if ('projection' in params || 'document' in params) {
+        if ('projection' in params) {
             const stored = admitted.record.metadata?.pageProjection;
             if (stored && !projectionMatchesMode(stored, admitted.record)) return { status: 'storage_mode_mismatch' as const };
             try { return { status: 'resolved' as const, ...await readProviderAccountUsagePageProjection(params, tx, admitted.record) }; }

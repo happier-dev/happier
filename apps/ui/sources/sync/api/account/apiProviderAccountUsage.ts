@@ -23,7 +23,7 @@ import { mapCryptoBatchWithYield } from '@/sync/encryption/cryptoBatchYield';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema,
     buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
-import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING, ProviderAccountUsagePageProjectionSupersededError,
+import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
     ProviderAccountUsagePageProjectionPrefixReadV1Schema,
     type ProviderAccountUsagePageProjectionCoverageV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { sealProviderAccountUsagePageProjectionV1, openProviderAccountUsagePageProjectionV1,
@@ -39,7 +39,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 type UsageHttpObservation = Readonly<{
     status: number; ok: boolean; json: unknown; jsonFailure?: Readonly<{ error: unknown }>;
-    etag: string | null; documentEtag: string | null;
+    etag: string | null;
     complete: string | null; prefix: string | null;
 }>;
 const usageHttpReads = createScopedResolutionSingleFlight<UsageHttpObservation>();
@@ -66,22 +66,6 @@ type HeldUsageProjection = {
     admitted?: AdmittedUsageProjection;
 };
 export type ProviderAccountUsageProjectionDocuments = Map<string, HeldUsageProjection>;
-// Only publication shares custody. A held history read must not block another
-// range, current facts, or the independent price/Pending facets.
-const projectionWrites = new WeakMap<ProviderAccountUsageProjectionDocuments, Map<string, Promise<unknown>>>();
-
-async function publishUsageProjection<T>(documents: ProviderAccountUsageProjectionDocuments | undefined,
-    recordId: string, publish: () => Promise<T>): Promise<T> {
-    if (!documents) return await publish();
-    let writes = projectionWrites.get(documents);
-    if (!writes) { writes = new Map(); projectionWrites.set(documents, writes); }
-    const previous = writes.get(recordId);
-    const write = (async () => { await previous?.catch(() => {}); return await publish(); })();
-    writes.set(recordId, write);
-    try { return await write; }
-    finally { if (writes.get(recordId) === write) writes.delete(recordId); }
-}
-
 function hasUsageProjectionCustody(prior: AdmittedUsageProjection | undefined, options: ProviderAccountUsageQuotaReadOptions,
     credentialScope: string, materialBytes: Uint8Array | undefined): boolean {
     return prior?.accountMode === options.accountMode && prior.credentialScope === credentialScope
@@ -257,16 +241,8 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                 const prior = held?.projection === read.projection ? held?.admitted : undefined;
                 const sameCustody = hasUsageProjectionCustody(prior, options, credentialScope, materialBytes);
                 if (read.projection) {
-                    try {
-                        opened = sameCustody ? prior!.opened : read.opened ?? openProviderAccountUsagePageProjectionV1({ recordId, accountMode: options.accountMode,
-                            material: options.material, content: read.projection.content });
-                    } catch (error) {
-                        if (!(error instanceof ProviderAccountUsagePageProjectionSupersededError)) throw error;
-                        // A marked current body disagreeing with its metadata is
-                        // inconsistent, not permission to overwrite opaque data.
-                        if (read.projection.encoding) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-                        read = { projection: null, complete: false };
-                    }
+                    opened = sameCustody ? prior!.opened : read.opened ?? openProviderAccountUsagePageProjectionV1({ recordId, accountMode: options.accountMode,
+                        material: options.material, content: read.projection.content });
                 }
                 const stored = read.projection;
                 if (stored && opened && (stored.recordId !== recordId || opened.range.startAtMs !== stored.demand.range.startAtMs
@@ -305,78 +281,38 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     const materialize = (): z.infer<typeof ProviderAccountUsagePageProjectionWriteV1Schema> => ({ ...metadata,
                         content: sealProviderAccountUsagePageProjectionV1({ projection, accountMode: options.accountMode,
                             material: options.material, randomBytes: getRandomBytes }) });
-                    // Rejected/superseded protected content must be repaired;
-                    // matching opaque metadata does not prove current encoding.
-                    const published = opened ? raw.published : undefined;
-                    const alreadyPublished = published && published.contentMode === (options.accountMode === 'plain' ? 'plain' : 'encrypted')
-                        && published.demand.range.startAtMs === range.startAtMs
-                        && published.observationCount === metadata.observationCount
-                        && sameStrictJsonValue(published.frontier, metadata.frontier);
-                    if (alreadyPublished) {
-                        const body = materialize();
-                        // Exact paging may race a backdated/removed witness.
-                        // With no PUT to validate our derivation, re-admit that
-                        // actual derived prefix before claiming completeness.
-                        const confirmed = await requestProviderAccountUsageProjection(credentials, query, options, { projection: body, etag: '' });
-                        if (!active) return;
-                        if (!confirmed || confirmed.projection !== body || !confirmed.complete) continue;
-                        assertCurrent();
-                        // This is our derived representation, not the other
-                        // writer's ciphertext. Its accepted-prefix proof is used
-                        // next time; never borrow the other body's ETag.
-                        admitted = { accountMode: options.accountMode, credentialScope,
-                            materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened: projection,
-                            view: sameCustody ? prior?.view : undefined };
-                        options.projectionDocuments?.set(recordId, { projection: body, etag: '', admitted });
-                    } else {
-                        assertCurrent();
-                        const published = await publishUsageProjection(options.projectionDocuments, recordId, async () => {
-                            if (!active) return false;
+                    // The server owns accepted-prefix admission and equivalent
+                    // sealed-write deduplication. Independent readers never queue
+                    // behind one another or decide another writer's custody.
+                    assertCurrent();
+                    const body = materialize();
+                    const writeScope = options.readTransport?.scope ?? options.readTransport?.key;
+                    if (writeScope) usageHttpReads.invalidate(writeScope);
+                    const response = await (options.request ?? createServerFetchForActiveServer(options.expectedActiveServer))('/v4/connect/qualified/provider-account-usage/history', {
+                        method: 'PUT', signal: options.signal, headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    }, { includeAuth: false, ...(options.expectedActiveServer ? { expectedActiveServer: options.expectedActiveServer } : {}) })
+                        .finally(() => { if (writeScope) usageHttpReads.invalidate(writeScope); });
+                    if (!active) return;
+                    assertCurrent();
+                    if (!response.ok) {
+                        if (response.status === 409) {
+                            const failure: unknown = await response.json();
                             assertCurrent();
-                            const held = options.projectionDocuments?.get(recordId);
-                            // Another local reader can accept this exact derived
-                            // document while our independent backfill is in flight.
-                            // Compare admitted content, not opaque ciphertext or
-                            // metadata alone, before skipping our duplicate PUT.
-                            if (held && hasUsageProjectionCustody(held.admitted, options, credentialScope, materialBytes)
-                                && sameStrictJsonValue(held.projection.demand, metadata.demand)
-                                && sameStrictJsonValue(held.admitted!.opened, projection)) {
-                                admitted = held.admitted;
-                                return true;
-                            }
-                            // The incumbent publication owner has admitted the
-                            // duplicate check. Only an actual write needs its
-                            // complete packed/encrypted representation.
-                            const body = materialize();
-                            const writeScope = options.readTransport?.scope ?? options.readTransport?.key;
-                            if (writeScope) usageHttpReads.invalidate(writeScope);
-                            const response = await (options.request ?? createServerFetchForActiveServer(options.expectedActiveServer))('/v4/connect/qualified/provider-account-usage/history', {
-                                method: 'PUT', signal: options.signal, headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify(body),
-                            }, { includeAuth: false, ...(options.expectedActiveServer ? { expectedActiveServer: options.expectedActiveServer } : {}) })
-                                .finally(() => { if (writeScope) usageHttpReads.invalidate(writeScope); });
-                            if (!active) return false;
-                            assertCurrent();
-                            if (!response.ok) {
-                                if (response.status === 409) {
-                                    const failure: unknown = await response.json();
-                                    assertCurrent();
-                                    if (failure && typeof failure === 'object' && 'error' in failure
-                                        && failure.error === 'provider_account_usage_projection_conflict') return false;
-                                }
-                                const code = response.status === 401 || response.status === 403 ? 'denied'
-                                    : response.status === 409 ? 'provider_account_usage_projection_conflict' : 'provider_account_usage_projection_write_failed';
-                                throw new HappyError(code, false, { status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'server', code });
-                            }
-                            admitted = { accountMode: options.accountMode, credentialScope,
-                                materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened: projection,
-                                view: sameCustody ? prior?.view : undefined };
-                            options.projectionDocuments?.set(recordId, { projection: body, etag: response.headers.get('etag') ?? '', admitted });
-                            return true;
-                        });
-                        if (!active) return;
-                        if (!published) continue;
+                            if (failure && typeof failure === 'object' && 'error' in failure
+                                && failure.error === 'provider_account_usage_projection_conflict') continue;
+                        }
+                        const code = response.status === 401 || response.status === 403 ? 'denied'
+                            : response.status === 409 ? 'provider_account_usage_projection_conflict' : 'provider_account_usage_projection_write_failed';
+                        throw new HappyError(code, false, { status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'server', code });
                     }
+                    admitted = { accountMode: options.accountMode, credentialScope,
+                        materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened: projection,
+                        view: sameCustody ? prior?.view : undefined };
+                    // A successful PUT can retain another writer's sealed
+                    // bytes. Its prefix acknowledgement is not a validator
+                    // for this local body or the demand's complete bit.
+                    options.projectionDocuments?.set(recordId, { projection: body, etag: '', admitted });
                 } else if (!opened) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
                 if (!active) return;
                 assertCurrent();
@@ -396,77 +332,67 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     } finally { active = false; }
 }
 
-/** HTTP owns the held document; range coverage is revalidated without its body. */
+/** One qualified demand GET admits both the protected prefix and its coverage. */
 async function requestProviderAccountUsageProjection(credentials: AuthCredentials,
     query: Readonly<{ recordId: string; projection: NonNullable<ConnectedServiceQuotaGetInputV1['projection']> }>,
     options: ProviderAccountUsageQuotaReadOptions,
-    heldOverride?: HeldUsageProjection,
 ): Promise<(z.infer<typeof ProviderAccountUsagePageProjectionReadV1Schema> & {
         published?: z.infer<typeof ProviderAccountUsagePageProjectionCoverageV1Schema>;
         opened?: ReturnType<typeof openProviderAccountUsagePageProjectionV1>;
     }) | null> {
-    const path = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({
-        query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, query),
-    }).toString()}`;
     throwIfAborted(options.signal); options.assertCurrent?.();
-    const held = heldOverride ?? options.projectionDocuments?.get(query.recordId);
+    const held = options.projectionDocuments?.get(query.recordId);
     const heldCoverage = held ? { demand: held.projection.demand, frontier: held.projection.frontier,
         observationCount: held.projection.observationCount, contentMode: held.projection.content.t } : undefined;
-    const headPath = heldCoverage ? `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({
+    const path = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({
         query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
-            { ...query, heldProjection: heldCoverage }),
-    }).toString()}` : path;
-    const head = await acquireProviderUsageHttp(credentials, headPath, {
-        method: 'HEAD', signal: options.signal, cache: 'no-store', headers: {
+            { ...query, ...(heldCoverage ? { heldProjection: heldCoverage } : {}) }),
+    }).toString()}`;
+    const response = await acquireProviderUsageHttp(credentials, path, {
+        method: 'GET', signal: options.signal, headers: {
             Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
             'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification',
             ...(held?.etag ? { 'If-None-Match': held.etag } : {}),
         },
     }, options);
     throwIfAborted(options.signal); options.assertCurrent?.();
-    if (head.status === 401 || head.status === 403) throw new HappyError('Provider account usage authority refused', false,
-        { status: head.status, kind: 'auth', code: 'denied' });
-    if (head.status === 409) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
-    if (head.status === 404) return null;
-    if (!head.ok && head.status !== 304 && head.status !== 405 && head.status !== 501) throw new HappyError('Provider account usage read failed', false,
-        { status: head.status, kind: 'server', code: 'provider_account_usage_read_failed' });
-    const complete = head.complete;
-    const etag = head.etag;
-    const prefixHeader = head.prefix;
-    if ((head.ok || head.status === 304) && held && prefixHeader) {
+    if (response.status === 401 || response.status === 403) throw new HappyError('Provider account usage authority refused', false,
+        { status: response.status, kind: 'auth', code: 'denied' });
+    if (response.status === 409) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
+    if (response.status === 404) return null;
+    if (!response.ok && response.status !== 304) throw new HappyError('Provider account usage read failed', false,
+        { status: response.status, kind: 'server', code: 'provider_account_usage_read_failed' });
+    const etag = response.etag;
+    if (response.status === 304) {
+        if (!held || !etag || held.etag !== etag || !['true', 'false'].includes(response.complete ?? '')) {
+            throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+        }
+        // Fetch/native/carrier transports need not replay a 304 body. Retain
+        // this already-admitted representation at the existing Resource owner.
+        return { projection: held.projection, complete: response.complete === 'true' };
+    }
+    if (response.jsonFailure) throw response.jsonFailure.error;
+    const read = openProviderAccountUsagePageProjectionReadV1({ value: response.json, recordId: query.recordId,
+        accountMode: options.accountMode, material: options.material });
+    if (held && etag && held.etag === etag && read.projection) return { projection: held.projection, complete: read.complete };
+    const prefixHeader = response.prefix;
+    if (held && prefixHeader) {
         const prefix = ProviderAccountUsagePageProjectionPrefixReadV1Schema.parse(JSON.parse(decodeURIComponent(prefixHeader)));
         // Coverage belongs to the held body being extended, independently of
         // the changed server body's validator or complete bit (B3-A-01).
-        if (sameStrictJsonValue(prefix.held, heldCoverage)) return { projection: held.projection,
-            complete: prefix.complete, published: prefix.published };
-    }
-    if ((head.ok || head.status === 304) && etag && (complete === 'true' || complete === 'false')
-        && held?.etag === etag) return { projection: held.projection, complete: complete === 'true' };
-    // Incomplete coverage already needs the atomic demand read and backfill;
-    // avoid downloading the same protected body twice on ordinary growth.
-    if (head.ok && etag && complete === 'true') {
-        const document = await requestProviderAccountUsageRead(credentials,
-            `/v4/connect/qualified/provider-account-usage/history/document?recordId=${encodeURIComponent(query.recordId)}`, options);
-        if (document === null) return null;
-        const read = openProviderAccountUsagePageProjectionReadV1({ value: document.json, recordId: query.recordId,
-            accountMode: options.accountMode, material: options.material });
-        // A concurrent backdated observation may invalidate the prefix after
-        // HEAD. A now-missing document must enter the existing backfill path.
-        if (read.projection === null) return { projection: null, complete: false };
-        if (etag === document.etag) {
-            options.projectionDocuments?.set(query.recordId, { projection: read.projection, etag });
-            return { ...read, complete: true };
+        if (sameStrictJsonValue(prefix.held, heldCoverage)) {
+            if (prefix.complete && read.projection) {
+                // Another equivalent seal can replace the wire body without
+                // changing the accepted facts admitted by this prefix proof.
+                const admitted = held.admitted && read.opened ? { ...held.admitted,
+                    opened: { ...held.admitted.opened, range: read.opened.range } } : undefined;
+                options.projectionDocuments?.set(query.recordId, { projection: read.projection, etag: etag ?? '', admitted });
+                return read;
+            }
+            return { projection: held.projection, complete: prefix.complete, published: prefix.published };
         }
-        // Another reader may have replaced the document, or accepted history
-        // may have changed its coverage. Read demand and representation together
-        // before the existing owner decides whether a backfill is needed.
     }
-    // Missing/unexposed validators also use the original atomic demand read.
-    const legacy = await requestProviderAccountUsageRead(credentials, path, options);
-    if (legacy === null) return null;
-    const read = openProviderAccountUsagePageProjectionReadV1({ value: legacy.json, recordId: query.recordId,
-        accountMode: options.accountMode, material: options.material });
-    if (read.projection && legacy.etag) options.projectionDocuments?.set(query.recordId, { projection: read.projection, etag: legacy.etag });
+    if (read.projection) options.projectionDocuments?.set(query.recordId, { projection: read.projection, etag: etag ?? '' });
     else options.projectionDocuments?.delete(query.recordId);
     return read;
 }
@@ -524,14 +450,14 @@ async function readProviderAccountUsageWaitingWork(credentials: AuthCredentials,
 type UsageReadTransportOptions = Pick<ProviderAccountUsageQuotaReadOptions,
     'request' | 'readTransport' | 'assertCurrent' | 'signal' | 'expectedActiveServer'>;
 
-async function observeProviderUsageHttp(response: Response, method?: string): Promise<UsageHttpObservation> {
+async function observeProviderUsageHttp(response: Response): Promise<UsageHttpObservation> {
     let json: unknown = null;
     let jsonFailure: UsageHttpObservation['jsonFailure'];
-    if (method !== 'HEAD' && response.status !== 404 && response.status !== 401 && response.status !== 403) {
+    if (response.status !== 304 && response.status !== 404 && response.status !== 401 && response.status !== 403) {
         try { json = await response.json(); } catch (error) { jsonFailure = { error }; }
     }
     return { status: response.status, ok: response.ok, json, ...(jsonFailure ? { jsonFailure } : {}),
-        etag: response.headers.get('etag'), documentEtag: response.headers.get('x-happier-usage-projection-document-etag'),
+        etag: response.headers.get('etag'),
         complete: response.headers.get('x-happier-usage-projection-complete'),
         prefix: response.headers.get('x-happier-usage-projection-prefix') };
 }
@@ -539,7 +465,7 @@ async function observeProviderUsageHttp(response: Response, method?: string): Pr
 async function acquireProviderUsageHttp(credentials: AuthCredentials, path: string, init: RequestInit,
     options: UsageReadTransportOptions, fresh = false): Promise<UsageHttpObservation> {
     throwIfAborted(options.signal); options.assertCurrent?.();
-    const consume = (response: Response) => observeProviderUsageHttp(response, init.method);
+    const consume = (response: Response) => observeProviderUsageHttp(response);
     const fetchOptions = { includeAuth: false, ...(options.expectedActiveServer ? { expectedActiveServer: options.expectedActiveServer } : {}) };
     const transport = options.readTransport;
     const bindingKey = transport?.key;
@@ -573,7 +499,7 @@ async function requestProviderAccountUsageRead(credentials: AuthCredentials, pat
         const code = extractErrorCode(json) ?? 'provider_account_usage_read_failed';
         throw new HappyError(code, false, { status: response.status, kind: 'server', code });
     }
-    return { json, etag: response.documentEtag ?? response.etag };
+    return { json, etag: response.etag };
 }
 
 async function requestProviderAccountUsageHistoryPage(credentials: AuthCredentials, query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>, options: ProviderAccountUsageQuotaReadOptions, fresh = false) {
@@ -693,7 +619,7 @@ async function readProviderSnapshotWithOwner<T>(credentials: AuthCredentials, re
     const value = opts?.retry === 'none'
         ? consume(await acquireProviderUsageHttp(credentials, path, { ...init, signal: opts.signal }, { ...opts, request, readTransport: transport }))
         : await pending.run(JSON.stringify([bindingKey, recordId]), signal => backoff(async () =>
-            await transport.read(path, { ...init, signal }, options, async response => consume(await observeProviderUsageHttp(response, 'GET')))),
+            await transport.read(path, { ...init, signal }, options, async response => consume(await observeProviderUsageHttp(response)))),
             { scope, signal: opts?.signal });
     throwIfAborted(opts?.signal);
     return value;
