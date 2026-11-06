@@ -943,3 +943,8 @@ export function isSessionAccessActionId(value: string): value is SessionAccessAc
   return (ACTION_ID_FAMILIES_V1.session_access as readonly string[]).includes(value);
 }
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
+
+/** The closed Action family sharing relationship creation and destination approval. */
+export function isWorkspaceSyncRelationshipWriteActionId(value: unknown): value is 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace' {
+  return value === 'workspace.sync.relationship.create' || value === 'workspace.sync.relationship.replace';
+}
