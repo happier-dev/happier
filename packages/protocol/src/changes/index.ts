@@ -228,6 +228,23 @@ export function readSessionFollowSourceChangedV1(
   return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
 }
 
+/** The Account cursor preceding coalesced writes proven not to change server accounting. */
+export function readSessionUsageAccountingProjectionOnlySinceCursorV1(hint: unknown): number | null {
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const record = hint as Record<string, unknown>;
+  const cursor = record.usageAccountingUnchangedSinceCursor;
+  return record.usageAccountingChanged === false && typeof cursor === 'number'
+    && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+}
+
+/** Accounting-only proof is independent of Follow: Agent state and turn status still change Follow evidence. */
+export function readSessionUsageAccountingChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean {
+  const since = change.kind === 'session' ? readSessionUsageAccountingProjectionOnlySinceCursorV1(change.hint) : null;
+  return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
+}
+
 /** Availability is advisory; a retained event is relevant only before its Account cursor. */
 export function readSessionFollowReceiverAvailabilityChangedV1(
   change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
