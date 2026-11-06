@@ -17,6 +17,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 import {
   AccountSettingsV2UpdateRequestSchema,
@@ -44,7 +45,7 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
-  it.each(['completed', 'cancelled', 'end', 'unavailable'] as const)(
+  it.each(['completed', 'cancelled', 'end', 'unavailable', 'failed'] as const)(
     'settles native host-summary playback through the real Action owner (%s)', async playback => {
       const serverId = await home.addHome({ name: 'Native readback', serverUrl: 'https://native-readback.test', accountId: 'alice', currentAccount: true });
       const features = createRootLayoutFeaturesResponse();
@@ -61,12 +62,15 @@ describe('Voice Action reference catalog', () => {
       const speaking = new Promise<void>(resolve => { started = resolve; });
       const drain = new Promise<void>(resolve => { finish = resolve; });
       const controller = new AbortController();
+      const playbackFailure = Object.assign(new Error('fixture_tts_failed'),
+        createVoiceMachineError({ kind: 'tts_failed', reason: 'fixture_tts_failed' }));
       const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
         playHostText: async ({ text }: { text: string; signal: AbortSignal }) => {
           if (playback === 'unavailable') return { status: 'unavailable' as const, code: 'host_text_playback_unavailable' as const };
           expect(text).toBe(getVoiceSessionSpokenActionConfirmation()?.readPending()?.operation.summary);
           started();
           await drain;
+          if (playback === 'failed') throw playbackFailure;
           return { status: playback === 'cancelled' ? 'cancelled' as const : 'completed' as const };
         },
       });
@@ -85,8 +89,13 @@ describe('Voice Action reference catalog', () => {
           expect(home.requests.filter(request => request.method === 'POST')).toEqual([]);
           if (playback === 'end') resetVoiceSessionStoreForTests();
           finish();
-          const outcome = JSON.parse(await pending);
-          expect(outcome).toMatchObject(playback === 'completed' ? { ok: true } : { ok: false, errorCode: 'cancelled' });
+          if (playback === 'failed') {
+            await expect(pending).rejects.toBe(playbackFailure);
+            expect(getVoiceSessionSpokenActionConfirmation()?.readPending()).toBeNull();
+          } else {
+            const outcome = JSON.parse(await pending);
+            expect(outcome).toMatchObject(playback === 'completed' ? { ok: true } : { ok: false, errorCode: 'cancelled' });
+          }
           expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/account/settings')).toHaveLength(playback === 'completed' ? 1 : 0);
           expect(home.artifacts(serverId).list()).toEqual([]);
         }

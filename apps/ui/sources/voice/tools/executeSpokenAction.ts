@@ -36,7 +36,13 @@ export async function executeSpokenAction(
       ...(operation.sessionTargetsV1 ? { sessionTargetsV1: operation.sessionTargetsV1 } : {}),
     });
     const readBack = carrier.readPending();
-    const playback = await playHostText({ text: operation.summary, signal: context.signal ?? new AbortController().signal });
+    let playback: Awaited<ReturnType<VoiceHostTextPlayback>>;
+    try {
+      playback = await playHostText({ text: operation.summary, signal: context.signal ?? new AbortController().signal });
+    } catch (error) {
+      if (carrier.readPending() === readBack) carrier.clear();
+      throw error;
+    }
     if (context.signal?.aborted || carrier !== getVoiceSessionSpokenActionConfirmation()
       || carrier.readPending() !== readBack || playback.status === 'cancelled') {
       if (carrier.readPending() === readBack) carrier.clear();

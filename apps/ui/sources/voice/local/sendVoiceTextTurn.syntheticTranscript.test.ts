@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, createMachineFixture, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { t } from '@/text';
@@ -16,6 +16,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { writeVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
@@ -39,6 +40,9 @@ import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voic
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { SpeechOptions } from 'expo-speech';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
+  NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 const conversationModeState: { current: 'agent' | 'direct_session' } = { current: 'agent' };
 const speech = vi.hoisted(() => ({ speak: vi.fn<(text: string, options: SpeechOptions) => void>(), stop: vi.fn() }));
@@ -87,6 +91,8 @@ type TurnReply = { assistantText: string; actions: VoiceAssistantAction[]; speec
 let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
 let turnIndex = 0;
 let rejectStart = false;
+let webhookCatalog = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [] });
+let webhookRevision = 1;
 const repliesByStream = new Map<string, TurnReply>();
 async function answerVoiceAgentRpc(method: string, input: unknown): Promise<unknown> {
   if (method === SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1) {
@@ -222,6 +228,10 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     rejectStart = false;
     turnReplies = () => ({ assistantText: 'I found Claude and Codex.', actions: [] });
     repliesByStream.clear();
+    webhookRevision = 1;
+    webhookCatalog = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [{ v: 1,
+      id: 'deployment-webhook', kind: 'webhook', url: 'https://deployment-hook.test/notify', enabled: true,
+      topics: {}, readyIncludeMessageText: false, requestIncludeMessageText: false, signingSecretRef: null }] });
     retainedAgent = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerVoiceAgentRpc });
     account = await serveAccountHomes({ homes: [
       { key: 'other', serverUrl: 'https://transcript-other.test', accountId: 'account-b' },
@@ -246,6 +256,17 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       const artifactResponse = approvalArtifacts.handle(request.path + request.url.search, { method: request.method,
         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
       if (artifactResponse) return artifactResponse;
+      if (request.path === NOTIFICATION_CHANNELS_ROUTE_V1) {
+        if (request.method === 'GET') return Response.json({ status: 'present', revision: webhookRevision,
+          content: { t: 'plain', v: webhookCatalog } });
+        if (request.method === 'POST') {
+          const mutation = NotificationChannelCatalogMutationV1Schema.parse(request.body);
+          expect(mutation.expectedRevision).toBe(webhookRevision);
+          if (mutation.content?.t !== 'plain') throw new Error('Expected Plain webhook catalog');
+          webhookCatalog = mutation.content.v;
+          return Response.json({ status: 'updated', revision: ++webhookRevision, cursor: webhookRevision });
+        }
+      }
       const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
       if (request.path === '/v1/machines/read-batch' && request.method === 'POST') return createMachineReadBatchResponseFixture(
         request.body, id => id === machine.id ? machine : null);
@@ -266,13 +287,17 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       if (request.method === 'POST' && handled) { events.push(`settle:${decodeURIComponent(handled[1]!)}`); return Response.json({}); }
       if (/^\/v1\/sessions\/[^/]+\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
       return sessionMetadata.handle(request.url, { method: request.method,
-        ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) }) ?? undefined;
+        ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) })
+        ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method, headers: request.headers }) ?? undefined;
     }).handle });
     disconnect = await account.restoreActiveConnection();
     const { sync } = await import('@/sync/sync');
     await sync.resumeSync('manual');
     const serverId = account.homes.voice!.id;
-    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
+    // Sync hydrated the HTTP Machine row, including its Plain transport mode.
+    // Replacing it with an unadmitted local seed loses that mode at Resume.
+    const machine = storage.getState().machineListByServerId[serverId]?.find(row => row.id === 'machine-1');
+    if (!machine) throw new Error('The Voice fixture did not hydrate its Machine');
     const target = createSessionFixture({ id: 's1', serverId, active: true, presence: 'online', pendingVersion: 0, pendingCount: 0, metadata: {
       machineId: machine.id, path: '/workspace/s1', host: 'voice.test', flavor: 'claude',
       agentRuntimeCapabilitiesV1: { localControl: { supported: true } },
@@ -442,6 +467,87 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         }
       }));
     });
+
+  it.each([
+    { streaming: false, completion: 'done' },
+    { streaming: true, completion: 'done' },
+    { streaming: true, completion: 'barge-in' },
+    { streaming: true, completion: 'end' },
+    { streaming: true, completion: 'not-started' },
+    { streaming: true, completion: 'failed' },
+  ] as const)('only completed host summary playback executes the Action (streaming=$streaming, $completion)', async ({ streaming, completion }) => {
+    const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests,
+      getVoiceSessionSpokenActionConfirmation } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected', mode: 'listening', canStop: true });
+    const carrier = getVoiceSessionSpokenActionConfirmation();
+    if (!carrier) throw new Error('Missing live call');
+    const actionId = 'notifications.webhooks.remove';
+    const toolName = getActionSpec(actionId).bindings?.voiceClientToolName;
+    if (!toolName) throw new Error('Missing Voice webhook tool');
+    const input = { channelId: 'deployment-webhook' };
+    turnReplies = index => index === 0
+      ? { assistantText: 'Okay.', actions: [{ t: toolName, args: input }] }
+      : { assistantText: 'Done.', actions: [] };
+    const base = buildAccountSettings();
+    const local = readLocalConversationVoiceSettings(base.voice);
+    const settings = settingsParse({ ...base, ...normalizeVoiceSettingsLocalDelta({ voice: { ...base.voice, providers: { ...base.voice.providers,
+      local_conversation: { schemaVersion: 1, config: { ...local,
+        // Required host read-back also speaks when optional model replies are muted.
+        tts: { ...local.tts, provider: 'device', autoSpeakReplies: streaming },
+        streaming: { ...local.streaming, enabled: streaming, ttsEnabled: streaming },
+      } },
+    } } }) });
+    const summaryStarted = createDeferred<SpeechOptions>();
+    const spoken: string[] = [];
+    let activeSpeech: SpeechOptions | undefined;
+    const playbackController = createVoicePlaybackController();
+    const controller = new AbortController();
+    await speech.speak.withImplementation((text, options) => {
+      activeSpeech = options;
+      spoken.push(text);
+      if (text === carrier.readPending()?.operation.summary && completion === 'not-started') {
+        summaryStarted.resolve(options);
+        options.onStopped?.();
+        return;
+      }
+      options.onStart?.();
+      if (text === carrier.readPending()?.operation.summary) summaryStarted.resolve(options);
+      else options.onDone?.();
+    }, async () => await speech.stop.withImplementation(() => { activeSpeech?.onStopped?.(); }, async () => {
+      const sending = sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
+        userText: 'remove the deployment webhook', playbackController, voiceAgentSessions, signal: controller.signal });
+      try {
+        const summarySpeech = await Promise.race([summaryStarted.promise, sending.then(() => {
+          throw new Error('The model repeated the Action without host summary playback');
+        })]);
+        expect(spoken).toContain(carrier.readPending()!.operation.summary);
+        expect(carrier.readPending()).not.toBeNull();
+        expect(webhookRevision).toBe(1);
+        if (completion === 'done') summarySpeech.onDone?.();
+        else if (completion === 'not-started') summarySpeech.onStopped?.();
+        else if (completion === 'failed') summarySpeech.onError?.(new Error('fixture_tts_failed'));
+        else {
+          if (completion === 'end') {
+            setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+            controller.abort();
+          }
+          playbackController.interrupt();
+        }
+        await sending;
+        expect(webhookRevision).toBe(completion === 'done' ? 2 : 1);
+        expect(webhookCatalog.channels).toHaveLength(completion === 'done' ? 0 : 1);
+        expect(carrier.readPending()).toBeNull();
+      } finally {
+        controller.abort();
+        playbackController.interrupt();
+        activeSpeech?.onStopped?.();
+        await sending.catch(() => undefined);
+        resetVoiceSessionStoreForTests();
+      }
+    }));
+  });
 
   it('submits direct coding-session voice turns through durable immediate delivery', async () => {
     conversationModeState.current = 'direct_session';
