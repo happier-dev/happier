@@ -173,7 +173,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 });
                 const edge = ingress?.kind === 'edgeCaddy' ? machines.find(machine => machine.machineId === ingress.edgeMachineId) : undefined;
                 const selected = selectDomainCaddyPlacements({ ingress, members, ...(edge ? { edge } : {}) });
-                if (selected.status !== 'ready') return failure(selected.reason);
+                if (selected.status !== 'ready') return failure(selected.reason, selected.details);
                 if (original.placements && !isDeepStrictEqual(original.placements, selected.placements)) return failure('target_mismatch');
                 input = { ...preparedInput, placements: [...selected.placements] };
                 topology = { members: link.members.filter(member => member.state === 'active').map(member => ({

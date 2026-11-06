@@ -233,6 +233,13 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
     expect(await readDomainCaddyStartFirstLegs({ ...input, list: single([]) })).toEqual({ kind: 'ready', legs: [] });
 });
 
+it('provides the deployment remedy when no active Domain members can supply a route', () => {
+    const unavailable = { status: 'unavailable', reason: 'required_fact_unavailable',
+        details: { requiredFact: 'activeDomainMembers', remedy: expect.any(String) } };
+    expect(selectDomainCaddyPlacements({ members: [] })).toMatchObject(unavailable);
+    expect(selectPrivateCaddyOriginNetwork({ observerNetworks: [], members: [] })).toMatchObject(unavailable);
+});
+
 it.skipIf(process.platform === 'win32')('derives private/public placements from observed topology without confusing the public redirect with app origin', async () => {
     const [a, b, edge] = await Promise.all([observed('100.70.0.2', 9381), observed('100.70.0.3', 9481), observed('100.70.0.4', 9581, true)]);
     const member = { machineId: 'a', installationId: 'installed-a', dockerEngineId: 'engine-a', state: 'active' as const, caddy: a };

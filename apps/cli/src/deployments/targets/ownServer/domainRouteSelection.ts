@@ -9,9 +9,12 @@ import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRout
 export type DomainCaddyMemberObservation = Readonly<{
     machineId: string; state: 'active' | 'joining'; caddy: NativeCaddyObservationResult;
 }>;
+const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers',
+    remedy: 'Deploy the app so it is running on this Machine, then add the domain' } as const;
 export type DomainRouteSelectionUnavailable = Readonly<{
-    status: 'unavailable'; reason: 'required_fact_unavailable' | 'private_scope_unenforceable'; machineIds: readonly string[];
-}>;
+    status: 'unavailable'; machineIds: readonly string[];
+}> & (Readonly<{ reason: 'required_fact_unavailable'; details: Readonly<{ requiredFact: string; remedy?: string }> }>
+    | Readonly<{ reason: 'private_scope_unenforceable'; details?: never }>);
 type InstalledCaddyMember = DomainCaddyMemberObservation & Readonly<{ installationId: string; dockerEngineId: string }>;
 type Placement = NonNullable<DeploymentDomainAddInputV1['placements']>[number];
 export type DomainCaddyPlacementsSelection = Readonly<{ status: 'ready'; placements: readonly Placement[];
@@ -27,16 +30,19 @@ export function selectDomainCaddyPlacements(input: Readonly<{
 }>): DomainCaddyPlacementsSelection {
     const members = input.members.filter(member => member.state === 'active');
     if (!members.length || !input.ingress && members.length > 1) return { status: 'unavailable',
-        reason: 'required_fact_unavailable', machineIds: members.map(member => member.machineId) };
+        reason: 'required_fact_unavailable', machineIds: members.map(member => member.machineId),
+        details: members.length ? { requiredFact: 'domainIngress' } : activeDomainMembersDetails };
     const placements: Placement[] = [];
     const tunnelMachineIds = input.ingress?.kind === 'cloudflareTunnel' ? members.map(member => member.machineId) : undefined;
     const tunnelMembers: Array<{ machineId: string; installationId: string; containerId: string; nativeServer: string;
         origins: NonNullable<Extract<NativeCaddyObservationResult, { status: 'ready' }>['containerOrigins']> }> = [];
     for (const member of members) {
-        if (member.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: tunnelMachineIds ?? [member.machineId] };
+        if (member.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable',
+            machineIds: tunnelMachineIds ?? [member.machineId], details: { requiredFact: 'memberCaddyObservation' } };
         const redirects = new Set(member.caddy.servers.filter(server => server.tls).map(server => caddyPublicHttpServerId(server.serverId)));
         const origins = member.caddy.servers.filter(server => !server.tls && server.automaticHttpsDisabled && !redirects.has(server.serverId));
-        if (origins.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: tunnelMachineIds ?? [member.machineId] };
+        if (origins.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable',
+            machineIds: tunnelMachineIds ?? [member.machineId], details: { requiredFact: 'privateCaddyListener' } };
         const nativeServer = origins[0]!.serverId;
         placements.push({ machineId: member.machineId, installationId: member.installationId, dockerEngineId: member.dockerEngineId,
             nativeServer, listener: 'privateOrigin' });
@@ -57,7 +63,8 @@ export function selectDomainCaddyPlacements(input: Readonly<{
                 break;
             }
         }
-        if (!tunnelOrigin) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: tunnelMachineIds };
+        if (!tunnelOrigin) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: tunnelMachineIds,
+            details: { requiredFact: 'sharedTunnelOrigin' } };
     }
     let publicHost: Readonly<{ machineId: string; installationId: string; dockerEngineId: string; caddy: NativeCaddyObservationResult }> | undefined;
     if (input.ingress?.kind === 'edgeCaddy') {
@@ -65,11 +72,13 @@ export function selectDomainCaddyPlacements(input: Readonly<{
         publicHost = input.edge?.machineId === edgeMachineId ? input.edge : members.find(member => member.machineId === edgeMachineId);
     } else if (input.ingress === undefined) publicHost = members[0];
     if (input.ingress?.kind === 'edgeCaddy' && !publicHost) return { status: 'unavailable', reason: 'required_fact_unavailable',
-        machineIds: [input.ingress.edgeMachineId] };
+        machineIds: [input.ingress.edgeMachineId], details: { requiredFact: 'edgeCaddyMachine' } };
     if (publicHost) {
-        if (publicHost.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [publicHost.machineId] };
+        if (publicHost.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable',
+            machineIds: [publicHost.machineId], details: { requiredFact: 'publicCaddyObservation' } };
         const servers = publicHost.caddy.servers.filter(server => server.tls && server.endpoints.length > 0);
-        if (servers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [publicHost.machineId] };
+        if (servers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable',
+            machineIds: [publicHost.machineId], details: { requiredFact: 'publicCaddyListener' } };
         placements.push({ machineId: publicHost.machineId, installationId: publicHost.installationId, dockerEngineId: publicHost.dockerEngineId,
             nativeServer: servers[0]!.serverId, listener: 'public' });
     }
@@ -164,7 +173,8 @@ export function selectPrivateCaddyOriginNetwork(input: Readonly<{
 }>): DomainPrivateOriginsSelection {
     const members = input.members.filter(member => member.state === 'active');
     const unavailable = members.filter(member => member.caddy.status !== 'ready').map(member => member.machineId);
-    if (!members.length || unavailable.length) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: unavailable };
+    if (!members.length || unavailable.length) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: unavailable,
+        details: members.length ? { requiredFact: 'memberCaddyObservation' } : activeDomainMembersDetails };
     for (const network of input.observerNetworks) {
         if (network.state !== 'ready' || !network.networkIdentity || !network.interfaceName || !network.sourceRanges.length) continue;
         const origins: DomainPrivateOrigin[] = [];
@@ -195,10 +205,12 @@ export function selectEdgeCaddyDomainRoute(input: Readonly<{
     basicAuth?: CaddyDomainRouteInput['basicAuth']; publicTls?: CaddyDomainRouteInput['publicTls'];
 }>): EdgeCaddyDomainRouteSelection {
     if (input.edge.machineId !== input.ingress.edgeMachineId || input.edge.caddy.status !== 'ready') {
-        return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.ingress.edgeMachineId] };
+        return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.ingress.edgeMachineId],
+            details: { requiredFact: input.edge.machineId === input.ingress.edgeMachineId ? 'publicCaddyObservation' : 'edgeCaddyMachine' } };
     }
     const publicServers = input.edge.caddy.servers.filter(server => server.tls && server.endpoints.length > 0);
-    if (publicServers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.edge.machineId] };
+    if (publicServers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.edge.machineId],
+        details: { requiredFact: 'publicCaddyListener' } };
     const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: input.edge.privateNetworks, members: input.members });
     if (selected.status !== 'ready') return selected;
     const [first, ...others] = selected.origins;
