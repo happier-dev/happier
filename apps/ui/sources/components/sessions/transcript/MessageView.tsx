@@ -59,6 +59,7 @@ import {
 } from '@/components/sessions/transcript/messageSelection/resolveSelectableMessageText';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
 import { MessageActionRow } from '@/components/sessions/transcript/messageActions/MessageActionRow';
+import { RowActionDeferredIcon } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { MessagePinButton } from '@/components/sessions/transcript/messageActions/MessagePinButton';
 import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
@@ -1557,11 +1558,13 @@ function ForkMessageButton(props: {
         pressed && styles.copyMessageButtonPressed,
       ]}
     >
-      <Icon
-        name="git-branch"
-        size={14}
-        color={theme.colors.text.secondary}
-      />
+      <RowActionDeferredIcon size={14}>
+        <Icon
+          name="git-branch"
+          size={14}
+          color={theme.colors.text.secondary}
+        />
+      </RowActionDeferredIcon>
     </Pressable>
   );
 }
@@ -1612,11 +1615,13 @@ function CopyMessageButton(props: { markdown: string; testID?: string; invertedA
         pressed && styles.copyMessageButtonPressed,
       ]}
     >
-      <Icon
-        name={copied ? "check" : "copy"}
-        size={14}
-        color={copied ? theme.colors.state.success.foreground : theme.colors.text.secondary}
-      />
+      <RowActionDeferredIcon size={14}>
+        <Icon
+          name={copied ? "check" : "copy"}
+          size={14}
+          color={copied ? theme.colors.state.success.foreground : theme.colors.text.secondary}
+        />
+      </RowActionDeferredIcon>
     </Pressable>
   );
 }

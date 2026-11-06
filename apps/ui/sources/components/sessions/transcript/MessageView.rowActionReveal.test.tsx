@@ -151,6 +151,25 @@ describe('MessageView row action reveal', () => {
         expect(readOpacity(screen.findByTestId('transcript-message-actions:u1')?.props.style)).toBe(0);
     });
 
+    it('waits to mount the hidden row\'s action icons until the row reveals them', async () => {
+        const screen = await renderUserMessage();
+        const deferredIn = (testID: string) => screen.findByTestId(testID)?.findAll((node) => (
+            typeof node.type === 'string' && node.props?.testID === 'row-action-deferred-icon'
+        )).length;
+
+        // Mounted, labelled and focusable while hidden; only the icon waits.
+        expect(screen.findByTestId('transcript-message-copy:u1')?.props.accessibilityLabel).toBeTruthy();
+        expect(deferredIn('transcript-message-copy:u1')).toBe(1);
+        expect(deferredIn('transcript-message-pin:u1')).toBe(1);
+
+        await act(async () => {
+            screen.findByTestId('transcript-message-actions:u1')?.props.onFocus?.();
+        });
+
+        expect(deferredIn('transcript-message-copy:u1')).toBe(0);
+        expect(deferredIn('transcript-message-pin:u1')).toBe(0);
+    });
+
     it('keeps a pinned row pin visible while the rest of the row stays hidden', async () => {
         const screen = await renderUserMessage([existingPin]);
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -106,6 +106,58 @@ describe('RowActionRevealSlot', () => {
         });
 
         expect(readOpacity(screen.findByTestId('slot')?.props.style)).toBe(0);
+    });
+
+    // Issue #864: the action icons were 44 of a message row's ~160 fibers, on every row of every
+    // switch, for pixels a hover-capable reader has not asked to see. The button itself stays
+    // mounted, labelled and focusable; only its icon waits, in a box of the same size.
+    it('mounts deferred icons only once the slot has been revealed, and keeps them through the fade-out', async () => {
+        const { RowActionDeferredIcon, RowActionRevealSlot } = await import('./RowActionRevealSlot');
+
+        function Host(props: Readonly<{ revealed: boolean }>) {
+            return (
+                <RowActionRevealSlot revealed={props.revealed} testID="slot">
+                    <Pressable testID="slot-action" onPress={() => undefined}>
+                        <RowActionDeferredIcon size={14}>
+                            <View testID="slot-icon" />
+                        </RowActionDeferredIcon>
+                    </Pressable>
+                </RowActionRevealSlot>
+            );
+        }
+
+        const screen = await renderScreen(<Host revealed={false} />);
+        expect(screen.findByTestId('slot-action')).toBeTruthy();
+        expect(screen.findByTestId('slot-icon')).toBeNull();
+        const reserved = flattenStyle(screen.findByTestId('row-action-deferred-icon')?.props.style);
+        expect(reserved.width).toBe(14);
+        expect(reserved.height).toBe(14);
+
+        act(() => {
+            screen.findByTestId('slot')?.props.onFocus?.();
+        });
+        expect(screen.findByTestId('slot-icon')).toBeTruthy();
+
+        act(() => {
+            screen.findByTestId('slot')?.props.onBlur?.();
+        });
+        expect(screen.findByTestId('slot-icon')).toBeTruthy();
+    });
+
+    it('mounts deferred icons immediately in an initially revealed slot and outside any slot', async () => {
+        const { RowActionDeferredIcon, RowActionRevealSlot } = await import('./RowActionRevealSlot');
+
+        const revealed = await renderScreen(
+            <RowActionRevealSlot revealed testID="slot">
+                <RowActionDeferredIcon size={14}><View testID="slot-icon" /></RowActionDeferredIcon>
+            </RowActionRevealSlot>,
+        );
+        expect(revealed.findByTestId('slot-icon')).toBeTruthy();
+
+        const standalone = await renderScreen(
+            <RowActionDeferredIcon size={14}><View testID="slot-icon" /></RowActionDeferredIcon>,
+        );
+        expect(standalone.findByTestId('slot-icon')).toBeTruthy();
     });
 
     it('uses the native pointerEvents prop off web', async () => {

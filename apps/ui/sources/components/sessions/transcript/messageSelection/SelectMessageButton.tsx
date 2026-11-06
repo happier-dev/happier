@@ -8,6 +8,7 @@ import type { TranscriptSelectableMessageRole } from './_types';
 import { formatMessageSelectionRowAccessibilityLabel } from './messageSelectionAccessibility';
 import { useOptionalTranscriptSelectionActions, useOptionalTranscriptSelectionRow } from './TranscriptMessageSelectionContext';
 import { Icon } from '@/components/ui/icons/Icon';
+import { RowActionDeferredIcon } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 
 const TRANSCRIPT_SELECT_ACTION_HIT_SLOP = 15;
 const TRANSCRIPT_SELECT_MODE_HIT_SLOP = 22;
@@ -63,11 +64,13 @@ export function SelectMessageButton(props: Readonly<{
                 pressed ? styles.buttonPressed : null,
             ]}
         >
-            <Icon
-                name={iconName}
-                size={isSelectionToggle ? TRANSCRIPT_SELECT_MODE_ICON_SIZE : TRANSCRIPT_SELECT_ACTION_ICON_SIZE}
-                color={iconColor}
-            />
+            <RowActionDeferredIcon size={isSelectionToggle ? TRANSCRIPT_SELECT_MODE_ICON_SIZE : TRANSCRIPT_SELECT_ACTION_ICON_SIZE}>
+                <Icon
+                    name={iconName}
+                    size={isSelectionToggle ? TRANSCRIPT_SELECT_MODE_ICON_SIZE : TRANSCRIPT_SELECT_ACTION_ICON_SIZE}
+                    color={iconColor}
+                />
+            </RowActionDeferredIcon>
         </Pressable>
     );
 }
