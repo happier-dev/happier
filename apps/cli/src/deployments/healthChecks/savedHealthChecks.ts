@@ -1,6 +1,6 @@
 import type { HealthChecksService } from '@happier-dev/plugin-sdk';
 import { z } from 'zod/mini';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
@@ -22,6 +22,14 @@ import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/service
 
 function unavailable(code: string): never {
     throw new PluginError({ code, message: 'The saved health check is unavailable', retryable: false });
+}
+
+function missingDomainServingAddress(cause?: unknown): never {
+    throw new PluginError({ code: 'deployment_unavailable',
+        message: 'The app has no available Domain serving address for this health check.', retryable: false,
+        details: { requiredFact: 'domainServingAddress',
+            remedy: 'Deploy the app successfully, then add its Domain before setting up this health check.' },
+    }, { cause });
 }
 
 /** One finite admission over the existing adopted source and live service read. */
@@ -68,10 +76,16 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     return unavailable('health_check_subject_mismatch');
                 }
                 const loaded = await services.actions.execute('deployments.domains.get',
-                    { serverId: input.serverId, environmentId: environment.environment.id, domainId }, { signal });
+                    { serverId: input.serverId, environmentId: environment.environment.id, domainId }, { signal }).catch(error => {
+                    if (isPluginError(error) && error.code === 'deployment_unavailable') return missingDomainServingAddress(error);
+                    throw error;
+                });
                 signal.throwIfAborted();
                 const detail = DeploymentDomainMutationResultV1Schema.parse(loaded);
-                if (!detail.ok) return unavailable(detail.error);
+                if (!detail.ok) {
+                    if (detail.error === 'deployment_unavailable') return missingDomainServingAddress(detail);
+                    return unavailable(detail.error);
+                }
                 const domain = detail.domain;
                 if (detail.environmentId !== environment.environment.id || domain.id !== domainId
                     || domain.environmentId !== environment.environment.id || domain.targetLinkId !== targetLinkId

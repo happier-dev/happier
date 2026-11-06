@@ -178,6 +178,16 @@ describe('saved source finite native producer binding', () => {
                     }), invokeContributedAction: async () => { throw new Error('No contributed Action in saved health admission'); } });
                 const ownerService = host.bind(actionSeed, { actions: actionsFor(home.token), http });
                 if (!ownerService) throw new Error('Owner service must bind');
+                await expect(ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig: {
+                    ...sourceConfig, checks: [{ ...sourceConfig.checks[0]!, binding: { kind: 'domain',
+                        domainId: 'not-deployed-domain', targetLinkId: link.id, condition: 'domain_probe_failed' } }],
+                }, heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({
+                    code: 'deployment_unavailable', details: { requiredFact: 'domainServingAddress',
+                        remedy: expect.stringMatching(/deploy/i) },
+                    data: { name: 'PluginError', code: 'deployment_unavailable',
+                        details: { requiredFact: 'domainServingAddress', remedy: expect.stringMatching(/deploy/i) } },
+                });
+                expect(requests).toEqual([]);
                 expect(await ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig,
                     heartbeatContributionId: 'health-heartbeat' })).toEqual(sourceConfig);
                 await expect(ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig: {
