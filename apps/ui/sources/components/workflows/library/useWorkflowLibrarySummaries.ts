@@ -120,7 +120,12 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
             demands.add(keys);
             if (!unsubscribeWake) unsubscribeWake = subscribeVisibleWorkflowRunListInvalidation({
                 lifetime, isVisibleWindowLoaded: () => true,
-                invalidate: () => { for (const demand of demands) for (const id of demand) pending.add(id); schedule(); },
+                sourceArtifactIds: () => [...demands].flatMap(keys => keys.flatMap(key => key.startsWith('source:') ? [key.slice('source:'.length)] : [])),
+                invalidate: change => {
+                    if (change.sourceArtifactIds) for (const id of change.sourceArtifactIds) pending.add(`source:${id}`);
+                    else for (const demand of demands) for (const id of demand) pending.add(id);
+                    schedule();
+                },
             });
             // An id may miss wakes while hidden even if a sibling remains visible. Keep its
             // last-known row, but refresh new demand after any older in-flight reply.

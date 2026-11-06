@@ -34,17 +34,17 @@ afterEach(() => {
 describe('subscribeVisibleWorkflowRunListInvalidation', () => {
     it.each([{ runId: 'run-a' }, { runIds: ['run-a'] }])('refreshes demanded source grants and Team membership even when other Runs were already materialized (%#)', selection => {
         const invalidate = vi.fn();
-        const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({ lifetime: buildLifetime(), ...selection,
+        const sources = { sourceArtifactIds: () => ['source-a'] };
+        const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({ lifetime: buildLifetime(), ...selection, ...sources,
             ...('runId' in selection ? { sourceArtifactId: 'source-a' } : {}), isVisibleWindowLoaded: () => true, invalidate });
         try {
-            // Run detail knows its exact protected source; an exact Run-set
-            // window conservatively observes grants until that source is known.
-            if ('runId' in selection) publishHomeAccountChange('server-a', ['source-b'], { changeKinds: ['artifact'] });
+            // Both exact selections observe their demanded source, never other Artifacts.
+            publishHomeAccountChange('server-a', ['source-b'], { changeKinds: ['artifact'] });
             publishHomeAccountChange('server-a', ['workflow-run:run-b'], { changeKinds: ['account'] });
             expect(invalidate).not.toHaveBeenCalled();
             publishHomeAccountChange('server-a', ['source-a'], { changeKinds: ['artifact'], workflowRunsMaterialized: true });
             publishHomeAccountChange('server-a', ['teams'], { changeKinds: ['account'], workflowRunsMaterialized: true });
-            expect(invalidate.mock.calls).toEqual([[{ summaryCurrent: false }], [{ summaryCurrent: false }]]);
+            expect(invalidate.mock.calls).toEqual([[{ summaryCurrent: false, sourceArtifactIds: ['source-a'] }], [{ summaryCurrent: false }]]);
         } finally { unsubscribe(); }
     });
     it('uses Account Automation changes for the Automation attention window only', () => {

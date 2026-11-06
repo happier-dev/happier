@@ -284,7 +284,8 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
 
     it('shares exact followed Run summaries and retains their outage state without hidden demand', async () => {
         const initialRead = createDeferred<void>();
-        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]), respondAfter: initialRead.promise });
+        const followed = { ...run('followed-run', 'succeeded'), sourceArtifactId: definitionId };
+        home.answer(serverId, route, { body: await runPage([followed]), respondAfter: initialRead.promise });
         const first = await renderHook((props: { demanded: boolean }) => useWorkflowRunWindow('exact:["followed-run"]',
             { demanded: props.demanded, readMode: 'complete' }), { initialProps: { demanded: true } });
         const second = await renderHook(() => useWorkflowRunWindow('exact:["followed-run"]', { readMode: 'complete' }));
@@ -302,8 +303,8 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
         await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('failed'));
         expect(home.requestsFor(route)).toHaveLength(reads + 1);
-        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]) });
-        await act(async () => publishHomeAccountChange(serverId, ['source-artifact'], { changeKinds: ['artifact'] }));
+        home.answer(serverId, route, { body: await runPage([followed]) });
+        await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
         await waitLoaded(first);
         expect(home.requestsFor(route)).toHaveLength(reads + 2);
         home.answer(serverId, route, { status: 503, body: { error: 'unavailable' } });
@@ -317,7 +318,7 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await act(async () => publishHomeAccountChange(serverId, ['workflow-run:followed-run'], { changeKinds: ['account'] }));
         expect(home.requestsFor(route)).toHaveLength(failedReads);
         expect(first.getCurrent().status).toBe('failed');
-        home.answer(serverId, route, { body: await runPage([run('followed-run', 'succeeded')]) });
+        home.answer(serverId, route, { body: await runPage([followed]) });
         await first.rerender({ demanded: true });
         await waitLoaded(first);
         await first.unmount();
@@ -709,6 +710,67 @@ describe('Workflow Run windows through real Account storage', () => {
         projection: 'membership', runs, acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, ...(nextCursor ? { nextCursor } : {}),
     });
 
+    it.each(['all', 'exact:["selected-run"]'] as const)('ignores 300 unrelated Artifact pushes and targets only changed Runs and referenced sources (%s)', async windowId => {
+        await saved();
+        const boundary = home.artifacts(serverId);
+        const template = boundary.read(definitionId)!;
+        const artifactIds = Array.from({ length: 300 }, (_, index) => `unrelated-artifact-${index}`);
+        for (const id of artifactIds) boundary.replaceStoredRow({ ...template, id });
+        const selected = { ...run('selected-run'), sourceArtifactId: definitionId };
+        const untouched = { ...run('untouched-run'), sourceArtifactId: definitionId };
+        home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [selected, untouched] : [selected], 'retained-tail') });
+        const hook = await renderHook(() => useWorkflowRunWindow(windowId));
+        await waitLoaded(hook);
+        const before = home.requestsFor(route).length;
+        const fullReloads = () => home.requestsFor(route).slice(before).filter(read => {
+            const request = WorkflowRunListRequestV1Schema.parse((read.input as { request: unknown }).request);
+            return request.runIds === undefined && request.sourceArtifactId === undefined;
+        });
+        for (const id of artifactIds) await act(async () => publishHomeAccountChange(serverId, [id], { changeKinds: ['artifact'] }));
+        expect(home.requestsFor(route)).toHaveLength(before);
+        expect(fullReloads()).toHaveLength(0);
+        const changed = { ...selected, state: 'succeeded' as const, revision: selected.revision + 1 };
+        home.answer(serverId, route, { body: await runPage([changed]) });
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${selected.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows.find(row => row.id === selected.id)?.revision).toBe(changed.revision));
+        expect(home.requestsFor(route)).toHaveLength(before + 1);
+        expect(home.requestsFor(route).at(-1)?.input).toMatchObject({ request: { runIds: [selected.id] } });
+        expect(hook.getCurrent().runIds).toEqual(windowId === 'all' ? [selected.id, untouched.id] : [selected.id]);
+        expect(hook.getCurrent().hasMore).toBe(true);
+        const current = { ...changed, revision: changed.revision + 1 };
+        home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [current, untouched] : [current]) });
+        await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows.find(row => row.id === selected.id)?.revision).toBe(current.revision));
+        expect(home.requestsFor(route)).toHaveLength(before + 2);
+        expect(home.requestsFor(route).at(-1)?.input).toMatchObject({ request: { sourceArtifactId: definitionId } });
+        expect(fullReloads()).toHaveLength(0);
+        const materialized = { ...current, revision: current.revision + 1 };
+        await act(async () => {
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(materialized, null)]);
+            publishHomeAccountChange(serverId, [`workflow-run:${selected.id}`], { workflowRunsMaterialized: true });
+        });
+        expect(hook.getCurrent().rows.find(row => row.id === selected.id)?.revision).toBe(materialized.revision);
+        expect(home.requestsFor(route)).toHaveLength(before + 2);
+        await act(async () => storage.getState().removeWorkflowRun(selected.id));
+        await act(async () => storage.getState().removeWorkflowRun(untouched.id));
+        await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
+        expect(home.requestsFor(route)).toHaveLength(before + 2);
+    });
+
+    it.each([undefined, 'membership'] as const)('observes demanded source grant removal without refreshing unrelated sources (%s)', async projection => {
+        const selected = { ...run('shared-run'), sourceArtifactId: definitionId, attentionRequired: true };
+        home.answer(serverId, route, { body: projection ? membershipPage([selected]) : await runPage([selected]) });
+        const hook = await renderHook(() => useWorkflowRunWindow('attention', { projection }));
+        await waitLoaded(hook);
+        const before = home.requestsFor(route).length;
+        await act(async () => publishHomeAccountChange(serverId, ['unrelated-source'], { changeKinds: ['artifact'] }));
+        expect(home.requestsFor(route)).toHaveLength(before);
+        home.answer(serverId, route, { body: projection ? membershipPage([]) : await runPage([]) });
+        await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual([]));
+        expect(home.requestsFor(route)[before]?.input).toMatchObject({ request: { sourceArtifactId: definitionId, attention: 'required' } });
+    });
+
     it('settles 1,000 complete Runs in one byte-bounded request and keeps a genuine arrival current', async () => {
         const summaries = Array.from({ length: 1000 }, (_, index) => createWorkflowRunSummaryFixture({
             ...run(`complete-${index}`), createdAt: new Date(1_000_000 - index).toISOString(),
@@ -719,10 +781,12 @@ describe('Workflow Run windows through real Account storage', () => {
         home.answer(serverId, route, { select: input => {
             const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' && 'request' in input ? input.request : undefined);
             const offset = Number(request.cursor ?? 0);
-            const rows = fullPage.runs.slice(offset, request.limit === undefined ? undefined : offset + request.limit);
+            const runIds = request.runIds;
+            const selected = runIds ? fullPage.runs.filter(run => runIds.includes(run.id)) : fullPage.runs;
+            const rows = selected.slice(offset, request.limit === undefined ? undefined : offset + request.limit);
             const next = offset + rows.length;
             return { body: { ...fullPage, runs: rows,
-                ...(next < fullPage.runs.length ? { nextCursor: String(next) } : {}) }, respondAfter: pending.promise };
+                ...(next < selected.length ? { nextCursor: String(next) } : {}) }, respondAfter: pending.promise };
         } });
         const complete = await renderHook(() => useWorkflowRunWindow('all', { readMode: 'complete' }));
         const visible = await renderHook(() => useWorkflowRunWindow('all'));
@@ -793,7 +857,7 @@ describe('Workflow Run windows through real Account storage', () => {
         await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${head.id}`]));
         await waitForHomeGovernance(() => expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(changedHead.revision));
         expect(home.requestsFor(route)).toHaveLength(3);
-        expect(home.requestsFor(route)[2]?.input).toMatchObject({ request: { limit: expect.any(Number) } });
+        expect(home.requestsFor(route)[2]?.input).toMatchObject({ request: { runIds: [head.id] } });
     });
 
     it('completes the same window when complete demand joins a visible continuation', async () => {
@@ -919,7 +983,10 @@ describe('Workflow Run windows through real Account storage', () => {
         await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toHaveLength(4));
         const pages = [membershipPage(ordered.slice(0, 2), 'fresh-second'), membershipPage(ordered.slice(2, 4), 'fresh-third'),
             membershipPage(ordered.slice(5))];
-        home.answer(serverId, route, { select: () => ({ body: pages.shift() }) });
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' && 'request' in input ? input.request : undefined);
+            return { body: request.runIds ? membershipPage([]) : pages.shift() };
+        } });
         await act(async () => publishHomeAccountChange(serverId, ['workflow-run:member-20']));
         await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual(ordered.filter(row => row.id !== 'member-20').map(row => row.id)));
         expect(storage.getState().workflowRunsById).toEqual({});

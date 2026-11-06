@@ -156,6 +156,8 @@ export type WorkflowRunListWindow = Readonly<{
     /** Oldest traversed list position, including when membership has never opened a body. */
     frontier?: WorkflowRunListFrontier;
     runIds: readonly string[];
+    /** Source access routing from the list projection, even before a body is opened. */
+    sourceArtifactIdsByRunId?: Readonly<Record<string, string>>;
     nextCursor: string | null;
     loaded: boolean;
     /** Explicitly scoped windows can outlive the consumer that queried them. */
@@ -819,8 +821,11 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     ? areServerAccountScopesEqual(scope, window.scope)
                     : !scope || areServerAccountScopesEqual(scope, getActiveServerAccountScope()))) continue;
                 if (workflowRunListWindows === state.workflowRunListWindows) workflowRunListWindows = { ...workflowRunListWindows };
+                const sourceArtifactIdsByRunId = { ...window.sourceArtifactIdsByRunId };
+                delete sourceArtifactIdsByRunId[runId];
                 workflowRunListWindows[id as keyof typeof workflowRunListWindows] = { ...window,
                     runIds: window.runIds.filter(candidate => candidate !== runId),
+                    ...(window.sourceArtifactIdsByRunId ? { sourceArtifactIdsByRunId } : {}),
                     ...(window.attentionRunIds ? { attentionRunIds: window.attentionRunIds.filter(candidate => candidate !== runId) } : {}) };
             }
             let workflowRunInvocationsByRunId = state.workflowRunInvocationsByRunId;
@@ -847,6 +852,10 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 const membership: WorkflowRunListWindow = mode === 'append' && previous
                     ? { runIds: appendUniqueIds(previous.runIds, pageRunIds), nextCursor, loaded: true }
                     : { runIds: pageRunIds, nextCursor, loaded: true };
+                const sourceArtifactIdsByRunId = {
+                    ...(mode === 'append' ? previous?.sourceArtifactIdsByRunId : {}),
+                    ...Object.fromEntries(runs.flatMap(run => run.sourceArtifactId ? [[run.id, run.sourceArtifactId] as const] : [])),
+                };
                 const tailId = membership.runIds.at(-1);
                 const tailSummary = tailId === undefined ? undefined : runs.find(run => run.id === tailId);
                 const tailAutomation = tailId === undefined ? undefined : automationRuns.find(run => run.id === tailId);
@@ -856,6 +865,8 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     : tailBody ? workflowRunListFrontier(tailBody) : tailId === previous?.frontier?.id ? previous?.frontier : undefined;
                 const window: WorkflowRunListWindow = { ...membership,
                     runIds: previous && sameStrictJsonValue(previous.runIds, membership.runIds) ? previous.runIds : membership.runIds,
+                    sourceArtifactIdsByRunId: previous?.sourceArtifactIdsByRunId && sameStrictJsonValue(previous.sourceArtifactIdsByRunId, sourceArtifactIdsByRunId)
+                        ? previous.sourceArtifactIdsByRunId : sourceArtifactIdsByRunId,
                     ...(projection === undefined ? {} : { projection }),
                     ...(frontier === undefined ? {} : { frontier: previous?.frontier && sameStrictJsonValue(previous.frontier, frontier) ? previous.frontier : frontier }),
                     ...((windowId.startsWith('account:') || windowId.startsWith('session:') || windowId.startsWith('discussion:')) && scope ? { scope } : {}),

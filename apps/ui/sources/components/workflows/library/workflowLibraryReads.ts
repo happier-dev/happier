@@ -29,7 +29,8 @@ import {
     listWorkflowRuns,
     type WorkflowRunListPage,
 } from '@/sync/domains/workflows/workflowRunListActions';
-import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
+import { subscribeVisibleWorkflowRunListInvalidation, type WorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
+import { refreshWorkflowRunWindowChanges } from './workflowRunWindowChanges';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -450,7 +451,7 @@ type RunWindowStatuses = Readonly<Partial<Record<WorkflowRunListWindowStoreId, R
 const EMPTY_RUN_STATUSES: RunWindowStatuses = Object.freeze({});
 const runWindowStatusCell = createCell<RunWindowStatuses>(EMPTY_RUN_STATUSES);
 type RunProjection = 'membership' | undefined;
-type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; projection: RunProjection; controller: AbortController };
+type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; change?: WorkflowRunListInvalidation; projection: RunProjection; controller: AbortController };
 type RunWindowReader = { lifetime: ActiveServerAccountScopeLifetime; fullReaders: number; membershipReaders: number; completeReaders: number;
     read?: RunWindowRead; unsubscribe?: () => void };
 const runWindowReaders = new Map<WorkflowRunListWindowStoreId, RunWindowReader>();
@@ -478,7 +479,8 @@ function finishRunWindowRead(windowId: WorkflowRunListWindowId, lifetime: Server
     // Restate it once after either the leading read or its continuation settles.
     if ((read.refreshRequested || (read.projection === 'membership' && reader.fullReaders > 0))
         && isCurrent() && reader.lifetime.isCurrent()
-        && reader.fullReaders + reader.membershipReaders > 0) void refreshRunWindow(windowId, false, lifetime);
+        && reader.fullReaders + reader.membershipReaders > 0) void refreshRunWindow(windowId, false, lifetime,
+            read.projection === 'membership' && reader.fullReaders > 0 ? undefined : read.change);
     else if (reader.completeReaders > 0 && isCurrent() && reader.lifetime.isCurrent()
         && readRunWindowStatus(storeId).status === 'loaded' && !readRunWindowStatus(storeId).loadMoreFailed
         && getStorage().getState().workflowRunListWindows[storeId]?.nextCursor) void loadMoreRunWindow(windowId, lifetime);
@@ -516,7 +518,9 @@ export async function readRunWindowPage(windowId: WorkflowRunListWindowId, curso
 }
 
 /** Restate a window through its loaded ordering frontier, retaining rows until the read succeeds. */
-export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate = false, accountLifetime?: ServerAccountScopeLifetime | null): Promise<void> {
+export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate = false, accountLifetime?: ServerAccountScopeLifetime | null, change?: WorkflowRunListInvalidation): Promise<void> {
+    // No selection means the producer requested a coarse reset (for example reconnect).
+    if (!change?.runIds && !change?.sourceArtifactIds) change = undefined;
     const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
     if (lifetime === null) return Promise.resolve();
     const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
@@ -526,7 +530,18 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     const projection = demandedRunProjection(windowId, reader);
     const inFlight = reader.read;
     if (inFlight && !inFlight.controller.signal.aborted) {
-        if (invalidate) inFlight.refreshRequested = true;
+        if (invalidate) {
+            // Keep exact changes exact while sharing the existing in-flight read.
+            // A coarse reset supersedes accumulated row selections.
+            if (!inFlight.refreshRequested) inFlight.change = change;
+            else if (!inFlight.change || !change) inFlight.change = undefined;
+            else inFlight.change = { summaryCurrent: inFlight.change.summaryCurrent && change.summaryCurrent,
+                runIds: [...new Set([...(inFlight.change.runIds ?? []), ...(change.runIds ?? [])])],
+                ...((inFlight.change.sourceArtifactIds || change.sourceArtifactIds) ? {
+                    sourceArtifactIds: [...new Set([...(inFlight.change.sourceArtifactIds ?? []), ...(change.sourceArtifactIds ?? [])])],
+                } : {}) };
+            inFlight.refreshRequested = true;
+        }
         return inFlight.promise;
     }
     const retirement = lifetime.onRetire(() => controller.abort());
@@ -544,6 +559,14 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     const readRunWindow = async (): Promise<void> => {
         let continuing = false;
         try {
+            if (windowId !== 'automationAttention' && previousWindow && !promoting && (change?.runIds || change?.sourceArtifactIds)) {
+                const membershipChanged = await refreshWorkflowRunWindowChanges(windowId, change, lifetime, controller.signal, projection);
+                if (!lifetime.isCurrent() || controller.signal.aborted) return;
+                if (!membershipChanged) {
+                    setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), status: 'loaded', failure: null, knownAt: Date.now() });
+                    return;
+                }
+            }
             let page = await readRunWindowPage(windowId, undefined, projection, reader.completeReaders > 0 ? 'complete' : undefined, controller.signal, lifetime);
             if (!lifetime.isCurrent() || controller.signal.aborted) return;
             // Restate everything the person already paged to: a page-one-only
@@ -720,10 +743,11 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
             lifetime,
             ...(windowId !== 'automationAttention' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
             source: windowId === 'automationAttention' ? 'automation' : 'workflow',
+            sourceArtifactIds: () => Object.values(getStorage().getState().workflowRunListWindows[storeId]?.sourceArtifactIdsByRunId ?? {}),
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'
                 || (runWindowReaders.get(storeId)?.lifetime === lifetime && runWindowReaders.get(storeId)?.read !== undefined),
-            invalidate: () => { void refreshRunWindow(windowId, true, lifetime); },
+            invalidate: change => { void refreshRunWindow(windowId, true, lifetime, change); },
         });
         return () => {
             if (membershipOnly) reader.membershipReaders -= 1;

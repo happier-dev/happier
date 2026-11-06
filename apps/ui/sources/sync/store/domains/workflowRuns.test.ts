@@ -524,6 +524,7 @@ describe('workflow run body store', () => {
 
         expect(harness.get().workflowRunListWindows.attention).toEqual({
             runIds: ['run-1', 'run-2'], nextCursor: null, loaded: true,
+            sourceArtifactIdsByRunId: {},
             frontier: { id: 'run-2', createdAt: Date.parse(summary({ id: 'run-2' }).createdAt) },
         });
         expect(resolveWorkflowRunRows(
@@ -796,6 +797,7 @@ describe('workflow run body store', () => {
 
             expect(harness.get().workflowRunListWindows.all).toEqual({
                 runIds: ['run-5', 'run-4', 'run-2'],
+                sourceArtifactIdsByRunId: {},
                 nextCursor: 'fresh-tail',
                 loaded: true,
                 frontier: { id: 'run-2', createdAt: Date.parse('2026-09-08T10:00:02.000Z') },
@@ -816,6 +818,7 @@ describe('workflow run body store', () => {
 
             expect(harness.get().workflowRunListWindows.all).toEqual({
                 runIds: ['run-5'], nextCursor: null, loaded: true,
+                sourceArtifactIdsByRunId: {},
                 frontier: { id: 'run-5', createdAt: Date.parse('2026-09-08T10:00:05.000Z') },
             });
         });
