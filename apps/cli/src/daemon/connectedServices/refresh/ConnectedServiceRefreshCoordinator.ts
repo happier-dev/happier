@@ -388,16 +388,18 @@ function isReconnectRequiredProfileStatus(status: unknown): boolean {
 }
 
 function readBoundedPluginDiagnosticCode(
-  result: PluginConnectedAccountHealthResult,
+  result: PluginConnectedAccountHealthResult | QualifiedConnectedAccountRefreshSettlement['result'],
 ): string | undefined {
-  const code = 'diagnostic' in result
-    ? result.diagnostic?.code.trim()
-    : undefined;
+  const diagnostic = 'diagnostic' in result ? result.diagnostic : undefined;
+  const details = diagnostic?.details;
+  const providerCode = details !== null && typeof details === 'object' && !Array.isArray(details)
+    && 'providerErrorCode' in details ? details.providerErrorCode : undefined;
+  const code = typeof providerCode === 'string' ? providerCode.trim() : diagnostic?.code.trim();
   return code && code.length <= 128 ? code : undefined;
 }
 
 function buildCredentialHealthFromPluginStatus(
-  result: PluginConnectedAccountHealthResult,
+  result: PluginConnectedAccountHealthResult | QualifiedConnectedAccountRefreshSettlement['result'],
 ): ConnectedServiceCredentialHealthV1 {
   const providerErrorCode = readBoundedPluginDiagnosticCode(result);
   if (result.status === 'connected') {
@@ -2319,7 +2321,24 @@ export class ConnectedServiceRefreshCoordinator {
       }
       return await this.refreshQualifiedAccount({ ...input, expectedCredential: current });
     }
-    const completion = refreshQualifiedConnectedAccount(input);
+    const acquireRefreshLease = input.acquireRefreshLease;
+    const completion = refreshQualifiedConnectedAccount({
+      ...input,
+      ...(acquireRefreshLease ? {
+        acquireRefreshLease: async (request: Parameters<typeof acquireRefreshLease>[0]) => {
+          const lease = await acquireRefreshLease(request);
+          logger.debug('[ConnectedServiceRefreshCoordinator] refresh lease', {
+            account: input.account,
+            credentialRevision: input.expectedCredential.credentialRevision,
+            configurationRevision: input.expectedCredential.configurationRevision,
+            machineId: this.params.machineIdProvider(), ownerId: input.ownerId,
+            acquired: lease.acquired, leaseOwnerId: lease.ownerId,
+            leaseCredentialRevision: lease.credentialRevision,
+          });
+          return lease;
+        },
+      } : {}),
+    });
     const inFlight = { kind: 'qualified', reason: input.reason, completion } as const;
     this.inFlightRefreshes.set(key, inFlight);
     try {

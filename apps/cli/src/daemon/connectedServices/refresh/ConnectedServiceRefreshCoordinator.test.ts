@@ -52,6 +52,12 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
 
+// Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
+
 let pluginLease: PluginRuntimeRegistryLease;
 beforeAll(async () => {
   pluginLease = await pluginReloadController.acquireRuntimeRegistry({
@@ -3038,13 +3044,13 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       health: expect.objectContaining({
         status: 'needs_reauth',
         reconnectRequired: true,
-        providerErrorCode: 'openai_codex_oauth_rejected',
+        providerErrorCode: 'invalid_grant',
       }),
     });
     expect(onCredentialHealthNotification).toHaveBeenCalledWith(expect.objectContaining({
       diagnostic: expect.objectContaining({
         status: 'blocked_by_credential_health',
-        providerErrorCode: 'openai_codex_oauth_rejected',
+        providerErrorCode: 'invalid_grant',
       }),
       healthStatus: 'reconnect_required',
       affectedTargets: [expect.objectContaining({ pid: 123, sessionId: 'happy-session-1' })],
@@ -3130,7 +3136,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       health: expect.objectContaining({
         status: 'needs_reauth',
         reconnectRequired: true,
-        providerErrorCode: 'openai_codex_oauth_rejected',
+        providerErrorCode: 'invalid_grant',
       }),
     }));
     expect(onCredentialHealthNotification).not.toHaveBeenCalled();
