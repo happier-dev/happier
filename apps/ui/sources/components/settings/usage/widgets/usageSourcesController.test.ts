@@ -12,6 +12,7 @@ import { act } from 'react-test-renderer';
 import { createUsageSourcesController } from './usageSourcesController';
 import { useUsageSourcesController, type UsageSourcesHookOptions } from './useUsageSources';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { applyUsageSocketUpdate } from '@/sync/engine/socket/usageUpdates';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 const source: UsageSourceV1 = {
@@ -60,7 +61,7 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
 }
 
 describe('Usage Sources consent controller', () => {
-    it.each(['enabled', 'disabled'] as const)('retries failed capture only with existing %s consent', async consent => {
+    it.each(['enabled', 'disabled'] as const)('retries failed capture only with existing %s consent and keeps push reads passive', async consent => {
         let currentSource: UsageSourceV1 = { ...source, consent, status: 'unavailable', errorCode: 'source_unavailable' };
         let captures = 0;
         let reads = 0;
@@ -77,6 +78,9 @@ describe('Usage Sources consent controller', () => {
         try {
             await controller.discover();
             await controller.refresh();
+            for (let index = 0; index < 25; index++) {
+                publishHomeAccountChange('home', [], { usageSourcesMachineIds: ['machine'] });
+            }
             await vi.waitFor(() => expect(controller.getSnapshot().pending).toEqual([]));
             expect(captures).toBe(0);
             const before = reads;
@@ -163,23 +167,53 @@ describe('Usage Sources consent controller', () => {
         expect(after.root).toBe(before.root);
         controller.dispose();
     });
-    it('refreshes background progress on the existing Home wake and retires that demand with its Account', async () => {
+    it('reads only matching source facts and recovery, delivering progress to its subscriber until Account retirement', async () => {
         let currentSource: UsageSourceV1 = { ...source, consent: 'enabled', status: 'reading', pendingCount: 7 };
-        const settled = createDeferred<void>();
+        let reads = 0;
         const { controller, retire } = harness(async request => {
-            if (request.actionId === 'usage.sources.get') settled.resolve();
+            if (request.actionId === 'usage.sources.get') reads++;
             return { sources: [currentSource] };
         });
-        await controller.discover();
-        currentSource = { ...currentSource, status: 'ready', pendingCount: 0, asOfMs: 500 };
-        publishHomeAccountChange('other-home');
-        expect(controller.getSnapshot().sources[0]?.status).toBe('reading');
-        publishHomeAccountChange('home');
-        await settled.promise;
-        await vi.waitFor(() => expect(controller.getSnapshot().sources).toEqual([currentSource]));
-        retire();
-        publishHomeAccountChange('home');
-        expect(controller.getSnapshot()).toMatchObject({ sources: [], retired: true, pending: [] });
+        let consumed = controller.getSnapshot();
+        const detach = controller.subscribe(() => { consumed = controller.getSnapshot(); });
+        try {
+            await controller.discover();
+            const before = consumed.sources;
+            await act(async () => {
+                for (let index = 0; index < 20; index++) {
+                    publishHomeAccountChange('home', [`session-${index}`], { changeKinds: ['session'] });
+                }
+                applyUsageSocketUpdate({ type: 'usage', id: null, key: 'codex:model', tokens: { total: 1 },
+                    cost: { total: 0 }, timestamp: 1000 }, 'home', 'account');
+                applyUsageSocketUpdate({ type: 'usage-sources-invalidated', machineId: 'other-machine',
+                    installationId: 'other-installation' }, 'home', 'account');
+                applyUsageSocketUpdate({ type: 'usage-sources-invalidated', machineId: 'machine',
+                    installationId: 'installation' }, 'other-home', 'account');
+            });
+            expect.soft(reads, 'Unrelated Home and Machine facts perform no Source RPC reads').toBe(0);
+            expect(consumed.sources).toBe(before);
+            currentSource = { ...currentSource, status: 'ready', pendingCount: 0, asOfMs: 500 };
+            await act(async () => {
+                applyUsageSocketUpdate({ type: 'usage-sources-invalidated', machineId: 'machine',
+                    installationId: 'installation' }, 'home', 'account');
+            });
+            expect(reads).toBe(1);
+            expect(consumed.sources).toEqual([currentSource]);
+            for (const recovery of ['connected', 'snapshot'] as const) {
+                currentSource = { ...currentSource, asOfMs: currentSource.asOfMs! + 1 };
+                await act(async () => { publishHomeAccountChange('home', undefined, { source: recovery }); });
+                expect(consumed.sources).toEqual([currentSource]);
+            }
+            expect(reads).toBe(3);
+            retire();
+            await act(async () => {
+                applyUsageSocketUpdate({ type: 'usage-sources-invalidated', machineId: 'machine',
+                    installationId: 'installation' }, 'home', 'account');
+                publishHomeAccountChange('home', undefined, { source: 'connected' });
+            });
+            expect(reads).toBe(3);
+            expect(consumed).toMatchObject({ sources: [], retired: true, pending: [] });
+        } finally { detach(); controller.dispose(); }
     });
     it('discovers metadata lazily through the admitted Action without granting consent', async () => {
         const { lifetime } = lifetimeHarness();

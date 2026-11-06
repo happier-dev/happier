@@ -9,7 +9,6 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type UsageSourcesOperation = Readonly<{ actionId: UsageSourceActionId; sourceId?: string }>;
 export type UsageSourcesSnapshot = Readonly<{
@@ -198,11 +197,11 @@ export function createUsageSourcesController(options: Readonly<{
         refreshRequested = false;
         void run('usage.sources.get', target);
     }
-    unsubscribeWake = subscribeHomeAccountChange(event => {
-        if (!current() || !snapshot.loaded || !areServerProfileIdentifiersEquivalent(event.serverId, target.serverId)) return;
+    unsubscribeWake = subscribeHomeAccountChange(() => {
+        if (!current() || !snapshot.loaded) return;
         refreshRequested = true;
         drainRefresh();
-    });
+    }, { serverIds: [target.serverId], usageSourcesMachineIds: [target.machineId], reconnect: 'refresh' });
     retirement = options.lifetime.onRetire(dispose);
     if (!current()) retirement.dispose();
     return {

@@ -17,6 +17,7 @@ import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSource
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 it('retains source inventory but withdraws execution from machines with locked content', () => {
@@ -203,6 +204,20 @@ describe('Usage Sources body', () => {
     await act(async () => { offset = 0; tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } } as never); });
     await vi.waitFor(() => expect(visibleRows()).toEqual(['machine-0', 'machine-1']));
     expect(screen.findByTestId('sources.machine.machine-0.missing.missing')).toBeTruthy();
+  });
+  it('keeps another Machine snapshot change local while updating the grouped status', async () => {
+    const machines = Array.from({ length: 8 }, (_, i) => ({ id: `machine-${i}`, name: `Machine ${i}`, online: true }));
+    const sources = new Map(machines.map(machine => [machine.id, [{ ...found, machineId: machine.id }]]));
+    const boundary = machineBoundary(found, undefined, sources);
+    const screen = await renderScreen(<UsageSourcesMachines lifetime={lifetime} serverId="home" executor={boundary.executor}
+      testID="sources" input={{ agents: [], machines: [], sources: [] }} machines={machines} />);
+    await vi.waitFor(() => expect(machines.every(machine => screen.findByTestId(`sources.machine.${machine.id}.source.claude-default.add`))).toBe(true));
+    machineHostRenders.clear();
+    sources.set('machine-0', []);
+    await act(async () => { publishHomeAccountChange('home', [], { usageSourcesMachineIds: ['machine-0'] }); });
+    await vi.waitFor(() => expect(Boolean(screen.findByTestId('sources.machine.machine-0.source.claude-default.add'))).toBe(false));
+    expect(screen.findByTestId('sources.emptyMachines')).toBeTruthy();
+    expect(machines.slice(1).map(machine => machineHostRenders.get(`sources.machine.${machine.id}`) ?? 0)).toEqual(Array(7).fill(0));
   });
   it('decides missing once per Agent and hides untouched Happier runtime homes without hiding captured history', async () => {
     const codex = { ...found, sourceId: 'codex-user', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
