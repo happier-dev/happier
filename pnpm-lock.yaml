@@ -1430,6 +1430,9 @@ importers:
       '@happier-dev/plugins-machine-railway':
         specifier: 0.0.0
         version: link:../../packages/plugins/machine-railway
+      '@happier-dev/plugins-machine-services':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/machine-services
       '@happier-dev/plugins-machine-superserve':
         specifier: 0.0.0
         version: link:../../packages/plugins/machine-superserve

@@ -193,6 +193,7 @@
     "@happier-dev/plugins-machine-fly": "0.0.0",
     "@happier-dev/plugins-machine-hetzner": "0.0.0",
     "@happier-dev/plugins-machine-railway": "0.0.0",
+    "@happier-dev/plugins-machine-services": "0.0.0",
     "@happier-dev/plugins-machine-superserve": "0.0.0",
     "@happier-dev/plugins-machine-upstash-box": "0.0.0",
     "@happier-dev/plugins-machine-vercel": "0.0.0",
