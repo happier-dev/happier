@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -59,6 +60,63 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
 }
 
 describe('Usage Sources consent controller', () => {
+    it.each(['enabled', 'disabled'] as const)('retries failed capture only with existing %s consent', async consent => {
+        let currentSource: UsageSourceV1 = { ...source, consent, status: 'unavailable', errorCode: 'source_unavailable' };
+        let captures = 0;
+        let reads = 0;
+        const { controller } = harness(async request => {
+            if (request.actionId === 'usage.sources.consent.set') {
+                expect(request.input).toMatchObject({ sourceId: source.sourceId, enabled: true });
+                captures += 1;
+                currentSource = { ...source, consent: 'enabled', status: 'ready', coverage: 'complete', asOfMs: 100 };
+                return { source: currentSource };
+            }
+            reads += 1;
+            return { sources: [currentSource] };
+        });
+        try {
+            await controller.discover();
+            await controller.refresh();
+            await vi.waitFor(() => expect(controller.getSnapshot().pending).toEqual([]));
+            expect(captures).toBe(0);
+            const before = reads;
+            await controller.refresh(source.sourceId);
+            expect(captures).toBe(consent === 'enabled' ? 1 : 0);
+            expect(controller.getSnapshot().sources[0]).toMatchObject(consent === 'enabled'
+                ? { status: 'ready', consent: 'enabled', asOfMs: 100 } : { status: 'unavailable', consent: 'disabled' });
+            expect(reads - before).toBe(consent === 'enabled' ? 0 : 1);
+            expect(controller.getSnapshot().pending).toEqual([]);
+        } finally { controller.dispose(); }
+    });
+    it('retires admitted private roots after an actual RPC refusal and never revives them on a later outage', async () => {
+        let error: Error | undefined;
+        let reads = 0;
+        const { controller } = harness(async () => {
+            reads++;
+            if (error) throw error;
+            return { sources: [source] };
+        });
+        try {
+            await controller.discover();
+            expect(controller.getSnapshot().sources).toEqual([source]);
+            error = new RpcError('Transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+            await controller.refresh();
+            expect(controller.getSnapshot().sources).toHaveLength(1);
+            error = new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
+            await controller.refresh();
+            expect(controller.getSnapshot()).toMatchObject({ sources: [], loaded: false, pending: [],
+                error: { errorCode: RPC_ERROR_CODES.FORBIDDEN } });
+            expect(reads).toBe(3);
+            await Promise.resolve();
+            expect(reads).toBe(3);
+            error = new RpcError('Transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+            await controller.refresh();
+            expect(controller.getSnapshot().sources).toEqual([]);
+            error = undefined;
+            await controller.refresh();
+            expect(controller.getSnapshot()).toMatchObject({ sources: [source], error: null });
+        } finally { controller.dispose(); }
+    });
     it('marks retained metadata unreadable after terminal HTTP failure and clears it on denial', async () => {
         let status = 200;
         const reading: UsageSourceV1 = { ...source, consent: 'enabled', status: 'reading', pendingCount: 7, asOfMs: 500 };

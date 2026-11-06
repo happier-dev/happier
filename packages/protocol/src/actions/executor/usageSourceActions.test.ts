@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createUsageSourceActionPort } from './usageSourceActions.js';
 import type { UsageSourceV1 } from '../../usage/usageSources.js';
+import { RPC_ERROR_CODES, RpcError } from '../../rpc/errors.js';
+import { canRetainUsageReadFailure } from '../../usage/resolveUsagePageAggregation.js';
 
 const source: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId: 'opaque-root',
   agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -8,6 +10,17 @@ const source: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId
   coverage: 'unknown', pendingCount: 0, asOfMs: null };
 
 describe('admitted Usage source transport', () => {
+  it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE])(
+    'preserves an actual RPC authority refusal and disallows retaining its private sources (%s)', async errorCode => {
+      const port = createUsageSourceActionPort({ serverId: 'home', assertCurrent: () => {},
+        rpc: async () => { throw new RpcError('Authority refused', errorCode); } });
+      for (const actionId of ['usage.sources.discover', 'usage.sources.get'] as const) {
+        expect(await port({ actionId, input: { serverId: 'home', machineId: 'machine' } }, { surface: 'ui' }))
+          .toMatchObject({ ok: false, errorCode });
+      }
+      expect(canRetainUsageReadFailure(errorCode)).toBe(false);
+    });
+
   it('enforces the captured Home even when invocation context omits its optional Home field', async () => {
     const transport = { serverId: 'home', assertCurrent: () => {},
       rpc: async () => ({ sources: [{ ...source, serverId: 'other' }] }) };

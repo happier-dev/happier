@@ -210,7 +210,14 @@ export function createUsageSourcesController(options: Readonly<{
         getSnapshot: () => { current(); return snapshot; },
         subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         discover: () => run('usage.sources.discover', target),
-        refresh: sourceId => run('usage.sources.get', { ...target, ...(sourceId === undefined ? {} : { sourceId }) }),
+        refresh: sourceId => {
+            const source = sourceId === undefined ? undefined : snapshot.sources.find(source => source.sourceId === sourceId);
+            // Retry restarts the Machine's existing consented capture lifetime;
+            // status/push reads remain passive and never grant disabled consent.
+            return source?.consent === 'enabled' && (source.status === 'unavailable' || source.status === 'error')
+                ? run('usage.sources.consent.set', { ...target, sourceId: source.sourceId, enabled: true })
+                : run('usage.sources.get', { ...target, ...(sourceId === undefined ? {} : { sourceId }) });
+        },
         setConsent: (sourceId, enabled) => run('usage.sources.consent.set', { ...target, sourceId, enabled }),
         notNow: sourceId => run('usage.sources.dismiss', { ...target, sourceId }),
         setRoot: (sourceId, root) => run('usage.sources.root.set', { ...target, sourceId, root }),

@@ -3,6 +3,7 @@ import { USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS, parseUsageSourceActionResult, type 
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import type { ActionExecutorContext, ActionExecuteFailure } from './types.js';
 import { canRetainUsageReadFailure } from '../../usage/resolveUsagePageAggregation.js';
+import { readRpcErrorCode } from '../../rpc/errors.js';
 
 export type UsageSourceActionRequest = { [K in UsageSourceActionId]: Readonly<{
   actionId: K; input: UsageSourceActionInputById[K];
@@ -23,7 +24,7 @@ export function createUsageSourceActionPort(host: Readonly<{
 }>): UsageSourceActionPort {
   return async (request, context) => {
     await host.assertCurrent(context);
-    // Core already admitted the caller's Home; this port binds the captured transport target.
+    // Core admitted the caller's Home; this port only binds the exact captured transport target.
     if (host.serverId !== request.input.serverId) return failure('server_target_mismatch');
     if (request.actionId === 'usage.sources.dismiss') {
       if (!host.dismiss) return { status: 'unavailable' };
@@ -37,8 +38,9 @@ export function createUsageSourceActionPort(host: Readonly<{
     catch (error) {
       // Preserve an explicit authority withdrawal across the Machine boundary;
       // an ordinary read outage still uses the incumbent unavailable marker.
-      if (read && error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-        && !canRetainUsageReadFailure(error.code)) return failure(error.code);
+      const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
+        && typeof error.code === 'string' ? error.code : undefined);
+      if (read && code && !canRetainUsageReadFailure(code)) return failure(code);
       return failure(read ? 'usage_source_unavailable' : 'usage_source_mutation_outcome_unknown');
     }
     const refused = readActionFailureEnvelope(raw);
