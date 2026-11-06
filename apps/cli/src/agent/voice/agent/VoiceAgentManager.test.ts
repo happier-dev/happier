@@ -508,6 +508,146 @@ function createPromptCaptureBackend(
 }
 
 describe('VoiceAgentManager', () => {
+  it('accepts a completed nonliteral warm-up turn and never replays its text', async () => {
+    const backend = createPromptCaptureBackend([
+      { responseText: 'Warm-up completed successfully.' }, { responseText: 'Real answer.' }, { responseText: 'Instruction.' },
+    ]);
+    const manager = new VoiceAgentManager({ createRuntime: () => backend });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 3600, initialContext: 'WARM_CONTEXT', bootstrapMode: 'ready_handshake' });
+      expect(backend.prompts).toHaveLength(1);
+      await expect(manager.sendTurn({ voiceAgentId, userText: 'Real question.' })).resolves.toEqual({ assistantText: 'Real answer.' });
+      expect(backend.prompts[1]).not.toContain('WARM_CONTEXT');
+      await manager.commit({ voiceAgentId });
+      expect(backend.prompts[2]).not.toContain('Warm-up completed successfully.');
+    } finally { await manager.dispose(); }
+  });
+
+  it.each([73, Number.NaN])('retires at the chosen or canonical idle deadline without a sweep (%s)', async ttl => {
+    const { VoiceLocalConversationSchema } = await import('@happier-dev/protocol/voice/settings/localConversation');
+    const expectedTtlMs = (Number.isFinite(ttl) ? ttl : VoiceLocalConversationSchema.parse({}).agent.idleTtlSeconds) * 1000;
+    vi.useFakeTimers();
+    const reaped: string[] = [];
+    const manager = new VoiceAgentManager({ createRuntime: () => createDeterministicBackend('idle-deadline'),
+      onIdleReaped: async id => { reaped.push(id); } });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+        idleTtlSeconds: ttl, initialContext: '' });
+      await vi.advanceTimersByTimeAsync(expectedTtlMs - 1);
+      expect(reaped).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reaped).toEqual([voiceAgentId]);
+      await vi.advanceTimersByTimeAsync(expectedTtlMs);
+      expect(reaped).toEqual([voiceAgentId]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { await manager.dispose(); vi.useRealTimers(); }
+  });
+
+  it('pauses the idle deadline during native work and gives completion a full idle lifetime', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const admitted = new Promise<void>(resolve => { entered = resolve; });
+    const reaped: string[] = [];
+    const backend = createBlockingBackend('idle-during-work', { waitForSendPrompt: () => { entered(); return held; } });
+    vi.useFakeTimers();
+    const manager = new VoiceAgentManager({ createRuntime: () => backend,
+      onIdleReaped: async id => { reaped.push(id); } });
+    let sending: ReturnType<VoiceAgentManager['sendTurn']> | undefined;
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat', commitModelId: 'chat', permissionIntent: 'read-only', idleTtlSeconds: 73, initialContext: '' });
+      sending = manager.sendTurn({ voiceAgentId, userText: 'Take your time.' });
+      await admitted;
+      await vi.advanceTimersByTimeAsync(146_000);
+      expect(reaped).toEqual([]);
+      release();
+      await sending;
+      await vi.advanceTimersByTimeAsync(72_999);
+      expect(reaped).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reaped).toEqual([voiceAgentId]);
+    } finally { release(); await sending?.catch(() => {}); await manager.dispose(); vi.useRealTimers(); }
+  });
+
+  it('allows a native turn beyond the former 120 second response cutoff and still cancels it', async () => {
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    let enteredAgain!: () => void;
+    const sendingAgain = new Promise<void>(resolve => { enteredAgain = resolve; });
+    let sends = 0;
+    let complete: (() => void) | undefined;
+    const backend = createDeterministicBackend('long-native-turn', {
+      onSend(request, publish) {
+        complete = () => {
+          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'Finished.' });
+          publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+        };
+        sends += 1;
+        if (sends === 1) entered();
+        else enteredAgain();
+      },
+      onCancel(turnId, publish) {
+        complete = undefined;
+        publish({ kind: 'turn-cancelled', turnId, cause: 'user' });
+      },
+    });
+    const manager = new VoiceAgentManager({ createRuntime: () => backend });
+    const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+      idleTtlSeconds: 3600, initialContext: '' });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Take your time.' });
+      await sending;
+      await vi.advanceTimersByTimeAsync(120_001);
+      expect(manager.isTurnInFlight(voiceAgentId)).toBe(true);
+      // Only the deadline observation uses virtual time. Completion and the
+      // fresh native admission keep their real transport scheduling.
+      vi.useRealTimers();
+      complete?.();
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId, streamId });
+      expect(events).toContainEqual(expect.objectContaining({ t: 'voice_output',
+        output: expect.objectContaining({ kind: 'turn_final', text: 'Finished.' }) }));
+      const next = await manager.startTurnStream({ voiceAgentId, userText: 'Now stop.' });
+      await sendingAgain;
+      await manager.cancelTurnStream({ voiceAgentId, streamId: next.streamId });
+      expect(manager.isTurnInFlight(voiceAgentId)).toBe(false);
+    } finally {
+      complete?.();
+      vi.useRealTimers();
+      await manager.dispose();
+    }
+  });
+
+  it('honors the existing explicit response timeout override after native admission', async () => {
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    const backend = createDeterministicBackend('explicit-response-deadline', {
+      onSend() { entered(); },
+      onCancel(turnId, publish) { publish({ kind: 'turn-cancelled', turnId, cause: 'user' }); },
+    });
+    const manager = new VoiceAgentManager({ createRuntime: () => backend, responseTimeoutMs: 240_000 });
+    const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+      idleTtlSeconds: 3600, initialContext: '' });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Wait for the provider.' });
+      await sending;
+      await vi.advanceTimersByTimeAsync(239_999);
+      expect(manager.isTurnInFlight(voiceAgentId)).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      vi.useRealTimers();
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId, streamId });
+      expect(events.some(event => event.t === 'error')).toBe(true);
+      expect(events.some(event => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
+    } finally { vi.useRealTimers(); await manager.dispose(); }
+  });
+
   it.each(['delivered', 'refused', 'cancelled'] as const)('publishes instruction receipts through the real stream reader only after %s delivery', async outcome => {
     const previousSettings = await readSettings();
     await updateSettings(current => ({ ...current, servers: { ...current.servers, home: {
@@ -1262,7 +1402,7 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('runs idle reaping only while established voice agents need it', async () => {
+  it('owns one deadline per idle instance and releases it with the instance', async () => {
     vi.useFakeTimers();
     const manager = new VoiceAgentManager({
       createBackend: () => createDeterministicBackend('backend'),
@@ -1276,7 +1416,7 @@ describe('VoiceAgentManager', () => {
       expect(vi.getTimerCount()).toBe(0);
       const first = await manager.start(params);
       const second = await manager.start(params);
-      expect(vi.getTimerCount()).toBe(1);
+      expect(vi.getTimerCount()).toBe(2);
       await manager.stop({ voiceAgentId: first.voiceAgentId });
       expect(vi.getTimerCount()).toBe(1);
       await manager.stop({ voiceAgentId: second.voiceAgentId });
@@ -1655,7 +1795,6 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({
       createBackend,
-      getNowMs: () => Date.now(),
     });
 
     const started = await manager.start({
@@ -2807,7 +2946,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('notifies the lifecycle owner before reaping an idle voice agent', async () => {
-    let nowMs = 0;
     let disposed = false;
     const reapedVoiceAgentIds: string[] = [];
     const createBackend: BackendFactory = ({ modelId }) => createDeterministicBackend(modelId, {
@@ -2820,8 +2958,6 @@ describe('VoiceAgentManager', () => {
     try {
       const manager = new VoiceAgentManager({
         createBackend,
-        getNowMs: () => nowMs,
-        reaperIntervalMs: 5_000,
         async onIdleReaped(voiceAgentId) {
           expect(disposed).toBe(false);
           reapedVoiceAgentIds.push(voiceAgentId);
@@ -2836,8 +2972,7 @@ describe('VoiceAgentManager', () => {
         initialContext: 'CTX',
       });
 
-      nowMs = 120_000;
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(60_000);
 
       expect(reapedVoiceAgentIds).toEqual([started.voiceAgentId]);
       expect(disposed).toBe(true);
@@ -2852,9 +2987,9 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('treats a NaN idleTtlSeconds as the minimum TTL so idle voice agents can be reaped', async () => {
+  it('uses the canonical idle default for NaN and reaps the idle voice agent', async () => {
+    const { VoiceLocalConversationSchema } = await import('@happier-dev/protocol/voice/settings/localConversation');
 
-    let nowMs = 0;
     let disposedCount = 0;
     const createBackend: BackendFactory = ({ modelId }) => createDeterministicBackend(modelId, {
       onDispose() {
@@ -2866,8 +3001,6 @@ describe('VoiceAgentManager', () => {
     try {
       const manager = new VoiceAgentManager({
         createBackend,
-        getNowMs: () => nowMs,
-        reaperIntervalMs: 5_000,
       });
 
       const started = await manager.start({
@@ -2879,8 +3012,7 @@ describe('VoiceAgentManager', () => {
         initialContext: 'CTX',
       });
 
-      nowMs = 120_000;
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(VoiceLocalConversationSchema.parse({}).agent.idleTtlSeconds * 1000);
 
       expect(disposedCount).toBe(1);
       await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' })).rejects.toMatchObject({
@@ -2893,9 +3025,8 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('honors the configured idle lifetime beyond six hours through the native host runtime', async () => {
+  it.each([8 * 60 * 60, 30 * 24 * 60 * 60])('honors the configured idle lifetime beyond six hours through the native host runtime (%s seconds)', async idleTtlSeconds => {
 
-    let nowMs = 0;
     let disposedCount = 0;
     // Agent/native boundary only; the host adapter and manager lifecycle are real.
     const runtime: AgentRuntime = { sessions: { async open() { return {
@@ -2909,8 +3040,6 @@ describe('VoiceAgentManager', () => {
       const manager = new VoiceAgentManager({
         createRuntime: ({ modelId }) => createVoiceSessionRuntimeThroughNativeFactory({ runtime, modelId,
           capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false } }),
-        getNowMs: () => nowMs,
-        reaperIntervalMs: 5_000,
       });
 
       const started = await manager.start({
@@ -2918,21 +3047,18 @@ describe('VoiceAgentManager', () => {
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
-        idleTtlSeconds: 8 * 60 * 60,
+        idleTtlSeconds,
         initialContext: '',
       });
 
-      nowMs = 2 * 60 * 60 * 1000; // 2h
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
       expect(disposedCount).toBe(0);
 
-      nowMs = 7 * 60 * 60 * 1000;
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
       expect(disposedCount).toBe(0);
       expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)).toMatchObject({ runtimeState: 'idle' });
 
-      nowMs = 8 * 60 * 60 * 1000 + 1;
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync((idleTtlSeconds - 7 * 60 * 60) * 1000);
       expect(disposedCount).toBe(1);
 
       await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' })).rejects.toMatchObject({
@@ -3876,49 +4002,48 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts[0]).toContain('Voice stack block');
   });
 
-  it('passes an explicit bounded timeout to non-bootstrap voice waits', async () => {
+  it.each(['welcome', 'turn', 'commit', 'stream'] as const)('lets a %s complete beyond the former 120-second turn cutoff', async (operation) => {
     vi.useFakeTimers();
-    let deadline: number | undefined;
-    const schedule = globalThis.setTimeout;
-    const clock = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
-      if (delay === 45_000) deadline = Date.now() + delay;
-      return schedule(callback, delay, ...args);
+    let complete: (() => void) | undefined;
+    const backend = createDeterministicBackend(`long-${operation}`, { onSend(request, publish) {
+      complete = () => {
+        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'Completed after the wait.' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      };
+    } });
+    const manager = new VoiceAgentManager({
+      createRuntime: () => backend,
+      resolvePromptPreparation: async () => ({ systemAppendBlocks: [], memoryRecallGuidanceEnabled: false, disabledActionIds: [] }),
     });
     try {
-      for (const operation of ['welcome', 'turn', 'commit'] as const) {
-        deadline = undefined;
-        const backend = createDeterministicBackend(`response-timeout-${operation}`, { onSend() {} });
-        const manager = new VoiceAgentManager({ createRuntime: () => backend, responseTimeoutMs: 45_000 });
-        try {
-          const started = await manager.start({
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      chatModelId: 'chat-model',
-      commitModelId: 'chat-model',
-      permissionIntent: 'read-only',
-      idleTtlSeconds: 60,
-      initialContext: 'CTX',
-          });
-          let settled = false;
-          const work = operation === 'welcome'
-            ? manager.welcome({ voiceAgentId: started.voiceAgentId, welcomeText: 'hi' })
-            : operation === 'turn'
-              ? manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hello' })
-              : manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
-          void work.then(() => { settled = true; }, () => { settled = true; });
-          await vi.waitFor(() => expect(backend.getSeenPrompts()).toHaveLength(1));
-          await vi.advanceTimersByTimeAsync(0);
-          if (deadline === undefined) throw new Error('Voice completion deadline was not armed');
-          await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
-          expect(settled).toBe(false);
-          await vi.advanceTimersByTimeAsync(1);
-          expect(settled).toBe(true);
-          await expect(work).rejects.toBeInstanceOf(Error);
-        } finally {
-          await manager.dispose();
-        }
+      const started = await manager.start({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 60, initialContext: 'CTX',
+      });
+      const stream = operation === 'stream'
+        ? await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' }) : null;
+      const work = stream ? null : operation === 'welcome'
+        ? manager.welcome({ voiceAgentId: started.voiceAgentId, welcomeText: 'hi' })
+        : operation === 'turn'
+          ? manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hello' })
+          : manager.commit({ voiceAgentId: started.voiceAgentId });
+      let settled = false;
+      void work?.then(() => { settled = true; }, () => { settled = true; });
+      await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
+      await vi.advanceTimersByTimeAsync(120_001);
+      complete!();
+      if (stream) {
+        const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+        expect(events.some(event => event.t === 'error')).toBe(false);
+        expect(events).toContainEqual(expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({ kind: 'turn_final', text: 'Completed after the wait.' }) }));
+      } else {
+        expect(settled).toBe(false);
+        await expect(work).resolves.toEqual(operation === 'commit'
+          ? { commitText: 'Completed after the wait.' } : { assistantText: 'Completed after the wait.' });
       }
     } finally {
-      clock.mockRestore();
+      await manager.dispose();
       vi.useRealTimers();
     }
   });

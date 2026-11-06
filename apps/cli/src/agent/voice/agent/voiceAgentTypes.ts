@@ -49,14 +49,14 @@ export type VoiceAgentStartParams = Readonly<{
   disabledActionIds?: readonly string[];
   /**
    * Optional one-time bootstrap behavior for newly created (non-resumed) sessions.
-   * - `ready_handshake`: send a bootstrap prompt and require the model to reply with `READY`.
+   * - `ready_handshake`: complete a warm-up turn, discarding its model text.
    * - `none` / undefined: no bootstrap; first user turn seeds the system prompt.
    */
   bootstrapMode?: 'ready_handshake' | 'none';
   /**
-   * Optional READY response budget for legacy callers, after native provisioning
+   * Optional warm-up response budget for legacy callers, after native provisioning
    * and prompt admission. This never limits execution-run startup preparation.
-   * When omitted, the backend default response-completion timeout applies.
+   * When omitted, only an existing explicit operator response timeout applies.
    */
   bootstrapTimeoutMs?: number;
 }>;
@@ -191,7 +191,7 @@ export type VoiceAgentInstance = {
   chatSessionSeeded: boolean;
   welcomed: boolean;
   history: VoiceAgentTurn[];
-  lastUsedAt: number;
+  cancelIdleDeadline: (() => void) | null;
   idleTtlMs: number;
   inFlight: Promise<unknown> | null;
   lifecycleInFlight: Promise<void> | null;

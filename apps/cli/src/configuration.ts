@@ -242,7 +242,7 @@ class Configuration {
   public readonly oneShotTasksMaxConcurrentPerSession: number | null
   public readonly executionRunsBoundedTimeoutMs: number | null
   public readonly executionRunsReviewBoundedTimeoutMs: number | null
-  public readonly voiceAgentResponseTimeoutMs: number
+  public readonly voiceAgentResponseTimeoutMs: number | null
   public readonly executionRunsMaxTurns: number | null
   public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
   public readonly executionBudgetMaxConcurrentByClass: Readonly<Record<string, number>>
@@ -733,8 +733,8 @@ class Configuration {
       Number.isFinite(reviewBoundedTimeoutRaw) && reviewBoundedTimeoutRaw >= 1_000 ? reviewBoundedTimeoutRaw : null;
     this.voiceAgentResponseTimeoutMs = resolveIntEnvWithBounds('HAPPIER_VOICE_AGENT_RESPONSE_TIMEOUT_MS', {
       min: 1_000,
-      default: 120_000,
-    });
+      default: 0,
+    }) || null;
     // Intentionally unlimited by default: long-lived execution runs should not stop unexpectedly.
     this.executionRunsMaxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? Math.trunc(maxTurnsRaw) : null;
 

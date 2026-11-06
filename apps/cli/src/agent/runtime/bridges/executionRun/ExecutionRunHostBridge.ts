@@ -1210,7 +1210,6 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         });
       },
       responseTimeoutMs: configuration.voiceAgentResponseTimeoutMs,
-      getNowMs: this.getNowMs,
       onIdleReaped: this.handleVoiceAgentIdleReaped.bind(this),
       onTerminalFailure: this.handleVoiceAgentTerminalFailure.bind(this),
       onActivityChanged: (voiceAgentId) => {

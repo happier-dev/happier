@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { waitForChange } from '@/utils/async/waitForChange';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { logger } from '@/ui/logger';
+import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import {
@@ -65,10 +67,6 @@ export type VoiceAgentRuntimeAuthorityV1 = Readonly<{
   activeTurnId: string | null;
 }>;
 
-function isVoiceAgentReadyHandshakeReply(text: string): boolean {
-  return text.trim().replace(/[\s.!"'`*]+$/u, '').replace(/^[\s"'`*]+/u, '').toUpperCase() === 'READY';
-}
-
 function areVoiceModelSelectionsEqual(
   left: ProviderBoundModelRef | undefined,
   right: ProviderBoundModelRef | undefined,
@@ -104,11 +102,9 @@ function assertVoiceModelSelectionMatches(
 export class VoiceAgentManager {
   private static readonly MAX_HISTORY_TURNS = 48;
   private static readonly MAX_TURN_TEXT_CHARS = 4_000;
-  private static readonly DEFAULT_IDLE_TTL_SECONDS = 60;
   private readonly createRuntime: BackendFactory;
   private readonly resolvePromptPreparation: (args: ResolveVoicePromptPreparationArgs) => Promise<VoicePromptPreparation>;
-  private readonly responseTimeoutMs: number;
-  private readonly getNowMs: () => number;
+  private readonly responseTimeoutMs: number | null;
   private readonly onIdleReaped: ((voiceAgentId: string) => Promise<void>) | null;
   private readonly onTerminalFailure: ((voiceAgentId: string, reason: 'backend_replacement_failed') => Promise<void>) | null;
   private readonly onActivityChanged: ((voiceAgentId: string) => void) | null;
@@ -129,8 +125,6 @@ export class VoiceAgentManager {
   }>();
   private readonly retiringVoiceAgents = new Map<string, Promise<void>>();
   private readonly runtimeDisposals = new WeakMap<ExecutionRunHostRuntime, Promise<void>>();
-  private readonly reaperIntervalMs: number;
-  private reaper: NodeJS.Timeout | null = null;
   private disposed = false;
 
   isTurnInFlight(voiceAgentId: string): boolean {
@@ -143,6 +137,8 @@ export class VoiceAgentManager {
   }
 
   private notifyActivityChanged(voiceAgentId: string): void {
+    const voiceAgent = this.voiceAgents.get(voiceAgentId);
+    if (voiceAgent) this.updateIdleDeadline(voiceAgent);
     try {
       this.onActivityChanged?.(voiceAgentId);
     } catch (error) {
@@ -263,6 +259,9 @@ export class VoiceAgentManager {
   private beginRetirement(voiceAgentId: string, cleanup: () => Promise<void>): Promise<void> {
     const existing = this.retiringVoiceAgents.get(voiceAgentId);
     if (existing) return existing;
+    const voiceAgent = this.voiceAgents.get(voiceAgentId);
+    voiceAgent?.cancelIdleDeadline?.();
+    if (voiceAgent) voiceAgent.cancelIdleDeadline = null;
 
     let retirement!: Promise<void>;
     retirement = Promise.resolve()
@@ -287,7 +286,7 @@ export class VoiceAgentManager {
     return trimmed;
   }
 
-  private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number {
+  private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number | null {
     if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs) && explicitTimeoutMs > 0) {
       return Math.floor(explicitTimeoutMs);
     }
@@ -564,7 +563,6 @@ export class VoiceAgentManager {
       }
       if (this.voiceAgents.get(voiceAgent.id) === voiceAgent) {
         this.voiceAgents.delete(voiceAgent.id);
-        this.updateReaper();
         this.notifyActivityChanged(voiceAgent.id);
       }
       voiceAgent.activeTurnStream = null;
@@ -583,9 +581,7 @@ export class VoiceAgentManager {
     createRuntime?: BackendFactory;
     createBackend?: BackendFactory;
     resolvePromptPreparation?: (args: ResolveVoicePromptPreparationArgs) => Promise<VoicePromptPreparation>;
-    responseTimeoutMs?: number;
-    getNowMs?: () => number;
-    reaperIntervalMs?: number;
+    responseTimeoutMs?: number | null;
     onIdleReaped?: (voiceAgentId: string) => Promise<void>;
     onTerminalFailure?: (voiceAgentId: string, reason: 'backend_replacement_failed') => Promise<void>;
     onActivityChanged?: (voiceAgentId: string) => void;
@@ -608,27 +604,34 @@ export class VoiceAgentManager {
     this.responseTimeoutMs =
       typeof opts.responseTimeoutMs === 'number' && Number.isFinite(opts.responseTimeoutMs) && opts.responseTimeoutMs > 0
         ? Math.floor(opts.responseTimeoutMs)
-        : 120_000;
-    this.getNowMs = opts.getNowMs ?? (() => Date.now());
+        : null;
     this.onIdleReaped = typeof opts.onIdleReaped === 'function' ? opts.onIdleReaped : null;
     this.onTerminalFailure = typeof opts.onTerminalFailure === 'function' ? opts.onTerminalFailure : null;
     this.onResumeHandleChanged = opts.onResumeHandleChanged ?? null;
     this.onActivityChanged = opts.onActivityChanged ?? null;
     this.prepareFollowContext = typeof opts.prepareFollowContext === 'function' ? opts.prepareFollowContext : null;
-    this.reaperIntervalMs = Math.max(5_000, Math.floor(opts.reaperIntervalMs ?? 30_000));
   }
 
-  private updateReaper(): void {
-    if (this.disposed || this.voiceAgents.size === 0) {
-      if (this.reaper !== null) clearInterval(this.reaper);
-      this.reaper = null;
+  private updateIdleDeadline(voiceAgent: VoiceAgentInstance): void {
+    if (this.disposed || this.retiringVoiceAgents.has(voiceAgent.id) || this.isTurnInFlight(voiceAgent.id)) {
+      voiceAgent.cancelIdleDeadline?.();
+      voiceAgent.cancelIdleDeadline = null;
       return;
     }
-    if (this.reaper !== null) return;
-    this.reaper = setInterval(() => {
-      void this.reapIdle();
-    }, this.reaperIntervalMs);
-    this.reaper.unref?.();
+    if (voiceAgent.cancelIdleDeadline) return;
+    voiceAgent.cancelIdleDeadline = armDeadlineTimer(Date.now() + voiceAgent.idleTtlMs, () => {
+      voiceAgent.cancelIdleDeadline = null;
+      if (this.voiceAgents.get(voiceAgent.id) !== voiceAgent || this.disposed || this.isTurnInFlight(voiceAgent.id)) return;
+      const retirement = this.beginRetirement(voiceAgent.id, async () => {
+        try {
+          await this.onIdleReaped?.(voiceAgent.id);
+        } finally {
+          if (this.voiceAgents.get(voiceAgent.id) === voiceAgent) this.voiceAgents.delete(voiceAgent.id);
+          await voiceAgent.dispose();
+        }
+      });
+      void this.trackWork(voiceAgent, 'lifecycleInFlight', retirement).catch(() => {});
+    }, { unref: true });
   }
 
   getResumeHandle(voiceAgentId: string): ExecutionRunResumeHandle | null {
@@ -751,7 +754,7 @@ export class VoiceAgentManager {
       : randomUUID();
     const rawTtlSeconds = Number.isFinite(params.idleTtlSeconds)
       ? Math.floor(params.idleTtlSeconds)
-      : VoiceAgentManager.DEFAULT_IDLE_TTL_SECONDS;
+      : VoiceLocalConversationSchema.parse({}).agent.idleTtlSeconds;
     const idleTtlMs =
       Math.max(1, rawTtlSeconds) * 1000;
     const verbosity: Verbosity = params.verbosity === 'balanced' ? 'balanced' : 'short';
@@ -895,7 +898,7 @@ export class VoiceAgentManager {
         chatSessionSeeded: false,
         welcomed: Boolean(resume.chatSessionId),
         history: [] as VoiceAgentTurn[],
-        lastUsedAt: this.getNowMs(),
+        cancelIdleDeadline: null,
         idleTtlMs,
         inFlight: null,
         lifecycleInFlight: null,
@@ -911,6 +914,8 @@ export class VoiceAgentManager {
           return () => {
             if (disposeInFlight) return disposeInFlight;
             disposeInFlight = (async () => {
+              instance.cancelIdleDeadline?.();
+              instance.cancelIdleDeadline = null;
               this.closeTurnStream(instance.activeTurnStream);
               this.unsubscribeBestEffort(instance.unsubscribeChatMessages);
               const disposals: Promise<unknown>[] = [this.disposeRuntimeOnce(instance.chatBackend)];
@@ -954,9 +959,6 @@ export class VoiceAgentManager {
           await instance.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs(params.bootstrapTimeoutMs));
           ensureCurrentStart();
         }
-        if (!isVoiceAgentReadyHandshakeReply(instance.chatBuffer)) {
-          throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Bootstrap failed');
-        }
         instance.clearChatBuffer();
         instance.chatSessionSeeded = !shouldDeferInitialContextUntilFirstTurn;
         // A readiness handshake is not a greeting to the user.
@@ -967,7 +969,6 @@ export class VoiceAgentManager {
       ensureCurrentStart();
       this.startingVoiceAgents.delete(voiceAgentId);
       this.voiceAgents.set(voiceAgentId, instance);
-      this.updateReaper();
       this.notifyActivityChanged(voiceAgentId);
 
       return {
@@ -984,7 +985,6 @@ export class VoiceAgentManager {
       const registeredVoiceAgent = this.voiceAgents.get(voiceAgentId) ?? null;
       if (registeredVoiceAgent && registeredVoiceAgent === instanceForCleanup) {
         this.voiceAgents.delete(voiceAgentId);
-        this.updateReaper();
         this.notifyActivityChanged(voiceAgentId);
         disposals.push(registeredVoiceAgent.dispose());
       } else if (instanceForCleanup) {
@@ -1007,7 +1007,6 @@ export class VoiceAgentManager {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.updateReaper();
 
     const startingIds = [...this.startingVoiceAgents.keys()];
     for (const occurrence of this.startingVoiceAgents.values()) {
@@ -1039,7 +1038,6 @@ export class VoiceAgentManager {
     if (!voiceAgent) throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Voice agent not found');
     if (voiceAgent.lifecycleInFlight || voiceAgent.inFlight) throw new VoiceAgentError('VOICE_AGENT_BUSY', 'Voice agent busy');
 
-    voiceAgent.lastUsedAt = this.getNowMs();
 		    const run = (async () => {
 		      const { ensureCurrent } = await this.prepareSystemAppendBlocks(voiceAgent);
 		      voiceAgent.clearChatBuffer();
@@ -1096,7 +1094,6 @@ export class VoiceAgentManager {
     // Idempotent across backend replacement: a second welcome would pollute conversation memory.
     if (voiceAgent.welcomed) return { assistantText: '' };
 
-    voiceAgent.lastUsedAt = this.getNowMs();
     const run = (async () => {
       const { ensureCurrent, preparedInstructionsFor } = await this.prepareSystemAppendBlocks(voiceAgent);
       voiceAgent.clearChatBuffer();
@@ -1148,7 +1145,6 @@ export class VoiceAgentManager {
       throw new VoiceAgentError('VOICE_AGENT_BUSY', 'Voice agent busy');
     }
 
-    voiceAgent.lastUsedAt = this.getNowMs();
     voiceAgent.clearChatBuffer();
     const streamId = randomUUID();
     const eventWaiters = new Set<() => void>();
@@ -1427,7 +1423,6 @@ export class VoiceAgentManager {
     if (!voiceAgent) throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Voice agent not found');
     if (voiceAgent.lifecycleInFlight || voiceAgent.inFlight) throw new VoiceAgentError('VOICE_AGENT_BUSY', 'Voice agent busy');
 
-    voiceAgent.lastUsedAt = this.getNowMs();
 		    const run = (async () => {
           const canReuseChatBackend = voiceAgent.commitIsolation !== true
             && voiceAgent.commitModelId === voiceAgent.chatModelId
@@ -1541,36 +1536,11 @@ export class VoiceAgentManager {
     // terminal truth may settle immediately, while same-id resume must still
     // wait for this exact Voice cleanup to finish.
     this.voiceAgents.delete(params.voiceAgentId);
-    this.updateReaper();
     this.notifyActivityChanged(params.voiceAgentId);
 
     await retirement;
 		    return { ok: true };
 		  }
-
-  private async reapIdle(): Promise<void> {
-    const now = this.getNowMs();
-    const reaping: Promise<void>[] = [];
-    for (const voiceAgent of this.voiceAgents.values()) {
-      if (voiceAgent.lifecycleInFlight || voiceAgent.inFlight) continue;
-      if (now - voiceAgent.lastUsedAt <= voiceAgent.idleTtlMs) continue;
-
-      const lifecycle = this.trackWork(voiceAgent, 'lifecycleInFlight', this.beginRetirement(voiceAgent.id, async () => {
-        try {
-          await this.onIdleReaped?.(voiceAgent.id);
-        } finally {
-          if (this.voiceAgents.get(voiceAgent.id) === voiceAgent) {
-            this.voiceAgents.delete(voiceAgent.id);
-            this.updateReaper();
-          }
-          await voiceAgent.dispose();
-        }
-      }));
-      reaping.push(lifecycle);
-    }
-    if (reaping.length === 0) return;
-    await Promise.allSettled(reaping);
-  }
 
   private async cancelActiveTurnStream(
     voiceAgent: VoiceAgentInstance,
