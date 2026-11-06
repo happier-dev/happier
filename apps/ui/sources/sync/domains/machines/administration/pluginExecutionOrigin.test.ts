@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as executionOrigins from './pluginExecutionOrigin';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 
 import {
     buildPluginMachineExecutionOriginCandidates,
@@ -145,6 +146,25 @@ function candidate(input: Readonly<{
 }
 
 describe('resolvePluginMachineExecutionOriginState', () => {
+    it('retains unknown contributor coverage instead of treating a thin incumbent as proven empty', () => {
+        const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'a' });
+        const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'b' });
+        const source = { ...b.materialization, pluginId: 'acme.source', declaredManifest:
+            PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.source', version: '1.0.0',
+                displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
+                    actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                        dangerLevel: 'safe', execution: { target: 'daemon' } }],
+                    targetedPluginContributions: [{ id: 'source', target: { pluginId: 'acme.plugin', pointId: 'sources' },
+                        protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+                } }) };
+        const origin = composePluginMachineExecutionOriginV1(a.materialization);
+        for (const sourceMaterializations of [[], [a.materialization, b.materialization], [a.materialization, source]]) {
+            expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: null,
+                automaticOrigin: origin, candidates: [a, b], sourceMaterializations,
+                lastUsedTarget: { serverIdentityId: 'srv_one', machineId: 'machine-b' } }))
+                .toMatchObject({ kind: 'selected', origin });
+        }
+    });
     it('retains the admitted Auto Machine when its supplying origin is replaced at equal coverage', () => {
         const previous = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'previous' });
         const replacement = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'replacement' });
@@ -159,6 +179,98 @@ describe('resolvePluginMachineExecutionOriginState', () => {
         ] })).toMatchObject({ kind: 'selected', origin: composePluginMachineExecutionOriginV1(other.materialization) });
     });
 
+    it('replaces Auto only with a known contributor superset that preserves native readiness', () => {
+        const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'a' });
+        const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'b' });
+        const originA = composePluginMachineExecutionOriginV1(a.materialization);
+        const originB = composePluginMachineExecutionOriginV1(b.materialization);
+        const contributor = (host: typeof a, id: string, target = 'acme.plugin', accountOnly = false) => ({
+            ...host.materialization, pluginId: id, materializationId: `${host.materialization.machineId}-${id}`,
+            declaredManifest: PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id, version: '1.0.0',
+                displayName: id, runtime: { apiVersion: 1 }, contributes: {
+                    connectedAccountDescriptors: [{ id: 'account', title: 'Account', authentication: {
+                        native: { systemTool: 'gh' }, defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual',
+                            outcomeReconciliation: 'none', fields: [{ id: 'credential', title: 'Credential',
+                                schema: { type: 'string' }, secret: true }] }],
+                    } }],
+                    actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+                        execution: accountOnly ? { target: 'account', account: { artifactId: 'runtime', exportName: 'activate' } }
+                            : { target: 'daemon' } }],
+                    targetedPluginContributions: [{ id: 'source', target: { pluginId: target, pointId: 'sources' },
+                        protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+                } }),
+        });
+        const sourceA = contributor(a, 'acme.source-one');
+        const sourceB = contributor(b, 'acme.source-one');
+        const secondB = contributor(b, 'acme.source-two');
+        const params = { pluginId: 'acme.plugin', storedOrigin: null, candidates: [a, b],
+            lastUsedTarget: { serverIdentityId: 'srv_one', machineId: 'machine-a' },
+            localMachineTarget: { serverIdentityId: 'srv_one', machineId: 'machine-a' },
+            machineActivity: [{ serverIdentityId: 'srv_one', machineId: 'machine-a', activeAt: 100 }],
+            sourceMaterializations: [sourceA, sourceB, secondB] };
+        expect(resolvePluginMachineExecutionOriginState(params)).toMatchObject({ kind: 'selected', origin: originB });
+        // The configured-source recovery contract permits a strict known superset,
+        // including a peer whose additional installation declarations are unknown.
+        const unknownA = { ...a.materialization, pluginId: 'acme.pending' };
+        const unknownB = { ...unknownA, machineId: b.materialization.machineId };
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            sourceMaterializations: [sourceA, sourceB, secondB, unknownA, unknownB,
+                ...['shared-two', 'shared-three', 'shared-four'].flatMap(id =>
+                    [contributor(a, `acme.${id}`), contributor(b, `acme.${id}`)])],
+            nativeToolAuthentication: [a, b].map(host => ({ serverIdentityId: host.materialization.serverIdentityId,
+                machineId: host.materialization.machineId, systemTool: 'gh', authenticated: true })) }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            sourceMaterializations: [sourceA, sourceB, secondB, unknownA] }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            sourceMaterializations: [sourceB, secondB, unknownA] }))
+            .toMatchObject({ kind: 'selected', origin: originA });
+        const thirdB = contributor(b, 'acme.source-three');
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            sourceMaterializations: [sourceA, secondB, thirdB] }))
+            .toMatchObject({ kind: 'selected', origin: originA });
+        const c = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-c', materializationId: 'c' });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA, candidates: [a, b, c],
+            sourceMaterializations: [sourceA, sourceB, secondB, ...['three', 'four', 'five']
+                .map(id => contributor(c, `acme.source-${id}`))] }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        // Only settled declarations prove the incumbent supplies no sources.
+        const emptyA = { ...sourceA, declaredManifest: PluginPortableReleaseManifestV1Schema.parse({
+            ...sourceA.declaredManifest, contributes: {} }) };
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            sourceMaterializations: [emptyA, sourceB, secondB] }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originB,
+            sourceMaterializations: [sourceA, sourceB] })).toMatchObject({ kind: 'selected', origin: originB });
+        const nativeToolAuthentication = [{ serverIdentityId: 'srv_one', machineId: 'machine-a', systemTool: 'gh', authenticated: true },
+            { serverIdentityId: 'srv_one', machineId: 'machine-b', systemTool: 'gh', authenticated: false }];
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originB, nativeToolAuthentication }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, nativeToolAuthentication }))
+            .toMatchObject({ kind: 'selected', origin: originA });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA, nativeToolAuthentication }))
+            .toMatchObject({ kind: 'selected', origin: originA });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, automaticOrigin: originA,
+            nativeToolAuthentication: [{ ...nativeToolAuthentication[0]!, authenticated: true },
+                { ...nativeToolAuthentication[1]!, authenticated: true }] }))
+            .toMatchObject({ kind: 'selected', origin: originB });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, sourceMaterializations: [sourceA, sourceB, sourceB,
+            { ...secondB, enabled: false }, contributor(b, 'acme.other', 'acme.other-target'),
+            contributor(b, 'acme.account-source', 'acme.plugin', true),
+            { ...secondB, trustState: 'revoked' }, { ...secondB, serverIdentityId: 'srv_other' }] }))
+            .toMatchObject({ kind: 'selected', origin: originA });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, storedOrigin: originA }))
+            .toMatchObject({ kind: 'selected', origin: originA, selectionSource: 'pinned' });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, storedTarget: params.lastUsedTarget }))
+            .toMatchObject({ kind: 'selected', origin: originA, selectionSource: 'pinned' });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, candidates: [a,
+            { ...b, validation: { kind: 'rejected', reason: 'offline' } }] })).toMatchObject({ kind: 'selected', origin: originA });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, autoPick: false }))
+            .toMatchObject({ kind: 'selectionRequired' });
+    });
     it('auto-picks compatible admitted supply during census hydration and keeps unresolved coverage pending', () => {
         const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'a' });
         const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'b', version: '2.0.0' });

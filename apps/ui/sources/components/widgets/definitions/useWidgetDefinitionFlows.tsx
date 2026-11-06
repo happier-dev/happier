@@ -1,10 +1,11 @@
 import * as React from 'react';
 import type { View } from 'react-native';
-import type { WidgetDefinitionV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { isPublicProfileWidgetSurfaceV1, type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { JsonValue } from '@happier-dev/protocol';
 import { canPromoteSessionWidgetDefinitionSourceV1 } from '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredWidgetTarget';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -245,7 +246,14 @@ function AboutResolvedFlow(props: Parameters<typeof AboutFlow>[0] & Readonly<{
         ? { session: [{ serverId: props.scope.serverId, sessionId: props.scope.owner.sessionId }] } : {}),
     [props.providedContext, props.scope]);
     const name = definition?.name ?? descriptor?.title ?? props.instance.displayName ?? t('widgetDefinition.aboutUnavailable');
-    return <AboutBoundFlow {...props} descriptor={descriptor} runtime={runtime} providedContext={providedContext} name={name} />;
+    const source = definition?.body ?? props.instance.definition;
+    // About can open while the widget body is deferred; presentation metadata
+    // alone does not establish the executable Resource declarations.
+    return <>
+        {!isPublicProfileWidgetSurfaceV1(props.scope) && source.kind === 'installed' ? <PluginSurfaceProjectionDemand
+            pluginId={source.surface.pluginId} accountScope={props.account} /> : null}
+        <AboutBoundFlow {...props} descriptor={descriptor} runtime={runtime} providedContext={providedContext} name={name} />
+    </>;
 }
 
 /** Only the open panel resolves target metadata; closed frame menus issue no read. */

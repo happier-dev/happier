@@ -13,7 +13,25 @@ import {
 
 import { t } from '@/text';
 
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+
+/** Host-private discovery; Plugin UI forms continue to consume the unchanged exact-reference port. */
+export type HostInputTypePickerPort = HappierInputPickerPort & Readonly<{
+    resolveSemantic: (semantic: string, field: Pick<InputFieldHint, 'path'>) => PluginContributionIdentityV1 | null;
+}>;
+
+export function resolveSemanticInputTypePickerReference(port: HappierInputPickerPort | null,
+    semantic: string, field: Pick<InputFieldHint, 'path'>): PluginContributionIdentityV1 | null {
+    return port && hasSemanticLookup(port) ? port.resolveSemantic(semantic, field) : null;
+}
+
+function hasSemanticLookup(port: HappierInputPickerPort): port is HostInputTypePickerPort {
+    return 'resolveSemantic' in port && typeof port.resolveSemantic === 'function';
+}
+
 export type InputTypePickerPortHost = Readonly<{
+    /** The provider's existing scoped inventory, in its projection order; never another discovery read. */
+    readInputTypes?: (field: Pick<InputFieldHint, 'path'>) => PluginUiProjectionModel['inputTypesById'] | undefined;
     /** The current admitted type for this identity, read anew on every call so a replaced plugin is seen. */
     resolveType: (identity: PluginContributionIdentityV1, field?: Pick<InputFieldHint, 'path'>) => ResolvedInputTypeV1 | null;
     /** Whether the host can mount this declared picker renderer now. */
@@ -31,7 +49,7 @@ export type InputTypePickerPortHost = Readonly<{
  * (`invokeInputTypePicker`): the answer meets the same schema and options an agent's value does.
  * This adapter only says whether a picker is offered and puts the outcome in the reader's words.
  */
-export function createInputTypePickerPort(host: InputTypePickerPortHost): HappierInputPickerPort {
+export function createInputTypePickerPort(host: InputTypePickerPortHost): HostInputTypePickerPort {
     const pickerFor = (identity: InputTypeReferenceV1 | undefined, field: Pick<InputFieldHint, 'path'>): PluginContributionIdentityV1 | null => {
         if (identity === undefined) return null;
         if ('hostType' in identity) return null;
@@ -42,6 +60,15 @@ export function createInputTypePickerPort(host: InputTypePickerPortHost): Happie
         return host.canOpenPicker(qualified, type, field) ? qualified : null;
     };
     return {
+        resolveSemantic: (semantic, field) => {
+            // First available match in the existing projection order wins; no second precedence catalog.
+            for (const entry of Object.values(host.readInputTypes?.(field) ?? {})) {
+                if (entry.definition.semantic !== semantic) continue;
+                const identity = { pluginId: entry.pluginId, localId: entry.definition.id };
+                if (pickerFor(identity, field)) return identity;
+            }
+            return null;
+        },
         describe: (field) => (field.inputType && 'hostType' in field.inputType
             // A Usage field (the Period, the Session) offers its choices in place from its type's own
             // source; only a whole Usage query opens the host's dialog. The field is named by its type,

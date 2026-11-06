@@ -24,6 +24,7 @@ import { useSessionCallerHostedHtmlRuntime } from '@/components/ui/surfaces/host
 import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { PublicProfileWidgetSurface } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
 
 /** Placement supplies context and presentation, never executable target facts. */
@@ -158,7 +159,12 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
         unresolved={{ state: opened.state === 'loading' ? 'loading' : 'unavailable', reasonCode: opened.reasonCode ?? 'widget_type_unavailable' }} testID={props.testID} />;
     const installed = definition.body.kind === 'installed' ? readWidgetDescriptor(props.appRuntime.pluginUiProjection, definition.body) : null;
     const descriptor = describeAuthoredWidgetDefinitionV1(definition, reference, installed);
-    return <AuthoredReadyBody {...props} descriptor={descriptor} />;
+    return <>
+        {definition.body.kind === 'installed' ? <PluginSurfaceProjectionDemand pluginId={definition.body.surface.pluginId}
+            accountScope={props.appRuntime.accountLifetime?.scope ?? null}
+            enabled={props.enabled !== false && props.isCurrent?.() !== false} /> : null}
+        <AuthoredReadyBody {...props} descriptor={descriptor} />
+    </>;
 }
 
 /** One mounted instance body shared by Home, Board and Companion; hosts retain their frame. */
@@ -213,6 +219,9 @@ export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
         [inherited, size, footprint, geometry]);
     // It fills the frame's body room, so a state that replaces the body can sit balanced in it.
     const body = <View testID={`${props.testID}.geometry`} onLayout={inherited ? undefined : onLayout} style={{ minWidth: 0, flexGrow: 1 }}>
+        {!isPublicProfileWidgetSurfaceV1(props.scope) && props.instance.definition.kind === 'installed' ? <PluginSurfaceProjectionDemand
+            pluginId={props.instance.definition.surface.pluginId} accountScope={props.appRuntime.accountLifetime?.scope ?? null}
+            enabled={props.enabled !== false && props.isCurrent?.() !== false} /> : null}
         <WidgetMachineNoticeBoundary testID={props.testID}>
             {isPublicProfileWidgetSurfaceV1(props.scope) ? <PublicProfileWidgetSurface instance={props.instance} descriptor={descriptor}
                 size={props.size} testID={props.testID} /> : <WidgetSurfaceBody {...props} />}

@@ -215,12 +215,14 @@ export function readFreshPluginMachineExecutionOriginCandidates(params: FreshPlu
 /** Invocation-time closure over the current Availability and raw machine owners. */
 export function resolveFreshPluginMachineExecutionOrigin(params: FreshPluginExecutionOriginParams): FreshPluginMachineExecutionOriginV1 | null {
     const candidates = readFreshPluginMachineExecutionOriginCandidates(params);
+    const admission = params.reader?.readMaterializations();
     const state = resolvePluginMachineExecutionOriginState({ pluginId: params.pluginId, storedOrigin: params.origin,
         automaticOrigin: executionOriginMachineSnapshotPublication.readAutomaticOrigin(params.pluginId, captureActiveServerAccountScopeLifetime()),
         storedTarget: params.storedTarget, homeServerIdentityId: getServerProfileById(getActiveServerAccountScope()?.serverId ?? '')?.serverIdentityId,
         candidates, declaredDefaultOrigins: params.declaredDefaultOrigins, contextualTarget: params.contextualTarget,
         autoPick: params.autoPick, renderedVersion: params.renderedVersion,
-        ...readPluginExecutionOriginAutomaticHints(params.pluginId, candidates) });
+        ...readPluginExecutionOriginAutomaticHints(params.pluginId, candidates, undefined,
+            admission?.kind === 'available' ? admission.materializations : [], params.reader?.readInstalledPlugins()) });
     if (state.kind !== 'selected') return null;
     const origin = state.origin;
     const machineTarget = resolveFreshMachineAdministrationExecutionTarget({
@@ -344,12 +346,12 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         storedTarget,
     );
     const descriptiveInputs = React.useMemo<PluginExecutionOriginDescriptiveInputs>(() => ({
-        availabilityRevision, classifyRelease: params.classifyRelease, storedOrigin, contextualTarget,
+        availabilityRevision, installedPlugins: reader?.readInstalledPlugins(), classifyRelease: params.classifyRelease, storedOrigin, contextualTarget,
         homeServerIdentityId: getServerProfileById(expectedSettingsScope?.serverId ?? '')?.serverIdentityId,
         machineRejections: params.machineRejections, declaredDefaultOrigins: params.declaredDefaultOrigins,
         establishingTargets: params.establishingTargets, autoPick: params.autoPick, renderedVersion: params.renderedVersion,
         availabilityNotLoaded, localStatus,
-    }), [availabilityRevision, params.classifyRelease, storedOrigin, contextualTarget, expectedSettingsScope,
+    }), [availabilityRevision, reader, params.classifyRelease, storedOrigin, contextualTarget, expectedSettingsScope,
         params.machineRejections, params.declaredDefaultOrigins, params.establishingTargets, params.autoPick,
         params.renderedVersion, availabilityNotLoaded, localStatus]);
     const semanticMachineSelection = usePluginExecutionOriginMachineSnapshots({ enabled, pluginId: params.pluginId,

@@ -1,7 +1,8 @@
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { readCurrentAppShellPluginUiProjection, readCurrentAppShellPluginUiExecutionOriginCandidates,
@@ -150,6 +151,38 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         && (supply.unavailableReasonCode !== 'plugin_source_not_ready' || supply.phase === 'establishing')
     )) ?? null : null;
     const selectedSupply = selectedSupplyFromSelection ?? retainedSupply;
+    // The mounted surface owns its selected Machine even while its fallback
+    // header is replaced or candidates are still loading. Retained supplier
+    // identity also keeps an Auto target through authority revalidation.
+    const demandOrigin = selection.selectedOrigin ?? selectedSupply?.executionOrigin;
+    const requestedTarget = params.enabled && accountLifetime?.isCurrent() === true ? selection.storedTarget ?? (demandOrigin ? {
+        serverIdentityId: demandOrigin.serverIdentityId,
+        machineId: getPluginMachineExecutionOriginRef(demandOrigin).machineId,
+    } : contextualTarget ?? null) : null;
+    const choiceKey = JSON.stringify([params.pluginId, selection.storedTarget ?? null,
+        contextualTarget === undefined ? 'automatic' : contextualTarget]);
+    const mountedDemand = React.useRef<Readonly<{
+        accountLifetime: typeof accountLifetime;
+        choiceKey: string;
+        target: NonNullable<typeof requestedTarget>;
+    }> | null>(null);
+    const previousDemand = mountedDemand.current;
+    // Auto selection is executable authority and can disappear during refresh.
+    // The same mounted consumer still needs its admitted target: do not turn
+    // that withdrawal/return into cancellation followed by fresh acquisition.
+    // Hold only this mount's demand while its current candidate still exists.
+    const retainedTarget = params.enabled && accountLifetime?.isCurrent() === true
+        && previousDemand !== null && previousDemand.accountLifetime === accountLifetime && previousDemand.choiceKey === choiceKey
+        && selection.candidates.some(candidate => {
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            return origin.serverIdentityId === previousDemand.target.serverIdentityId
+                && getPluginMachineExecutionOriginRef(origin).machineId === previousDemand.target.machineId;
+        }) ? previousDemand.target : null;
+    const demandTarget = requestedTarget ?? retainedTarget;
+    React.useLayoutEffect(() => {
+        mountedDemand.current = demandTarget ? { accountLifetime, choiceKey, target: demandTarget } : null;
+    }, [accountLifetime, choiceKey, demandTarget]);
+    const projectionDemand = usePluginExecutionOriginProjectionDemand(demandTarget);
     // Fresh invocation authority can withdraw before the descriptive selection
     // publication catches up. Do not erase the same establishing presentation
     // in that intermediate turn; the unavailable/refusal guard above still
@@ -184,7 +217,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     // The exact mounted supplier can enter establishment before the shell's
     // committed selection publication catches up in layout. Its positive
     // loading fact must accompany the fresh guard that already refuses it.
-    const loading = selection.loading || (selection.state.kind === 'selected'
+    const loading = selection.loading || projectionDemand.phase === 'loading' || (selection.state.kind === 'selected'
         && selectedSupply?.phase === 'establishing');
     return { selection, selectedSupply, loading, isExecutionOriginCurrent };
 }

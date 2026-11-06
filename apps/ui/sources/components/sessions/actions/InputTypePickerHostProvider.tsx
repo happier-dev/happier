@@ -37,6 +37,8 @@ export type InputTypePickerHostContext = Readonly<{
 type HostProps = InputTypePickerHostContext & Readonly<{
     children: React.ReactNode;
     enabled: boolean;
+    /** Host-only fields borrow no daemon contribution inventory before their picker opens. */
+    requiresPluginTypes?: boolean;
     isCurrent?: () => boolean;
     /** Supplied only by the demanded participant control; selection itself never starts a Session. */
     pickAgentParticipant?: (request: Readonly<{
@@ -67,7 +69,8 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
         : props.machineId ?? sessionTarget?.machineId ?? (props.sessionId || !accountLifetime ? null
             : resolveUiAccountActionFallbackMachineId(accountLifetime.scope));
     const state = useDaemonMergedProjectionInputs({ machineId, serverId,
-        enabled: props.enabled && !inherited && props.pluginUiProjection === undefined });
+        sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
+        enabled: props.enabled && props.requiresPluginTypes !== false && !inherited && props.pluginUiProjection === undefined });
     const current = React.useRef({ props, accountLifetime, machineId, serverId, state });
     current.current = { props, accountLifetime, machineId, serverId, state };
     const port = React.useMemo(() => {
@@ -101,6 +104,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             const projection = now.props.pluginUiProjection !== undefined || now.state.phase === 'ready'
                 ? readReusableDaemonMergedProjectionCacheEntry({
                     machineId: producerMachineId, serverId: now.serverId, accountLifetime: now.accountLifetime,
+                    sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
                 }) : null;
             const inputs = projection?.kind === 'ready' ? projection.inputs : null;
             const entry = inputs?.pluginProjectionV2?.familiesById.inputTypes?.entriesById[`${identity.pluginId}/${identity.localId}`];
@@ -114,6 +118,17 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             return now && entry?.occurrenceId && plugin?.enabled === true ? { now, entry } : null;
         };
         return createInputTypePickerPort({
+            readInputTypes: field => {
+                const now = current.current;
+                const target = now.props.fieldTargets?.[field.path];
+                if (now.props.pluginUiProjection !== undefined && !target) return now.props.pluginUiProjection?.inputTypesById;
+                const projection = target?.machineId ? readReusableDaemonMergedProjectionCacheEntry({
+                    machineId: target.machineId, serverId: now.serverId, accountLifetime: now.accountLifetime,
+                    sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
+                }) : null;
+                const inputs = target ? projection?.kind === 'ready' ? projection.inputs : null : now.state.inputs;
+                return inputs?.pluginProjectionV2?.familiesById.inputTypes?.entriesById;
+            },
             canOpenHostPicker: (reference) => reference.hostType === 'savedSecretReference' ? readHost() !== null
                 : reference.hostType === 'agentParticipant' && readHost()?.props.pickAgentParticipant !== undefined,
             openHostPicker: async (request, field) => {
@@ -193,6 +208,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
         // A containing plugin still owns its host input picker. Contributed
         // fields use their own admitted producer instead of inheriting its relay.
         return {
+            resolveSemantic: port.resolveSemantic,
             describe: field => field.inputType && 'hostType' in field.inputType ? inherited.describe(field) : port.describe(field),
             pick: request => request.field.inputType && 'hostType' in request.field.inputType ? inherited.pick(request) : port.pick(request),
         };

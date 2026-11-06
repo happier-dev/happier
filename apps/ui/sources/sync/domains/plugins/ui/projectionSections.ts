@@ -5,6 +5,9 @@ export const CONNECTED_ACCOUNT_PROJECTION_SECTIONS = ['familiesById.connectedAcc
 export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.pluginBrowser',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
     'familiesById.storeKinds', 'resourcesById'] as const;
+// Administration ranks origin candidates from installed-package facts. `base` and
+// `installedPackagesById` are always loaded, so the candidate question demands no family.
+export const PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS = [] as const satisfies readonly string[];
 // Search renders provider declarations and invokes their Actions. Package
 // admission and base facts are included by the deferred-section owner.
 export const PLUGIN_SEARCH_SECTIONS = ['searchProviders'] as const;

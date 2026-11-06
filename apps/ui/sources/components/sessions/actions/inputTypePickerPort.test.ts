@@ -1,6 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { createInputTypePickerPort } from './inputTypePickerPort';
+import { createInputTypePickerPort, resolveSemanticInputTypePickerReference } from './inputTypePickerPort';
 import type { ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
+
+import type { PluginUiInputTypeProjection } from '@/sync/domains/plugins/ui/projection';
+
+describe('host semantic picker discovery', () => {
+  it('uses projection order among available matching pickers and keeps exact-reference consumers unchanged', async () => {
+    const types = ['other', 'unavailable', 'first', 'second'].map((localId): PluginUiInputTypeProjection => ({
+      id: `example.inputs/${localId}`, pluginId: 'example.inputs', pluginVersion: '1.0.0', occurrenceId: 'current',
+      definition: { id: localId, title: localId, semantic: localId === 'other' ? 'repository' : 'scmPullRequestComparison',
+        valueSchema: { type: 'string' }, picker: 'browse' },
+    }));
+    const entries = Object.fromEntries(types.map(type => [type.id, type]));
+    const port = createInputTypePickerPort({
+      readInputTypes: () => entries,
+      resolveType: identity => {
+        const entry = entries[`${identity.pluginId}/${identity.localId}`];
+        return entry ? { identity, occurrenceId: 'current', definition: entry.definition } : null;
+      },
+      canOpenPicker: (_picker, type) => type.identity.localId !== 'unavailable',
+      openPicker: async () => ({ kind: 'completed', input: 'selected' }),
+    });
+    const field = { path: 'comparison', title: 'Comparison' };
+    expect(resolveSemanticInputTypePickerReference(port, 'scmPullRequestComparison', field))
+      .toEqual({ pluginId: 'example.inputs', localId: 'first' });
+    expect(resolveSemanticInputTypePickerReference(port, 'missing', field)).toBeNull();
+    expect(resolveSemanticInputTypePickerReference(null, 'scmPullRequestComparison', field)).toBeNull();
+    expect(resolveSemanticInputTypePickerReference({ describe: port.describe, pick: port.pick },
+      'scmPullRequestComparison', field)).toBeNull();
+    const exact = { ...field, inputType: { pluginId: 'example.inputs', localId: 'second' } };
+    expect(port.describe(exact)).not.toBeNull();
+    expect(await port.pick({ field: exact, value: undefined, signal: new AbortController().signal }))
+      .toEqual({ status: 'selected', value: 'selected' });
+    delete entries['example.inputs/first'];
+    expect(resolveSemanticInputTypePickerReference(port, 'scmPullRequestComparison', field)).toEqual(exact.inputType);
+  });
+});
 
 describe('native reference input picker projection', () => {
   it('keeps omitted picker-only inventory distinct from an explicitly empty field constraint', async () => {

@@ -161,6 +161,15 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     let connectedAccounts = createConnectedAccountDescriptorProjectionPublication();
     let skills = createPluginSkillSourceIdentityPublication();
     const machineMerges = new Map<string, ReturnType<typeof createInstalledPluginUiProjectionPublication>>();
+    /**
+     * Origin candidates for Machines whose presentation sections are unread. Administration ranks
+     * every candidate from installed-package facts; the union's presentation members stay
+     * establishing for them, so an unread section is never published as an empty catalog.
+     */
+    const candidateMembersByMachineId = new Map<string, Readonly<{ member: PluginUiProjectionUnionMember;
+        packages: PluginUiProjectionModel; candidate: PluginUiProjectionUnionMember;
+        merge: ReturnType<typeof createInstalledPluginUiProjectionPublication> }>>();
+    let candidateMembers = NO_MEMBERS;
     const listeners = new Map<() => void, 'committed' | undefined>();
     const notify = (previous: AppShellPluginUiProjectionSnapshot) => {
         // Committed readers consume declarations/candidates, not the raw
@@ -191,6 +200,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         identityBasis = [];
         activeServerIdentity = undefined;
         machineMerges.clear();
+        candidateMembersByMachineId.clear();
+        candidateMembers = NO_MEMBERS;
         union = createPluginUiProjectionUnionPublication();
         accountMerge = createInstalledPluginUiProjectionPublication();
         candidates = createPluginUiExecutionOriginCandidatePublication();
@@ -298,11 +309,13 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             && [...currentness].every(([id, value]) => previous.currentnessForActiveAccountByMachineId.get(id) === value);
         const currentnessForActiveAccountByMachineId = sameCurrentness ? previous.currentnessForActiveAccountByMachineId : currentness;
         const nextModelBasis = [materializations, installedByMachineId,
-            ...[...currentness.values()].map(value => value.pluginUiProjection?.installedPackagesById)];
+            ...[...currentness.values()].flatMap(value => [value.pluginUiProjection?.installedPackagesById,
+                value.installedPackagesProjection?.installedPackagesById])];
         let pluginIds = previous.executionOriginPluginIds;
         if (nextModelBasis.length !== modelBasis.length || nextModelBasis.some((value, index) => value !== modelBasis[index])) {
             const nextIds = [...new Set([...materializations.map(value => value.pluginId),
-                ...[...currentness.values()].flatMap(value => Object.keys(value.pluginUiProjection?.installedPackagesById ?? {})),
+                ...[...currentness.values()].flatMap(value => Object.keys(value.pluginUiProjection?.installedPackagesById
+                    ?? value.installedPackagesProjection?.installedPackagesById ?? {})),
                 ...[...installedByMachineId.values()].flatMap(value => value.models.flatMap(model => Object.keys(model.installedPackagesById)))])]
                 .sort((left, right) => left.localeCompare(right));
             if (nextIds.length !== pluginIds.length || nextIds.some((id, index) => id !== pluginIds[index])) pluginIds = Object.freeze(nextIds);
@@ -368,7 +381,24 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const accountUiProjection = sources.hostBundledUiEnabled ? availabilityInputs?.accountUiProjection ?? null : null;
         const pluginUiProjection = accountMerge.publish(accountUiProjection ? [accountUiProjection] : NO_MODELS,
             projectionUnion.pluginUiProjection, undefined, explicitSelections);
-        const candidateFactsByPluginId = candidates.publish(pluginUiProjection, members, pluginIds);
+        const nextCandidateMembers = members.map(member => {
+            const packages = currentness.get(member.machineId)?.installedPackagesProjection;
+            if (!packages) { candidateMembersByMachineId.delete(member.machineId); return member; }
+            const held = candidateMembersByMachineId.get(member.machineId);
+            if (held?.member === member && held.packages === packages) return held.candidate;
+            const merge = held?.merge ?? createInstalledPluginUiProjectionPublication();
+            const declaration = installedByMachineId.get(member.machineId);
+            const candidate: PluginUiProjectionUnionMember = { ...member, phase: 'current', unavailableReasonCode: undefined,
+                interactionEnabled: true, projection: merge.publish(declaration?.models ?? NO_MODELS, packages,
+                    declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds) };
+            candidateMembersByMachineId.set(member.machineId, { member, packages, candidate, merge });
+            return candidate;
+        });
+        for (const id of candidateMembersByMachineId.keys()) if (!eligible.has(id)) candidateMembersByMachineId.delete(id);
+        if (candidateMembers.length !== nextCandidateMembers.length || nextCandidateMembers.some((member, index) => member !== candidateMembers[index])) {
+            candidateMembers = nextCandidateMembers.every((member, index) => member === members[index]) ? members : Object.freeze(nextCandidateMembers);
+        }
+        const candidateFactsByPluginId = candidates.publish(pluginUiProjection, candidateMembers, pluginIds);
         const skillSourceIdentity = skills.publish(pluginUiProjection);
         const destinationSurfacePlacements = previous.pluginUiProjection?.surfacePlacementsById === pluginUiProjection?.surfacePlacementsById
             ? previous.destinationSurfacePlacements
@@ -414,7 +444,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             if ((current?.currentness.pluginUiProjection ?? null) === currentness.pluginUiProjection
                 && (current?.currentness.phase ?? 'establishing') === currentness.phase
                 && current?.currentness.unavailableReasonCode === currentness.unavailableReasonCode
-                && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled) {
+                && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled
+                && (current?.currentness.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)) {
                 // Missing reports already contribute null/establishing/noninteractive
                 // inputs. Their first matching answer, like Browser and descriptor
                 // arrivals, changes the raw report without changing the catalog.

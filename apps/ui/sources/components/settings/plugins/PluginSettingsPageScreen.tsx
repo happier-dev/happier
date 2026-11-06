@@ -8,6 +8,7 @@ import { createPluginAppPageLocationOwner } from '@/components/appShell/plugins/
 import { PluginSettingsPageHost } from '@/components/plugins/surfaces';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
@@ -86,6 +87,9 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     const headerOptions = React.useMemo(() => ({ title: identityTitle ?? undefined, headerTitle: identityTitle ?? t('pluginSurfaces.appPage.title'),
         headerRight: () => executionChip }), [identityTitle, executionChip]);
     const renderPage = (body: React.ReactNode) => <PageNavigationContextActionsProvider actions={executionChip}>
+        {props.pluginId && props.pageId && props.subPath !== null ? <PluginSurfaceProjectionDemand
+            pluginId={props.pluginId} accountScope={appShell.accountLifetime?.scope ?? null}
+            enabled={isFocused && (needsMachineExecution || !destination && (appShell.phase === 'establishing' || appShell.hasEstablishingMembers))} /> : null}
         <Stack.Screen options={headerOptions} />{body}
     </PageNavigationContextActionsProvider>;
     // A page that has loaded nothing keeps its identity above its state, in the page column, so the

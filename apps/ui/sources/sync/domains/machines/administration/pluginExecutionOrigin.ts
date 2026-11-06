@@ -4,6 +4,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 
 import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { resolveFleetSnapshotMachineRejection, resolveFleetSupplyAgreement } from './fleetUnion';
+import type { PluginAccountInstalledPluginsAdmission } from '@/sync/domains/plugins/availability/reader';
 
 export type PluginMachineOriginRejectionReasonV1 =
     | 'content_conflict'
@@ -73,6 +74,12 @@ type MachineFactInputs = Readonly<{
     machineSnapshots: readonly ServerMachineInventorySnapshotV1[];
     readMachineFact?: PluginExecutionOriginMachineFactReader;
 }>;
+
+function machineTargetKey(target: PluginExecutionOriginContextualTarget) {
+    return `${target.serverIdentityId}\u0000${target.machineId}`;
+}
+
+const NO_MATERIALIZATIONS: readonly PluginMachineMaterializationV1[] = Object.freeze([]);
 
 function readMachineFact(params: MachineFactInputs, target: PluginExecutionOriginContextualTarget) {
     if (params.readMachineFact) return params.readMachineFact(target);
@@ -327,6 +334,91 @@ function candidateMatchesOrigin(
     return arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(candidate), origin);
 }
 
+function readContributorDeclarations(materializations: readonly PluginMachineMaterializationV1[], installedPlugins?: PluginAccountInstalledPluginsAdmission) {
+    return installedPlugins?.kind === 'available'
+        ? installedPlugins.plugins.flatMap(plugin => plugin.installations.map(installation => ({
+            materialization: installation.materialization, declaration: installation.contributorDeclaration,
+        })))
+        : materializations.map(materialization => ({ materialization, declaration: materialization.declaredManifest ?? null }));
+}
+
+type PluginContributorDeclaration = NonNullable<ReturnType<typeof readContributorDeclarations>[number]['declaration']>;
+type PluginMachineScopedContributor = Readonly<{
+    materialization: PluginMachineMaterializationV1;
+    identity: string;
+    nativeSystemTools: readonly string[];
+}>;
+type PluginDeclarationFacts = Readonly<{
+    machineContributions: readonly Readonly<{ id: string; targetPluginId: string }>[];
+    nativeSystemTools: readonly string[];
+}>;
+type PluginContributorFacts = Readonly<{
+    knownTargets: ReadonlySet<string>;
+    unknownTargets: ReadonlySet<string>;
+    contributorsByTargetPlugin: ReadonlyMap<string, readonly PluginMachineScopedContributor[]>;
+}>;
+
+// One manifest serves every Machine holding that release.
+const declarationFacts = new WeakMap<PluginContributorDeclaration, PluginDeclarationFacts>();
+
+function readDeclarationFacts(declaration: PluginContributorDeclaration): PluginDeclarationFacts {
+    let facts = declarationFacts.get(declaration);
+    if (facts) return facts;
+    const declarations = declaration.contributes;
+    const machineActions = new Set(declarations.actions.filter(action => action.execution.target !== 'account').map(action => action.id));
+    facts = {
+        machineContributions: declarations.targetedPluginContributions
+            .filter(contribution => Object.values(contribution.operations).some(id => machineActions.has(id)))
+            .map(contribution => ({ id: contribution.id, targetPluginId: contribution.target.pluginId })),
+        nativeSystemTools: declarations.connectedAccountDescriptors.flatMap(descriptor =>
+            descriptor.authentication.native ? [descriptor.authentication.native.systemTool] : []),
+    };
+    declarationFacts.set(declaration, facts);
+    return facts;
+}
+
+// Every plugin demand reads the same Account installations. Availability's
+// immutable row list is the only input, so its facts are derived once per list.
+const contributorFactsByRows = new WeakMap<object, PluginContributorFacts>();
+const NO_CONTRIBUTORS: readonly PluginMachineScopedContributor[] = Object.freeze([]);
+
+function readPluginContributorFacts(materializations: readonly PluginMachineMaterializationV1[],
+    installedPlugins?: PluginAccountInstalledPluginsAdmission): PluginContributorFacts {
+    const rows = installedPlugins?.kind === 'available' ? installedPlugins.plugins : materializations;
+    const previous = contributorFactsByRows.get(rows);
+    if (previous) return previous;
+    const knownTargets = new Set<string>();
+    const unknownTargets = new Set<string>();
+    const contributorsByTargetPlugin = new Map<string, PluginMachineScopedContributor[]>();
+    for (const { materialization, declaration } of readContributorDeclarations(materializations, installedPlugins)) {
+        if (!materialization.enabled || materialization.trustState !== 'trusted') continue;
+        (declaration ? knownTargets : unknownTargets).add(machineTargetKey(materialization));
+        if (!declaration) continue;
+        const { machineContributions, nativeSystemTools } = readDeclarationFacts(declaration);
+        for (const contribution of machineContributions) {
+            const contributor = { materialization, nativeSystemTools,
+                identity: JSON.stringify([materialization.pluginId, contribution.id]) };
+            const contributors = contributorsByTargetPlugin.get(contribution.targetPluginId);
+            if (contributors) contributors.push(contributor);
+            else contributorsByTargetPlugin.set(contribution.targetPluginId, [contributor]);
+        }
+    }
+    const facts = { knownTargets, unknownTargets, contributorsByTargetPlugin };
+    contributorFactsByRows.set(rows, facts);
+    return facts;
+}
+
+/** Installation coverage and native-tool observation consume Availability's resolved declarations. */
+export function readPluginMachineScopedContributors(pluginId: string, materializations: readonly PluginMachineMaterializationV1[],
+    installedPlugins?: PluginAccountInstalledPluginsAdmission): readonly PluginMachineScopedContributor[] {
+    return readPluginContributorFacts(materializations, installedPlugins).contributorsByTargetPlugin.get(pluginId) ?? NO_CONTRIBUTORS;
+}
+
+export type PluginExecutionOriginNativeToolAuthentication = PluginExecutionOriginContextualTarget & Readonly<{
+    systemTool: string;
+    authenticated: boolean;
+}>;
+
 /**
  * Administration's sole plugin-origin decision. Artifact admission remains
  * authoritative; local hints rank only admitted, compatible unpinned candidates.
@@ -348,6 +440,12 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
     lastUsedTarget?: MachineAdministrationTargetV1 | null;
     localMachineTarget?: MachineAdministrationTargetV1 | null;
     machineActivity?: readonly (MachineAdministrationTargetV1 & Readonly<{ activeAt: number }>)[];
+    /** Existing installation declarations; coverage is a preference, never admission. */
+    sourceMaterializations?: readonly PluginMachineMaterializationV1[];
+    /** Canonical installation declarations, including thin census rows resolved by Availability. */
+    installedPlugins?: PluginAccountInstalledPluginsAdmission;
+    /** Already-published native authentication is a preference, never execution authority. */
+    nativeToolAuthentication?: readonly PluginExecutionOriginNativeToolAuthentication[];
     /** Incomplete coverage cannot establish absence or incompatibility, but admitted rows may execute. */
     inventoryPending?: boolean;
     /** A Session panel starts at its own machine, not an Account-wide preference. */
@@ -477,11 +575,64 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
         if (new Set(compatible.map(getPluginExecutionOriginCandidateVersion)).size > 1) {
             return Object.freeze({ kind: 'conflict', candidates: compatible, reasons: Object.freeze(['different_versions'] as const) });
         }
+        // Hints only rank alternatives. A sole compatible candidate wins with or without them.
+        if (compatible.length === 1) return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(compatible[0]!),
+            candidate: compatible[0]!, selectionSource: 'auto' });
+        // Refreshes retain a supplying Machine across replacement custody.
+        // Exact saved origins remain pins above.
         const incumbent = params.automaticOrigin && (compatible.find(candidate => candidateMatchesOrigin(candidate, params.automaticOrigin!))
             ?? compatible.find(candidate => arePluginMachineExecutionRoutingsEqual(
                 getPluginMachineExecutionRouting(getPluginExecutionOriginCandidateOrigin(candidate)), getPluginMachineExecutionRouting(params.automaticOrigin!))));
-        if (incumbent) return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(incumbent),
-            candidate: incumbent, selectionSource: 'auto' });
+        const nativeTools = new Map<string, Set<string>>();
+        for (const fact of params.nativeToolAuthentication ?? []) {
+            if (!fact.authenticated) continue;
+            const key = machineTargetKey(fact);
+            const tools = nativeTools.get(key) ?? new Set<string>();
+            tools.add(fact.systemTool);
+            nativeTools.set(key, tools);
+        }
+        const contributors = new Map<string, { covered: Set<string>; nativeReady: Set<string> }>();
+        const { knownTargets, unknownTargets, contributorsByTargetPlugin } = readPluginContributorFacts(params.sourceMaterializations ?? NO_MATERIALIZATIONS, params.installedPlugins);
+        const complete = params.installedPlugins?.kind === 'available' && params.installedPlugins.completeness === 'complete';
+        for (const hint of contributorsByTargetPlugin.get(params.pluginId) ?? NO_CONTRIBUTORS) {
+            const key = machineTargetKey(hint.materialization);
+            const coverage = contributors.get(key) ?? { covered: new Set<string>(), nativeReady: new Set<string>() };
+            coverage.covered.add(hint.identity);
+            if (hint.nativeSystemTools.some(tool => nativeTools.get(key)?.has(tool))) coverage.nativeReady.add(hint.identity);
+            contributors.set(key, coverage);
+        }
+        const emptyCoverage = { covered: new Set<string>(), nativeReady: new Set<string>() };
+        const coverage = (candidate: PluginExecutionOriginCandidateV1) => {
+            if (contributors.size === 0) return undefined;
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            const key = machineTargetKey({ serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId });
+            if (params.installedPlugins !== undefined && !complete) return undefined;
+            const knownCoverage = contributors.get(key);
+            // An unrelated unknown declaration cannot erase observed contributors.
+            if (knownCoverage) return knownCoverage;
+            if (unknownTargets.has(key) || (!complete && !knownTargets.has(key))) return undefined;
+            return emptyCoverage;
+        };
+        // Replace only with a known strict superset, preserving every observed
+        // native-ready contributor. Unknown-zero coverage cannot prove a subset.
+        const incumbentCoverage = incumbent ? coverage(incumbent) : undefined;
+        const alternatives = incumbent && incumbentCoverage ? compatible.filter(candidate => {
+            const next = coverage(candidate);
+            if (!next || next.covered.size <= incumbentCoverage.covered.size) return false;
+            for (const identity of incumbentCoverage.covered) if (!next.covered.has(identity)) return false;
+            for (const identity of incumbentCoverage.nativeReady) if (!next.nativeReady.has(identity)) return false;
+            return true;
+        }) : compatible;
+        if (incumbent && (incumbentCoverage === undefined || alternatives.length === 0)) {
+            return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(incumbent),
+                candidate: incumbent, selectionSource: 'auto' });
+        }
+        const compareCoverage = (left: PluginExecutionOriginCandidateV1, right: PluginExecutionOriginCandidateV1) => {
+            const a = coverage(left);
+            const b = coverage(right);
+            return (b?.nativeReady.size ?? 0) - (a?.nativeReady.size ?? 0)
+                || (b?.covered.size ?? 0) - (a?.covered.size ?? 0);
+        };
         const matchesTarget = (candidate: PluginExecutionOriginCandidateV1, target: MachineAdministrationTargetV1 | null | undefined) => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
             return target?.serverIdentityId === origin.serverIdentityId
@@ -489,8 +640,9 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
         };
         const activity = (candidate: PluginExecutionOriginCandidateV1) => params.machineActivity?.find(target => matchesTarget(candidate, target))?.activeAt ?? 0;
         const isDefault = (candidate: PluginExecutionOriginCandidateV1) => params.declaredDefaultOrigins?.some(origin => candidateMatchesOrigin(candidate, origin)) === true;
-        const [candidate] = [...compatible].sort((left, right) =>
-            Number(matchesTarget(right, params.lastUsedTarget)) - Number(matchesTarget(left, params.lastUsedTarget))
+        const [candidate] = [...alternatives].sort((left, right) =>
+            compareCoverage(left, right)
+            || Number(matchesTarget(right, params.lastUsedTarget)) - Number(matchesTarget(left, params.lastUsedTarget))
             || Number(matchesTarget(right, params.localMachineTarget)) - Number(matchesTarget(left, params.localMachineTarget))
             || activity(right) - activity(left)
             || Number(isDefault(right)) - Number(isDefault(left))

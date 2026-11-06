@@ -1,3 +1,4 @@
+import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
@@ -328,6 +329,21 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     // A remembered Machine that cannot answer stays the choice: the list marks its row, not a stand-in.
     const storedTarget = props.selection.storedTarget
         ?? (props.selection.state.kind === 'unavailable' ? props.selection.state.storedTarget : null);
+    const selectedTarget = storedTarget ?? (selectedOrigin ? { serverIdentityId: selectedOrigin.serverIdentityId,
+        machineId: getPluginMachineExecutionOriginRef(selectedOrigin).machineId } : null);
+    // Administration owns selected demand independently of this header. Only
+    // additional presented rows belong to the open picker.
+    const sourceTargets = readPluginPresentedExecutionOriginProjectionTargets(pickerOpen ? props.selection.candidates : [])
+        .filter(target => !selectedTarget || target.serverIdentityId !== selectedTarget.serverIdentityId
+            || target.machineId !== selectedTarget.machineId);
+    const sourceTargetsKey = JSON.stringify(sourceTargets);
+    // The canonical selected/presented set, not candidate object identity or
+    // ordering, changes this open picker's acquisition question.
+    const presentedTargets = React.useMemo(() => sourceTargets,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [sourceTargetsKey]);
+    const projectionDemands = pickerOpen
+        ? <PluginPresentedExecutionOriginProjectionDemand targets={presentedTargets} /> : null;
     const isChosenRow = (machine: PresentedPluginOrigin) => selectedOrigin
         ? exactOriginsEqual(selectedOrigin, machine.origin)
         : storedTarget !== null && storedTarget !== undefined
@@ -338,8 +354,10 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     const clearAccessibilityScope = props.groupTitle ?? t('settingsPlugins.executionOriginTitle');
 
     if (props.presentation === 'chip') {
-        return <><SelectionListFilterChip filter={{
+        return <>{projectionDemands}<SelectionListFilterChip filter={{
             id: 'plugin-execution',
+            open: pickerOpen,
+            onOpenChange: setPickerOpen,
             label: groupTitle,
             valueLabel: current.titleParts?.name ?? current.title,
             ...(current.titleParts?.hint ? { valueQualifier: current.titleParts.hint } : {}),
@@ -403,6 +421,7 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
 
     return (
         <>
+            {projectionDemands}
             <ItemGroup title={groupTitle}>
                 {pendingApproval ? <PluginOriginApprovalNotice key={pendingApproval.approval.artifactId} pending={pendingApproval} presentation="row"
                     testID={props.testIDPrefix ? `${props.testIDPrefix}.approvalPending` : undefined}

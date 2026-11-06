@@ -1,4 +1,5 @@
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import type { PluginAccountInstalledPluginsAdmission } from '@/sync/domains/plugins/availability/reader';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
@@ -23,10 +24,11 @@ import { readPluginExecutionOriginMachineTargets, createPluginMachineExecutionOr
     type PluginMachineSourceExecutionOriginCandidateV1, type PluginExecutionOriginMachineFactReader,
     type PluginExecutionOriginContextualTarget } from './pluginExecutionOrigin';
 import { readPluginMachineExecutionTargetPreference, readPluginMachineExecutionLastUsedTarget } from './selectionPreferences';
-import { readPluginExecutionOriginAutomaticHints } from './pluginExecutionOriginAutomaticHints';
+import { readPluginExecutionOriginAutomaticHints, subscribePluginExecutionOriginNativeToolAuthentication } from './pluginExecutionOriginAutomaticHints';
 
 export type PluginExecutionOriginDescriptiveInputs = Readonly<{
     availabilityRevision: object | null;
+    installedPlugins?: PluginAccountInstalledPluginsAdmission;
     classifyRelease: (materialization: PluginMachineMaterializationV1) => PluginMachineReleaseClassificationV1;
     homeServerIdentityId?: string | null;
     storedOrigin: PluginMachineExecutionOriginV1 | null;
@@ -187,7 +189,8 @@ function sameSelectionInputs(left: ExecutionOriginMachineSnapshotInputs, right: 
         && (a?.establishingTargets === b?.establishingTargets || (a?.establishingTargets?.length ?? 0) === (b?.establishingTargets?.length ?? 0)
             && (a?.establishingTargets ?? []).every((target, index) => sameTarget(target, b?.establishingTargets?.[index])))
         && a?.autoPick === b?.autoPick && a?.renderedVersion === b?.renderedVersion
-        && a?.availabilityNotLoaded === b?.availabilityNotLoaded && a?.localStatus === b?.localStatus;
+        && a?.availabilityNotLoaded === b?.availabilityNotLoaded && a?.localStatus === b?.localStatus
+        && a?.installedPlugins === b?.installedPlugins;
 }
 
 function sameCandidateRows(left: readonly PluginExecutionOriginCandidateV1[], right: readonly PluginExecutionOriginCandidateV1[]) {
@@ -310,7 +313,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         return null;
     }
 
-    function describe(demand: Demand, inventory: InventoryPublication, key: string, eligibilityKey: string) {
+    function describe(demand: Demand, inventory: InventoryPublication, key: string, eligibilityKey: string, nativeToolChanged: boolean) {
         const spec = demand.inputs.selection;
         if (!spec) return null;
         const targets = inventory.state.settings.machineAdministrationTargetsLocalV1;
@@ -344,7 +347,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             && sameSelectionInputs(description.inputs, demand.inputs) && sameTarget(description.storedTarget, storedTarget)
             && sameTarget(description.lastUsedTarget, lastUsedTarget)
             && description.value.loading === readLoading(description.value.state);
-        if (demand.description && matches(demand.description)) return demand.description.value;
+        if (!nativeToolChanged && demand.description && matches(demand.description)) return demand.description.value;
         const previous = demand.description;
         const candidates = previous && previous.eligibilityKey === eligibilityKey && sameCandidateInputs(previous.inputs, demand.inputs)
             ? previous.value.candidates : retainDescriptiveCandidates(previous?.value.candidates, combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
@@ -362,7 +365,8 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 ? previous.value.state.origin : readAutomaticOrigin(demand.inputs.pluginId, demand.inputs.accountLifetime),
             declaredDefaultOrigins: spec.declaredDefaultOrigins, contextualTarget: spec.contextualTarget,
             storedOriginMachinePresence: presence, autoPick: spec.autoPick, renderedVersion: spec.renderedVersion,
-            ...readPluginExecutionOriginAutomaticHints(demand.inputs.pluginId, candidates, inventory.snapshots),
+            ...readPluginExecutionOriginAutomaticHints(demand.inputs.pluginId, candidates, inventory.snapshots,
+                demand.inputs.materializations, spec.installedPlugins),
             lastUsedTarget,
             inventoryPending: inventory.pendingHomes.has(rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId ?? ''),
         });
@@ -384,7 +388,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         else dependencies.clock.requestWake(clockToken, deadline);
     }
 
-    function publishDemand(demand: Demand) {
+    function publishDemand(demand: Demand, nativeToolChanged = false) {
         const { context, inputs } = demand;
         const inventory = context.inventory;
         if (!inventory || (inputs.accountLifetime && !inputs.accountLifetime.isCurrent())) {
@@ -409,7 +413,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             // Activity ranks an initial/replacement Auto choice. A heartbeat
             // alone must not republish or replace an eligible mounted choice.
             const key = inputs.selection ? eligibilityKey : `${prefix}${demand.facts!.activityKey}`;
-            const selection = describe(demand, inventory, key, eligibilityKey);
+            const selection = describe(demand, inventory, key, eligibilityKey, nativeToolChanged);
             if (demand.current.key !== key || demand.current.snapshots !== inventory.snapshots || demand.current.selection !== selection) {
                 demand.current = Object.freeze({ key, eligibilityKey, selection,
                     snapshots: inventory.snapshots, nextRefreshAtMs: inventory.nextRefreshAtMs, readMachineFact: inventory.readMachineFact });
@@ -652,6 +656,11 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                     publishDemand(demand);
                 });
                 demand.listeners.add(notify);
+                retirements.push({ dispose: subscribePluginExecutionOriginNativeToolAuthentication(next.pluginId, next.materializations,
+                    demand.current.snapshots, () => {
+                        withAutomaticOriginView(() => publishDemand(demand, true));
+                    }, next.selection?.installedPlugins) });
+
                 if (next.accountLifetime?.isCurrent()) {
                     const observationKey = serverAccountScopedResourceKey(next.accountLifetime.scope, `plugin.lastRunOn:${next.pluginId}`);
                     retirements.push({ dispose: machineAdministrationTargetObservationsState.subscribeKey(observationKey, () => {

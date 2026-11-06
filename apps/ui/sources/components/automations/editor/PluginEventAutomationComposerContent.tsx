@@ -1,3 +1,4 @@
+import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -268,6 +269,8 @@ export function PluginEventAutomationComposerContent(props: Props) {
         ])),
         [props.model.watcherCandidates],
     );
+    const watcherProjectionTargets = React.useMemo(() => readPluginPresentedExecutionOriginProjectionTargets(props.model.watcherCandidates),
+        [props.model.watcherCandidates]);
     const watcherSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
         () => props.model.watcherCandidates.map((candidate) => {
             const key = watcherKey(candidate.materialization);
@@ -425,6 +428,10 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     </HappierPressable>
                                     {watcherPickerOpen ? (
                                         <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
+                                            <PluginPresentedExecutionOriginProjectionDemand
+                                                key={selectedEvent?.event.identity.pluginId}
+                                                targets={watcherProjectionTargets}
+                                            />
                                             <SelectionList
                                                 rootStep={watcherSelectionStep}
                                                 listAccessibilityLabel={observationPlacementTitle}

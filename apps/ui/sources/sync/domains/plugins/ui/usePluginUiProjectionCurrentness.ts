@@ -104,6 +104,11 @@ type LoadedProjectionState = Readonly<{
     pluginUiProjection: PluginUiProjectionModel;
     pluginBrowserProjection: PluginBrowserProjectionModel;
     connectedAccountProjection: ConnectedAccountDescriptorMachineProjection | null;
+    /**
+     * The answer for this authority covered only the always-loaded installed-package sections.
+     * Presentation sections are unread, not empty: `phase` stays establishing for them.
+     */
+    installedPackages?: Readonly<{ authorityKey: string; projection: PluginUiProjectionModel }>;
 }>;
 
 export type PluginUiProjectionCurrentness = Readonly<{
@@ -120,6 +125,12 @@ export type PluginUiProjectionCurrentness = Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null;
     /** Present on machine-owned reports; aggregate surface projections have no descriptor authority. */
     connectedAccountProjection?: ConnectedAccountDescriptorMachineProjection | null;
+    /**
+     * Current installed-package facts while this Machine's presentation sections are not loaded.
+     * Only package identity, custody and execution facts are meaningful here: its UI families are
+     * unread, never an empty catalog. Null once presentation is current (it then carries them).
+     */
+    installedPackagesProjection?: PluginUiProjectionModel | null;
 }>;
 
 /**
@@ -449,8 +460,16 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                     ? entry.inputs.connectedAccountProjection : previous.connectedAccountProjection;
                 // A catalog's answered descriptor family settles independently
                 // of UI sections nobody has requested. It grants no UI authority.
-                if (!presentationReady) return previous.connectedAccountProjection === connectedAccountProjection
-                    ? previous : { ...previous, connectedAccountProjection };
+                // Installed packages always load first; they are current facts for
+                // origin candidates, kept apart from the unread presentation.
+                if (!presentationReady) {
+                    const installedPackages = previous.installedPackages?.authorityKey === authorityKey
+                        && previous.installedPackages.projection === entry.inputs.pluginUiProjection
+                        ? previous.installedPackages : { authorityKey, projection: entry.inputs.pluginUiProjection };
+                    return previous.connectedAccountProjection === connectedAccountProjection
+                        && previous.installedPackages === installedPackages
+                        ? previous : { ...previous, connectedAccountProjection, installedPackages };
+                }
                 // A completed request and the shared subscription can deliver
                 // the same answer. Admit that model and authority only once.
                 if (previous.authorityKey === authorityKey && previous.phase === 'current'
@@ -547,6 +566,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const connectedAccountProjection = hasLoadedCurrentScope
         ? loadedProjection.connectedAccountProjection
         : null;
+    const installedPackagesProjection = hasLoadedCurrentScope && authorityKey !== null && phase !== 'current'
+        && loadedProjection.installedPackages?.authorityKey === authorityKey
+        ? loadedProjection.installedPackages.projection : null;
     currentPluginUiProjectionRef.current = currentPluginUiProjection;
     const reactNativeRuntimeProjectionSourceRef = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
 
@@ -586,7 +608,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         platform,
         accountLifetime,
         connectedAccountProjection,
+        installedPackagesProjection,
     }), [
+        installedPackagesProjection,
         interactionEnabled,
         connectedAccountProjection,
         machineId,

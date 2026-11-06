@@ -64,7 +64,7 @@ const UNAVAILABLE_ENTRY: ScopeEntry = Object.freeze({ resolution: UNAVAILABLE })
 const SIGNED_OUT_ENTRY: ScopeEntry = Object.freeze({ resolution: SIGNED_OUT });
 const EMPTY_SCOPE_BINDINGS: ReadonlyMap<string, ServerCredentialAccountScopeBinding> = new Map();
 
-function normalizeCredentialScopeServerId(serverId: string | null | undefined): string {
+export function normalizeCredentialScopeServerId(serverId: string | null | undefined): string {
     return isEmbedWindowContext() ? serverId?.trim() ?? '' : resolveServerProfileScopeIdForIdentifier(serverId);
 }
 

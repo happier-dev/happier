@@ -45,8 +45,13 @@ export function useMachinePresenceSummary(
     serverId: string | null | undefined,
     machineId: string | null | undefined,
     suppliedLifetime?: ServerAccountScopeLifetime | null,
+    /** A caller reading only some facts: an equal summary keeps its identity and wakes nothing. */
+    areEqual?: (left: MachinePresenceSummary, right: MachinePresenceSummary) => boolean,
 ): MachinePresenceSummary {
-    return useMachinePresenceSummaries(serverId, [machineId ?? ''], suppliedLifetime)[0]!;
+    const areSummariesEqual = React.useMemo(() => areEqual
+        ? (left: readonly MachinePresenceSummary[], right: readonly MachinePresenceSummary[]) => areEqual(left[0]!, right[0]!)
+        : undefined, [areEqual]);
+    return useMachinePresenceSummaries(serverId, [machineId ?? ''], suppliedLifetime, areSummariesEqual)[0]!;
 }
 
 /** All-machines daemon reads share the same presence lifecycle and earliest clock wake. */
@@ -54,6 +59,7 @@ export function useMachinePresenceSummaries(
     serverId: string | null | undefined,
     machineIds: readonly string[],
     suppliedLifetime?: ServerAccountScopeLifetime | null,
+    areEqual?: (left: readonly MachinePresenceSummary[], right: readonly MachinePresenceSummary[]) => boolean,
 ): readonly MachinePresenceSummary[] {
     const store = getStorage();
     const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
@@ -96,7 +102,7 @@ export function useMachinePresenceSummaries(
         return cached.current;
     }, [readMachines, scope, ids]);
     const targets = React.useMemo(() => [{ serverId: targetServerId, machineIds: ids }], [targetServerId, ids]);
-    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
 }
 
 export type MachinePresenceMembership = Readonly<{

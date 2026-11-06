@@ -10,8 +10,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { useHappierInputPicker } from '@happier-dev/plugin-ui/presentation';
+import { useHappierInputPicker, useHappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
 import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm/comparison';
+import { resolveSemanticInputTypePickerReference } from '@/components/sessions/actions/inputTypePickerPort';
 
 import { filesComparisonScopeOptionKey, type FilesComparisonScopeOption } from './filesComparison';
 
@@ -45,10 +46,11 @@ export type ScmComparisonScopePickerProps = Readonly<{
 export const ScmComparisonScopePicker = React.memo(function ScmComparisonScopePicker(props: ScmComparisonScopePickerProps) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
-    // Triage's admitted source picker returns into this mounted comparison; the host never parses a PR URL.
+    const inputType = resolveSemanticInputTypePickerReference(useHappierInputPickerPort(), 'scmPullRequestComparison', { path: 'comparison' });
+    // The contributed source picker returns into this mounted comparison; the host never parses a PR URL.
     const pullRequests = useHappierInputPicker({
         field: { path: 'comparison', title: t('scmComparison.scopePicker.pullRequestChoice'),
-            inputType: { pluginId: 'happier.triage', localId: 'pull-request-comparison' } },
+            ...(inputType ? { inputType } : {}) },
         value: props.current,
         onSelect: (value) => {
             const source = ScmComparisonSourceSchema.safeParse(value);
@@ -58,7 +60,9 @@ export const ScmComparisonScopePicker = React.memo(function ScmComparisonScopePi
     const currentKey = props.current ? filesComparisonScopeOptionKey({ comparison: props.current,
         evidenceSessionId: props.current.kind === 'session' || props.current.kind === 'turnCheckpoint' ? props.currentEvidenceSessionId : undefined,
         sourceKind: props.current.kind }) : null;
-    const items = React.useMemo<DropdownMenuItem[]>(() => props.options.map((option) => ({
+    const items = React.useMemo<DropdownMenuItem[]>(() => props.options.filter(option =>
+        option.comparison || option.sourceKind !== 'pullRequest' || pullRequests.affordance !== null,
+    ).map((option) => ({
         id: filesComparisonScopeOptionKey(option),
         title: option.label,
         icon: <Icon name={SOURCE_ICON[option.sourceKind]} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
@@ -68,8 +72,7 @@ export const ScmComparisonScopePicker = React.memo(function ScmComparisonScopePi
             ? t('scmComparison.scopePicker.explainAndCommit')
             : t('scmComparison.scopePicker.explainOnly'),
         checked: filesComparisonScopeOptionKey(option) === currentKey,
-        disabled: !option.comparison && (option.sourceKind === 'turnCheckpoint'
-            || (option.sourceKind === 'pullRequest' && pullRequests.affordance === null)),
+        disabled: !option.comparison && option.sourceKind === 'turnCheckpoint',
     })), [currentKey, props.fileCount, props.options, pullRequests.affordance, theme.colors.text.secondary]);
     const byKey = React.useMemo(
         () => new Map(props.options.map((option) => [filesComparisonScopeOptionKey(option), option] as const)),

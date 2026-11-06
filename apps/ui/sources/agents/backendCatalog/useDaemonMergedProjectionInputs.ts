@@ -78,12 +78,17 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
      */
     load?: boolean;
     sections?: readonly string[];
+    /**
+     * `false`: a demand-only caller that reads nothing back. It acquires and re-asks exactly the same,
+     * but the cache's answers (other readers' included) do not re-render it.
+     */
+    observe?: boolean;
 }>): DaemonMergedProjectionInputsState {
     // Settings updates also arrive remotely; subscribe only to the language field.
     useSetting('preferredLanguage');
     const locale = getPreferredLanguage();
     const sectionsKey = params.sections?.join('\0') ?? null;
-    const sections = React.useMemo(() => sectionsKey === null ? undefined : sectionsKey.split('\0'), [sectionsKey]);
+    const sections = React.useMemo(() => sectionsKey === null ? undefined : sectionsKey === '' ? [] : sectionsKey.split('\0'), [sectionsKey]);
     const stateSectionsKeyRef = React.useRef(sectionsKey);
     const enabled = params.enabled !== false;
     const machineId = normalizeKeyPart(params.machineId);
@@ -130,7 +135,8 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     const serverIdRef = React.useRef(serverId);
     const hasProjectionScopeRef = React.useRef(hasProjectionScope);
 
-    const [state, replaceState] = React.useState<DaemonMergedProjectionInputsState>(() => {
+    const observes = params.observe !== false;
+    const [state, replaceObservedState] = React.useState<DaemonMergedProjectionInputsState>(() => {
         if (!hasProjectionScope) {
             return { phase: 'idle', inputs: null };
         }
@@ -153,6 +159,9 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         }
         return { phase: cached.kind, inputs: null };
     });
+    const replaceState = React.useCallback((update: React.SetStateAction<DaemonMergedProjectionInputsState>) => {
+        if (observes) replaceObservedState(update);
+    }, [observes]);
     // Cache observation and this reader's own load can deliver the same answer.
     // Keep one publication boundary for both, including warm cached demand.
     const setState = React.useCallback((update: React.SetStateAction<DaemonMergedProjectionInputsState>) => {
@@ -161,7 +170,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             return previous.phase === next.phase && previous.inputs === next.inputs
                 && previous.failureReason === next.failureReason ? previous : next;
         });
-    }, []);
+    }, [replaceState]);
     // A response is never visible under a successor Account. The effect below
     // publishes the new Account's state; this render-time fence prevents one
     // stale render before that effect has run.
@@ -181,7 +190,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     }, [accountLifetime, machineId, serverId, staleMs, sections]);
 
     React.useEffect(() => {
-        if (!hasProjectionScope || !accountLifetime) return;
+        if (!observes || !hasProjectionScope || !accountLifetime) return;
         // App-shell and detail readers publish through this same cache. A
         // mounted reader must observe their answers even when it owns no RPC.
         return subscribeDaemonMergedProjectionSummary({ machineId, serverId }, () => {
@@ -190,7 +199,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             stateAccountLifetimeRef.current = accountLifetime;
             setState(observed);
         });
-    }, [accountLifetime, hasProjectionScope, machineId, readObservedCacheState, serverId, setState]);
+    }, [accountLifetime, hasProjectionScope, machineId, observes, readObservedCacheState, serverId, setState]);
 
     React.useEffect(() => {
         const forceReload = refreshKeyRef.current !== params.refreshKey
@@ -327,6 +336,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         hasProjectionScope,
         locale,
         machineId,
+        replaceState,
         setState,
         params.load,
         params.refreshKey,
