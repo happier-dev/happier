@@ -30,6 +30,7 @@ import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
     DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema,
+    DaemonContributionRegistryProjectionDescribeRequestSchema,
     DaemonPluginUiArtifactBytesReadResponseSchema,
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
     DaemonPluginUiTargetedSurfaceMountV1Schema,
@@ -10504,23 +10505,43 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             target: mountedTarget,
             points: [],
         } as const;
-        contributionProjectionDescribeMock.mockResolvedValue({
-            supported: true,
+        const projectionResponse = {
+            protocolVersion: 1,
             projection: {
                 v: 2,
                 generation: 77,
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 settingsById: {},
                 familiesById: {},
                 diagnostics: [],
             },
-            targetedContributions,
-        });
+        };
+        const ambientDescribes: unknown[] = [];
+        const mountedActionDescribes: unknown[] = [];
+        const targetedReads: unknown[] = [];
+        realResourceTransport.settingsEnabled = true;
+        realResourceTransport.targetedEnabled = true;
+        realResourceTransport.request = async (method, payload) => {
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                if (payload !== null && typeof payload === 'object'
+                    && 'selection' in payload && payload.selection === 'mountedActions') {
+                    mountedActionDescribes.push(payload);
+                } else {
+                    ambientDescribes.push(DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload));
+                }
+                return projectionResponse;
+            }
+            if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+                targetedReads.push(payload);
+                return { status: 'current', targetedContributions, targetedSurfaceMounts: [] };
+            }
+            return { error: 'Method not found' };
+        };
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' },
+            { serverIdentityId: 'srv_server_1' });
         const baseProjection = createGeneratedProjection({
             installedPackagesById: {
                 'acme.browser': {
@@ -10569,11 +10590,23 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await Promise.resolve();
         });
 
-        expect(targetedContributionsReadMock).toHaveBeenCalledWith('machine_1', expect.objectContaining({
-            serverId: 'server_1',
-            pluginId: mountedTarget.pluginId,
-        }));
+        await vi.waitFor(() => expect(targetedReads.length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(reactNativeSurfaceProps.length).toBeGreaterThan(0));
         expect(readMountedSurface().targetedContributions).toEqual(targetedContributions);
+        // The mounted renderer owns its projection already. An unopened input
+        // picker must not acquire a second, ambient Machine inventory.
+        await flushHookEffects({ cycles: 3 });
+        expect(ambientDescribes).toHaveLength(0);
+        // Mounted Action facts are an exact question owned by this renderer,
+        // rather than an inventory acquisition for its unopened input picker.
+        for (const question of mountedActionDescribes) {
+            expect(question).toMatchObject({
+                machineId: 'machine_1',
+                selection: 'mountedActions',
+                callers: [mountedTarget],
+                actions: [],
+            });
+        }
     });
 
     it('mounts a fresh all-daemons-offline process from the last-confirmed targeted admission in device custody', async () => {

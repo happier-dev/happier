@@ -419,6 +419,78 @@ export type PluginExecutionOriginNativeToolAuthentication = PluginExecutionOrigi
     authenticated: boolean;
 }>;
 
+/** Both exact admission and descriptive read intent use the same Auto preferences. */
+function rankPluginMachineExecutionOriginCandidates(
+    params: Parameters<typeof resolvePluginMachineExecutionOriginState>[0],
+    compatible: readonly PluginExecutionOriginCandidateV1[],
+    incumbent?: PluginExecutionOriginCandidateV1 | null,
+): PluginExecutionOriginCandidateV1 | undefined {
+    const nativeTools = new Map<string, Set<string>>();
+    for (const fact of params.nativeToolAuthentication ?? []) {
+        if (!fact.authenticated) continue;
+        const key = machineTargetKey(fact);
+        const tools = nativeTools.get(key) ?? new Set<string>();
+        tools.add(fact.systemTool);
+        nativeTools.set(key, tools);
+    }
+    const contributors = new Map<string, { covered: Set<string>; nativeReady: Set<string> }>();
+    const { knownTargets, unknownTargets, contributorsByTargetPlugin } = readPluginContributorFacts(params.sourceMaterializations ?? NO_MATERIALIZATIONS, params.installedPlugins);
+    const complete = params.installedPlugins?.kind === 'available' && params.installedPlugins.completeness === 'complete';
+    for (const hint of contributorsByTargetPlugin.get(params.pluginId) ?? NO_CONTRIBUTORS) {
+        const key = machineTargetKey(hint.materialization);
+        const coverage = contributors.get(key) ?? { covered: new Set<string>(), nativeReady: new Set<string>() };
+        coverage.covered.add(hint.identity);
+        if (hint.nativeSystemTools.some(tool => nativeTools.get(key)?.has(tool))) coverage.nativeReady.add(hint.identity);
+        contributors.set(key, coverage);
+    }
+    const emptyCoverage = { covered: new Set<string>(), nativeReady: new Set<string>() };
+    const coverage = (candidate: PluginExecutionOriginCandidateV1) => {
+        if (contributors.size === 0) return undefined;
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        const key = machineTargetKey({ serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId });
+        if (params.installedPlugins !== undefined && !complete) return undefined;
+        const knownCoverage = contributors.get(key);
+        // An unrelated unknown declaration cannot erase observed contributors.
+        if (knownCoverage) return knownCoverage;
+        if (unknownTargets.has(key) || (!complete && !knownTargets.has(key))) return undefined;
+        return emptyCoverage;
+    };
+    // Replace only with a known strict superset, preserving every observed
+    // native-ready contributor. Unknown-zero coverage cannot prove a subset.
+    const incumbentCoverage = incumbent ? coverage(incumbent) : undefined;
+    const alternatives = incumbent && incumbentCoverage ? compatible.filter(candidate => {
+        const next = coverage(candidate);
+        if (!next || next.covered.size <= incumbentCoverage.covered.size) return false;
+        for (const identity of incumbentCoverage.covered) if (!next.covered.has(identity)) return false;
+        for (const identity of incumbentCoverage.nativeReady) if (!next.nativeReady.has(identity)) return false;
+        return true;
+    }) : compatible;
+    if (incumbent && (incumbentCoverage === undefined || alternatives.length === 0)) {
+        return incumbent;
+    }
+    const compareCoverage = (left: PluginExecutionOriginCandidateV1, right: PluginExecutionOriginCandidateV1) => {
+        const a = coverage(left);
+        const b = coverage(right);
+        return (b?.nativeReady.size ?? 0) - (a?.nativeReady.size ?? 0)
+            || (b?.covered.size ?? 0) - (a?.covered.size ?? 0);
+    };
+    const matchesTarget = (candidate: PluginExecutionOriginCandidateV1, target: MachineAdministrationTargetV1 | null | undefined) => {
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        return target?.serverIdentityId === origin.serverIdentityId
+            && target.machineId === getPluginMachineExecutionOriginRef(origin).machineId;
+    };
+    const activity = (candidate: PluginExecutionOriginCandidateV1) => params.machineActivity?.find(target => matchesTarget(candidate, target))?.activeAt ?? 0;
+    const isDefault = (candidate: PluginExecutionOriginCandidateV1) => params.declaredDefaultOrigins?.some(origin => candidateMatchesOrigin(candidate, origin)) === true;
+    const [candidate] = [...alternatives].sort((left, right) =>
+        compareCoverage(left, right)
+        || Number(matchesTarget(right, params.lastUsedTarget)) - Number(matchesTarget(left, params.lastUsedTarget))
+        || Number(matchesTarget(right, params.localMachineTarget)) - Number(matchesTarget(left, params.localMachineTarget))
+        || activity(right) - activity(left)
+        || Number(isDefault(right)) - Number(isDefault(left))
+        || compareCandidates(left, right));
+    return candidate;
+}
+
 /**
  * Administration's sole plugin-origin decision. Artifact admission remains
  * authoritative; local hints rank only admitted, compatible unpinned candidates.
@@ -583,70 +655,7 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
         const incumbent = params.automaticOrigin && (compatible.find(candidate => candidateMatchesOrigin(candidate, params.automaticOrigin!))
             ?? compatible.find(candidate => arePluginMachineExecutionRoutingsEqual(
                 getPluginMachineExecutionRouting(getPluginExecutionOriginCandidateOrigin(candidate)), getPluginMachineExecutionRouting(params.automaticOrigin!))));
-        const nativeTools = new Map<string, Set<string>>();
-        for (const fact of params.nativeToolAuthentication ?? []) {
-            if (!fact.authenticated) continue;
-            const key = machineTargetKey(fact);
-            const tools = nativeTools.get(key) ?? new Set<string>();
-            tools.add(fact.systemTool);
-            nativeTools.set(key, tools);
-        }
-        const contributors = new Map<string, { covered: Set<string>; nativeReady: Set<string> }>();
-        const { knownTargets, unknownTargets, contributorsByTargetPlugin } = readPluginContributorFacts(params.sourceMaterializations ?? NO_MATERIALIZATIONS, params.installedPlugins);
-        const complete = params.installedPlugins?.kind === 'available' && params.installedPlugins.completeness === 'complete';
-        for (const hint of contributorsByTargetPlugin.get(params.pluginId) ?? NO_CONTRIBUTORS) {
-            const key = machineTargetKey(hint.materialization);
-            const coverage = contributors.get(key) ?? { covered: new Set<string>(), nativeReady: new Set<string>() };
-            coverage.covered.add(hint.identity);
-            if (hint.nativeSystemTools.some(tool => nativeTools.get(key)?.has(tool))) coverage.nativeReady.add(hint.identity);
-            contributors.set(key, coverage);
-        }
-        const emptyCoverage = { covered: new Set<string>(), nativeReady: new Set<string>() };
-        const coverage = (candidate: PluginExecutionOriginCandidateV1) => {
-            if (contributors.size === 0) return undefined;
-            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
-            const key = machineTargetKey({ serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId });
-            if (params.installedPlugins !== undefined && !complete) return undefined;
-            const knownCoverage = contributors.get(key);
-            // An unrelated unknown declaration cannot erase observed contributors.
-            if (knownCoverage) return knownCoverage;
-            if (unknownTargets.has(key) || (!complete && !knownTargets.has(key))) return undefined;
-            return emptyCoverage;
-        };
-        // Replace only with a known strict superset, preserving every observed
-        // native-ready contributor. Unknown-zero coverage cannot prove a subset.
-        const incumbentCoverage = incumbent ? coverage(incumbent) : undefined;
-        const alternatives = incumbent && incumbentCoverage ? compatible.filter(candidate => {
-            const next = coverage(candidate);
-            if (!next || next.covered.size <= incumbentCoverage.covered.size) return false;
-            for (const identity of incumbentCoverage.covered) if (!next.covered.has(identity)) return false;
-            for (const identity of incumbentCoverage.nativeReady) if (!next.nativeReady.has(identity)) return false;
-            return true;
-        }) : compatible;
-        if (incumbent && (incumbentCoverage === undefined || alternatives.length === 0)) {
-            return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(incumbent),
-                candidate: incumbent, selectionSource: 'auto' });
-        }
-        const compareCoverage = (left: PluginExecutionOriginCandidateV1, right: PluginExecutionOriginCandidateV1) => {
-            const a = coverage(left);
-            const b = coverage(right);
-            return (b?.nativeReady.size ?? 0) - (a?.nativeReady.size ?? 0)
-                || (b?.covered.size ?? 0) - (a?.covered.size ?? 0);
-        };
-        const matchesTarget = (candidate: PluginExecutionOriginCandidateV1, target: MachineAdministrationTargetV1 | null | undefined) => {
-            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
-            return target?.serverIdentityId === origin.serverIdentityId
-                && target.machineId === getPluginMachineExecutionOriginRef(origin).machineId;
-        };
-        const activity = (candidate: PluginExecutionOriginCandidateV1) => params.machineActivity?.find(target => matchesTarget(candidate, target))?.activeAt ?? 0;
-        const isDefault = (candidate: PluginExecutionOriginCandidateV1) => params.declaredDefaultOrigins?.some(origin => candidateMatchesOrigin(candidate, origin)) === true;
-        const [candidate] = [...alternatives].sort((left, right) =>
-            compareCoverage(left, right)
-            || Number(matchesTarget(right, params.lastUsedTarget)) - Number(matchesTarget(left, params.lastUsedTarget))
-            || Number(matchesTarget(right, params.localMachineTarget)) - Number(matchesTarget(left, params.localMachineTarget))
-            || activity(right) - activity(left)
-            || Number(isDefault(right)) - Number(isDefault(left))
-            || compareCandidates(left, right));
+        const candidate = rankPluginMachineExecutionOriginCandidates(params, compatible, incumbent);
         return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(candidate!), candidate: candidate!, selectionSource: 'auto' });
     }
     // A default is merely a preference. It can select only an admitted exact
@@ -684,4 +693,36 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
 
     const candidate = eligible[0]!;
     return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(candidate), candidate, selectionSource: 'auto' });
+}
+
+
+/** A placement descriptor requests data; only the exact state above admits execution. */
+export function resolvePluginMachineProjectionTarget(params: Parameters<typeof resolvePluginMachineExecutionOriginState>[0] & Readonly<{
+    state: PluginMachineExecutionOriginStateV1;
+    automaticTarget?: MachineAdministrationTargetV1 | null;
+}>): MachineAdministrationTargetV1 | null {
+    if (params.contextualTarget !== undefined) return params.contextualTarget;
+    if (params.storedTarget) return params.storedTarget;
+    const targetOf = (candidate: PluginExecutionOriginCandidateV1) => {
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        return { serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId };
+    };
+    if (params.state.kind === 'selected') return targetOf(params.state.candidate);
+    if (params.storedOrigin) return params.state.kind === 'unavailable' && params.state.reasons.includes('plugin_mismatch') ? null
+        : { serverIdentityId: params.storedOrigin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(params.storedOrigin).machineId };
+    if (params.state.kind !== 'unavailable' || params.autoPick === false) return null;
+    const matchesTarget = (candidate: PluginExecutionOriginCandidateV1) => {
+        const target = targetOf(candidate);
+        return params.automaticTarget?.serverIdentityId === target.serverIdentityId && params.automaticTarget.machineId === target.machineId;
+    };
+    // Nonportable Account rows describe placement, not source custody. An
+    // establishing projection has the same read intent. Keep the incumbent
+    // in this ranking when its runtime answers with a visible refusal.
+    const descriptors = params.state.candidates.filter(candidate =>
+        (matchesTarget(candidate) || 'materialization' in candidate && !candidate.materialization.portableRelease
+            && candidate.validation.kind === 'rejected'
+            && (candidate.validation.reason === 'non_portable' || candidate.validation.reason === 'source_not_ready'))
+        && (!params.renderedVersion || getPluginExecutionOriginCandidateVersion(candidate) === params.renderedVersion));
+    const candidate = rankPluginMachineExecutionOriginCandidates(params, descriptors, descriptors.find(matchesTarget));
+    return candidate ? targetOf(candidate) : null;
 }

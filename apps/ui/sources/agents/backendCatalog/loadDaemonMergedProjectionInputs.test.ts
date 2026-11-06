@@ -168,6 +168,53 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it('shares one admission and boundary parse across presented section consumers in a 20-Machine fleet', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const machines = Array.from({ length: 20 }, (_, index) => createMachineFixture({ id: `fleet-${index}` }));
+        storage.getState().applyMachines(machines, true, { sourceServerId: 'server-1' });
+        const snapshot = (generation: number) => buildDeferredDaemonProjectionSections(
+            DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                projectionDigest: String(generation).repeat(64), projection: { ...daemonProjection(generation),
+                    agentsById: { codex: { id: 'codex', title: `Codex ${generation}` } },
+                } }));
+        let current = snapshot(1);
+        const reads: { machineId: string; digest?: string }[] = [];
+        network.setRpcAckResponder(async request => {
+            const section = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            reads.push({ machineId: request.targetId, digest: section?.digest });
+            return { ok: true, result: section ? current.read(section.digest, section.offset, section.includeDigests) : current.manifest };
+        });
+        // Observe the real boundary parser; no projection/loader logic is substituted.
+        const parse = vi.spyOn(PluginProjectionV2Schema, 'safeParse');
+        onTestFinished(() => parse.mockRestore());
+        const params = { machineId: machines[0]!.id, serverId: 'server-1', accountLifetime: account.lifetime };
+        const results = await Promise.all(Array.from({ length: 20 }, (_, index) => loadDaemonMergedProjectionCacheEntry({
+            ...params, sections: index % 2 === 0 ? ['agentsById'] : [],
+        })));
+        expect(results.every(result => result?.kind === 'ready')).toBe(true);
+        expect(reads.filter(read => read.digest === undefined)).toHaveLength(1);
+        // One packed index frame and one agent-body frame serve every reader.
+        expect(reads.filter(read => read.digest !== undefined)).toHaveLength(2);
+        expect(new Set(reads.map(read => read.machineId))).toEqual(new Set([machines[0]!.id]));
+        expect(parse).toHaveBeenCalledTimes(1);
+        expect(results[0]).toMatchObject({ inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex 1' } } } } });
+        const settled = reads.length;
+        await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'], reuseFreshReady: true });
+        expect(reads).toHaveLength(settled);
+        expect(parse).toHaveBeenCalledTimes(1);
+        current = snapshot(2);
+        // Fixture creation uses the schema too; only subsequent ingress counts.
+        parse.mockClear();
+        publishMachineContributionRegistryProjectionInvalidation(params);
+        const fresh = await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'], reuseFreshReady: true });
+        expect(fresh).toMatchObject({ inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex 2' } } } } });
+        expect(reads.filter(read => read.digest === undefined)).toHaveLength(2);
+        expect(parse).toHaveBeenCalledTimes(1);
+    });
+
     it('publishes retained plugin Network Join choices through the passive section reader without unrelated catalog renders', async () => {
         const { act } = await import('react-test-renderer');
         const { renderHook } = await import('@/dev/testkit');

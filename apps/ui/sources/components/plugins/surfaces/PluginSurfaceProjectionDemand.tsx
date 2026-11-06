@@ -4,19 +4,17 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
-import { PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { normalizeCredentialScopeServerId, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 
 /**
  * An opened Machine-backed surface needs discovery before Administration can
- * select an executable origin. Installed Account facts identify the sources to
- * ask, not permission to execute them. A plugin surface presents one selected
- * origin: every installation Machine is asked only for its installed packages
- * (the candidate facts Administration ranks), and the selected Machine for its
- * UI sections. Surfaces presenting every Machine's contributions (the Store)
- * ask each installation for its UI sections.
+ * select an executable origin. Administration ranks Account descriptors into
+ * one read intent before admitting that Machine's actual source. Surfaces
+ * presenting every Machine's contributions (the Store) ask each installation
+ * for its UI sections.
  */
 export function PluginSurfaceProjectionDemand(props: Readonly<{
     pluginId?: string;
@@ -29,9 +27,10 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const presented = props.enabled !== false && active;
     const availability = usePluginAccountAvailabilityReader(props.accountScope, props.pluginId, { enabled: presented });
     const installed = presented ? availability?.readInstalledPlugins() : null;
+    const selectedOrigin = props.pluginId !== undefined && props.presents !== 'allInstallations';
     const targets = React.useMemo(() => {
         const targets = new Map<string, MachineAdministrationTargetV1>();
-        if (presented && installed?.kind === 'available') {
+        if (presented && !selectedOrigin && installed?.kind === 'available') {
             for (const plugin of installed.plugins) {
                 if (props.pluginId !== undefined && plugin.pluginId !== props.pluginId) continue;
                 for (const installation of plugin.installations) {
@@ -42,12 +41,10 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
             }
         }
         return [...targets.entries()];
-    }, [installed, presented, props.pluginId]);
-    const selectedOrigin = props.pluginId !== undefined && props.presents !== 'allInstallations';
-    const sections = selectedOrigin ? PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS : PLUGIN_UI_SECTIONS;
-    const hosted = useHostedDemands(targets, selectedOrigin ? 'candidates' : 'presentation');
+    }, [installed, presented, props.pluginId, selectedOrigin]);
+    const hosted = useHostedDemands(targets, 'presentation');
     // Administration's uncontextual selection is plugin-scoped, so one presented body decides it for all.
-    const decides = selectedOrigin && presented && targets.length > 0;
+    const decides = selectedOrigin && presented;
     const selection = React.useMemo(() => decides ? [[props.pluginId!, props.pluginId!] as const] : [], [decides, props.pluginId]);
     const hostedSelection = useHostedDemands(selection, 'selectedOrigin');
     // One credential read per surface: Machine demands borrow their Home's lifetime (null until it binds), so
@@ -55,8 +52,8 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const homeIds = React.useMemo(() => hosted.map(([, target]) => target.serverIdentityId), [hosted]);
     const bindings = useServerCredentialAccountScopeBindings(homeIds);
     // A surface render (an Availability publication) does not redraw its unchanged Machine demands.
-    const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={sections}
-        accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted, sections]);
+    const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={PLUGIN_UI_SECTIONS}
+        accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted]);
     return <>
         {sourceDemands}
         {hostedSelection.map(([key, pluginId]) => <SelectedOriginDemand key={key} pluginId={pluginId} />)}
@@ -104,7 +101,7 @@ function releaseSourceDemand(key: string, owner: symbol): boolean {
 }
 
 function useHostedDemands<T>(targets: readonly (readonly [string, T])[],
-    question: 'candidates' | 'presentation' | 'selectedOrigin'): readonly (readonly [string, T])[] {
+    question: 'presentation' | 'selectedOrigin'): readonly (readonly [string, T])[] {
     const [owner] = React.useState(() => Symbol('source-demand-surface'));
     const targetsKey = targets.map(([key]) => `${question}:${key}`).join('\n');
     // Registration follows the key set by difference, so a key the surface keeps keeps its place (and

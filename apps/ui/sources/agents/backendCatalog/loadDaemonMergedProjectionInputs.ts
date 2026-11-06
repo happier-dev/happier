@@ -397,11 +397,11 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     };
     const requestRevision = getMachineContributionRegistryProjectionRevision(projectionScope);
     const accountScope = accountLifetime?.scope ?? null;
-    // Only the same Account, locale and demand share a pending question.
-    // Newer revisions of that question keep the existing serial admission;
-    // unrelated sections and locales never wait for its answer.
+    // Section sets hydrate the same Account/Machine/locale answer. Join its
+    // admission first; a reader missing coverage then hydrates the held manifest.
+    // Purpose-specific questions retain their existing identity.
     const requestKey = JSON.stringify([cacheKey, accountScope?.serverId ?? null, accountScope?.accountId ?? null, locale,
-        params.sections === undefined ? null : [...new Set(params.sections)].sort()]);
+        null]);
     const matchesRequest = (entry: ProjectionCacheEntry) => matchesProjectionCurrentness(entry, { projectionRevision: requestRevision, locale, accountScope });
     const incumbentRequest = LATEST_PROJECTION_REQUEST.get(requestKey);
     if (

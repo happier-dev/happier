@@ -11,7 +11,7 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useMachineAdministrationTargetSelection, type MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
@@ -53,7 +53,10 @@ export function useConnectedServicesAgents(options: Options) {
         serverId: options.agents === 'load' ? sourceTarget?.serverIdentityId : appShellProjection.serverId,
         enabled: presented && Boolean(options.agents === 'load' ? catalogMachineId : projectionMachineId),
         load: options.agents === 'load',
-        sections: ['agentsById', ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS],
+        // Presented Connect surfaces also offer the source's setup UI and Actions.
+        // Discover those from the same selected Machine, including Machine-only plugins.
+        sections: options.agents === 'load' ? ['agentsById', ...PLUGIN_UI_SECTIONS]
+            : ['agentsById', ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS],
     });
     const agentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
         enabledAgentIds: AGENT_IDS,

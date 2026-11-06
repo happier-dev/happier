@@ -428,7 +428,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     buildApprovalHref(authoringApproval.approvalId!, props.serverId),
                 )} /> : null}
             {snapshot ? <SourceControlStaleSnapshotNotice error={error} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
-            <InputTypePickerHostProvider enabled={presented} machineId={props.machineId} serverId={props.serverId}
+            <InputTypePickerHostProvider enabled={presented} requiresPluginTypes={false} machineId={props.machineId} serverId={props.serverId}
                 contextKey={JSON.stringify([props.serverId, props.machineId, props.rootPath])}>
             <WorkspaceScmReviewBody activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={scopeDetail}
                 hostSwitch={props.hostSwitch}

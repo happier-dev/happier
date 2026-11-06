@@ -18,7 +18,7 @@ import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/r
 import { resolveFleetSnapshotMachineRejection } from './fleetUnion';
 import { readPluginExecutionOriginMachineTargets, createPluginMachineExecutionOriginMachineFacts,
     buildPluginMachineExecutionOriginCandidates, buildPluginMachineSourceExecutionOriginCandidates,
-    combinePluginMachineExecutionOriginCandidates, resolvePluginMachineExecutionOriginState,
+    combinePluginMachineExecutionOriginCandidates, resolvePluginMachineExecutionOriginState, resolvePluginMachineProjectionTarget,
     type PluginMachineReleaseClassificationV1, type PluginMachineExecutionOriginRejectionV1,
     type PluginExecutionOriginCandidateV1, type PluginMachineExecutionOriginStateV1,
     type PluginMachineSourceExecutionOriginCandidateV1, type PluginExecutionOriginMachineFactReader,
@@ -44,6 +44,7 @@ export type PluginExecutionOriginDescriptiveInputs = Readonly<{
 export type PluginExecutionOriginDescriptiveSelection = Readonly<{
     candidates: readonly PluginExecutionOriginCandidateV1[];
     state: PluginMachineExecutionOriginStateV1;
+    projectionTarget: MachineAdministrationTargetV1 | null;
     loading: boolean;
 }>;
 
@@ -357,7 +358,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 machineSnapshots: inventory.snapshots, readMachineFact: inventory.readMachineFact })));
         const presence = rememberedTarget ? inventory.readMachineFact(rememberedTarget).rejection
             ?? spec.machineRejections?.find(entry => sameTarget(entry, rememberedTarget))?.reason ?? null : null;
-        const resolved = resolvePluginMachineExecutionOriginState({ pluginId: demand.inputs.pluginId,
+        const selectionInputs = { pluginId: demand.inputs.pluginId,
             storedOrigin: spec.storedOrigin, storedTarget, homeServerIdentityId: spec.homeServerIdentityId, candidates,
             automaticOrigin: previous && previous.inputs.pluginId === demand.inputs.pluginId
                 && previous.inputs.accountLifetime === demand.inputs.accountLifetime
@@ -369,11 +370,17 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 demand.inputs.materializations, spec.installedPlugins),
             lastUsedTarget,
             inventoryPending: inventory.pendingHomes.has(rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId ?? ''),
-        });
+        };
+        const resolved = resolvePluginMachineExecutionOriginState(selectionInputs);
         const state = retainDescriptiveState(previous?.value.state, resolved);
+        const proposedTarget = resolvePluginMachineProjectionTarget({ ...selectionInputs, state,
+            automaticTarget: previous?.value.projectionTarget });
+        const projectionTarget = previous && sameTarget(previous.value.projectionTarget, proposedTarget)
+            ? previous.value.projectionTarget : proposedTarget;
         const loading = readLoading(state);
-        const value = previous?.value.candidates === candidates && previous.value.state === state && previous.value.loading === loading
-            ? previous.value : Object.freeze({ candidates, state, loading });
+        const value = previous?.value.candidates === candidates && previous.value.state === state
+            && previous.value.projectionTarget === projectionTarget && previous.value.loading === loading
+            ? previous.value : Object.freeze({ candidates, state, projectionTarget, loading });
         demand.description = { inputs: demand.inputs, key, eligibilityKey, storedTarget, lastUsedTarget, value };
         return value;
     }

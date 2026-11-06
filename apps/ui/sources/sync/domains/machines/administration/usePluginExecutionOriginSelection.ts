@@ -238,6 +238,8 @@ export type PluginMachineExecutionOriginSelectionV1 = Readonly<{
     machineCandidates?: readonly MachineAdministrationCandidateV1[];
     state: PluginMachineExecutionOriginStateV1;
     selectedOrigin: PluginMachineExecutionOriginV1 | null;
+    /** Descriptive acquisition intent; this grants no execution authority. */
+    projectionTarget?: MachineAdministrationTargetV1 | null;
     /** Explicit device/Home Machine intent survives an unavailable current source. */
     storedTarget?: MachineAdministrationTargetV1 | null;
     /** Account availability has not been read yet: "no Machine" is not yet an answer. */
@@ -359,6 +361,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     const machineFactsKey = semanticMachineSelection.key;
     const candidates = semanticMachineSelection.selection?.candidates ?? EMPTY_PLUGIN_EXECUTION_CANDIDATES;
     const state = semanticMachineSelection.selection?.state ?? EMPTY_PLUGIN_EXECUTION_STATE;
+    const projectionTarget = enabled ? semanticMachineSelection.selection?.projectionTarget ?? null : null;
     const loading = enabled && (semanticMachineSelection.selection?.loading ?? true);
     const currentParamsRef = React.useRef(params);
     currentParamsRef.current = params;
@@ -508,6 +511,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         machineCandidates,
         state,
         storedTarget,
+        projectionTarget,
         loading,
         selectedOrigin: enabled ? state.kind === 'selected' ? state.origin : state.kind === 'unavailable' ? state.storedOrigin : storedOrigin : null,
         get canExecute() { return readCanExecute(); },
@@ -525,6 +529,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         state,
         storedOrigin,
         storedTarget,
+        projectionTarget,
         loading,
     ]);
 }

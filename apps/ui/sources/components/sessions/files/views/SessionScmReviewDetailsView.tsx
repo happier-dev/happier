@@ -1030,7 +1030,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
     };
 
     return (
-      <InputTypePickerHostProvider enabled={props.active !== false} sessionId={props.sessionId} serverId={props.serverId}
+      <InputTypePickerHostProvider enabled={props.active !== false} requiresPluginTypes={false} sessionId={props.sessionId} serverId={props.serverId}
         contextKey={JSON.stringify([props.serverId, props.sessionId, reviewScope?.machineId, reviewScope?.rootPath])}>
       <WorkspaceScmReviewBody
         activeReviewFile={activeReviewFile}

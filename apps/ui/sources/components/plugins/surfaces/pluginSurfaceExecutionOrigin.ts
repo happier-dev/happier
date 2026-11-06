@@ -158,7 +158,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     const requestedTarget = params.enabled && accountLifetime?.isCurrent() === true ? selection.storedTarget ?? (demandOrigin ? {
         serverIdentityId: demandOrigin.serverIdentityId,
         machineId: getPluginMachineExecutionOriginRef(demandOrigin).machineId,
-    } : contextualTarget ?? null) : null;
+    } : selection.projectionTarget ?? contextualTarget ?? null) : null;
     const choiceKey = JSON.stringify([params.pluginId, selection.storedTarget ?? null,
         contextualTarget === undefined ? 'automatic' : contextualTarget]);
     const mountedDemand = React.useRef<Readonly<{

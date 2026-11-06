@@ -6,7 +6,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 
 import { useDaemonMergedProjectionInputs, type DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 // Unknown presence needs the first acquisition; execution still requires
@@ -48,7 +48,7 @@ export function readPluginPresentedExecutionOriginProjectionTargets(
 }
 
 function PluginOriginProjectionDemand(props: Readonly<{ target: MachineAdministrationTargetV1 }>) {
-    usePluginExecutionOriginProjectionDemand(props.target, { observe: false });
+    usePluginExecutionOriginProjectionDemand(props.target, { sections: PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS, observe: false });
     return null;
 }
 

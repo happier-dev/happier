@@ -2427,6 +2427,18 @@ Administration target remains responsible for install, installation settings,
 Secrets and Browse operations. Machine-bound plugin effects use Administration's
 per-plugin execution selector: an explicit device-local, Account/Home-scoped Machine pin,
 then automatic selection among admitted compatible installations on this Home.
+In unreleased 0.3 source, presented plugin surfaces use that same placement
+ranking to choose one Machine projection read from available Account installation
+descriptors. Presented Connect surfaces discover installed packages and UI on
+their selected Machine through their existing loader request, including installs
+absent from Account metadata. This read intent carries coordinates only; it does
+not admit an executable source. The Store requests every installation it presents. Unopened
+input pickers retain available presentation without acquiring Machine sections;
+opening a picker requests its descriptors, and picking acquires the current
+exact producer. Presented origin rows request package facts without unopened
+UI bodies. The existing loader shares admission across section consumers on
+one Account/Machine/locale and widens missing coverage from its held manifest;
+invalidation still requests a fresh generation and boundary validation remains.
 In current 0.3 development source, a scoped row whose content has opened may be
 selected while unrelated Machine hydration continues. Fleet consumes the inventory
 owner's row qualification; presence alone does not admit execution. With no qualified

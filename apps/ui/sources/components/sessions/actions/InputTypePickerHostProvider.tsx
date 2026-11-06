@@ -6,7 +6,7 @@ import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plug
 import { normalizeExecutableParticipantSelectionV1, type ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { readReusableDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { loadDaemonMergedProjectionCacheEntry, readReusableDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -56,9 +56,24 @@ function normalizeParticipantChoice(value: unknown): ExecutableParticipantSelect
     return selections.every((selection): selection is ExecutableParticipantSelectionV1 => selection !== null) ? selections : null;
 }
 
+const INPUT_PICKER_SECTIONS = ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'] as const;
+const InputTypeProjectionDemandContext = React.createContext<(() => () => void) | null>(null);
+
+/** Host menus acquire their descriptor inventory only while their choices are presented. */
+export function useInputTypePickerProjectionDemand(presented: boolean): void {
+    const acquire = React.useContext(InputTypeProjectionDemandContext);
+    React.useLayoutEffect(() => presented ? acquire?.() : undefined, [acquire, presented]);
+}
+
 /** A leaf-only adapter over the daemon's existing admitted input-type projection. */
 export function InputTypePickerHostProvider(props: HostProps): React.ReactElement {
     const inherited = useHappierInputPickerPort();
+    const inheritedDemand = React.useContext(InputTypeProjectionDemandContext);
+    const [projectionDemands, setProjectionDemands] = React.useState(0);
+    const acquireProjectionDemand = React.useCallback(() => {
+        setProjectionDemands(count => count + 1);
+        return () => setProjectionDemands(count => count - 1);
+    }, []);
     const serverId = props.serverId?.trim() || null;
     const routed = useServerCredentialAccountScopeBindings(serverId ? [serverId] : []);
     const accountLifetime = props.accountLifetime ?? (serverId
@@ -69,8 +84,9 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
         : props.machineId ?? sessionTarget?.machineId ?? (props.sessionId || !accountLifetime ? null
             : resolveUiAccountActionFallbackMachineId(accountLifetime.scope));
     const state = useDaemonMergedProjectionInputs({ machineId, serverId,
-        sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
-        enabled: props.enabled && props.requiresPluginTypes !== false && !inherited && props.pluginUiProjection === undefined });
+        sections: INPUT_PICKER_SECTIONS,
+        load: props.requiresPluginTypes !== false || projectionDemands > 0,
+        enabled: props.enabled && !inherited && props.pluginUiProjection === undefined });
     const current = React.useRef({ props, accountLifetime, machineId, serverId, state });
     current.current = { props, accountLifetime, machineId, serverId, state };
     const port = React.useMemo(() => {
@@ -104,18 +120,21 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             const projection = now.props.pluginUiProjection !== undefined || now.state.phase === 'ready'
                 ? readReusableDaemonMergedProjectionCacheEntry({
                     machineId: producerMachineId, serverId: now.serverId, accountLifetime: now.accountLifetime,
-                    sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
+                    sections: INPUT_PICKER_SECTIONS,
                 }) : null;
             const inputs = projection?.kind === 'ready' ? projection.inputs : null;
-            const entry = inputs?.pluginProjectionV2?.familiesById.inputTypes?.entriesById[`${identity.pluginId}/${identity.localId}`];
-            if (now.props.pluginUiProjection !== undefined && !fieldTarget?.sessionId && declaredType?.occurrenceId !== entry?.occurrenceId) return null;
-            return inputs ? { ...now, machineId: producerMachineId, inputs } : null;
+            return { ...now, machineId: producerMachineId, inputs, declaredType,
+                supplied: now.props.pluginUiProjection !== undefined && !fieldTarget?.sessionId };
         };
-        const entryFor = (identity: PluginContributionIdentityV1, field?: Pick<InputFieldHint, 'path'>) => {
+        const entryFor = (identity: PluginContributionIdentityV1, field?: Pick<InputFieldHint, 'path'>, requireInputs = false) => {
             const now = read(identity, field);
-            const entry = now?.inputs.pluginProjectionV2?.familiesById.inputTypes?.entriesById[`${identity.pluginId}/${identity.localId}`];
-            const plugin = now?.inputs.pluginProjectionById[identity.pluginId];
-            return now && entry?.occurrenceId && plugin?.enabled === true ? { now, entry } : null;
+            const projectedEntry = now?.inputs?.pluginProjectionV2?.familiesById.inputTypes?.entriesById[`${identity.pluginId}/${identity.localId}`];
+            const supplied = now?.supplied === true && !requireInputs && !now.inputs;
+            const entry = supplied ? now?.declaredType : projectedEntry;
+            if (now?.supplied && now.declaredType?.occurrenceId !== entry?.occurrenceId) return null;
+            const plugin = supplied ? now?.props.pluginUiProjection?.installedPackagesById[identity.pluginId]
+                : now?.inputs?.pluginProjectionById[identity.pluginId];
+            return now && entry?.occurrenceId && plugin?.enabled === true ? { now, entry, supplied } : null;
         };
         return createInputTypePickerPort({
             readInputTypes: field => {
@@ -124,7 +143,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                 if (now.props.pluginUiProjection !== undefined && !target) return now.props.pluginUiProjection?.inputTypesById;
                 const projection = target?.machineId ? readReusableDaemonMergedProjectionCacheEntry({
                     machineId: target.machineId, serverId: now.serverId, accountLifetime: now.accountLifetime,
-                    sections: ['familiesById.inputTypes', 'familiesById.pluginUi', 'actionsById', 'resourcesById'],
+                    sections: INPUT_PICKER_SECTIONS,
                 }) : null;
                 const inputs = target ? projection?.kind === 'ready' ? projection.inputs : null : now.state.inputs;
                 return inputs?.pluginProjectionV2?.familiesById.inputTypes?.entriesById;
@@ -178,11 +197,20 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                 const surface = admitted.entry.pickerSurface;
                 return declared.pluginId === picker.pluginId && declared.localId === picker.localId
                     && surface?.selectedRenderer.availability.state === 'available'
-                    && surface.projectionGeneration === admitted.now.inputs.pluginProjectionV2?.generation
+                    && (admitted.supplied || surface.projectionGeneration === admitted.now.inputs?.pluginProjectionV2?.generation)
                     && readPluginSurfaceEphemeralMountBinding(surface) !== null;
             },
             openPicker: async (request, field) => {
-                const admitted = entryFor(request.type.identity, field);
+                const descriptor = entryFor(request.type.identity, field);
+                if (!descriptor?.now.accountLifetime || request.signal.aborted
+                    || descriptor.entry.occurrenceId !== request.type.occurrenceId) return { kind: 'cancelled' };
+                await loadDaemonMergedProjectionCacheEntry({ machineId: descriptor.now.machineId,
+                    serverId: descriptor.now.serverId, accountLifetime: descriptor.now.accountLifetime,
+                    sections: INPUT_PICKER_SECTIONS, reuseFreshReady: true, signal: request.signal });
+                const currentEntry = entryFor(request.type.identity, field, true);
+                const inputs = currentEntry?.now.inputs;
+                if (!currentEntry || !inputs || request.signal.aborted) return { kind: 'cancelled' };
+                const admitted = { ...currentEntry, now: { ...currentEntry.now, inputs } };
                 const surface = admitted?.entry.pickerSurface;
                 if (!admitted || !surface || admitted.entry.occurrenceId !== request.type.occurrenceId
                     || surface.selectedRenderer.availability.state !== 'available') return { kind: 'cancelled' };
@@ -213,5 +241,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             pick: request => request.field.inputType && 'hostType' in request.field.inputType ? inherited.pick(request) : port.pick(request),
         };
     }, [inherited, port, props.enabled, props.pluginUiProjection, props.fieldTargets]);
-    return <HappierInputPickerProvider port={composed}>{props.children}</HappierInputPickerProvider>;
+    return <InputTypeProjectionDemandContext.Provider value={composed === inherited ? inheritedDemand : acquireProjectionDemand}>
+        <HappierInputPickerProvider port={composed}>{props.children}</HappierInputPickerProvider>
+    </InputTypeProjectionDemandContext.Provider>;
 }

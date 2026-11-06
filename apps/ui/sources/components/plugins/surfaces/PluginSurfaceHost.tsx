@@ -4515,6 +4515,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         <PluginSurfacePresentation lifetime={controller}>
         <InputTypePickerHostProvider enabled={renderer.kind === 'reactNative'}
             machineId={machineId ?? undefined} serverId={serverId} sessionId={props.sessionId}
+            pluginUiProjection={mountedPresentationUiProjection} pluginUiMachineId={machineId ?? null}
             accountLifetime={accountLifetime ?? undefined} isCurrent={controller.isCurrent}
             contextKey={surfaceTargetAuthorityKey ?? undefined}>
             {showsExecutionOriginSelector ? <View style={[surfaceHostStyles.executionOriginBand, insideWidgetFrame ? surfaceHostStyles.executionOriginBandInWidget : null]}>

@@ -187,10 +187,11 @@ describe('PluginMachineExecutionOriginSelector header chip', () => {
         expect(screen.findHostByTestId('plugin.execution.picker-readiness:machine-a')).toBeNull();
     }));
 
-    it('re-reads a retained heartbeat at the canonical deadline and ages only the Machine presence', () => withPopoverWebGlobals(async () => {
+    it('keeps a retained Machine online until its authoritative offline push', () => withPopoverWebGlobals(async () => {
         await installLiveMachine();
+        storage.getState().applyMachines([{ ...storage.getState().machines['machine-a']!, presenceProtocolVersion: 1 }], false,
+            { sourceServerId: account!.home.id });
         vi.useFakeTimers();
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '1000');
         const fixture = createSelection();
         const screen = await renderScreen(<PluginMachineExecutionOriginSelectorView selection={{ ...fixture.selection, candidates: [fixture.candidates[0]!] }}
             presentation="chip" testIDPrefix="plugin.execution" />);
@@ -205,9 +206,12 @@ describe('PluginMachineExecutionOriginSelector header chip', () => {
         expect(screen.getTextContent()).toContain('settingsOverview.machineOnline');
         expect(screen.getTextContent()).not.toContain('settingsOverview.machineOffline');
         await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+        expect(screen.getTextContent()).toContain('settingsOverview.machineOnline');
+        await act(async () => storage.getState().applyMachineActivityUpdates([{ id: 'machine-a', active: false, activeAt: Date.now() }], { sourceServerId: account!.home.id }));
         expect(screen.getTextContent()).toContain('settingsOverview.machineOffline');
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
         await act(async () => {
-            storage.getState().applyMachines([{ ...storage.getState().machines['machine-a']!, activeAt: Date.now() }], false,
+            storage.getState().applyMachines([{ ...storage.getState().machines['machine-a']!, active: true, activeAt: Date.now() }], false,
                 { sourceServerId: account!.home.id });
         });
         expect(screen.getTextContent()).toContain('settingsOverview.machineOnline');

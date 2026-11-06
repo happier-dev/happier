@@ -13,6 +13,7 @@ import { Modal } from '@/modal';
 import { useHappierInputPicker, useHappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
 import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm/comparison';
 import { resolveSemanticInputTypePickerReference } from '@/components/sessions/actions/inputTypePickerPort';
+import { useInputTypePickerProjectionDemand } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
 import { filesComparisonScopeOptionKey, type FilesComparisonScopeOption } from './filesComparison';
 
@@ -46,6 +47,7 @@ export type ScmComparisonScopePickerProps = Readonly<{
 export const ScmComparisonScopePicker = React.memo(function ScmComparisonScopePicker(props: ScmComparisonScopePickerProps) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
+    useInputTypePickerProjectionDemand(open);
     const inputType = resolveSemanticInputTypePickerReference(useHappierInputPickerPort(), 'scmPullRequestComparison', { path: 'comparison' });
     // The contributed source picker returns into this mounted comparison; the host never parses a PR URL.
     const pullRequests = useHappierInputPicker({
