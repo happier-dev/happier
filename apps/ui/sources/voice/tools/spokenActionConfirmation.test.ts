@@ -41,4 +41,31 @@ describe('live carrier spoken Action read-back binding', () => {
     expect(carrier.readPending()).toBeNull();
   });
 
+  it('retires the one binding with the actual call lifetime without publishing speech progress to React', async () => {
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests, getVoiceSessionSpokenActionConfirmation,
+      useVoiceSessionStore } = await import('@/voice/session/voiceSessionStore');
+    resetVoiceSessionStoreForTests();
+    try {
+      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'person-call',
+        status: 'connected', mode: 'listening', canStop: true });
+      const carrier = getVoiceSessionSpokenActionConfirmation();
+      expect(carrier).not.toBeNull();
+      if (!carrier) throw new Error('Missing live call');
+      let publications = 0;
+      const unsubscribe = useVoiceSessionStore.subscribe(() => { publications++; });
+      try {
+        carrier.prepare(operation('channel-one'));
+        carrier.completeReadBack(carrier.readPending());
+        expect(publications).toBe(0);
+      } finally { unsubscribe(); }
+      setVoiceSessionSnapshot({ adapterId: null, sessionId: null,
+        status: 'disconnected', mode: 'idle', canStop: false });
+      expect(carrier.readPending()).toBeNull();
+      expect(getVoiceSessionSpokenActionConfirmation()).toBeNull();
+      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'person-call',
+        status: 'connected', mode: 'listening', canStop: true });
+      expect(getVoiceSessionSpokenActionConfirmation()).not.toBe(carrier);
+      expect(getVoiceSessionSpokenActionConfirmation()?.readPending()).toBeNull();
+    } finally { resetVoiceSessionStoreForTests(); }
+  });
 });
