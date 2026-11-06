@@ -14,6 +14,14 @@ function resolveStackServerLogLevel({ baseEnv }) {
   return 'warn';
 }
 
+/** QA stacks share storage infrastructure, but each owns its Socket.IO cluster. */
+export function resolveStackSocketAdapterScope(env) {
+  const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim();
+  return /^(?:repo-dev-|agent-qa-)/.test(stackName)
+    ? `hstack:${stackName}`
+    : env.HAPPIER_SOCKET_ADAPTER_SCOPE;
+}
+
 export function buildServerRuntimeEnv({
   baseEnv,
   serverPort,
@@ -28,6 +36,7 @@ export function buildServerRuntimeEnv({
   // The Stack URL owner has already selected the signing identity. Project it unchanged.
   const nextEnv = {
     ...baseEnv,
+    HAPPIER_SOCKET_ADAPTER_SCOPE: resolveStackSocketAdapterScope(baseEnv),
     PORT: String(serverPort),
     HAPPIER_CANONICAL_SERVER_URL: canonicalServerUrl,
     HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,

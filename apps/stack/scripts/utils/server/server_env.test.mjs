@@ -2,6 +2,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildServerRuntimeEnv } from './server_env.mjs';
+import { resolveRemoteServerRuntimeConfig } from '../dev_targets/server_environment.mjs';
+
+test('repo-dev and agent QA stacks have stable, distinct socket adapter scopes', () => {
+  const build = (stackName) => buildServerRuntimeEnv({
+    baseEnv: { HAPPIER_STACK_STACK: stackName }, serverPort: 3005,
+    publicServerUrl: 'http://localhost:3005',
+  });
+  const dev = build('repo-dev-a1cc5e0671').HAPPIER_SOCKET_ADAPTER_SCOPE;
+  const qa = build('agent-qa-redis-isolation').HAPPIER_SOCKET_ADAPTER_SCOPE;
+  assert.ok(dev);
+  assert.ok(qa);
+  assert.notEqual(dev, qa);
+  assert.equal(build('repo-dev-a1cc5e0671').HAPPIER_SOCKET_ADAPTER_SCOPE, dev);
+  assert.equal(build('agent-qa-redis-isolation').HAPPIER_SOCKET_ADAPTER_SCOPE, qa);
+  assert.notEqual(build('agent-qa-another').HAPPIER_SOCKET_ADAPTER_SCOPE, qa);
+  assert.equal(build('main').HAPPIER_SOCKET_ADAPTER_SCOPE, undefined);
+  assert.equal(build('repo-remote-dev-d72117acdb').HAPPIER_SOCKET_ADAPTER_SCOPE, undefined);
+});
+
+test('placed source servers keep their controller stack scope after target identity projection', () => {
+  const baseEnv = { HAPPIER_STACK_STACK: 'agent-qa-redis-isolation' };
+  const config = resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light', env: baseEnv });
+  const target = buildServerRuntimeEnv({
+    baseEnv: { ...config.environment, HAPPIER_STACK_STACK: 'dev-target-linux-fingerprint' },
+    serverPort: 3005, publicServerUrl: 'http://localhost:3005',
+  });
+  const controller = buildServerRuntimeEnv({ baseEnv, serverPort: 3005, publicServerUrl: 'http://localhost:3005' });
+  assert.ok(controller.HAPPIER_SOCKET_ADAPTER_SCOPE);
+  assert.equal(target.HAPPIER_SOCKET_ADAPTER_SCOPE, controller.HAPPIER_SOCKET_ADAPTER_SCOPE);
+});
 
 test('server projection consumes the canonical decision without reselecting ambient origins', () => {
   const selected = ['https:', '', 'selected.example.test'].join('/');

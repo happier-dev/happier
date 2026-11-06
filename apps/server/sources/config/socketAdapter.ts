@@ -16,7 +16,7 @@ export const DEFAULT_REDIS_STREAMS_ADAPTER_READ_COUNT = 2_000;
  */
 export const REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS = 100;
 
-/** Preserved upstream/current names; this is not a new namespace feature. */
+/** Unscoped deployments retain the upstream/current shared names. */
 export const REDIS_STREAMS_ADAPTER_STREAM_NAME = "socket.io";
 export const REDIS_STREAMS_ADAPTER_CHANNEL_PREFIX = "socket.io";
 
@@ -25,7 +25,7 @@ export const REDIS_STREAMS_ADAPTER_STREAM_COUNT = 1;
 
 /**
  * The complete adapter configuration Happier constructs. Every value is fixed
- * except the two long-standing `maxLen`/`readCount` environment tunables, so
+ * except the optional cluster scope and the `maxLen`/`readCount` tunables, so
  * there is exactly one option projection and no socket-local literals.
  */
 export type RedisStreamsAdapterRuntimeOptions = Required<Pick<
@@ -45,10 +45,12 @@ type EnvLike = Record<string, string | undefined>;
 export function readRedisStreamsAdapterOptionsFromEnv(
     env: EnvLike,
 ): RedisStreamsAdapterRuntimeOptions {
+    const scope = env.HAPPIER_SOCKET_ADAPTER_SCOPE?.trim();
+    const suffix = scope ? `:${scope}` : '';
     return {
-        streamName: REDIS_STREAMS_ADAPTER_STREAM_NAME,
+        streamName: `${REDIS_STREAMS_ADAPTER_STREAM_NAME}${suffix}`,
         streamCount: REDIS_STREAMS_ADAPTER_STREAM_COUNT,
-        channelPrefix: REDIS_STREAMS_ADAPTER_CHANNEL_PREFIX,
+        channelPrefix: `${REDIS_STREAMS_ADAPTER_CHANNEL_PREFIX}${suffix}`,
         // Sharded Pub/Sub would require Redis 7 shard-channel commands and ACL
         // surface with no current consumer.
         useShardedPubSub: false,

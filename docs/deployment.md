@@ -192,8 +192,10 @@ after provisioning changes so running processes consume the new settings.
 
 Sharing a database alone does not share Socket.IO fanout: in-memory adapters keep
 Machine activity/presence ephemerals and updates inside each server process.
-Servers connected to the shared Redis Streams cluster fan those events out to
-clients on other servers. `SERVER_ROLE=all` continues to flush presence to the
+Servers connected to the same Redis Streams adapter scope fan those events out to
+clients on other servers. In unreleased 0.3 development, repo-dev and `agent-qa-*`
+stacks keep separate adapter scopes even when they share the database and Redis
+endpoint; cross-stack presence and socket events no longer fan out between them. `SERVER_ROLE=all` continues to flush presence to the
 database locally; selecting the adapter does not turn it into an API/worker split.
 
 ## Environment variables
@@ -421,6 +423,26 @@ unavailable is never replayed after Redis recovers: the caller receives its
 existing timeout/error and retries if the operation is still wanted. RPC target
 discovery, external-action routing, and peer/tunnel coordination all consume
 this path, so it is load-bearing beyond human presence.
+
+### Development stack isolation
+
+In unreleased 0.3 development, Stack derives `HAPPIER_SOCKET_ADAPTER_SCOPE` as
+`hstack:<stack-name>` for `repo-dev-*` and `agent-qa-*` stacks. The server's one
+adapter option projection appends this scope to both `streamName` and
+`channelPrefix`: `socket.io:hstack:<stack-name>`. Ordinary broadcasts and RPC
+census/control traffic therefore stay inside that stack on the existing Redis
+instance. Source-mode remote placement projects the controller's scope before
+assigning its target-local runtime identity; replicas of one stack share a scope.
+API processes and split workers serving one stack must use the same scope.
+Unscoped deployments retain `socket.io` for both backplanes.
+
+This takes effect at each stack's next restart; changing source does not move a
+running adapter. Restart repo-dev and the 0.3 `agent-qa-*` stacks through their
+lifecycle owners. Old and restarted stacks can coexist: old processes keep their
+shared scope while restarted stacks join only their own scope. Old stacks remain
+exposed to each other's slow peers until restarted. The 0.2 stack is unchanged.
+If Redis uses restricted ACLs, allow the scoped stream keys and Pub/Sub channels
+in addition to the unscoped patterns below before restarting.
 
 ### Connections per API process
 

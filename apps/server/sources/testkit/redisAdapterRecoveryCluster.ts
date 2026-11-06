@@ -21,13 +21,14 @@ export function holdRedisAdapterDiscoveryRequests(io: Server) {
     const adapter = io.sockets.adapter;
     if (!(adapter instanceof ClusterAdapter)) throw new Error('Expected the real ClusterAdapter');
     // Protected upstream transport hook is the genuine external-system boundary.
-    const receiver = adapter as unknown as { onMessage(message: ClusterMessage, offset?: string): void };
+    const receiver = adapter as unknown as { readonly uid: string; onMessage(message: ClusterMessage, offset?: string): void };
     const receive = receiver.onMessage.bind(receiver);
     const held: Array<readonly [ClusterMessage, string | undefined]> = [];
     let received!: () => void;
     const firstRequest = new Promise<void>(resolve => { received = resolve; });
     const spy = vi.spyOn(receiver, 'onMessage').mockImplementation((message, offset) => {
-        if (message.type === MessageType.FETCH_SOCKETS || message.type === MessageType.SERVER_SIDE_EMIT) {
+        // Pub/Sub echoes the sender's frames; ClusterAdapter ignores those itself.
+        if (message.uid !== receiver.uid && (message.type === MessageType.FETCH_SOCKETS || message.type === MessageType.SERVER_SIDE_EMIT)) {
             held.push([message, offset]);
             received();
         } else receive(message, offset);
@@ -42,7 +43,7 @@ export function holdRedisAdapterDiscoveryRequests(io: Server) {
     };
 }
 
-export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: string; nodeCount?: 2 | 3 } = {}) {
+export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: string; nodeCount?: 2 | 3; adapterScope?: string } = {}) {
     // Recovery tests must never stop an ambient operator Redis instance.
     const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
         env: options.redisUrl ? { REDIS_URL: options.redisUrl } : {},
@@ -87,7 +88,9 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
             const httpServer = http.createServer();
             const io = new Server(httpServer, {
                 path: "/v1/updates", transports: ["websocket"], serveClient: false,
-                adapter: createAdapter(adapter, readRedisStreamsAdapterOptionsFromEnv({})),
+                adapter: createAdapter(adapter, readRedisStreamsAdapterOptionsFromEnv({
+                    HAPPIER_SOCKET_ADAPTER_SCOPE: options.adapterScope,
+                })),
             });
             servers.push(io);
             registerSocketRoomDiscovery(io);
@@ -102,7 +105,7 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
         const waitForRecovery = async () => {
             await vi.waitFor(async () => {
                 for (const node of nodes) {
-                    if (node.redis.status !== "ready" || await node.io.of("/").adapter.serverCount() !== nodeCount) {
+                    if (node.redis.status !== "ready" || await node.io.of("/").adapter.serverCount() < nodeCount) {
                         throw new Error("Waiting for both adapter subscribers");
                     }
                 }

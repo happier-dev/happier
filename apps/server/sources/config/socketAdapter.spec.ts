@@ -21,6 +21,14 @@ const FIXED_ADAPTER_OPTIONS = {
 } as const;
 
 describe("config/socketAdapter", () => {
+    it("scopes both stream broadcasts and Pub/Sub census to the selected stack", () => {
+        const scoped = readRedisStreamsAdapterOptionsFromEnv({ HAPPIER_SOCKET_ADAPTER_SCOPE: " hstack:agent-qa-test " });
+        expect(scoped.streamName).toBe("socket.io:hstack:agent-qa-test");
+        expect(scoped.channelPrefix).toBe("socket.io:hstack:agent-qa-test");
+        expect(readRedisStreamsAdapterOptionsFromEnv({ HAPPIER_SOCKET_ADAPTER_SCOPE: " " }))
+            .toEqual(readRedisStreamsAdapterOptionsFromEnv({}));
+    });
+
     it("uses the tuned redis-streams adapter defaults", () => {
         expect(readRedisStreamsAdapterOptionsFromEnv({})).toEqual({
             ...FIXED_ADAPTER_OPTIONS,
