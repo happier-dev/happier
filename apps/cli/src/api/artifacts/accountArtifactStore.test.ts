@@ -79,6 +79,50 @@ vi.mock('@/configuration', async (importOriginal) => {
 
 describe('createAccountArtifactStore', () => {
 
+  it.each(['plain', 'e2ee'] as const)('retains private skill creator through %s edits and restore, and lists it without opening bodies', async mode => {
+    const secret = randomBytes(32);
+    const creator = { kind: 'agent' as const, accountId: 'owner', sessionId: 'creator-session' };
+    const editor = { kind: 'person' as const, accountId: 'owner' };
+    const header = { v: 1, kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Skill' };
+    const body = JSON.stringify({ v: 1, entries: [{ path: 'SKILL.md', contentKind: 'utf8',
+      contentBase64: Buffer.from('---\nname: sample\ndescription: useful\n---\nInstructions').toString('base64') }], createdAtMs: 1, updatedAtMs: 1 });
+    let stored: Record<string, unknown> | undefined;
+    let first: Record<string, unknown>;
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => {
+      const input = readCarrierMutation(wire);
+      const version = Number(stored?.bodyVersion ?? 0) + 1;
+      stored = { ...stored, ...input, id: input.id ?? stored?.id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+        encryptionMode: mode, headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
+      first ??= { ...stored };
+      return { status: 200, data: { ...stored, success: true } };
+    });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === '/v1/artifacts'
+      ? [{ ...stored, body: 'body must not be opened' }]
+      : url.endsWith('/revisions') ? { retentionCount: 10, revisions: [{ bodyVersion: 1, body: first.body,
+        provenance: first.provenance, createdAt: 1, sizeBytes: 1 }] } : url.endsWith('/recipients') ? {
+          artifactId: stored?.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+          dataEncryptionKey: stored?.dataEncryptionKey, callerDataEncryptionKey: stored?.dataEncryptionKey,
+          provenanceDataEncryptionKey: stored?.provenanceDataEncryptionKey,
+          callerProvenanceDataEncryptionKey: stored?.provenanceDataEncryptionKey, recipients: [],
+        } : stored }));
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    const created = await store.create({ header, body, savedBy: creator });
+    expect((await store.read(created.artifactId))?.provenance).toEqual({ savedBy: creator, skillCreator: creator });
+    await expect(store.update({ artifactId: created.artifactId, expectedRevision: created.revision, header, body, savedBy: editor })).resolves.toMatchObject({ ok: true });
+    expect((await store.list({ includeBody: false })).items[0]).toMatchObject({ bodyVersion: 2, provenance: { savedBy: editor, skillCreator: creator } });
+    expect((await store.list({ includeBody: false })).items[0]).not.toHaveProperty('body');
+    await expect(store.revisions.restore({ artifactId: created.artifactId, bodyVersion: 1,
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 }, savedBy: editor })).resolves.toMatchObject({ ok: true });
+    expect((await store.read(created.artifactId))?.provenance).toEqual({ savedBy: editor, skillCreator: creator, restoredFromBodyVersion: 1 });
+    await expect(store.update({ artifactId: created.artifactId, expectedRevision: { headerVersion: 3, bodyVersion: 3 }, header, body }))
+      .resolves.toMatchObject({ ok: true });
+    expect((await store.read(created.artifactId))?.provenance).toEqual({ savedBy: editor, skillCreator: creator, restoredFromBodyVersion: 1 });
+    await expect(store.revisions.restore({ artifactId: created.artifactId, bodyVersion: 1,
+      expectedRevision: { headerVersion: 4, bodyVersion: 4 } })).resolves.toMatchObject({ ok: true });
+    expect((await store.read(created.artifactId))?.provenance).toEqual({ savedBy: editor, skillCreator: creator, restoredFromBodyVersion: 1 });
+  });
   it('keeps explicit requester transport on candidate creation and domain-owned update preparation', async () => {
     const store = createAccountArtifactStore({ credentials: { token: 'custodian', encryption: null },
       getAccountEncryptionMode: async () => { throw new Error('Requester operations must not borrow custodian transport'); } });

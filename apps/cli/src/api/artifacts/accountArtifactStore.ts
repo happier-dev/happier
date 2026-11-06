@@ -29,6 +29,7 @@ import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPre
 import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
 import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
+import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { createArtifactPublicLinkActionsV1, readArtifactPublicLinksV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
@@ -545,17 +546,21 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return parsed.data.provenance;
   };
-  const writeProvenance = async (input: Readonly<{ artifactId: string; bodyVersion: number; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>, stored: StoredArtifact | undefined, contentCodec: Codec): Promise<Readonly<{
+  const writeProvenance = async (input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; bodyVersion: number; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>, stored: StoredArtifact | undefined, contentCodec: Codec): Promise<Readonly<{
     wire: Readonly<{ provenance?: string; provenanceDataEncryptionKey?: string }>;
     prepareRecipients?: () => Promise<void>;
   }>> => {
     const savedBy = input.savedBy === undefined ? params.savedBy : input.savedBy;
-    if (!savedBy) return { wire: {} };
     const existing = stored ? await openProvenanceCodec(stored) : null;
+    const provenance = preserveSkillCreatorV1({ header: input.header, isCreate: !stored,
+      currentProvenance: stored ? readProvenance(existing, stored.provenance, stored.id, stored.bodyVersion) : undefined,
+      provenance: savedBy ? { savedBy, ...(input.source ? { source: input.source } : {}),
+        ...(input.restoredFromBodyVersion === undefined ? {} : { restoredFromBodyVersion: input.restoredFromBodyVersion }) } : undefined });
+    if (!provenance) return { wire: {} };
     const codec = existing ?? await createCodec({ credentials: contentCredentials,
       mode: contentCodec.mode });
     const metadata = ArtifactPrivateRevisionMetadataV1Schema.parse({ v: 1, artifactId: input.artifactId, bodyVersion: input.bodyVersion,
-      provenance: { savedBy, ...(input.source ? { source: input.source } : {}), ...(input.restoredFromBodyVersion === undefined ? {} : { restoredFromBodyVersion: input.restoredFromBodyVersion }) } });
+      provenance });
     let ownerEnvelope = codec.dataEncryptionKey;
     let prepareRecipients: (() => Promise<void>) | undefined;
     if (!existing && codec.mode === 'e2ee' && stored) {
@@ -721,7 +726,10 @@ export function createAccountArtifactStore(params: Readonly<{
       if (options?.prepareRecipients !== false) await prepare(stored, codec, options?.signal);
       await assertOwnerAccountMode(stored, undefined, { signal: options?.signal });
       options?.signal?.throwIfAborted();
+      const provenance = stored.bodyVersion === undefined ? undefined
+        : readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion);
       return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
+        ...(provenance ? { provenance } : {}),
         ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
         ownerAccountId: stored.ownerAccountId, access: stored.access, publicAudience: stored.publicAudience,
         headerVersion: stored.headerVersion, ...(stored.bodyVersion === undefined ? {} : { bodyVersion: stored.bodyVersion }),
@@ -769,24 +777,27 @@ export function createAccountArtifactStore(params: Readonly<{
       if (!header || typeof header !== 'object' || Array.isArray(header)) continue;
       const knownBodyVersion = readNonnegativeSafeInteger(value.bodyVersion);
       let content: Pick<AccountArtifactHeader, 'body' | 'bodyVersion' | 'provenance'> = knownBodyVersion === null ? {} : { bodyVersion: knownBodyVersion };
+      if (knownBodyVersion !== null) {
+        if ((value.provenance != null && typeof value.provenance !== 'string')
+          || (value.provenanceDataEncryptionKey != null && typeof value.provenanceDataEncryptionKey !== 'string')) {
+          throw new ArtifactEncryptionMaterialUnavailableError();
+        }
+        const provenance = readProvenance(await openProvenanceCodec({ encryptionMode: access.encryptionMode,
+          provenanceDataEncryptionKey: typeof value.provenanceDataEncryptionKey === 'string' ? value.provenanceDataEncryptionKey : null }),
+          typeof value.provenance === 'string' ? value.provenance : null, value.id, knownBodyVersion);
+        if (provenance) content = { ...content, provenance };
+      }
       if (options?.includeBody) {
         const bodyVersion = readNonnegativeSafeInteger(value.bodyVersion);
         if (typeof value.body === 'string' && bodyVersion !== null) {
           try {
             const body = decodeBody(codec, value.body);
             requireBodyForArtifactKind(header as Readonly<Record<string, unknown>>, body);
-            if ((value.provenance != null && typeof value.provenance !== 'string')
-              || (value.provenanceDataEncryptionKey != null && typeof value.provenanceDataEncryptionKey !== 'string')) {
-              throw new ArtifactEncryptionMaterialUnavailableError();
-            }
-            const provenance = readProvenance(await openProvenanceCodec({ encryptionMode: access.encryptionMode,
-              provenanceDataEncryptionKey: typeof value.provenanceDataEncryptionKey === 'string' ? value.provenanceDataEncryptionKey : null }),
-              typeof value.provenance === 'string' ? value.provenance : null, value.id, bodyVersion);
-            content = { body, bodyVersion, ...(provenance ? { provenance } : {}) };
+            content = { ...content, body, bodyVersion };
           } catch (error) {
             if (!(error instanceof ArtifactEncryptionMaterialUnavailableError)
               && (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'artifact_content_unavailable')) throw error;
-            content = { bodyVersion };
+            content = { ...content, bodyVersion };
           }
         }
       }
@@ -822,7 +833,7 @@ export function createAccountArtifactStore(params: Readonly<{
     const kind = await writeKind(nextHeader);
     const body = codec.encode({ body: content.body });
     const source = readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion)?.source;
-    const provenance = await writeProvenance({ artifactId: input.artifactId, bodyVersion: input.expectedRevision.bodyVersion + 1,
+    const provenance = await writeProvenance({ artifactId: input.artifactId, header: nextHeader, bodyVersion: input.expectedRevision.bodyVersion + 1,
       savedBy: input.savedBy, source, signal: input.signal,
       mutationAuthorizationHeaders: input.mutationAuthorizationHeaders, authorizationHeaders: input.authorizationHeaders }, stored, codec);
 
@@ -1146,7 +1157,7 @@ export function createAccountArtifactStore(params: Readonly<{
           nextRevision: { headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion + 1 },
           shared: (await sharedWriteContext(stored, header as Readonly<Record<string, unknown>>, header as Readonly<Record<string, unknown>>, signal, retained.body))?.shared });
         signal?.throwIfAborted();
-        const provenance = await writeProvenance({ artifactId: input.artifactId, bodyVersion: stored.bodyVersion + 1,
+        const provenance = await writeProvenance({ artifactId: input.artifactId, header: nextHeader, bodyVersion: stored.bodyVersion + 1,
           savedBy: input.savedBy, source: retained.provenance?.source, restoredFromBodyVersion: input.bodyVersion, signal }, stored, codec);
         const kind = await writeKind(nextHeader);
         await assertOwnerAccountMode(stored, undefined, { signal });
@@ -1224,7 +1235,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const header = codec.encode(nextHeader);
       const kind = await writeKind(nextHeader);
       const body = codec.encode({ body: content.body });
-      const provenance = (await writeProvenance({ artifactId, bodyVersion: 1, savedBy: input.savedBy, source: input.source, signal: input.signal }, undefined, codec)).wire;
+      const provenance = (await writeProvenance({ artifactId, header: nextHeader, bodyVersion: 1, savedBy: input.savedBy, source: input.source, signal: input.signal }, undefined, codec)).wire;
       // Host-owned admission is rechecked after preparation's last await and
       // immediately before the first HTTP write. It is never a persisted field.
       if (input.beforeWrite) await input.beforeWrite();
