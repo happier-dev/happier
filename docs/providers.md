@@ -87,6 +87,26 @@ Responses preserve insertion bytes and actual reported token usage. An absent co
 stays unknown; no pricing estimate is presented as an actual charge. Upstream error
 bodies, prompts, credentials and generated text are not logged by this path.
 
+### Connection usage and credits (0.3 development)
+
+`ProviderConnectionDetailScreen` mounts `ProviderConnectionUsageSection` for
+connections with declared usage sources. The section groups money rows by
+**This key** and **Account**, shows the observation date and Refresh, and binds
+separate billing credentials through the existing Saved Secret controls. Its
+resource dispatches through the real Action client and rejects stale
+Account/Home/Machine/connection lifetimes. First presented demand acquires once;
+overlapping settings and expanded model-source detail consumers share that
+request at the existing account-usage resource owner. The key includes the
+current Home, Account, Machine and the usage source, endpoint, parser and selected
+credential facts consumed by acquisition. Connection renames, presentation-only
+declaration edits, revision-only changes and unrelated credential slots preserve
+the shared observation, including across focus changes and consumer remounts.
+Hidden demand starts nothing, and the last remaining demand owns cancellation.
+Ordinary refresh/failure retains dated last-known-good facts; credential or
+authority retirement clears them. Automatic acquisition uses the executor's
+non-interactive presentation constraint: when policy requires approval, it stops
+without creating a prompt. Explicit Refresh retains the normal approval policy.
+
 ### Provider contributions
 
 `ProviderContributionV1` is plugin-owned, declarative, and immutable at runtime. It contains provider facts:
