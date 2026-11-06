@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { ClaudePoolSettings } from '@/agents/providers/claude/connectedServices/ClaudePoolSettings';
 
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { buildClaudeSessionComposerNextMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeSessionComposerNextMessageMetaOverrides';
@@ -17,9 +16,20 @@ import { isClaudeUnifiedAttachedSessionTerminalAvailable } from '@/agents/provid
 import { resolveClaudePendingDeliveryLabelKey } from '@/agents/providers/claude/pendingDeliveryPresentation';
 import { isCurrentPendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 
+// The state store reaches this module through the agent catalog, so a settings row imported eagerly
+// here closes storage -> catalog -> Item -> layout -> storage at module load. Loaded on first render.
+const ClaudePoolSettings = React.lazy(async () => {
+    const { ClaudePoolSettings: Component } = await import('@/agents/providers/claude/connectedServices/ClaudePoolSettings');
+    return { default: Component };
+});
+
 export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     connectedServices: {
-        renderPoolSettings: (props) => <ClaudePoolSettings {...props} />,
+        renderPoolSettings: (props) => (
+            <React.Suspense fallback={null}>
+                <ClaudePoolSettings {...props} />
+            </React.Suspense>
+        ),
     },
     pendingDelivery: {
         resolveLabelKey: ({ session, localId, detail }) => resolveClaudePendingDeliveryLabelKey({
