@@ -21,7 +21,8 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { fetchAccountEncryptionIdentity, type AccountEncryptionReadUsage } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionIdentity, invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -378,7 +379,6 @@ export async function prepareCollectionOperation(
     options: ActivePluginCollectionOperationOptionsV1 | undefined,
     accountLifetime?: ActiveServerAccountScopeLifetime,
     invocationSignal?: AbortSignal,
-    usage: AccountEncryptionReadUsage = 'fresh-authority',
 ): Promise<PreparedCollectionOperationOutcome> {
     if (options?.signal?.aborted || invocationSignal?.aborted) return unavailable('operation-cancelled');
     const lifetime = accountLifetime ?? captureActiveServerAccountScopeLifetime();
@@ -430,12 +430,12 @@ export async function prepareCollectionOperation(
 
         const credentials = capturedAuthority.context.credentials ?? { token: capturedAuthority.context.token };
         const currentness = await fetchAccountEncryptionIdentity(credentials, {
-            // The captured request retains its exact Home/credential observation;
-            // wrapping it would erase that binding. Writers and exact witnesses
-            // retain fresh authority unless a read explicitly selects identity.
+            // Every plugin operation borrows its Account's admitted identity.
+            // Socket updates/reconnect own re-admission; the Data server still
+            // enforces persisted mode and each envelope is checked below.
             request: capturedAuthority.request,
             signal: controller.signal,
-            usage,
+            usage: 'identity',
         });
         const currentnessAfterRead = isScopeAndServerCurrent(lifetime, serverSnapshot);
         if (currentnessAfterRead) {
@@ -506,6 +506,9 @@ export async function requestCollectionOperation(input: Readonly<{
     }
     const beforeRequest = getPreparedCollectionOperationCurrentness(input.operation);
     if (beforeRequest) return unavailable(beforeRequest);
+    const credentials = input.operation.authority.context.credentials ?? { token: input.operation.authority.context.token };
+    const observation = readAccountEncryptionObservationBinding(input.operation.authority.request, credentials);
+    const observedIdentity = observation?.peek();
     // The prepared operation signal only carries the cancellation known when the
     // operation was prepared. A per-request signal — a transaction's composed
     // participant cancellation, for example — reaches the transport only if it
@@ -544,6 +547,13 @@ export async function requestCollectionOperation(input: Readonly<{
             input.operation.serverSnapshot,
         );
         if (input.kind !== 'mutation' && currentnessAfterBody) return unavailable(currentnessAfterBody);
+        const refusal = !response.ok ? PluginCollectionReadErrorV1Schema.safeParse(body) : null;
+        if (refusal?.success && refusal.data.error === 'collection_content_mode_mismatch'
+            && observedIdentity && observation?.peek() === observedIdentity) {
+            // The server refused this admitted identity. Withdraw it once, without
+            // replacing a newer push or fetching until another reader needs it.
+            invalidateAccountEncryptionModeCache({ serverId: input.operation.authority.scope.serverId });
+        }
         return { status: 'response', ok: response.ok, httpStatus: response.httpStatus, body };
     } catch {
         // An interrupted mutation stays outcome-unknown: cancelling the request
@@ -732,13 +742,12 @@ export async function createActivePluginCollectionClientForContractRef<
     /** The bound facade's current release admission, rechecked before effects. */
     assertAdmitted?: () => void;
     signal?: AbortSignal;
-    /** Writer admission is fresh by default; read-only callers may share pending raw acquisition. */
+    /** Exact Data reads bypass pending acquisition sharing; Account identity stays admitted. */
     fresh?: boolean;
 }>): Promise<ActivePluginCollectionClientForContractRefOutcomeV1<TValue>> {
     const request = PluginCollectionContractReadRequestV1Schema.safeParse({ ref: input.ref });
     if (!request.success) return rejected('collection_query_invalid');
-    const prepared = await prepareCollectionOperation(input.options, input.accountLifetime, input.signal,
-        input.fresh === false ? 'identity' : 'fresh-authority');
+    const prepared = await prepareCollectionOperation(input.options, input.accountLifetime, input.signal);
     if (prepared.status === 'unavailable') return prepared;
     try {
         input.assertAdmitted?.();
@@ -792,9 +801,9 @@ export function createActivePluginCollectionClient<
 }>): ActivePluginCollectionClientV1<TValue> {
     const validate = compilePluginJsonSchema(params.contract.schema);
     const storedReadSchema = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(params.contract.schema));
-    const prepare = async (options?: ActivePluginCollectionOperationOptionsV1, usage: AccountEncryptionReadUsage = 'fresh-authority') => {
+    const prepare = async (options?: ActivePluginCollectionOperationOptionsV1) => {
         params.assertAdmitted?.();
-        const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal, usage);
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal);
         if (prepared.status === 'ready') {
             try {
                 params.assertAdmitted?.();
@@ -823,7 +832,7 @@ export function createActivePluginCollectionClient<
             rowId,
         });
         if (!request.success) return rejected('collection_query_invalid');
-        const prepared = await prepare(options, fresh ? 'fresh-authority' : 'identity');
+        const prepared = await prepare(options);
         if (prepared.status === 'unavailable') return prepared;
         try {
             const response = await requestCollectionOperation({
@@ -875,7 +884,7 @@ export function createActivePluginCollectionClient<
             ...input,
         });
         if (!request.success) return rejected('collection_query_invalid');
-        const prepared = await prepare(options, 'identity');
+        const prepared = await prepare(options);
         if (prepared.status === 'unavailable') return prepared;
         try {
             const response = await requestCollectionOperation({
@@ -1067,7 +1076,7 @@ export function createActivePluginCollectionClient<
         request: Readonly<{ field: string; components: readonly string[] }>,
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionIdentityTagOutcomeV1> => {
-        // This local mode-dependent output has no later Data request to admit it.
+        // Tags are pure derivations of the Account's admitted mode and material.
         const prepared = await prepare(options);
         if (prepared.status === 'unavailable') return prepared;
         try {

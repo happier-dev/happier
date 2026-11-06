@@ -229,7 +229,7 @@ independent admission checks. A failed fresh read never becomes Plain authority.
 
 Observed encryption identity does not contain `version` or `settingsVersion`.
 The former is the Account-wide sequence, not an encryption-only revision.
-Exact cursor witnesses and final authority checks keep a fresh server observation
+Outside plugin Account Data admission below, exact cursor witnesses and final authority checks keep a fresh server observation
 point: UI mode/storage readers identify that phase with `usage:'fresh-authority'`.
 This includes read-only checks after opening private Secrets or catalogs, not
 only mutation/sealing checks. They do not join an earlier identity bootstrap or
@@ -238,7 +238,7 @@ that dispatch; no TTL, polling interval or additional revocation grace period is
 introduced. Actual HTTP/RPC authentication and captured Home/lifetime checks
 remain independent of the observed identity.
 
-UI storage acquisition defaults to identity usage; final disclosure, sealing,
+UI storage acquisition defaults to identity usage; outside plugin Account Data, final disclosure, sealing,
 mutation and local-only identity/digest operations request fresh authority
 explicitly. Workflow list projection borrows validated caller material from
 that identity, while the server's admitted Run census supplies the content mode,
@@ -249,6 +249,17 @@ Profile projection defers its inner catalog check to the final disclosure after
 Artifact opening. A skill-seed migration obtains fresh authority at its actual
 write callback. These are 0.3 development paths, with no timer, TTL or settled
 authority cache.
+
+Plugin Account Data's `prepareCollectionOperation` borrows the exact Home and
+credential's admitted socket identity for Collections, Account KV, sharing,
+private UI-query projection, and local identity tags. Rows, tags, and Data
+requests do not acquire fresh encryption currentness. Socket pushes and reconnect
+update or withdraw the existing observation; readers without that observation
+still admit through their own HTTP request. Exact Data absence witnesses and
+mutation CAS remain independent. The server enforces persisted Account mode,
+and client envelope/material checks still fail closed. A server mode refusal
+withdraws the stale observation once; the next demand re-admits without retrying
+or resealing the refused operation.
 
 After the Account-mode decision, each persisted row or domain envelope remains
 authoritative for its representation until the canonical transition owner rewrites

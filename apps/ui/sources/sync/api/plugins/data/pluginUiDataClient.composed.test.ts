@@ -120,7 +120,7 @@ async function withRowReadClient(
 }
 
 describe('Collection raw read acquisition after caller admission', () => {
-    it('borrows warm identity for ordinary get/query but freshens a writer before a mode change has a socket publication', async () => {
+    it('borrows admitted identity for tags and Data operations and re-admits after a server mode refusal', async () => {
         let currentness: AccountEncryptionCurrentnessResponse = createPlainAccountEncryptionCurrentnessFixture();
         installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
         try {
@@ -148,6 +148,11 @@ describe('Collection raw read acquisition after caller admission', () => {
                 if (request.path === '/v1/plugins/data/query') return Response.json({ rows: [row], changeCursor: 9 });
                 if (request.path === '/v1/plugins/data/mutate') {
                     const mutation = PluginCollectionMutationRequestV1Schema.parse(request.body);
+                    try {
+                        for (const operation of mutation.operations) {
+                            if (operation.kind === 'put') assertPluginCollectionContentEnvelopeForModeV1(operation.content, currentness.mode);
+                        }
+                    } catch { return Response.json({ error: 'collection_content_mode_mismatch' }, { status: 409 }); }
                     expect(mutation.operations[0]).toMatchObject({ kind: 'put', content: { t: 'plain' } });
                     if (mutation.operations[0]?.rowId === 'new') expect(mutation.operations[0]).toMatchObject({ expectedAbsenceEpoch: 2 });
                     return Response.json({ status: 'updated', changeCursor: 10,
@@ -165,48 +170,52 @@ describe('Collection raw read acquisition after caller admission', () => {
                 const requestedRef = { ...ref, contractDigest: rowReadContract.contractDigest };
                 await expect(createActivePluginCollectionClientForContractRef({ ref: requestedRef, fresh: false }))
                     .resolves.toMatchObject({ status: 'ready' });
-                for (let index = 0; index < 3; index++) {
+                for (let index = 0; index < 20; index++) {
+                    await expect(client.identityTag({ field: 'id', components: [`row-${index}`] }))
+                        .resolves.toMatchObject({ status: 'ready' });
                     await expect(client.get('same')).resolves.toEqual({ status: 'ready',
                         row: { rowId: 'same', revision: 1, value: { id: 'same' } }, absenceEpoch: 2 });
                     await expect(client.query({ indexId: 'by-id', order: 'asc' })).resolves.toMatchObject({ status: 'ready',
                         rows: [{ value: { id: 'same' } }], changeCursor: 9 });
                 }
                 const ordinaryReads = currentnessCount() - warmReads;
-                expect(home.requests.filter(request => request.path === '/v1/plugins/data/get')).toHaveLength(3);
-                expect(home.requests.filter(request => request.path === '/v1/plugins/data/query')).toHaveLength(3);
+                expect(ordinaryReads).toBe(0);
+                expect(home.requests.filter(request => request.path === '/v1/plugins/data/get')).toHaveLength(20);
+                expect(home.requests.filter(request => request.path === '/v1/plugins/data/query')).toHaveLength(20);
                 const beforeWriterResolution = currentnessCount();
                 await expect(createActivePluginCollectionClientForContractRef({ ref: requestedRef }))
                     .resolves.toMatchObject({ status: 'ready' });
-                expect(currentnessCount() - beforeWriterResolution).toBe(1);
+                expect(currentnessCount() - beforeWriterResolution).toBe(0);
                 const beforeWrite = currentnessCount();
                 await expect(client.mutate([{ kind: 'put', value: { id: 'same' }, expectedRevision: 1 }]))
                     .resolves.toMatchObject({ status: 'updated' });
-                expect(currentnessCount() - beforeWrite).toBe(1);
+                expect(currentnessCount() - beforeWrite).toBe(0);
                 const beforeAbsentWrite = currentnessCount();
                 await expect(client.mutate([{ kind: 'put', value: { id: 'new' }, expectedRevision: 'absent' }]))
                     .resolves.toMatchObject({ status: 'updated' });
-                // The absence observation and the later sealing authority are
-                // independent fresh phases, even with a warm identity holder.
-                expect(currentnessCount() - beforeAbsentWrite).toBe(2);
+                // Absence still needs its exact Data witness, while mode comes
+                // from the same admitted Account identity as the later write.
+                expect(currentnessCount() - beforeAbsentWrite).toBe(0);
                 currentness = { ...createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 }), mode: 'e2ee',
                     signingKeyFingerprint: 'changed-signing', contentKeyFingerprint: 'changed-content',
                     recipientEnvelopeReadiness: { status: 'available' } };
                 expect(binding.peek()?.mode).toBe('plain');
-                // Unlike get/query, a local identity tag has no later Data
-                // request to admit its mode. Never publish a Plain digest
-                // after E2EE has committed while the socket fact is stale.
+                // Until delivery the admitted mode remains usable. Persisted
+                // mode at the Data server refuses the stale write, without retry.
+                const beforeRefusedWrite = currentnessCount();
+                await expect(client.mutate([{ kind: 'put', value: { id: 'same' }, expectedRevision: 2 }]))
+                    .resolves.toEqual({ status: 'unavailable', reason: 'account-content-mismatch' });
+                expect(currentnessCount() - beforeRefusedWrite).toBe(0);
+                expect(home.requests.filter(request => request.path === '/v1/plugins/data/mutate')).toHaveLength(3);
+                expect(binding.peek()).toBeNull();
                 const beforeRefusedTag = currentnessCount();
                 await expect(client.identityTag({ field: 'id', components: ['same'] }))
                     .resolves.toEqual({ status: 'unavailable', reason: 'account-encryption-material-unavailable' });
                 expect(currentnessCount() - beforeRefusedTag).toBe(1);
-                const beforeRefusedWrite = currentnessCount();
-                await expect(client.mutate([{ kind: 'put', value: { id: 'same' }, expectedRevision: 2 }]))
-                    .resolves.toEqual({ status: 'unavailable', reason: 'account-encryption-material-unavailable' });
-                expect(currentnessCount() - beforeRefusedWrite).toBe(1);
-                expect(home.requests.filter(request => request.path === '/v1/plugins/data/mutate')).toHaveLength(2);
                 const beforeRefusedRead = currentnessCount();
-                await expect(client.get('same')).resolves.toEqual({ status: 'rejected', code: 'collection_content_mode_mismatch' });
+                await expect(client.get('same')).resolves.toEqual({ status: 'unavailable', reason: 'account-encryption-material-unavailable' });
                 expect(currentnessCount()).toBe(beforeRefusedRead);
+                expect(binding.peek()?.mode).toBe('e2ee');
                 retireActiveServerAccountScopeLifetime();
                 const beforeRetired = home.httpRequests.length;
                 await expect(client.get('same')).resolves.toEqual({ status: 'unavailable', reason: 'account-scope-changed' });
