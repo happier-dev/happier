@@ -1,12 +1,17 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { URL as NodeURL } from 'node:url';
+import { Blob as NodeBlob } from 'node:buffer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Clipboard from 'expo-clipboard';
 import { act } from 'react-test-renderer';
 import { normalizeUsageQuery, getUsageQueryKey, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { buildUsageFileResult } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -14,9 +19,10 @@ import { UsageRecapWidget } from './UsageRecapWidget';
 import { Modal } from '@/modal';
 import { UsageRecapComposer } from './recap/UsageRecapComposer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import type { UsageBodyProps } from './usageBodyKit';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
+import { ChartDatum } from '@happier-dev/plugin-ui/presentation';
+import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
@@ -29,8 +35,18 @@ const shownQuery = normalizeUsageQuery({ period: { startMs: 100, endMs: 900 }, a
   workspaceIds: ['workspace'], modelIds: ['model'], backendModes: ['remote'], timeZoneOffsetMinutes: 120,
   metric: 'cost', costBasis: 'reported', breakdown: ['agent'] });
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let restoreFrames: (() => void) | undefined;
+let portal: ReturnType<typeof installReactDomPortalBoundaryForTests> | undefined;
+beforeEach(() => {
+  installBrowserClipboardBoundary(async text => { await Clipboard.setStringAsync(text); });
+  // Real DOM nodes serve the menu and download; Test Renderer substitutes only browser painting.
+  restoreFrames = withPopoverWebGlobals({ window: globalThis.window as unknown as Record<string, unknown> });
+  portal = installReactDomPortalBoundaryForTests();
+  vi.stubGlobal('URL', NodeURL);
+  vi.stubGlobal('Blob', NodeBlob);
+});
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  portal?.restore(); restoreFrames?.(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function mount(denied = false, queryResponse?: () => Response | Promise<Response>, hasAccounting = true, requestedQuery = shownQuery,
   accountingStatus: 'available' | 'pending' | 'error' = 'available', shownAccounting = accounting) {
@@ -49,6 +65,12 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
       pending: true, error: null, freshness: 'stale', updatingPreviousPeriod: true, refreshing: false, refresh: async () => {} };
   const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice, model };
   return await renderScreen(<UsageRecapWidget {...props} />);
+}
+
+/** The exports live behind the widget's one overflow control. */
+async function pressExport(screen: Awaited<ReturnType<typeof mount>>, id: string) {
+  await screen.pressByTestIdAsync('recap.exports');
+  await screen.pressByTestIdAsync(id);
 }
 
 describe('Recap table/text controls through the admitted export Action', () => {
@@ -98,7 +120,7 @@ describe('Recap table/text controls through the admitted export Action', () => {
   it('copies the Action text bytes for the exact shown query with explicit summary fields', async () => {
     const clipboard = vi.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
     const screen = await mount();
-    await screen.pressByTestIdAsync('recap.copySummary');
+    await pressExport(screen, 'recap.copySummary');
     await vi.waitFor(() => expect(home!.requests.filter(request => request.path === '/v2/usage/query')).not.toHaveLength(0));
     expect(home!.requests.filter(request => request.path === '/v2/usage/query').map(request => request.body))
       .toContainEqual(usageQueryToAnalyticsRequest(shownQuery));
@@ -109,7 +131,7 @@ describe('Recap table/text controls through the admitted export Action', () => {
   it('withholds clipboard delivery when the Action read is denied', async () => {
     const clipboard = vi.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
     const screen = await mount(true);
-    await screen.pressByTestIdAsync('recap.copySummary');
+    await pressExport(screen, 'recap.copySummary');
     await vi.waitFor(() => expect(Boolean(screen.findByTestId('recap.exportNotice'))).toBe(true));
     expect(clipboard).not.toHaveBeenCalled();
   });
@@ -119,26 +141,30 @@ describe('Recap table/text controls through the admitted export Action', () => {
     const response = new Promise<Response>(resolve => { finish = resolve; });
     const clipboard = vi.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
     const screen = await mount(false, () => response);
-    await screen.pressByTestIdAsync('recap.copySummary');
+    await pressExport(screen, 'recap.copySummary');
     await vi.waitFor(() => expect(home!.requests.some(request => request.path === '/v2/usage/query')).toBe(true));
+    await screen.pressByTestIdAsync('recap.exports');
+    expect(screen.findByTestId('recap.copySummary')?.props.disabled).toBe(true);
     await act(async () => { retireActiveServerAccountScopeLifetime(); finish(Response.json(accounting)); });
-    await vi.waitFor(() => expect(screen.findByTestId('recap.copySummary')?.props.accessibilityState?.busy).toBe(false));
+    await vi.waitFor(() => expect(screen.findByTestId('recap.copySummary')?.props.disabled).toBe(false));
     expect(clipboard).not.toHaveBeenCalled();
   });
 
   it.each(['json', 'csv'] as const)('downloads the same %s Action bytes with explicit table fields', async format => {
-    const screen = await mount();
+    const details = repriceUsageAnalyticsResponse({ ...accounting, contributions: [{ id: 'export-detail', observedAtMs: 500,
+      sessionId: 's1', turnId: 'turn', agentId: 'claude', modelId: null, machineId: 'pinned-machine', projectKey: 'opaque-project',
+      workspaceId: 'workspace', source: 'native', tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
+    // The mounted recap has no raw rows. Only the explicit download may request them.
+    const screen = await mount(false, () => Response.json(details));
     const blobs: Blob[] = [];
     const downloads: string[] = [];
     vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:export'; });
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    const anchor = { href: '', download: '', rel: '', style: {}, remove() {}, click() { downloads.push(this.download); } };
-    vi.stubGlobal('document', { getElementById: () => null,
-      createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
-      head: { appendChild() {} }, body: { appendChild() {} } });
-    await screen.pressByTestIdAsync(`recap.${format}`);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloads.push(this.download); });
+    expect(home!.requests.filter(request => request.path === '/v2/usage/query')).toEqual([]);
+    await pressExport(screen, `recap.${format}`);
     await vi.waitFor(() => expect(downloads.length).toBe(1));
-    const expected = buildUsageFileResult({ query: shownQuery, format, fields: ['totals', 'breakdowns'] }, accounting, null);
+    const expected = buildUsageFileResult({ query: shownQuery, format, fields: ['totals', 'breakdowns', 'contributions'] }, details, null);
     expect(await blobs[0]!.text()).toBe(new TextDecoder().decode(decodeBase64(expected.base64)));
     expect(downloads[0]).toBe(expected.fileName);
     expect(home!.requests.filter(request => request.path === '/v2/usage/query').map(request => request.body))

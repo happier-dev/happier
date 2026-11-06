@@ -7,6 +7,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
+import { createUiCoachSuppressionPort } from '@/sync/api/account/usageCoachSuppressions';
+import { readLegacyUsageCoachSuppressions } from '@happier-dev/protocol/usage/coach/coachActions';
 
 type PublicProfileRead = Awaited<ReturnType<NonNullable<UsageActionPorts['readPublicProfile']>>>;
 const publicProfileReads = createScopedResolutionSingleFlight<PublicProfileRead>();
@@ -20,7 +22,7 @@ async function consumePublicProfile(response: Response): Promise<PublicProfileRe
 }
 
 /** Captured Home/Account reads use the same query adapter as mounted Resources. */
-export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pick<LazyActionAccountContext, 'assertCurrent'>,
+export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pick<LazyActionAccountContext, 'assertCurrent' | 'readRawSettingsSnapshot'>,
   renderRecap?: UsageActionPorts['renderRecap']): UsageActionPorts {
   const prices = async (refresh: boolean, context: Parameters<NonNullable<UsageActionPorts['prices']>['get']>[0]) => {
     throwIfAborted(context.signal);
@@ -38,6 +40,13 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
     }
   };
   return {
+    coachSuppressions: context => createUiCoachSuppressionPort(account, context.signal, async () => {
+      // Conversion must carry the stored legacy entries, including changes
+      // from another client that have not reached the local projection yet.
+      const snapshot = await account.readRawSettingsSnapshot();
+      account.assertCurrent();
+      return readLegacyUsageCoachSuppressions(snapshot.raw.usageCoachPreferencesV1);
+    }),
     readPublicProfile: async context => {
       throwIfAborted(context.signal);
       account.assertCurrent();
@@ -104,7 +113,7 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
               account.assertCurrent();
               throwIfAborted(context.signal);
               const snapshot = entry.getSnapshot();
-              if (snapshot.error) throw new HappyError(snapshot.error.message, false, { code: snapshot.error.code });
+              if (snapshot.error) throw new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details });
               if (!snapshot.value || snapshot.freshness !== 'fresh') return;
               const batch = decodeUsageQueryResource(snapshot.value);
               // Coach must inspect the requested private evidence, rather than
@@ -120,12 +129,13 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
                 && !['pending', 'not_loaded'].includes(source.status)))) resolve(batch);
             } catch (error) { reject(error); }
           };
-          // An initial read also supplies the Resource owner's terminal
-          // admission result. The static subscription joins this same read.
-          const baseline = entry.getSnapshot().value ? undefined : entry.refresh();
+          // Join ordinary admission, retaining its terminal result even when
+          // the Resource is retired. A user's explicit Refresh replaces Account
+          // accounting; a one-shot query must not request that replacement.
+          const baseline = entry.getSnapshot().value ? undefined : entry.refresh({ supersede: false });
           release = entry.subscribe(inspect, false);
           void baseline?.then(snapshot => {
-            if (snapshot.error) reject(new HappyError(snapshot.error.message, false, { code: snapshot.error.code }));
+            if (snapshot.error) reject(new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details }));
             else inspect();
           }, reject);
           abort = inspect;
@@ -138,7 +148,8 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       } catch (error) {
         account.assertCurrent();
         throwIfAborted(context.signal);
-        if (error instanceof HappyError && error.code) return { ok: false, errorCode: error.code, error: error.code };
+        if (error instanceof HappyError && error.code) return { ok: false, errorCode: error.code, error: error.code,
+          ...(error.code === 'usage_query_result_invalid' && error.details !== undefined ? { details: error.details } : {}) };
         throw error;
       } finally {
         release?.();
@@ -176,8 +187,8 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
         account.assertCurrent();
         const result = await deliverUsageImageFileResult(file, intent, { signal: retired.signal,
           isCurrent: () => { account.assertCurrent(); return true; } });
-        throwIfAborted(context.signal);
-        account.assertCurrent();
+        // The adapter checked cancellation/Account authority before the effect.
+        // Its settled outcome is not revoked when the requesting view departs.
         return result;
       } finally {
         removeRetire.dispose();

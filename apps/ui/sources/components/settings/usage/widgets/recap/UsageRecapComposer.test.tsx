@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { projectUsageAnalyticsBatchDelivery, repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -20,8 +21,8 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 } from '@happier-dev/protocol/account/publicProfilePublication';
 
 // The platform clipboard and the router are the effect boundaries; Action admission stays real.
-const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<boolean>>());
-vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
+const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
+beforeEach(() => { installBrowserClipboardBoundary(clipboard); });
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
 
@@ -36,7 +37,7 @@ const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   cost: { reportedUsd: 3, estimatedUsd: 0, currency: 'USD' } } };
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], query = normalizeUsageQuery({ agents: ['claude', 'codex'] }), beforeRender?: () => void,
-  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void }> = {}) {
+  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void; initialOutput?: 'badge' }> = {}) {
   await import('@/sync/ops/actions/defaultActionExecutor');
   const features = createRootLayoutFeaturesResponse();
   if (options.publicProfiles) features.features.account = { ...features.features.account, publicProfiles: { enabled: true } };
@@ -53,7 +54,8 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
   function Host() {
     const [shownQuery, setQuery] = React.useState(query);
     updateQuery = setQuery;
-    return <UsageRecapComposer query={shownQuery} serverId={server.id} onClose={options.onClose ?? (() => {})} />;
+    return <UsageRecapComposer query={shownQuery} serverId={server.id} onClose={options.onClose ?? (() => {})}
+      {...(options.initialOutput ? { initialOutput: options.initialOutput } : {})} />;
   }
   beforeRender?.();
   const screen = await renderScreen(<Host />);
@@ -61,13 +63,103 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
 }
 
 describe('recap composer through authorized query and composition', () => {
-  it('starts with Whole usage independently of page source filters and keeps its admitted preview on source-only updates', async () => {
+  it('composes All personal usage without inventing an epoch start', async () => {
+    const reads: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
+    const { screen } = await mount(request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      reads.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
+      return Response.json({ ...accounting, contributions: [{ id: 'all-observation', observedAtMs: Date.now() - 1000,
+        eventCount: 1, sessionId: null, turnId: null, agentId: 'codex', modelId: null, machineId: null,
+        projectKey: null, workspaceId: null, source: 'native', tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    await act(async () => {
+      screen.findAllByType(SegmentedTabBar).find(node => node.props.testIDPrefix === 'usage-recap-period')!.props.onSelectTab('all');
+    });
+    await vi.waitFor(() => expect(reads.some(query => query.granularity === 'month')).toBe(true));
+    const request = reads.find(query => query.granularity === 'month')!;
+    expect(request.dateRange?.endMs).toEqual(expect.any(Number));
+    expect(request.dateRange).not.toHaveProperty('startMs');
+    await vi.waitFor(() => expect({
+      disabled: screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled,
+      diagnostics: screen.findAllByType(SurfaceStateCard).flatMap(node => node.props.diagnosticCode ? [node.props.diagnosticCode] : []),
+    }).toEqual({ disabled: false, diagnostics: [] }));
+  });
+
+  it('preserves a safe rejected compact-wire field behind the existing Details disclosure', async () => {
+    const paths: string[] = [];
+    const { screen } = await mount(request => {
+      paths.push(request.path);
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      return Response.json({ v: 1, results: input.queries.map(query => ({ query, value: { ...accounting,
+        totals: { ...accounting.totals, tokens: { ...accounting.totals.tokens, input: 'private-invalid-value' } } } })) });
+    });
+    await vi.waitFor(() => expect({ paths, states: screen.findAllByType(SurfaceStateCard).map(node => ({
+      kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode,
+    })) }).toMatchObject({ states: expect.arrayContaining([expect.objectContaining({
+      diagnosticCode: expect.stringContaining('results.0.value.totals.tokens.input'),
+    })]) }));
+    const details = screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).join('\n');
+    expect(details).toContain('usage_query_result_invalid');
+    expect(details).toContain('invalid_type');
+    expect(details).not.toContain('private-invalid-value');
+  });
+
+  it('composes the Overview compact read with its own selected facts instead of inheriting widget omissions', async () => {
+    const requests: unknown[] = [];
+    const { screen } = await mount(request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      requests.push(request.body);
+      const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      const contributions = Array.from({ length: 41 }, (_, index) => ({ id: `recap-event-${index}`, observedAtMs: Date.now() - 1000,
+        eventCount: 1,
+        sessionId: null, turnId: null, agentId: 'codex', modelId: 'model', machineId: null, projectKey: null,
+        workspaceId: null, source: 'native', tokens: accounting.totals.tokens, cost: {
+          reportedUsd: [0.10000000000000002, 0.2, 0.3][index] ?? 0, estimatedUsd: 0, currency: 'USD',
+          costSource: index === 2 ? 'provider_reported_api_equivalent' as const : 'provider_reported' as const } }));
+      const value = repriceUsageAnalyticsResponse({ ...accounting, contributions, totals: { ...accounting.totals, eventCount: 41,
+        tokens: { ...accounting.totals.tokens, input: 410, output: 82, total: 492 } } });
+      const chunks = [...projectUsageAnalyticsBatchDelivery({ v: 1, results: input.queries.map(query => ({ query, value })) }, input, true)];
+      return new Response(chunks.map(chunk => JSON.stringify(chunk) + '\n').join(''),
+        { headers: { 'Content-Type': 'application/x-ndjson' } });
+    }, normalizeUsageQuery({ includeSeries: false, includeActivity: true, includeInsights: true, includeLeaders: true,
+      includeComparison: false, includeQuotaHistory: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: false }));
+    await vi.waitFor(() => expect({ ready: screen.findByTestId('usage-recap-composer.card') !== null,
+      failures: screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode) }).toMatchObject({ ready: true }));
+    expect(screen.findByTestId('usage-recap-composer.card')!.props.accessibilityLabel).toContain('492');
+    expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(false);
+    expect(requests).toHaveLength(1);
+    // Linked-work allocation and private interval evidence explicitly admit detail;
+    // the parent Overview's broad leaders/calendar and comparison are not acquired.
+    expect(requests[0]).toMatchObject({ contributionQueries: [expect.anything()], sessionQueries: [], queries: [expect.objectContaining({
+      includeInsights: true, includeLeaders: false, includeSeries: false, includeActivity: false,
+      breakdowns: ['agent'],
+    })] });
+    await act(async () => {
+      for (const field of ['activeDays', 'streak', 'agentMix', 'parallel', 'work', 'cache']) {
+        screen.findByTestId(`usage-recap-field-${field}.switch`)!.props.onValueChange(false);
+      }
+    });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(false));
+    expect(requests[1]).toMatchObject({ contributionQueries: [], sessionQueries: [], queries: [expect.objectContaining({
+      includeInsights: false, includeLeaders: false, includeSeries: false, includeActivity: false, breakdowns: [],
+    })] });
+    expect(screen.findByTestId('usage-recap-composer.card')!.props.accessibilityLabel).toContain('492');
+  });
+  it('composes private Whole usage independently of public recap policy and page source filters, keeping its admitted preview on source-only updates', async () => {
     const requests: unknown[] = [];
     const { screen, updateQuery } = await mount(request => {
       if (request.path !== '/v2/usage/query') return undefined;
       requests.push(request.body);
       return Response.json(accounting);
-    }, normalizeUsageQuery({ sources: ['native'], execution: 'outside' }));
+    }, normalizeUsageQuery({ sources: ['native'], execution: 'outside' }), () => {
+      storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, actions: { 'usage.recap.compose': { enabled: false } },
+      }) } }));
+    });
     await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')!.props.accessibilityLabel).toContain('12'));
     const beforePageChange = requests.length;
     await act(async () => { updateQuery(normalizeUsageQuery({ sources: ['runtime'], execution: 'unknown' })); });
@@ -78,11 +170,34 @@ describe('recap composer through authorized query and composition', () => {
       expect(UsageAnalyticsQueryRequestSchema.parse(request).filters).not.toHaveProperty('execution');
     }
   });
+  it('toggles Whole usage and Happier only through the same composition: Happier only asks for Happier execution, Whole drops it again', async () => {
+    const requests: unknown[] = [];
+    const { screen } = await mount(request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      requests.push(request.body);
+      return Response.json(accounting);
+    });
+    const source = () => screen.findAllByType(SegmentedTabBar).find(node => node.props.testIDPrefix === 'usage-recap-source')!;
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    expect(source().props.activeTabId).toBe('whole_usage');
+    expect(source().props.tabs.map((tab: { id: string }) => tab.id)).toEqual(['whole_usage', 'happier_only']);
+    const executionOf = (request: unknown) => (UsageAnalyticsQueryRequestSchema.parse(request).filters as { execution?: string } | undefined)?.execution;
+    expect(requests.map(executionOf)).toEqual(requests.map(() => undefined));
+    const before = requests.length;
+    await act(async () => { source().props.onSelectTab('happier_only'); });
+    await vi.waitFor(() => expect(requests.slice(before).some(request => executionOf(request) === 'happier')).toBe(true));
+    expect(source().props.activeTabId).toBe('happier_only');
+    const during = requests.length;
+    await act(async () => { source().props.onSelectTab('whole_usage'); });
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(during));
+    expect(source().props.activeTabId).toBe('whole_usage');
+    expect(requests.slice(during).every(request => executionOf(request) === undefined)).toBe(true);
+  });
   it.each(['style', 'format'] as const)('admits %s changes through the same composition Action instead of altering an authorized preview locally', async choice => {
     const { screen } = await mount(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
     await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
     storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
-      v: 1, actions: { 'usage.recap.compose': { enabled: false } },
+      v: 1, actions: { 'usage.recap.private.compose': { enabled: false } },
     }) } }));
     await act(async () => {
       if (choice === 'style') screen.findAllByType(SelectionTiles)[0]!.props.onChange('sigil');
@@ -107,10 +222,14 @@ describe('recap composer through authorized query and composition', () => {
     } finally { heldPrivate.resolve(Response.json({ error: 'not_found' }, { status: 404 })); }
   });
 
-  it('withdraws a ready preview when its admitted Account authority retires', async () => {
+  it('retains a ready preview across ambient scope retirement and withdraws it when its Home credential retires', async () => {
     const { screen } = await mount(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
     await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
     await act(async () => { retireActiveServerAccountScopeLifetime(); });
+    expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull();
+    const server = home!.homes.a!;
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    await act(async () => { await TokenStorage.removeCredentialsForServerUrl(server.serverUrl, { serverId: server.id }); });
     expect(screen.findByTestId('usage-recap-composer.card')).toBeNull();
     expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(true);
   });
@@ -216,6 +335,12 @@ describe('recap composer public outputs', () => {
     expect(outputTabs(enabled.screen)!.props.activeTabId).toBe('image');
   });
 
+  it('opens on the output its caller asked for, so a just-published page lands on its badge', async () => {
+    const { screen } = await mount(publicHome(true, []), undefined, undefined, { publicProfiles: true, initialOutput: 'badge' });
+    await vi.waitFor(() => expect(outputTabs(screen)?.props.activeTabId).toBe('badge'));
+    expect(screen.findByTestId('usage-recap-composer.card')).toBeNull();
+  });
+
   it('mounts only the selected preview, formats the chosen badge through the embed Action and copies exactly that text', async () => {
     const requests: string[] = [];
     const { screen } = await mount(publicHome(true, requests), undefined, undefined, { publicProfiles: true });
@@ -232,7 +357,7 @@ describe('recap composer public outputs', () => {
     await act(async () => { choice(screen, 'usage-recap-share-syntax').props.onSelectTab('html'); });
     await act(async () => { choice(screen, 'usage-recap-share-theme').props.onSelectTab('dark'); });
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.snippet'))).toBe('html|badge|tokens|dark'));
-    clipboard.mockResolvedValueOnce(true);
+    clipboard.mockResolvedValueOnce(undefined);
     await act(async () => { screen.findByTestId('usage-recap-share.copy')!.props.onPress(); });
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.note'))).toBe('publicIdentity.share.copied'));
     expect(clipboard).toHaveBeenLastCalledWith('html|badge|tokens|dark');
@@ -258,7 +383,7 @@ describe('recap composer public outputs', () => {
     await act(async () => { screen.findByTestId('usage-recap-share.copy')!.props.onPress(); });
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.note'))).toBe('publicIdentity.share.copyFailed'));
     expect(clipboard).toHaveBeenLastCalledWith(PAGE);
-    clipboard.mockResolvedValueOnce(true);
+    clipboard.mockResolvedValueOnce(undefined);
     await act(async () => { screen.findByTestId('usage-recap-share.copy')!.props.onPress(); });
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.note'))).toBe('publicIdentity.share.copied'));
   });

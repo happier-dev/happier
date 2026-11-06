@@ -4,17 +4,20 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { formatHappierDataValue, UsageRecapBody, type UsageRecapHighlight } from '@happier-dev/plugin-ui/presentation';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { UsageExportFieldSchema, UsageFileResultSchema, type UsageExportInput } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { Modal } from '@/modal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import type { UsageFilterState } from '@/sync/api/account/usageAnalytics';
 import { buildUsageRecapCardModels } from '@/sync/domains/usage/recap/buildUsageRecapCardModels';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { getPreferredLanguage, t } from '@/text';
 import { exportUsageTextDocument } from '../usageExportFile';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import {
   UsageBodyInsufficient,
@@ -25,7 +28,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { RecapStorySurface } from './recap/RecapStorySurface';
-import { UsageRecapComposer } from './recap/UsageRecapComposer';
+import { openUsageRecapComposer } from './recap/UsageRecapComposer';
 import { formatIdentifierLabel } from '@/utils/format/usageNumbers';
 import { UsageWorkAutopsy } from './UsageWorkAutopsy';
 import { UsageRecordsStyleBody } from './UsageChartStyleBodies';
@@ -58,37 +61,46 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     const field = UsageExportFieldSchema.safeParse(key);
     return field.success ? [field.data] : [];
   }), [props.slice.accounting]);
+  const execution = useMountedActionExecution(props.serverId);
+  const writeClipboard = useClipboardWrite(props.serverId);
   const exportFacts = async (format: UsageExportInput['format']) => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.serverId) return;
+    if (!execution.isCurrent()) return;
     const controller = new AbortController();
     delivery.current?.abort();
     delivery.current = controller;
-    const retired = lifetime.onRetire(() => controller.abort());
-    const isCurrent = () => !controller.signal.aborted && lifetime.isCurrent();
+    const isCurrent = () => !controller.signal.aborted && execution.isCurrent();
     setExporting(format);
     setExportFailed(false);
     try {
-      const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-      controller.signal.throwIfAborted();
-      const executed = await createDefaultActionExecutor().execute('usage.export', {
-        query: shownQuery, format, fields: format === 'text' ? ['totals'] : exportFields,
-      }, { surface: 'ui', actionCaller: { kind: 'host' }, serverId: lifetime.scope.serverId,
-        expectedAccountId: lifetime.scope.accountId, signal: controller.signal });
+      const executed = await execution.execute('usage.export', {
+        query: shownQuery, format, fields: format === 'text' ? ['totals']
+          : [...new Set([...exportFields, 'contributions' as const])],
+      }, { signal: controller.signal });
       if (!isCurrent()) return;
-      if (!executed.ok) throw new Error(executed.errorCode);
+      if (!executed.ok) {
+        // A declined approval is the person's own answer, not a failed export.
+        if (!isActionApprovalDeclinedErrorCode(executed.errorCode)) throw new Error(executed.errorCode);
+        return;
+      }
       const file = UsageFileResultSchema.parse(executed.result);
       const content = new TextDecoder().decode(decodeBase64(file.base64));
-      const delivered = format === 'text' ? await setClipboardStringSafe(content)
+      const delivered = format === 'text' ? await writeClipboard(content, { signal: controller.signal })
         : await exportUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
       if (isCurrent()) setExportFailed(!delivered);
     } catch {
       if (isCurrent()) setExportFailed(true);
     } finally {
-      retired.dispose();
       if (delivery.current === controller) { delivery.current = null; setExporting(null); }
     }
   };
+  const exportActions: ItemAction[] = [
+    { id: `${props.testID}.copySummary`, title: t('common.copyWithLabel', { label: t('usage.summary.title') }), icon: 'copy',
+      disabled: exporting !== null, onPress: () => { void exportFacts('text'); } },
+    { id: `${props.testID}.json`, title: t('files.repositoryTree.actions.download'), icon: 'download',
+      disabled: exporting !== null, onPress: () => { void exportFacts('json'); } },
+    { id: `${props.testID}.csv`, title: t('usage.exportCsv'), icon: 'file-arrow-down',
+      disabled: exporting !== null, onPress: () => { void exportFacts('csv'); } },
+  ];
   const viewModel = useUsageAnalyticsView(props.slice, props.query);
   // Legacy story shaping consumes the admitted response; it does not select a new period.
   const period = 'all' as const;
@@ -135,24 +147,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
   );
 
   const openComposer = React.useCallback(() => {
-    Modal.show({
-      component: UsageRecapComposer,
-      props: {
-        query: shownQuery,
-        serverId: props.serverId,
-      },
-      chrome: {
-        kind: 'card',
-        material: 'solid',
-        title: t('usage.board.recap.shareTitle'),
-        phonePresentation: 'fullscreen',
-        // Held to the window, so Copy, Save and Share stay in view while the controls scroll.
-        scrollHost: 'body',
-        // The stage needs the room of the lab sheet (s2card C): card left, controls right.
-        dimensions: { size: 'lg', width: 1120 },
-        testID: 'usage-recap-composer.modal',
-      },
-    });
+    openUsageRecapComposer({ query: shownQuery, serverId: props.serverId });
   }, [shownQuery, props.serverId]);
   const playStory = React.useCallback(() => {
     if (!viewModel) return;
@@ -213,33 +208,13 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
           onPress={playStory}
           testID={`${props.testID}.play`}
         />
-        <View style={{ flexGrow: 1 }} />
-        <RoundButton
-          size="small"
-          display="inverted"
-          title={t('common.copyWithLabel', { label: t('usage.summary.title') })}
-          onPress={() => { void exportFacts('text'); }}
-          loading={exporting === 'text'}
-          disabled={exporting !== null}
-          testID={`${props.testID}.copySummary`}
-        />
-        <RoundButton
-          size="small"
-          display="inverted"
-          title={t('files.repositoryTree.actions.download')}
-          onPress={() => { void exportFacts('json'); }}
-          loading={exporting === 'json'}
-          disabled={exporting !== null}
-          testID={`${props.testID}.json`}
-        />
-        <RoundButton
-          size="small"
-          display="inverted"
-          title={t('usage.exportCsv')}
-          onPress={() => { void exportFacts('csv'); }}
-          loading={exporting === 'csv'}
-          disabled={exporting !== null}
-          testID={`${props.testID}.csv`}
+        {/* The facts behind the card are three quiet exports behind one overflow, not three more buttons. */}
+        <ItemRowActions
+          title={t('common.moreActions')}
+          overflowOnly
+          overflowTriggerTestID={`${props.testID}.exports`}
+          overflowTriggerAccessibilityLabel={t('common.moreActions')}
+          actions={exportActions}
         />
       </>}
       notice={exportFailed ? <SurfaceFreshnessLine testID={`${props.testID}.exportNotice`} tone="warning"

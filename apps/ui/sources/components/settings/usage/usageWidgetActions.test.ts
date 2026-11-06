@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { buildWidgetSurfaceArtifactIdV1, readBuiltinWidgetDescriptorV1, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { buildWidgetSurfaceArtifactIdV1, projectWidgetBindingInputV1, readBuiltinWidgetDescriptorV1, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { standardCleanup } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -15,6 +15,8 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from './usageWidgetPageContext';
 import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { storage } from '@/sync/domains/state/storage';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
@@ -27,7 +29,7 @@ it('edits only displayed widget metric inputs through real Actions and Artifact 
         } }) } }],
         route: async request => request.path.startsWith('/v1/artifacts') ? (await artifacts.handle(`${request.path}${request.url.search}`, {
             method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-        })) ?? undefined : undefined });
+        })) ?? undefined : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
     const focused = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
     const surface: WidgetSurfaceRefV1 = { serverId: focused.id, accountId: 'account-a', owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview' } };
@@ -56,6 +58,7 @@ it('edits only displayed widget metric inputs through real Actions and Artifact 
     const selected: WidgetSurfaceRefV1 = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'selected' } };
     expect(await execute('widgets.area.layout.create', { surface, layoutId: 'selected', name: 'Selected', fromSurface: surface }, context))
         .toMatchObject({ ok: true });
+    const metricRequestStart = home.httpRequests.length;
     const writes = await setUsageWidgetMetric({ metric: 'cost', instanceIds: ids, target: { surface, context: {} }, port: {
         execute: async (operation, signal, target) => {
             const destination = target?.surface ?? selected;
@@ -64,6 +67,12 @@ it('edits only displayed widget metric inputs through real Actions and Artifact 
         },
     } });
     expect(writes, JSON.stringify(writes)).toEqual(ids.map(instanceId => ({ instanceId, result: expect.objectContaining({ ok: true }) })));
+    const metricRequests = home.httpRequests.slice(metricRequestStart).filter(request => request.path.startsWith('/v1/artifacts'));
+    // Each persistent widget edit admits its placement once, then acquires the
+    // writer's current revision/access for CAS. Input resolution reuses admission.
+    expect(metricRequests.filter(request => request.method === 'GET' && request.path.endsWith('/access/grants')),
+        JSON.stringify(metricRequests.map(request => `${request.method} ${request.path}`)))
+        .toHaveLength(ids.length * 2);
     const after = await execute('widgets.item.list', { surface }, context);
     if (!after.ok) throw new Error(after.errorCode);
     const changed = WidgetSurfaceReadV1Schema.parse(after.result).items![0]!;
@@ -93,9 +102,12 @@ it.each(['approve', 'reject', 'retire'] as const)('settles each metric approval 
         settings: { actionsSettingsV1: actionsSettings } }],
         route: async request => request.path.startsWith('/v1/artifacts') ? (await artifacts.handle(`${request.path}${request.url.search}`, {
             method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-        })) ?? undefined : undefined });
+        })) ?? undefined : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
     const focused = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
+    const { sync } = await import('@/sync/sync');
+    await sync.resumeSync('manual');
+    expect(storage.getState().settings.actionsSettingsV1).toMatchObject(actionsSettings);
     const surface: WidgetSurfaceRefV1 = { serverId: focused.id, accountId: 'account-a', owner: {
         kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview',
     } };
@@ -110,8 +122,14 @@ it.each(['approve', 'reject', 'retire'] as const)('settles each metric approval 
     const original = WidgetSurfaceReadV1Schema.parse(before.result);
     const group = original.items![0]!;
     if (group.kind !== 'group') throw new Error('expected_group');
-    const ids = group.children.filter(child => readBuiltinWidgetDescriptorV1(child.instance.definition)!
-        .inputs?.fields.some(field => field.path === 'metric')).map(child => child.instance.id);
+    const ids = group.children.filter(child => {
+        const fields = readBuiltinWidgetDescriptorV1(child.instance.definition)!.inputs?.fields ?? [];
+        return fields.some(field => field.path === 'metric') && projectWidgetBindingInputV1({
+            instance: child.instance, fields, context: values, viewerValues: {},
+        }).metric !== 'cost';
+    }).map(child => child.instance.id);
+    // Every requested write changes its current value, so each one must cross approval admission.
+    expect(ids.length).toBeGreaterThan(1);
     const decisions: Promise<void>[] = [];
     const controller = new AbortController();
     const onApprovalPending = (registration: ActionApprovalContinuation) => {

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';

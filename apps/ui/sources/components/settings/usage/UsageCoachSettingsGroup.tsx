@@ -19,7 +19,9 @@ export function UsageCoachSettingsGroup(props: Readonly<{ serverId: string; test
     const { setSetting, isCurrent } = useSettingActionFeedback({ serverId: props.serverId });
     const [modelOpen, setModelOpen] = React.useState(false);
     const write = (next: UsageCoachPreferencesV1) => {
-        if (isCurrent()) void setSetting(USAGE_SETTINGS.settings.coachPreferences, next);
+        if (isCurrent()) void setSetting(USAGE_SETTINGS.settings.coachPreferences, {
+            v: next.v, disabledChecks: next.disabledChecks, modelSuggestion: next.modelSuggestion,
+        });
     };
     const modelMode = preferences.disabledChecks.includes('model_misfit') ? 'off' : preferences.modelSuggestion;
     return <SettingAnchor setting={USAGE_SETTINGS.settings.coachPreferences}>

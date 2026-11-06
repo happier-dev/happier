@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { composeUsageRecap } from '@happier-dev/protocol';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageRecapPrivateComposeInputSchema } from '@happier-dev/protocol/usage/usageRecap';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageSummary';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildUsageStatCardModel } from './usageStatCardModel';
@@ -33,6 +34,49 @@ if (composed.kind !== 'composed') throw new Error('The canonical recap producer 
 const FORMATS = ['square', 'story', 'link-preview'] as const;
 
 describe('private stat card renderer', () => {
+    it('renders observed All days while retaining the admitted private artifact period', async () => {
+        const endMs = Date.UTC(2026, 8, 4);
+        const firstMs = Date.UTC(2026, 8, 1, 12);
+        const selected = normalizeUsageQuery({ period: { endMs }, timeZoneOffsetMinutes: 0,
+            includeActivity: true, includeInsights: true });
+        const rich = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+            insights: { ...accounting.insights, activeDays: 2, longestStreakDays: 1 },
+            activity: { calendarDays: [{ date: '2026-09-01', eventCount: 2 },
+                { date: '2026-09-02', eventCount: 0 }, { date: '2026-09-03', eventCount: 2 }], weekdayHourBuckets: [] },
+            coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+                range: { startMs: 0, endMs, complete: true } },
+            contributions: [firstMs, Date.UTC(2026, 8, 3, 12)].map((observedAtMs, index) => ({
+                id: `observed-all-${index}`, observedAtMs, eventCount: 2, sessionId: null, turnId: null,
+                agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null,
+                source: 'runtime', tokens, cost: accounting.totals.cost,
+            })),
+        });
+        const value = projectUsageAnalyticsSummary(rich, usageQueryToAnalyticsRequest(selected, endMs));
+        const snapshot = resolveUsagePageAggregation({ queries: [selected],
+            accounting: [{ query: selected, value, status: 'available', asOfMs: endMs }],
+            howYouWork: [{ query: selected, detail: { status: 'partial', facts: [{
+                workId: 'observed-private', machineId: null, agentId: 'codex', evidenceId: 'busy', kind: 'busy',
+                startMs: firstMs, endMs: firstMs + 3000,
+            }] } }],
+        }).results[0]!;
+        const result = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({
+            query: selected, selectedFields: ['activeDays', 'streak', 'rhythm', 'parallel'],
+        }), snapshot });
+        expect(result).toMatchObject({ kind: 'composed', period: { startMs: 0, endMs } });
+        if (result.kind !== 'composed') throw new Error('Expected admitted All recap');
+        const model = buildUsageStatCardModel(result);
+        expect(model.days).toEqual([2, 0, 2]);
+        expect(model.stats).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'activeDays', value: '2' }),
+            expect.objectContaining({ id: 'streak', value: t('usage.board.recap.daysValue', { count: 1 }) }),
+        ]));
+        const screen = await renderScreen(<UsageStatCard model={model} tone="dark" testID="all-observed" />);
+        try {
+            const label = screen.findByTestId('all-observed')!.props.accessibilityLabel;
+            expect(label).toContain(`2 ${t('usage.board.recap.statActiveDays')}`);
+            expect(label).toContain(`${t('usage.board.recap.daysValue', { count: 1 })} ${t('usage.board.recap.statStreak')}`);
+        } finally { standardCleanup(); }
+    });
     it('names the public Agent with Names off and exposes formatted amounts rather than share fractions', async () => {
         const agent = { ...accounting.breakdowns!.agent![0]!, key: 'claude', label: 'Claude' };
         const result = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({ query, selectedFields: ['agentMix'] }),
@@ -114,7 +158,7 @@ describe('private stat card renderer', () => {
             if (field === 'cache') {
                 expect(text).toContain('600');
                 expect(text).toContain('100');
-            } else expect(text).toContain('12.3k');
+            } else expect(text).toContain('12.3K');
             expect(text).not.toContain('Private Agent');
         } finally { standardCleanup(); }
     });

@@ -5,13 +5,14 @@ import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { UsageRecapComposeResultSchema, UsageRecapDeliveryResultSchema, USAGE_RECAP_FIELDS,
   resolveUsageRecapQuery, type UsageRecapSourceSelection } from '@happier-dev/protocol/usage/usageRecap';
-import { type UsageRecapField } from '@happier-dev/protocol';
+import { type UsageRecapField } from '@happier-dev/protocol/usage/usageRecap';
 import {
   UsageQuerySchema,
   getUsageQueryKey,
+  resolveUsageQueryPeriod,
   type UsageQuery,
 } from '@happier-dev/protocol/inputs/usageQuery';
-import type { CustomModalInjectedProps } from '@/modal';
+import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -21,10 +22,9 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import {
   getUsagePeriodDefinition,
-  resolveUsagePeriodStartTimeSeconds,
   type UsagePeriod,
 } from '@/sync/api/account/usagePeriods';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -69,7 +69,28 @@ export type UsageRecapComposerProps = Readonly<{
   query: UsageQuery;
   serverId: string;
   initialPeriod?: UsagePeriod;
+  /** Where the sheet opens: a just-published page lands on its badge. Ignored where public profiles are off. */
+  initialOutput?: UsageRecapPublicOutputKind;
 }>;
+
+/** The one way to open Share: the recap widget's button and the published profile's Badge both arrive here. */
+export function openUsageRecapComposer(props: UsageRecapComposerProps): void {
+  Modal.show({
+    component: UsageRecapComposer,
+    props,
+    chrome: {
+      kind: 'card',
+      material: 'solid',
+      title: t('usage.board.recap.shareTitle'),
+      phonePresentation: 'fullscreen',
+      // Held to the window, so Copy, Save and Share stay in view while the controls scroll.
+      scrollHost: 'body',
+      // The stage needs the room of the lab sheet (s2card C): card left, controls right.
+      dimensions: { size: 'lg', width: 1120 },
+      testID: 'usage-recap-composer.modal',
+    },
+  });
+}
 
 type ComposeState =
   /** `shown` keeps the last composed card on screen (dimmed, not exportable) until the new one arrives. */
@@ -77,6 +98,21 @@ type ComposeState =
   | Readonly<{ kind: 'ready'; result: UsageRecapComposed; query: UsageQuery }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'failed'; code: string }>;
+
+/** Only typed issue paths/codes enter the existing collapsed diagnostic slot. */
+function queryFailureDiagnostic(failure: Readonly<{ errorCode: string; details?: unknown }>): string {
+  const details = failure.details;
+  if (failure.errorCode !== 'usage_query_result_invalid' || !details || typeof details !== 'object'
+    || !('issues' in details) || !Array.isArray(details.issues)) return failure.errorCode;
+  const lines: string[] = [];
+  for (const issue of details.issues) {
+    if (!issue || typeof issue !== 'object' || !('code' in issue) || typeof issue.code !== 'string'
+      || !('path' in issue) || !Array.isArray(issue.path)) continue;
+    const path: readonly unknown[] = issue.path;
+    if (path.every(part => typeof part === 'string' || typeof part === 'number')) lines.push(`${issue.code}: ${path.join('.')}`);
+  }
+  return [failure.errorCode, ...lines].join('\n');
+}
 
 /**
  * One sheet behind every Share (lab s2card C/Cp, C1). Where the service offers public profiles it
@@ -90,7 +126,7 @@ export function UsageRecapComposer(
   const phone = useDeviceType() === 'phone';
   // Profile link, Badge and Card exist only where this service offers public profiles.
   const publicProfiles = useFeatureDecision('account.publicProfiles', { scopeKind: 'runtime' })?.state === 'enabled';
-  const [output, setOutput] = React.useState<RecapOutput>('image');
+  const [output, setOutput] = React.useState<RecapOutput>(props.initialOutput ?? 'image');
   // The image choices live here so they survive a visit to another output.
   const [style, setStyle] = React.useState<UsageRecapStyle>('daybreak');
   const [format, setFormat] = React.useState<UsageRecapFormat>(
@@ -145,6 +181,7 @@ export function UsageRecapComposer(
 }
 
 type RecapOutput = 'image' | UsageRecapPublicOutputKind;
+const USAGE_RECAP_SOURCE_SELECTIONS = ['whole_usage', 'happier_only'] as const satisfies readonly UsageRecapSourceSelection[];
 const OUTPUTS = [
   { id: 'image', icon: 'image' },
   { id: 'profile_link', icon: 'link' },
@@ -154,7 +191,7 @@ const OUTPUTS = [
 
 /**
  * The private image: a live preview at true proportions, seven styles as real-card tiles, format,
- * period and per-field switches. The facts come from `usage.recap.compose` (the same Action agents
+ * period and per-field switches. The facts come from `usage.recap.private.compose` (the same Action agents
  * use); the image is captured on this device and only leaves through Copy, Save or Share that the
  * person presses.
  */
@@ -176,7 +213,7 @@ function UsageRecapImageOutput(
   const reducedMotion = useReducedMotionPreference();
   const tone = theme.dark ? 'dark' : 'light';
   const { style, format, period, fields, sourceSelection } = props.selection;
-  const { setStyle, setFormat, setPeriod, setFields } = props;
+  const { setStyle, setFormat, setPeriod, setFields, setSourceSelection } = props;
   const [state, setState] = React.useState<ComposeState>({ kind: 'composing' });
   const [composeAttempt, retryCompose] = React.useReducer((attempt: number) => attempt + 1, 0);
   const [delivery, setDelivery] = React.useState<
@@ -184,6 +221,11 @@ function UsageRecapImageOutput(
   >(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const cardRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const execution = useMountedActionExecution(props.serverId);
+  const { execute: runAction, isCurrent: executionIsCurrent } = execution;
+  // The compose effect keys on the selection, never on the hook's per-render callbacks.
+  const executionRef = React.useRef(execution);
+  executionRef.current = execution;
   const deliveryController = React.useRef<AbortController | null>(null);
   // The composer owns its period and source. Equivalent parent scopes and field selections
   // must retain the admitted read rather than cancel it during live page updates.
@@ -197,8 +239,8 @@ function UsageRecapImageOutput(
   // Every selected presentation is admitted with its period and fields by the same compose Action.
   React.useEffect(() => {
     const controller = new AbortController();
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    const retirement = lifetime?.onRetire(() => {
+    const { execute, isCurrent, binding, resolution } = executionRef.current;
+    const retirement = binding?.onRetire(() => {
       controller.abort();
       setState({ kind: 'failed', code: 'usage_scope_unavailable' });
     });
@@ -207,11 +249,10 @@ function UsageRecapImageOutput(
       const shown = previous.kind === 'ready' ? previous.result : previous.kind === 'composing' ? previous.shown : undefined;
       return shown ? { kind: 'composing', shown } : { kind: 'composing' };
     });
+    // The Account binding resolves asynchronously; composing waits for it rather than failing early.
+    if (!binding && resolution.kind === 'resolving') return () => controller.abort();
     void (async () => {
-      if (
-        !lifetime?.isCurrent() ||
-        lifetime.scope.serverId !== props.serverId
-      ) {
+      if (!isCurrent()) {
         setState({ kind: 'failed', code: 'usage_scope_unavailable' });
         return;
       }
@@ -220,17 +261,10 @@ function UsageRecapImageOutput(
       const query = UsageQuerySchema.parse({
         ...compositionQuery,
         granularity: getUsagePeriodDefinition(period).granularity,
-        period: {
-          startMs:
-            resolveUsagePeriodStartTimeSeconds(period, nowMs, offset) * 1000,
-          endMs: nowMs,
-        },
+        period: resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes: offset }, nowMs),
       });
-      const { createDefaultActionExecutor } =
-        await import('@/sync/ops/actions/defaultActionExecutor');
-      if (controller.signal.aborted) return;
-      const executed = await createDefaultActionExecutor().execute(
-        'usage.recap.compose',
+      const executed = await execute(
+        'usage.recap.private.compose',
         {
           query,
           sourceSelection,
@@ -238,17 +272,11 @@ function UsageRecapImageOutput(
           format,
           selectedFields: [...selectedFields],
         },
-        {
-          surface: 'ui',
-          actionCaller: { kind: 'host' },
-          serverId: lifetime.scope.serverId,
-          expectedAccountId: lifetime.scope.accountId,
-          signal: controller.signal,
-        },
+        { signal: controller.signal },
       );
-      if (controller.signal.aborted || !lifetime.isCurrent()) return;
+      if (controller.signal.aborted || !isCurrent()) return;
       if (!executed.ok) {
-        setState({ kind: 'failed', code: executed.errorCode });
+        setState({ kind: 'failed', code: queryFailureDiagnostic(executed) });
         return;
       }
       const parsed = UsageRecapComposeResultSchema.safeParse(executed.result);
@@ -262,12 +290,12 @@ function UsageRecapImageOutput(
           : { kind: 'unavailable' },
       );
     })().catch(() => {
-      if (!controller.signal.aborted && lifetime?.isCurrent()) {
+      if (!controller.signal.aborted && isCurrent()) {
         setState({ kind: 'failed', code: 'usage_recap_compose_failed' });
       }
     });
     return () => { retirement?.dispose(); controller.abort(); };
-  }, [style, format, period, sourceSelection, selectedFields, compositionQuery, props.serverId, composeAttempt]);
+  }, [style, format, period, sourceSelection, selectedFields, compositionQuery, execution.binding, composeAttempt]);
 
   const composed =
     state.kind === 'ready' ? state.result : null;
@@ -289,34 +317,30 @@ function UsageRecapImageOutput(
   const deliver = React.useCallback(
     async (intent: 'copy' | 'save' | 'share') => {
       if (!composed || state.kind !== 'ready' || !cardRef.current) return;
-      const lifetime = captureActiveServerAccountScopeLifetime();
-      if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.serverId) return;
+      if (!executionIsCurrent()) return;
       const controller = new AbortController();
       deliveryController.current?.abort();
       deliveryController.current = controller;
-      const retired = lifetime.onRetire(() => controller.abort());
       setDelivery(intent);
       setNotice(null);
       try {
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        // The render port captures this mounted preview, so it travels with the invocation.
+        const executed = await runAction('usage.recap.private.deliver',
+          { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent },
+          { signal: controller.signal, executorOptions: { usageRecapRender: async (result, context) => {
+            // Capture the existing preview only when its exact selected/as-of model is still current.
+            if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
+              return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context);
+            }
+            return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
+              { signal: context.signal, isCurrent: executionIsCurrent }) };
+          } } });
         controller.signal.throwIfAborted();
-        const executed = await createDefaultActionExecutor({ usageRecapRender: async (result, context) => {
-          // Capture the existing preview only when its exact selected/as-of model is still current.
-          if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
-            return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context);
-          }
-          return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
-            { signal: context.signal, isCurrent: lifetime.isCurrent }) };
-        } }).execute('usage.recap.deliver', { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent }, {
-          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: lifetime.scope.serverId,
-          expectedAccountId: lifetime.scope.accountId, signal: controller.signal,
-        });
-        controller.signal.throwIfAborted();
-        if (!lifetime.isCurrent() || !executed.ok) throw new Error('usage_recap_export_unavailable');
+        if (!executionIsCurrent() || !executed.ok) throw new Error('usage_recap_export_unavailable');
         const result = UsageRecapDeliveryResultSchema.parse(executed.result);
         if (result.compose.kind !== 'composed') throw new Error('usage_recap_export_unavailable');
         setState({ kind: 'ready', result: result.compose, query: state.query });
-        if (controller.signal.aborted || !lifetime.isCurrent()) return;
+        if (controller.signal.aborted || !executionIsCurrent()) return;
         setNotice(
           result.kind === 'cancelled' ? null : result.kind === 'delivered'
             ? intent === 'copy'
@@ -327,16 +351,15 @@ function UsageRecapImageOutput(
               : t('usage.board.recap.exportFailed'),
         );
       } catch {
-        if (!controller.signal.aborted && lifetime.isCurrent()) setNotice(t('usage.board.recap.exportFailed'));
+        if (!controller.signal.aborted && executionIsCurrent()) setNotice(t('usage.board.recap.exportFailed'));
       } finally {
-        retired.dispose();
         if (deliveryController.current === controller) {
           deliveryController.current = null;
           setDelivery(null);
         }
       }
     },
-    [composed, state, props.serverId, sourceSelection, style, format, fields],
+    [composed, state, runAction, executionIsCurrent, sourceSelection, style, format, fields],
   );
 
   const toggle = React.useCallback((field: UsageRecapField, on: boolean) => {
@@ -471,6 +494,23 @@ function UsageRecapImageOutput(
           }))}
         />
       </ItemGroup>
+      <ItemGroup
+        title={t('usage.board.recap.sourceLabel')}
+        surface="none"
+        description={sourceSelection === 'happier_only' && (composed?.coverage.execution?.status === 'partial' || composed?.coverage.execution?.status === 'unknown')
+          ? t('usage.board.recap.sourcePartialHint')
+          : t('usage.board.recap.sourceHint')}
+      >
+        <SegmentedTabBar
+          testIDPrefix="usage-recap-source"
+          compact
+          segmentSizing="content"
+          activeTabId={sourceSelection}
+          onSelectTab={setSourceSelection}
+          accessibilityLabel={t('usage.board.recap.sourceLabel')}
+          tabs={USAGE_RECAP_SOURCE_SELECTIONS.map((id) => ({ id, label: t(`usage.board.recap.source_${id}`) }))}
+        />
+      </ItemGroup>
       <ItemGroup title={t('usage.board.recap.fieldsLabel')}>
         {USAGE_RECAP_FIELDS.map((field) => {
           const on = fields.includes(field);
@@ -598,6 +638,8 @@ const styles = StyleSheet.create((theme) => ({
   // The outputs lead the sheet: what you are sharing comes before how it looks.
   outputs: {
     alignItems: 'flex-start',
+    // The card chrome insets only its title band: the outputs stand on the title's edge.
+    paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s16,
   },
   // The card hangs under the formats: the stage stretches with the controls column beside it, and a

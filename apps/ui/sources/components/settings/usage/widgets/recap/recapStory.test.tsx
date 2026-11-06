@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { buildUsageAnalyticsViewModel, type UsageFilterState } from '@/sync/api/account/usageAnalytics';
-import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
+import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { buildRecapStorySlides } from '@/sync/domains/usage/recap/buildRecapStorySlides';
 import { RecapStorySurface } from './RecapStorySurface';

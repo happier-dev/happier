@@ -7,6 +7,10 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import type { UsageWidgetBodyModel } from './useUsageWidgetResource';
 import { ConnectedPresentationRecordV1Schema, ConnectedPresentationRowMutationV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import type { UsagePlanAccount } from './widgets/plans/usagePlansModel';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { decodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD, ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
@@ -44,7 +48,7 @@ const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = aw
 const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { normalizeUsageQuery, getUsageQueryKey } = await import('@happier-dev/protocol/inputs/usageQuery');
-const { ApprovalRequestV2Schema, AccountProfileSchema } = await import('@happier-dev/protocol');
+const [{ ApprovalRequestV2Schema}, { AccountProfileSchema}] = await Promise.all([import('@happier-dev/protocol/approvals/approvalRequestV1'), import('@happier-dev/protocol/account/profile')]);
 const { z } = await import('zod/mini');
 const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
 const { t } = await import('@/text');
@@ -75,6 +79,13 @@ beforeEach(async () => {
     harness.answer(serverId, '/v1/auth/ping', { body: {} });
     harness.answer(serverId, '/v2/sessions', { body: { sessions: [], nextCursor: null, hasNext: false } });
     harness.answer(serverId, '/v2/sessions/active', { body: { sessions: [], nextCursor: null, hasNext: false } });
+    for (const path of ['/v1/machines', '/v2/session-organization']) harness.answer(serverId, path, {
+        select: async (_input, request) => {
+            const response = createEmptyAccountBootstrapHttpResponse(new URL(request.url).pathname, request.init);
+            if (!response) throw new Error('Missing empty Account bootstrap fixture');
+            return { body: await response.json() };
+        },
+    });
     const credentials = await TokenStorage.getCredentialsForServerUrl('https://usage-settings.test');
     if (!credentials) throw new Error('The synthetic Home credential is missing');
     await restoreConnectionToActiveServer(credentials);
@@ -87,6 +98,8 @@ beforeEach(async () => {
     // seeds the saved Home, not the not-yet-applied Account's live settings.
     await harness.requireUiApproval(serverId, 'settings.set');
     raw = { ...storage.getState().settings };
+    await settingsQueue.awaitQueue();
+    expect(storage.getState().settings.actionsSettingsV1.actions['settings.set']).toMatchObject({ approvalRequiredSurfaces: ['ui'] });
     harness.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: raw }, version } }) });
 });
 afterEach(async () => { standardCleanup(); await disconnectActiveServerConnection(); });
@@ -120,7 +133,7 @@ function priceSlice() {
 
 describe('Usage settings UI Action admission', () => {
     it('round-trips mounted Save and Clear through quota read-back when the provider reports no subscription', async () => {
-        const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol');
+        const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId} = await import('@happier-dev/protocol/connect/account-usage-primitives');
         const { ConnectedServiceQuotaGetResultV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { createUiConnectedServiceAction } = await import('@/sync/ops/actions/connectedServiceActionDeps');
@@ -218,7 +231,13 @@ describe('Usage settings UI Action admission', () => {
             record = body.content.v;
             return { body: { status: 'updated', revision: ++revision, cursor: revision } };
         } });
-        if (requireApproval) await harness.requireUiApproval(serverId, actionId);
+        if (requireApproval) {
+            await harness.requireUiApproval(serverId, actionId);
+            raw = { ...storage.getState().settings };
+            const { sync } = await import('@/sync/sync');
+            await (Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync).awaitQueue();
+            expect(storage.getState().settings.actionsSettingsV1.actions[actionId]).toMatchObject({ approvalRequiredSurfaces: ['ui'] });
+        }
         const account: UsagePlanAccount = { key: 'subscription', source: { ref, bindingKind: 'account' },
             service: ref.service, accountId: ref.accountId, groupId: null, planLabel: null, accountLabel: null,
             state: { source: 'quota', status: 'available' }, read: null, windows: [], headline: null, stale: false,
@@ -236,18 +255,20 @@ describe('Usage settings UI Action admission', () => {
             const request = ApprovalRequestV2Schema.safeParse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null'));
             return request.success && request.data.actionId === actionId;
         });
-        await screen.pressByTestIdAsync(`subscription.${operation}`);
+        // Mounted Actions settle after approval; the person's press starts the wait before Inbox decides it.
+        await act(async () => { screen.pressByTestId(`subscription.${operation}`); });
         if (requireApproval) {
             await waitForHomeGovernance(() => expect(approvals()).toHaveLength(1));
             expect(record).toEqual(original);
             const rejectedId = approvals()[0]!.id;
-            await decideApprovalAsInbox(serverId, rejectedId, 'reject');
+            expect(await decideApprovalAsInbox(serverId, rejectedId, 'reject')).toMatchObject({ ok: true });
             await waitForHomeGovernance(() => expect(screen.findByTestId(`subscription.${operation}`)?.props.disabled).toBe(false));
             expect(record).toEqual(original);
             expect(settled).not.toHaveBeenCalled();
-            await screen.pressByTestIdAsync(`subscription.${operation}`);
+            await act(async () => { screen.pressByTestId(`subscription.${operation}`); });
             await waitForHomeGovernance(() => expect(approvals()).toHaveLength(2));
-            await decideApprovalAsInbox(serverId, approvals().find(artifact => artifact.id !== rejectedId)!.id, 'approve');
+            expect(await decideApprovalAsInbox(serverId, approvals().find(artifact => artifact.id !== rejectedId)!.id, 'approve'))
+                .toMatchObject({ ok: true });
         } else expect(approvals()).toHaveLength(0);
         await waitForHomeGovernance(() => expect(record.entries).toMatchObject(operation === 'clear' ? [] : [{
             subject: { kind: 'account', account: ref }, subscriptionMonthlyPrice: { amount: 17, currency: 'USD' },
@@ -264,7 +285,7 @@ describe('Usage settings UI Action admission', () => {
             return { status: 'dismissed' as const };
         } };
         const hook = await renderHook(() => useMountedActionExecution({ serverId, accountId: 'usage-account' },
-            { openOnRequest: true, executorOptions }));
+            { executorOptions }));
         const input = { serverId, machineId: 'machine', sourceId: 'source' };
         expect(await hook.getCurrent().execute('usage.sources.dismiss', input))
             .toMatchObject({ ok: true, result: { status: 'dismissed' } });
@@ -329,19 +350,19 @@ describe('Usage settings UI Action admission', () => {
         await screen.pressByTestIdAsync('prices.model.qa-private-model.set');
         const field = (name: string) => screen.findAllByType(FieldTextInput).find(input => input.props.testID === `prices.model.qa-private-model.${name}`)!;
         await act(async () => { field('input').props.onChangeText('3'); field('output').props.onChangeText('15'); });
-        await screen.pressByTestIdAsync('prices.model.qa-private-model.save');
+        await act(async () => { screen.pressByTestId('prices.model.qa-private-model.save'); });
         if (requireApproval) {
             expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({});
             await waitForHomeGovernance(() => expect(approvalFor('usage.modelPrices')).toBeTruthy());
             await decideApprovalAsInbox(serverId, approvalFor('usage.modelPrices')!.id, 'approve');
         } else expect(approvalFor('usage.modelPrices')).toBeUndefined();
-        await waitForHomeGovernance(() => expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({
-            'qa-private-model': { kind: 'rates', inputUsdPerMillion: 3, outputUsdPerMillion: 15 } }));
+        await act(async () => { await waitForHomeGovernance(() => expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({
+            'qa-private-model': { kind: 'rates', inputUsdPerMillion: 3, outputUsdPerMillion: 15 } })); });
         const previous = new Set(harness.artifacts(serverId).list().map(row => row.id));
         // An approved save closes the row; Reset lives in the open row with the other ways to price it.
         if (!screen.findByTestId('prices.model.qa-private-model.reset')) await screen.pressByTestIdAsync('prices.model.qa-private-model.set');
         await waitForHomeGovernance(() => expect(screen.findByTestId('prices.model.qa-private-model.reset')).toBeTruthy());
-        await screen.pressByTestIdAsync('prices.model.qa-private-model.reset');
+        await act(async () => { screen.pressByTestId('prices.model.qa-private-model.reset'); });
         const next = () => harness.artifacts(serverId).list().find(row => !previous.has(row.id));
         if (requireApproval) {
             await waitForHomeGovernance(() => expect(next()).toBeTruthy());
@@ -352,6 +373,14 @@ describe('Usage settings UI Action admission', () => {
     });
 
     it('persists Coach check and model choices only after approval, preserving dismissed evidence', async () => {
+        const kv = createAccountKvHttpFixture();
+        for (const route of [`GET /v1/kv/${encodeURIComponent(USAGE_COACH_SUPPRESSIONS_KV_KEY)}`, 'POST /v1/kv']) {
+            harness.answer(serverId, route, { select: async (_input, request) => {
+                const response = await kv.handleFetch(request.url, request.init);
+                if (!response) throw new Error('Expected Account KV route');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
         raw.usageCoachPreferencesV1 = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'keep-dismissed' }] };
         storage.getState().applySettings(settingsParse(raw), ++version);
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
@@ -374,8 +403,11 @@ describe('Usage settings UI Action admission', () => {
         expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('suggest_with_estimates');
         await decideApprovalAsInbox(serverId, nextApproval()!.id, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('complete_only'));
-        expect(raw.usageCoachPreferencesV1).toMatchObject({ disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only',
-            suppressions: [{ kind: 'dismissed', evidenceKey: 'keep-dismissed' }] });
+        expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only' });
+        const suppressionRow = kv.read(USAGE_COACH_SUPPRESSIONS_KV_KEY);
+        expect(suppressionRow).toBeDefined();
+        expect(await decodeAccountStoredJsonContent({ encoded: suppressionRow!.value, expectedMode: 'plain', encryption: null }))
+            .toEqual({ v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'keep-dismissed' }] });
         await screen.unmount();
     });
     it('does not bypass a disabled settings Action when the routing preference is pressed', async () => {
@@ -443,8 +475,9 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<ProviderUsageGaugeSettingsGroup />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-session-providerUsageGauge-routingHints')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-session-providerUsageGauge-routingHints');
-        await waitForHomeGovernance(() => expect(raw.usageRoutingHintsEnabled).toBe(false));
+        await act(async () => { await waitForHomeGovernance(() => expect(raw.usageRoutingHintsEnabled).toBe(false)); });
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(false);
+        expect(screen.findByTestId('settings-session-providerUsageGauge-routingHints-toggle')?.props.value).toBe(false);
         await screen.pressByTestIdAsync('settings-session-providerUsageGauge-routingHints');
         await waitForHomeGovernance(() => expect(raw.usageRoutingHintsEnabled).toBe(true));
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
@@ -476,9 +509,9 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><SessionModelRoutingHint entry={entry} machineId={null} /></InjectedAuthProvider>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy());
         await screen.pressByTestIdAsync('session-model-routing-hint.hide');
+        await act(async () => { await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.routingHints')).toBeTruthy()); });
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
         expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy();
-        await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.routingHints')).toBeTruthy());
         await decideApprovalAsInbox(serverId, approvalFor('session.providerLimits.routingHints')!.id, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(false));
         expect(screen.findAllByTestId('session-model-routing-hint.hide')).toHaveLength(0);
@@ -544,8 +577,10 @@ describe('Usage settings UI Action admission', () => {
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 }));
         const retiredPress = screen.findAllByType(DropdownMenu)[0]!.props.onSelect;
         await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
+        const replacementHours = storage.getState().settings.usageNightHoursV1;
         await act(async () => { retiredPress('clear'); });
-        expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
+        expect(storage.getState().settings.usageNightHoursV1).toEqual(replacementHours);
+        expect(raw.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
         await screen.unmount();
     });
 
@@ -554,9 +589,9 @@ describe('Usage settings UI Action admission', () => {
         storage.getState().applySettings(settingsParse(raw), ++version);
         const screen = await renderNight();
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('clear'); });
+        await act(async () => { await waitForHomeGovernance(() => expect(approvalFor('usage.nightHours')).toBeTruthy()); });
         expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
         expect(screen.findAllByType(DropdownMenu).map(control => control.props.selectedId)).toEqual(['23', '7']);
-        await waitForHomeGovernance(() => expect(approvalFor('usage.nightHours')).toBeTruthy());
         await decideApprovalAsInbox(serverId, approvalFor('usage.nightHours')!.id, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageNightHoursV1).toBeNull());
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('23'); });

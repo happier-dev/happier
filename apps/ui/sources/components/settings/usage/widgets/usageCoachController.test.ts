@@ -14,9 +14,11 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createUsageCoachController } from './usageCoachController';
 import { projectUsageCoachFindings } from './usageCoachPresentation';
+import { createUsageCoachSuppressionPort, UsageCoachSuppressionStateV1Schema } from '@happier-dev/protocol/usage/coach/coachActions';
 
 const ANCHOR = 'usage.exampleCoachSetting';
 const PREFERENCES = 'usage.coachPreferences';
+const COACH_STATE = 'usage-coach:suppressions';
 const query = normalizeUsageQuery({
   period: { startMs: 0, endMs: 1000 },
   granularity: 'day',
@@ -76,6 +78,7 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
   const store = new Map<string, unknown>([
     [ANCHOR, false],
     [PREFERENCES, { v: 1, suppressions: [] }],
+    [COACH_STATE, { v: 1, suppressions: [] }],
   ]);
   let version = 5;
   const settings = ActionsSettingsV1Schema.parse({
@@ -89,6 +92,14 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
   });
   const deps = {
     usageActions: {
+      coachSuppressions: () => createUsageCoachSuppressionPort({ readLegacy: async () => [], transport: {
+        read: async () => ({ value: store.get(COACH_STATE), version }),
+        compareAndSet: async (value, expected) => {
+          if (expected !== version) return { success: false as const, value: store.get(COACH_STATE), version };
+          store.set(COACH_STATE, value);
+          return { success: true as const, version: ++version };
+        },
+      } }),
       query: async () => ({
         v: 1 as const,
         results: [
@@ -183,19 +194,20 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
 describe('Usage Coach widget controller', () => {
   it('shows refreshed canonical findings after snooze expiry or an external restore in the same mount', async () => {
     const { controller, store } = harness();
+    const untilMs = Date.now() + 60_000;
     const rows = (nowMs: number) => projectUsageCoachFindings(applyUsageCoachPreferences(evaluation,
-      UsageCoachPreferencesV1Schema.parse(store.get(PREFERENCES)), nowMs).findings, controller.getSnapshot(), nowMs);
+      UsageCoachSuppressionStateV1Schema.parse(store.get(COACH_STATE)), nowMs).findings, controller.getSnapshot(), nowMs);
     try {
-      expect((await controller.snooze(query, finding.evidenceKey, 5000)).ok).toBe(true);
-      expect(rows(4999).visible).toEqual([]);
-      expect(rows(5000).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
-      await controller.snooze(query, finding.evidenceKey, 9000);
-      store.set(PREFERENCES, { v: 1, suppressions: [] });
-      expect(rows(5001).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
+      expect((await controller.snooze(query, finding.evidenceKey, untilMs)).ok).toBe(true);
+      expect(rows(untilMs - 1).visible).toEqual([]);
+      expect(rows(untilMs).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
+      await controller.snooze(query, finding.evidenceKey, untilMs + 4000);
+      store.set(COACH_STATE, { v: 1, suppressions: [] });
+      expect(rows(untilMs + 1).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
       await controller.dismiss(query, finding.evidenceKey);
-      expect(rows(10000).visible).toEqual([]);
-      store.set(PREFERENCES, { v: 1, suppressions: [] });
-      expect(rows(10001).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
+      expect(rows(untilMs + 5000).visible).toEqual([]);
+      store.set(COACH_STATE, { v: 1, suppressions: [] });
+      expect(rows(untilMs + 5001).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
     } finally { controller.dispose(); }
   });
   it('keeps digest opt-in within the captured Account and refuses an invalid Automation destination', async () => {
@@ -257,27 +269,28 @@ describe('Usage Coach widget controller', () => {
     expect(controller.getSnapshot()).toMatchObject({ applied: [], error: { evidenceKey: finding.evidenceKey }, pending: [] });
   });
 
-  it('dismisses and snoozes the exact evidence through Account preferences', async () => {
+  it('dismisses and snoozes exact evidence through Account KV without changing settings', async () => {
     const { controller, store } = harness();
+    const state = () => applyUsageCoachPreferences(evaluation,
+      UsageCoachSuppressionStateV1Schema.parse(store.get(COACH_STATE)), Date.now()).findings[0]!.state;
     expect((await controller.dismiss(query, finding.evidenceKey)).ok).toBe(
       true,
     );
-    expect(store.get(PREFERENCES)).toMatchObject({
-      suppressions: [{ kind: 'dismissed', evidenceKey: finding.evidenceKey }],
-    });
-    expect((await controller.snooze(query, finding.evidenceKey, 5000)).ok).toBe(
+    expect(UsageCoachSuppressionStateV1Schema.parse(store.get(COACH_STATE)).suppressions).toHaveLength(1);
+    expect(state().dismissed).toBe(true);
+    const untilMs = Date.now() + 60_000;
+    expect((await controller.snooze(query, finding.evidenceKey, untilMs)).ok).toBe(
       true,
     );
-    expect(store.get(PREFERENCES)).toMatchObject({
-      suppressions: [
-        { kind: 'snoozed', evidenceKey: finding.evidenceKey, untilMs: 5000 },
-      ],
-    });
+    expect(UsageCoachSuppressionStateV1Schema.parse(store.get(COACH_STATE)).suppressions).toHaveLength(1);
+    expect(state()).toMatchObject({ dismissed: false, snoozedUntilMs: untilMs });
     expect((await controller.snooze(query, finding.evidenceKey, null)).ok).toBe(true);
-    expect(store.get(PREFERENCES)).toMatchObject({ suppressions: [] });
+    expect(store.get(COACH_STATE)).toMatchObject({ suppressions: [] });
+    expect(store.get(PREFERENCES)).toEqual({ v: 1, suppressions: [] });
     await controller.dismiss(query, finding.evidenceKey);
     expect((await controller.dismiss(query, finding.evidenceKey, false)).ok).toBe(true);
-    expect(store.get(PREFERENCES)).toMatchObject({ suppressions: [] });
+    expect(store.get(COACH_STATE)).toMatchObject({ suppressions: [] });
+    expect(store.get(PREFERENCES)).toEqual({ v: 1, suppressions: [] });
   });
 
   it('drops a late result once the captured Account retires', async () => {
