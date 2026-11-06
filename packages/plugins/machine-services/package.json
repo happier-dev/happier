@@ -16,7 +16,8 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./happier-plugin-ui/healthSetup": "./src/ui/healthSetup.ts"
+    "./happier-plugin-ui/healthSetup": "./src/ui/healthSetup.ts",
+    "./happier-plugin-ui/health-setup": "./src/ui/healthSetup.ts"
   },
   "files": [
     "dist",
@@ -24,7 +25,8 @@
     "package.json"
   ],
   "scripts": {
-    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
+    "build:ui": "happier-plugin-build-ui",
     "build:finite": "pnpm --silent run build",
     "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
