@@ -30,16 +30,20 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
         const authentication = readSessionAccessAuthenticationFromRequest(request);
         const compatibility = readAccountStoredContentCompatibilityForHttpRequest(request);
         const selected = await inReadSnapshot(async tx => {
-            let candidates: string[] | undefined;
+            let candidates: Promise<string[]> | undefined;
             const result: UsageSessionEvidenceResponse['requests'] = [];
             for (const demand of request.body.requests) {
                 if (reply.raw.destroyed) break;
                 const explicit = demand.sessionIds ?? (demand.query.session === null ? undefined
                     : typeof demand.query.session === 'string' ? [demand.query.session] : demand.query.session);
+                const accessible = () => candidates ??= readSessionEvidenceCandidateIdsInTx(tx, { accountId: request.userId, authentication });
+                // A named wake asks only whether those Sessions join the window.
                 const sessionIds = explicit !== undefined ? [...new Set(explicit)]
                     : !usageQueryNeedsSessionCandidates(demand.query) ? []
                     : await selectSessionEvidenceSubjectsInTx(tx, { accountId: request.userId, query: demand.query, nowMs: request.body.nowMs,
-                        candidateIds: candidates ??= await readSessionEvidenceCandidateIdsInTx(tx, { accountId: request.userId, authentication }) });
+                        candidateIds: demand.candidateSessionIds === undefined ? await accessible()
+                            : await readSessionEvidenceCandidateIdsInTx(tx, { accountId: request.userId, authentication,
+                                candidateIds: demand.candidateSessionIds }) });
                 result.push({ query: demand.query, sessionIds });
             }
             return result;

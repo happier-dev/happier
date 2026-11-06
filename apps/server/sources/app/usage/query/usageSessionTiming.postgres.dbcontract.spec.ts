@@ -5,7 +5,7 @@ import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWork
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inReadSnapshot } from '@/storage/inTx';
 import { prismaRuntime } from '@/storage/prisma';
-import { selectSessionEvidenceSubjectsInTx } from './selectSessionEvidenceSubjects';
+import { readSessionEvidenceCandidateIdsInTx, selectSessionEvidenceSubjectsInTx } from './selectSessionEvidenceSubjects';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('persisted Usage timing on PostgreSQL', () => {
     beforeAll(async () => {
@@ -14,6 +14,26 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('p
         initDbPostgres(); await db.$connect();
     });
     afterAll(async () => { await shutdownDbClient(); });
+
+    it('bounds authorized candidate header rows to the named wake on PostgreSQL', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        try {
+            const make = (accountId: string) => db.session.create({ data: { accountId, tag: randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', agentState: '{}' } });
+            const candidate = await make(account.id);
+            await make(account.id);
+            const foreign = await make(other.id);
+            const ids = await inReadSnapshot(tx => readSessionEvidenceCandidateIdsInTx(tx, {
+                accountId: account.id, authentication: { env: process.env, authority: 'present_user', authenticationEvidence: undefined },
+                candidateIds: [candidate.id, foreign.id],
+            }));
+            expect(ids).toEqual([candidate.id]);
+        } finally {
+            await db.session.deleteMany({ where: { accountId: { in: [account.id, other.id] } } });
+            await db.account.deleteMany({ where: { id: { in: [account.id, other.id] } } });
+        }
+    });
 
     it('prunes both content modes by known bounds, retaining open waits, message timestamps and unknowns', async () => {
         const nowMs = Date.UTC(2026, 10, 5, 12), day = 86_400_000;

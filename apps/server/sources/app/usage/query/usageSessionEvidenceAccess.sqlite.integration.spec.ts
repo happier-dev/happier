@@ -21,6 +21,36 @@ describe('Usage evidence component admission', () => {
         initAuth: true, initEncrypt: true, env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
+    it('selects only changed candidate Sessions through the same window and access owner', async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const foreign = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const make = (accountId: string, createdAt: number) => db.session.create({ data: { accountId,
+            tag: randomUUID(), encryptionMode: 'plain', metadata: '{}', originKind: 'session',
+            createdAt: new Date(createdAt), updatedAt: new Date(createdAt), lastActiveAt: new Date(createdAt),
+            usageTimingV1: { v: 1, metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: null, maxMs: null } } } });
+        const [inside, unrelated, outside, denied] = await Promise.all([
+            make(owner.id, 250), make(owner.id, 250), make(owner.id, 10), make(foreign.id, 250),
+        ]);
+        let candidateRows = 0;
+        const stop = observeSqliteRequests({ after(request, result) {
+            if (request.model !== 'Session' || request.action !== 'findMany' || !Array.isArray(result)) return;
+            if (result.every(row => row && typeof row === 'object' && Object.keys(row).length === 1 && 'id' in row))
+                candidateRows += result.length;
+        } });
+        try { await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v2/usage/session-evidence',
+                headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders },
+                payload: { nowMs: 400, requests: [{ query: normalizeUsageQuery({ period: { startMs: 200, endMs: 400 },
+                    includeWorkEvidence: false, includeTranscriptEvidence: false }),
+                    candidateSessionIds: [inside.id, outside.id, denied.id] }] } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json().requests[0].sessionIds).toEqual([inside.id]);
+            expect(response.json().results.map((row: { sessionId: string }) => row.sessionId)).toEqual([inside.id]);
+            expect(response.json().results.some((row: { sessionId: string }) => row.sessionId === unrelated.id)).toBe(false);
+            expect(candidateRows, 'Named candidates must not read the unrelated accessible Session census').toBe(2);
+        }); } finally { stop(); }
+    });
+
     it('keeps transcript denial unknown after detail admission instead of inventing empty opened evidence', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),

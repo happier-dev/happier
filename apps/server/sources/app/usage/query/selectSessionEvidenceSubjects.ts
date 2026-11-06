@@ -9,11 +9,14 @@ import { sessionEvidenceSql } from './sessionEvidenceSql';
 
 /** Header-only authority scope. Explicit/historical membership never enters this census. */
 export async function readSessionEvidenceCandidateIdsInTx(tx: Tx, input: Readonly<{
-    accountId: string; authentication: SessionAccessAuthentication;
+    accountId: string; authentication: SessionAccessAuthentication; candidateIds?: readonly string[];
 }>): Promise<string[]> {
     const where = await buildSessionAccessWhere({ tx, accountId: input.accountId,
         authentication: input.authentication, capability: 'readTranscript', mode: 'effective_access_v1' });
-    return (await tx.session.findMany({ where, select: { id: true } })).map(row => row.id);
+    return (await tx.session.findMany({
+        where: input.candidateIds === undefined ? where : { AND: [where, { id: { in: [...new Set(input.candidateIds)] } }] },
+        select: { id: true },
+    })).map(row => row.id);
 }
 
 /** Window predicates use producer timing; unrelated protected bodies stay in storage. */

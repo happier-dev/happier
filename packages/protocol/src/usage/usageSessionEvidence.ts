@@ -57,7 +57,9 @@ export const UsageSessionStateEvidenceSchema: z.ZodMiniType<UsageSessionStateEvi
 
 export const UsageSessionEvidenceRequestSchema = lazyZodSchema(() => z.strictObject({
     nowMs: Time,
-    requests: z.array(z.strictObject({ query: UsageQuerySchema, sessionIds: z.optional(z.array(Id)) })),
+    requests: z.array(z.strictObject({ query: UsageQuerySchema, sessionIds: z.optional(z.array(Id)),
+        /** Row-level window question: which of these Sessions belong to the window. Ignored with explicit sessionIds. */
+        candidateSessionIds: z.optional(z.array(Id)) })),
 }));
 export type UsageSessionEvidenceRequest = z.infer<typeof UsageSessionEvidenceRequestSchema>;
 
