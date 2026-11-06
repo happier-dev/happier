@@ -56,6 +56,8 @@ import type {
     DaemonProviderModelSettingsMutationResponseV1,
     DaemonProviderProbeRequestV1,
     DaemonProviderProbeResponseV1,
+    DaemonProviderUsageRefreshRequestV1,
+    DaemonProviderUsageRefreshResponseV1,
     DaemonProviderProfileMigrationConfirmRequestV1,
     DaemonProviderProfileMigrationConfirmResponseV1,
     DaemonProviderProfileMigrationConflictConfirmRequestV1,
@@ -114,6 +116,8 @@ import type {
     ProviderModelSettingsMutationResult,
     ProviderProbeRequest,
     ProviderProbeResult,
+    ProviderUsageRefreshRequest,
+    ProviderUsageRefreshResult,
     ProviderProfileMigrationConfirmRequest,
     ProviderProfileMigrationConfirmResult,
     ProviderProfileMigrationConflictConfirmRequest,
@@ -127,6 +131,7 @@ import type {
 } from './projections.js';
 
 const PROVIDER_EXPORTS = [
+    'DaemonProviderUsageRefreshRequestV1',
     'PROVIDER_REASONING_EFFORT_LEVELS_V1',
     'buildProviderReasoningModelOptions',
     'ProviderUsageParseResultV1',
@@ -189,6 +194,9 @@ const PROVIDER_EXPORTS = [
     'ProviderModelSettingsMutationResult',
     'ProviderProbeRequest',
     'ProviderProbeResult',
+    'ProviderUsageRefreshRequest',
+    'ProviderUsageRefreshResult',
+    'ProviderUsageService',
     'ProviderProfileMigrationConfirmRequest',
     'ProviderProfileMigrationConfirmResult',
     'ProviderProfileMigrationConflictConfirmRequest',
@@ -374,6 +382,9 @@ type ProjectionTypes = [
     providerProjection.ProviderModelSettingsMutationResult,
     providerProjection.ProviderProbeRequest,
     providerProjection.ProviderProbeResult,
+    providerProjection.ProviderUsageRefreshRequest,
+    providerProjection.ProviderUsageRefreshResult,
+    providerProjection.ProviderUsageService,
     providerProjection.ProviderProfileMigrationConfirmRequest,
     providerProjection.ProviderProfileMigrationConfirmResult,
     providerProjection.ProviderProfileMigrationConflictConfirmRequest,
@@ -533,6 +544,8 @@ describe('final Provider source projection', () => {
         expectTypeOf<ProviderProbeRequest>()
             .toEqualTypeOf<WithoutHostMachineIdentity<DaemonProviderProbeRequestV1>>();
         expectTypeOf<ProviderProbeResult>().toEqualTypeOf<DaemonProviderProbeResponseV1>();
+        expectTypeOf<ProviderUsageRefreshRequest>().toEqualTypeOf<Omit<DaemonProviderUsageRefreshRequestV1, 'machineId'>>();
+        expectTypeOf<ProviderUsageRefreshResult>().toEqualTypeOf<DaemonProviderUsageRefreshResponseV1>();
         expectTypeOf<ProviderModelsRequest>()
             .toEqualTypeOf<WithoutHostMachineIdentity<DaemonProviderModelsRequestV1>>();
         expectTypeOf<ProviderModelsResult>().toEqualTypeOf<DaemonProviderModelsResponseV1>();

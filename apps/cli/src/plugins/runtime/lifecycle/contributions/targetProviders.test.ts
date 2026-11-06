@@ -144,6 +144,19 @@ function registration(pluginId: string, occurrenceId = '9') {
 }
 
 describe('projectTargetProviderRuntimes', () => {
+    it('projects usage parsers only for the matching current source declaration', () => {
+        const original = provider({ pluginId: 'acme.usage', provenance: 'first_party', source: 'bundled' });
+        const declaration = { ...original, definition: { ...original.definition, usageSources: [{ id: 'credits', endpointTemplateId: 'api', path: '/v1/credits', parser: 'credits-v1' }] } };
+        const parse = () => ({ meters: [] });
+        const entry = { pluginId: declaration.pluginId, occurrenceId: '9', registration: { family: 'providers' as const, localId: 'gateway', value: { usageParsers: { 'credits-v1': parse } } } };
+        const projected = projectTargetProviderRuntimes({ providers: [declaration], activationTargets: [activationTarget(declaration)], targetRegistrations: [entry], sourceCustodiesByPluginId: new Map([[declaration.pluginId, createBundledFirstPartyPluginSourceCustody('fixture-version-root:usage')]]), isRegistrationCurrent: () => true });
+        expect(projected.providers[0]?.usageParsers?.parsersByFormat['credits-v1']).toBe(parse);
+        expect(projected.providers[0]?.usageParsers?.isCurrent()).toBe(true);
+        const changed = { ...declaration, definition: { ...declaration.definition, usageSources: [{ ...declaration.definition.usageSources[0]!, path: '/other' }] } };
+        const rejected = projectTargetProviderRuntimes({ providers: [changed], activationTargets: [activationTarget(declaration)], targetRegistrations: [entry], sourceCustodiesByPluginId: new Map([[declaration.pluginId, createBundledFirstPartyPluginSourceCustody('fixture-version-root:usage')]]), isRegistrationCurrent: () => true });
+        expect(rejected.providers[0]?.usageParsers).toBeUndefined();
+        expect(rejected.diagnosticsByPluginId[declaration.pluginId]?.[0]?.code).toBe('plugin_activation_failed');
+    });
     it('projects the same public runtime outcome for bundled, development, and installed external Providers', () => {
         const providers = [
             provider({

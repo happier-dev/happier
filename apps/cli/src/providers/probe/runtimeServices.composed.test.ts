@@ -1,9 +1,8 @@
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -48,6 +47,13 @@ import {
 import { PROVIDER_HEALTH_REFRESH_TTL_MS } from './scheduler';
 import { createProviderLocalCatalogFallbackRunner } from './localCommand';
 import type { ProviderLocalCommandRunner } from './localCommand';
+import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { configuration } from '@/configuration';
 
 const temporaryPaths: string[] = [];
 afterEach(async () => {
@@ -224,6 +230,210 @@ function grantedSettings(providerRegistry = registry) {
 }
 
 describe('runtime provider services', () => {
+  it.each(['catalog', 'usage', 'command'] as const)('keeps %s parser retirement at its natural admission boundary', async (kind) => {
+    const pluginDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'chat', path: '/models', parser: 'credits-v1' }] },
+      usageSources: [{ id: 'credits', endpointTemplateId: 'chat', path: '/v1/credits', parser: 'credits-v1' }],
+      ...(kind === 'command' ? { discovery: { v: 1,
+        listener: { executableBasenames: ['acme'], defaultPorts: [] },
+        availabilityProbe: { endpointTemplateId: 'chat', path: '/models', parser: 'credits-v1' },
+        catalogFallback: {
+        endpointTemplateId: 'chat', lookupNames: ['acme'], fixedArgs: ['models'], parser: 'credits-v1',
+      } } } : {}),
+    });
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const transport = vi.fn(async (_request: ProviderProbeTransportRequest) => ({ status: kind === 'command' ? 503 : 200,
+      headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }));
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-parser-dns-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-provider-parser-plugin-'));
+    temporaryPaths.push(happyHomeDir, pluginRoot);
+    await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+    await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+      schemaVersion: 2, id: 'acme.static', version: '1.0.0', displayName: 'Parser admission fixture',
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      hostAccess: { required: [], optional: [] }, contributes: { providers: [pluginDefinition] },
+    }));
+    await writeFile(join(pluginRoot, 'daemon.mjs'), `export function activate(api) {
+      api.providers.registerCatalogParser('static', 'credits-v1', () => ({ models: [{ id: 'admitted-generation' }] }));
+      api.providers.registerUsageParser('static', 'credits-v1', () => ({ meters: [] }));
+    }`);
+    await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId: 'acme.static', manifestVersion: '1.0.0' });
+    const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }),
+      { isolateInvalidInstalledGenerations: false });
+    if (!generationAuthority) throw new Error('Expected committed parser fixture');
+    const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
+      loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external', existingAgentIds: new Set(),
+    }));
+    const runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, generationAuthority });
+    const acquired = await runtime.acquireProviderCatalogParsers?.({ pluginId: 'acme.static', localId: 'static' });
+    if (!acquired) throw new Error(JSON.stringify(runtime.pluginDiagnosticsByPluginId));
+    const capturedRegistry = { ...runtime.contributes,
+      providerActivationOccurrenceIdsByPluginId: new Map([['acme.static', acquired.activationOccurrenceId]]) };
+    const snapshot = providerSnapshot(grantedSettings(capturedRegistry));
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry: capturedRegistry,
+      runtimeStore, getAccountSettingsSnapshot: () => snapshot, featureGate: { isEnabled: () => true },
+      resolveAddresses: async () => ['1.1.1.1'], client: createProviderProbeHttpClient({ resolveAddresses: async () => {
+        if (kind !== 'command') { entered.resolve(); await release.promise; }
+        return ['1.1.1.1'];
+      }, transport }),
+      localCatalogFallback: createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool: async () => {
+        entered.resolve(); await release.promise;
+        return { ok: true, exitCode: 0, stdout: 'admitted-output', stderr: '' };
+      } } }),
+      resolveContributedCatalogParsers: async identity => {
+        const acquired = await runtime.acquireProviderCatalogParsers?.(identity);
+        return acquired ? { ...acquired, pluginId: identity.pluginId } : null;
+      },
+      resolveContributedUsageParsers: async identity => await runtime.acquireProviderUsageParsers?.(identity) ?? null,
+    });
+    try {
+      const pending = kind === 'usage' ? services.refreshUsage({ connectionId, machineId: 'machine-a' })
+        : services.probe({ connectionId, machineId: 'machine-a' });
+      expect(await Promise.race([entered.promise.then(() => 'entered'), pending]),
+        'The real admitted request must reach the held DNS boundary').toBe('entered');
+      runtime.fencePluginConsumers?.(['acme.static']);
+      release.resolve();
+      expect(await pending).toMatchObject(kind !== 'usage'
+        ? { status: 'success', models: [{ id: 'admitted-generation' }] }
+        : { status: 'success', sources: [{ status: 'ok', snapshot: { state: 'loaded_empty' } }] });
+      expect(transport).toHaveBeenCalledTimes(1);
+      // New acquisition, unlike this admitted finite operation, cannot invoke the retired plugin.
+      expect(await runtime.acquireProviderCatalogParsers?.({ pluginId: 'acme.static', localId: 'static' })).toBeNull();
+      expect(await runtime.acquireProviderUsageParsers?.({ pluginId: 'acme.static', localId: 'static' })).toBeNull();
+    } finally {
+      release.resolve();
+      await runtime.dispose();
+    }
+  });
+  // The 10-29 natural-boundary ruling admits finite reads once. Revocation
+  // affects the next read; a malformed sibling does not erase a valid source.
+  it.each(['valid', 'malformed'] as const)('finishes admitted usage after revocation with a %s later source and refuses the next read', async (secondResponse) => {
+    const usageDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      usageSources: [
+        { id: 'first', endpointTemplateId: 'chat', path: '/v1/first', parser: 'credits-v1' },
+        { id: 'second', endpointTemplateId: 'chat', path: '/v1/second', parser: 'credits-v1' },
+      ],
+    });
+    const usageRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: usageDefinition }]]),
+      providerActivationOccurrenceIdsByPluginId: new Map([['acme.static', 'occurrence-a']]) };
+    const settings = grantedSettings(usageRegistry);
+    let snapshot = providerSnapshot(settings);
+    const secondEntered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const transport = vi.fn(async (request: ProviderProbeTransportRequest) => {
+      if (request.url.endsWith('/second')) { secondEntered.resolve(); await release.promise; }
+      return { status: 200, headers: { 'content-type': 'application/json' },
+        body: Buffer.from(request.url.endsWith('/second') && secondResponse === 'malformed' ? '{' : '{"balance":"9.50"}') };
+    });
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-usage-currentness-'));
+    temporaryPaths.push(happyHomeDir);
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir,
+      registry: usageRegistry, getAccountSettingsSnapshot: () => snapshot,
+      featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      resolveContributedUsageParsers: async () => ({ activationOccurrenceId: 'occurrence-a', isCurrent: () => true, parsersByFormat: {
+        'credits-v1': () => ({ meters: [{ meterId: 'credits', label: 'Credits', used: null, limit: null,
+          remaining: 9.5, unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok' }] }),
+      } }),
+    });
+    const pending = services.refreshUsage({ connectionId, machineId: 'machine-a' });
+    await secondEntered.promise;
+    snapshot = { ...providerSnapshot(ProviderSettingsV1Schema.parse({ ...settings, accountGrants: [] })), settingsVersion: 2 };
+    release.resolve();
+    const result = await pending;
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') throw new Error('Expected settled source outcomes');
+    expect(result.sources).toHaveLength(2);
+    expect(result.sources[0]).toMatchObject({ sourceId: 'first', status: 'ok', snapshot: { meters: [{ remaining: 9.5 }] } });
+    expect(result.sources[1]).toMatchObject(secondResponse === 'valid'
+      ? { sourceId: 'second', status: 'ok', snapshot: { meters: [{ remaining: 9.5 }] } }
+      : { sourceId: 'second', status: 'error', error: { code: 'provider_probe_response_invalid' } });
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(await services.refreshUsage({ connectionId, machineId: 'machine-a' })).toMatchObject({
+      status: 'error', error: { code: 'provider_connection_disabled' },
+    });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports unavailable usage when the admitted runtime omits its optional parser acquirer', async () => {
+    const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+    // Partial runtime consumers may omit this public optional capability. Keep
+    // the real publication and lease owners beneath that supported boundary.
+    const runtimeWithoutUsage = { ...fixture.registry };
+    delete runtimeWithoutUsage.acquireProviderUsageParsers;
+    await pluginReloadController.adoptPreparedRuntimeRegistry({ registry: runtimeWithoutUsage,
+      changedPluginIds: [], runningSessionDisposition: 'retainRunningSessions' });
+    try {
+      const usageDefinition = ProviderContributionV1Schema.parse({ ...definition,
+        usageSources: [{ id: 'credits', endpointTemplateId: 'chat', path: '/credits', parser: 'credits-v1' }],
+      });
+      const usageRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: usageDefinition }]]) };
+      const snapshot = providerSnapshot(grantedSettings(usageRegistry));
+      const transport = vi.fn(async (_request: ProviderProbeTransportRequest) => ({
+        status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}'),
+      }));
+      const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir: configuration.happyHomeDir,
+        registry: usageRegistry, getAccountSettingsSnapshot: () => snapshot,
+        featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'],
+        client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      });
+      await expect(services.refreshUsage({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({
+        status: 'error', error: { code: 'provider_contribution_unavailable' },
+      });
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      await retireAdmittedPluginRuntimeRegistry({ controller: pluginReloadController,
+        registry: runtimeWithoutUsage, happyHomeDir: fixture.happyHomeDir });
+      await fixture.dispose();
+    }
+  });
+
+  it('refreshes declared usage through Q1 once and omits an unbound optional billing source', async () => {
+    const usageDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      usageSources: [
+        { id: 'credits', endpointTemplateId: 'chat', path: '/v1/credits', parser: 'credits-v1' },
+        { id: 'account-credits', endpointTemplateId: 'chat', path: '/v1/account-credits', parser: 'credits-v1',
+          billingCredential: { slotId: 'billing', destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
+      ],
+    });
+    const usageRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: usageDefinition }]]),
+      providerActivationOccurrenceIdsByPluginId: new Map([['acme.static', 'occurrence-a']]) };
+    const snapshot = providerSnapshot(grantedSettings(usageRegistry));
+    const transport = vi.fn(async (_request: ProviderProbeTransportRequest) => ({
+      status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"balance":"9.50"}'),
+    }));
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-usage-'));
+    temporaryPaths.push(happyHomeDir);
+    // The external Provider parser is the plugin boundary; all host admission,
+    // DNS transport policy and Q1 snapshot normalization below it remain real.
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir,
+      registry: usageRegistry, getAccountSettingsSnapshot: () => snapshot,
+      featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      resolveContributedUsageParsers: async () => ({ activationOccurrenceId: 'occurrence-a', isCurrent: () => true, parsersByFormat: {
+        'credits-v1': (body: unknown) => {
+          if (!body || typeof body !== 'object' || !('balance' in body)) throw new Error('Invalid credits');
+          return { meters: [{ meterId: 'credits', label: 'Credits', used: null, limit: null,
+            remaining: Number(body.balance), unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok' }] };
+        },
+      } }),
+    });
+    expect(transport).not.toHaveBeenCalled();
+    const result = await services.refreshUsage({ connectionId, machineId: 'machine-a' });
+    expect(result).toMatchObject({ status: 'success', sources: [
+      { sourceId: 'credits', status: 'ok', snapshot: { accountSubject: { kind: 'provisionalLocalSubject' },
+        meters: [{ remaining: 9.5, unit: 'usd', limit: null, utilizationPct: null }] } },
+      { sourceId: 'account-credits', status: 'not_configured' },
+    ] });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport.mock.calls[0]?.[0].url).toBe('https://models.example/v1/credits');
+    await services.refreshUsage({ connectionId, machineId: 'machine-a' });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it('probes a no-auth Anthropic-compatible connection over HTTP without native login headers', async () => {
     const requests: Array<{ path: string | undefined; headers: IncomingHttpHeaders }> = [];
     const server = createServer((request, response) => {
@@ -374,7 +584,7 @@ describe('runtime provider services', () => {
     }
   });
 
-  it('refuses a newly revoked shared Provider credential on saved probe without an AccountChange', async () => {
+  it.each(['probe', 'refreshUsage'] as const)('refuses a newly revoked shared Provider credential on %s without an AccountChange', async operation => {
     const token = 'provider-probe-account';
     const resourceId = 'provider-probe-resource';
     const ref = formatSharedSavedSecretRefV1(resourceId);
@@ -382,12 +592,13 @@ describe('runtime provider services', () => {
       ...contribution,
       definition: ProviderContributionV1Schema.parse({
         ...definition,
+        usageSources: [{ id: 'credits', endpointTemplateId: 'chat', path: '/credits', parser: 'credits-v1' }],
         credential: {
           kind: 'apiKey', slotId: 'apiKey', required: true,
           transports: [{ id: 'bearer', protocols: ['openai-chat'], uses: ['probe'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }],
         },
       }),
-    }]]) };
+    }]]), providerActivationOccurrenceIdsByPluginId: new Map([['acme.static', 'shared-key-usage']]) };
     setActiveAccountSettingsSnapshot({
       ...providerSnapshot(ProviderSettingsV1Schema.parse({
         ...grantedSettings(credentialRegistry),
@@ -430,27 +641,40 @@ describe('runtime provider services', () => {
       resolveAddresses: async () => ['1.1.1.1'], featureGate: { isEnabled: () => true },
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
       runtimeStore,
+      resolveContributedUsageParsers: async () => ({ activationOccurrenceId: 'shared-key-usage', isCurrent: () => true,
+        parsersByFormat: { 'credits-v1': () => ({ meters: [] }) } }),
     });
 
-    await expect(services.probe({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_secret_missing' },
-    });
+    const missing = { status: 'error', error: { code: 'provider_secret_missing' } };
+    await expect(services[operation]({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject(operation === 'probe'
+      ? missing : { status: 'success', sources: [{ sourceId: 'credits', ...missing }] });
     expect(transport).not.toHaveBeenCalled();
     expect(getActiveAccountSettingsSnapshot()?.savedSecretResources).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
 
     get.mockResolvedValue(materialResponse(2, 'restored-value'));
-    await expect(services.probe({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({ status: 'success' });
+    await expect(services[operation]({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject(operation === 'probe'
+      ? { status: 'success' } : { status: 'success', sources: [{ sourceId: 'credits', status: 'ok' }] });
     expect(transport).toHaveBeenLastCalledWith(expect.objectContaining({
       headers: expect.objectContaining({ authorization: 'Bearer restored-value' }),
     }));
     expect(get).toHaveBeenCalledTimes(2);
     get.mockResolvedValue(materialResponse(3, 'rotated-value'));
-    await expect(services.probe({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({ status: 'success' });
+    await expect(services[operation]({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject(operation === 'probe'
+      ? { status: 'success' } : { status: 'success', sources: [{ sourceId: 'credits', status: 'ok' }] });
     expect(transport).toHaveBeenLastCalledWith(expect.objectContaining({
       headers: expect.objectContaining({ authorization: 'Bearer rotated-value' }),
     }));
     expect(get).toHaveBeenCalledTimes(3);
+    if (operation === 'refreshUsage') {
+      const sent = transport.mock.calls.length;
+      get.mockResolvedValue({ status: 200, data: { resources: [] } });
+      expect(await services.refreshUsage({ connectionId, machineId: 'machine-a' })).toMatchObject({
+        status: 'success', sources: [{ sourceId: 'credits', ...missing }],
+      });
+      expect(transport).toHaveBeenCalledTimes(sent);
+      return;
+    }
     await runtimeStore.update(() => createEmptyProviderRuntimeStateFileV1('machine-a'));
     await expect(services.scheduleDemandRefresh({ connectionId, machineId: 'machine-a' }, 'picker_open')).resolves.toBeNull();
     // Catalog and health are two requests in one admitted demand operation.

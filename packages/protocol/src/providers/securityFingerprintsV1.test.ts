@@ -16,6 +16,7 @@ import {
   createProviderProbeObservationIdentityV1,
   createProviderProbeRequestFingerprintV1,
   createProviderSavedSecretRecordFingerprintV1,
+  createProviderUsageRequestFingerprintV1,
 } from './securityFingerprintsV1.js';
 import { assessProviderEndpoint, type AssessedProviderEndpoint } from './safety/index.js';
 import { resolveProviderBindingCompatibilityWithFingerprintV1 } from './compatibility/resolve.js';
@@ -35,6 +36,23 @@ const connectionInput = {
     destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
   }],
 } as const;
+
+it('binds usage request destinations and billing slots to the same Account/Machine grant facts', () => {
+  const usageSources = [{ id: 'credits', endpointTemplateId: 'responses', path: '/credits', parser: 'example-credits',
+    billingCredential: { slotId: 'managementKey', destination: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const } } }];
+  const input = { ...connectionInput, usageSources };
+  expect(createProviderConnectionSecurityFingerprintV1(input)).not.toBe(createProviderConnectionSecurityFingerprintV1(connectionInput));
+  expect(createProviderConnectionSecurityFingerprintV1(input)).not.toBe(createProviderConnectionSecurityFingerprintV1({ ...input,
+    usageSources: [{ ...usageSources[0]!, path: '/other-credits' }] }));
+  expect(createProviderConnectionSecurityFingerprintV1(input)).not.toBe(createProviderConnectionSecurityFingerprintV1({ ...input,
+    usageSources: [{ ...usageSources[0]!, billingCredential: { ...usageSources[0]!.billingCredential, slotId: 'otherManagementKey' } }] }));
+  const relabeled = { ...usageSources[0]!, billingCredential: { ...usageSources[0]!.billingCredential, title: 'New title', keyUrl: 'https://keys.example/' } };
+  expect(createProviderConnectionSecurityFingerprintV1(input)).toBe(createProviderConnectionSecurityFingerprintV1({ ...input, usageSources: [relabeled] }));
+  const request = { endpointUrl: 'https://example.test/v1', source: usageSources[0]!, publicHeaders: {} };
+  expect(createProviderUsageRequestFingerprintV1(request)).toBe(createProviderUsageRequestFingerprintV1({ ...request, source: relabeled }));
+  expect(createProviderUsageRequestFingerprintV1(request)).not.toBe(createProviderProbeRequestFingerprintV1({ ...request,
+    method: 'GET', path: request.source.path, parser: request.source.parser }));
+});
 
 function managedDeploymentWithPurposes(purposes: readonly string[]) {
   return {

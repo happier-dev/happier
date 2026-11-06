@@ -585,6 +585,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     projectModels: fail,
                     mutateModelSettings: fail,
                 }),
+                usage: Object.freeze({ refresh: fail }),
                 migrations: Object.freeze({
                     preview: fail,
                     confirm: fail,

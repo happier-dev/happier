@@ -261,6 +261,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     });
     let observedProviderService: unknown = null;
     const providerService: ProvidersService = Object.freeze({
+      usage: Object.freeze({ refresh: vi.fn() }),
       connections: Object.freeze({ describe: vi.fn(), mutate: vi.fn(), bindingStatus: vi.fn() }),
       catalog: Object.freeze({
         probe: vi.fn(),

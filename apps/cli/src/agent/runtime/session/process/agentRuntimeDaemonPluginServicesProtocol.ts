@@ -486,6 +486,7 @@ const OptionalSignalTimeoutSchema = {
 };
 
 export const RUNNER_DAEMON_PROVIDER_OPERATION_IDS_V1 = [
+    'usage.refresh',
     'connections.describe',
     'connections.mutate',
     'connections.bindingStatus',

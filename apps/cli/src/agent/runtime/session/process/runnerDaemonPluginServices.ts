@@ -50,6 +50,7 @@ import type {
     ProviderProfileMigrationConfirmRequest,
     ProviderProfileMigrationConflictConfirmRequest,
     ProviderProfileMigrationPreviewRequest,
+    ProviderUsageRefreshRequest,
 } from '@happier-dev/plugin-sdk/providers';
 import { PLUGIN_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 
@@ -842,6 +843,13 @@ export async function prepareRunnerDaemonPluginServices(
         }, signal ? { signal } : undefined);
     };
     const providers: PluginServices['providers'] = Object.freeze({
+        usage: Object.freeze({
+            async refresh(request: ProviderUsageRefreshRequest, options?: PluginCancellationOptions) {
+                return await invokeProvider<Awaited<ReturnType<
+                    PluginServices['providers']['usage']['refresh']
+                >>>('usage.refresh', request, options?.signal);
+            },
+        }),
         connections: Object.freeze({
             async describe(request: ProviderConnectionsDescribeRequest, options?: PluginCancellationOptions) {
                 return await invokeProvider<Awaited<ReturnType<

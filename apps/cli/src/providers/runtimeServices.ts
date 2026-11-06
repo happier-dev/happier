@@ -1,5 +1,6 @@
 import { DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderConnectionMutationRequestV1Schema, DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderConnectionsDescribeRequestV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderModelLoadRequestV1Schema, DaemonProviderModelLoadResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderModelsRequestV1Schema, DaemonProviderModelsResponseV1Schema, DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema, DaemonProviderProbeRequestV1Schema, DaemonProviderProbeResponseV1Schema, DaemonProviderProfileMigrationConfirmRequestV1Schema, DaemonProviderProfileMigrationConfirmResponseV1Schema, DaemonProviderProfileMigrationConflictConfirmRequestV1Schema, DaemonProviderProfileMigrationConflictConfirmResponseV1Schema, DaemonProviderProfileMigrationPreviewRequestV1Schema, DaemonProviderProfileMigrationPreviewResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { DaemonProviderModelLoadResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderUsageRefreshRequestV1Schema, DaemonProviderUsageRefreshResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -13,6 +14,7 @@ import type {
   ProviderModelsRequest,
   ProviderModelSettingsMutationRequest,
   ProviderProbeRequest,
+  ProviderUsageRefreshRequest,
   ProviderProfileMigrationConfirmRequest,
   ProviderProfileMigrationConflictConfirmRequest,
   ProviderProfileMigrationPreviewRequest,
@@ -111,9 +113,13 @@ export function createCurrentRuntimeProviderOperationsSource(
           confirmConflict: async (request, options) =>
             await readBound().migrations.confirmConflict(request, options),
         },
+        usage: {
+          refresh: async (request, options) => await readBound().usage.refresh(request, options),
+        },
       };
       Object.freeze(service.connections);
       Object.freeze(service.catalog);
+      Object.freeze(service.usage);
       Object.freeze(service.migrations);
       return Object.freeze(service);
     },
@@ -260,6 +266,18 @@ export function createRuntimeProviderOperationsProducer(input: Readonly<{
     machineServices: input.machineServices,
     bind(binding: RuntimeProviderOperationsBinding): ProvidersService {
       return Object.freeze({
+        usage: Object.freeze({
+          refresh: async (request: ProviderUsageRefreshRequest, options?: PluginCancellationOptions) =>
+            await executeRead({
+              binding, options,
+              prepare: () => DaemonProviderUsageRefreshRequestV1Schema.parse({ ...request, machineId: input.machineId }),
+              dispatch: async parsed => await input.machineServices.refreshUsage(parsed, {
+                signal: composeOperationSignal(binding, options),
+                isCurrent: () => isBindingCurrent(binding) && options?.signal?.aborted !== true,
+              }),
+              parseResult: value => DaemonProviderUsageRefreshResponseV1Schema.parse(value),
+            }),
+        }),
         connections: Object.freeze({
           describe: async (request: ProviderConnectionsDescribeRequest, options?: PluginCancellationOptions) =>
             await executeRead({

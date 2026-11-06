@@ -414,8 +414,9 @@ describe('runner daemon PluginServices v1 protocol', () => {
         ).toBe(false);
     });
 
-    it('exposes exactly the eleven Provider facade operations', () => {
+    it('exposes every Provider facade operation', () => {
         expect(RUNNER_DAEMON_PROVIDER_OPERATION_IDS_V1).toEqual([
+            'usage.refresh',
             'connections.describe',
             'connections.mutate',
             'connections.bindingStatus',

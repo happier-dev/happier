@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import {
     createUnavailablePluginServices,
@@ -8,6 +9,15 @@ import {
 } from './unavailable';
 
 describe('unavailable invocation services', () => {
+    it('refuses Provider usage refresh with the typed unavailable service result', () => {
+        const services = createUnavailablePluginServices();
+        expect(() => services.providers.usage.refresh({
+            connectionId: ProviderConnectionIdSchema.parse('pc_unavailable'),
+        })).toThrow(expect.objectContaining({
+            code: 'plugin_service_unavailable', details: { serviceId: 'providers' },
+        }));
+    });
+
     it('refuses native socket preparation through the typed unavailable Exec contract', () => {
         const services = createUnavailablePluginServices();
         expect(() => services.exec.prepareNativeSocketDirectory()).toThrow(expect.objectContaining({

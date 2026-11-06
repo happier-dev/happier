@@ -1,6 +1,6 @@
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderUsageRequestFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { isProviderDestinationGrantFingerprintV2 } from '@happier-dev/protocol/providers/fingerprints';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { mergeProviderCatalogV1, resolveProviderCatalogReferenceV1 } from '@happier-dev/protocol/providers/catalog/merge';
@@ -537,14 +537,21 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       ? [record.source.definition.discovery.availabilityProbe]
       : []),
   ];
-  const declaredProbe = declaredProbes.find((probe) =>
+  const usageSourceId = input.request.purpose === 'usage' ? input.request.usageSourceId : undefined;
+  const usageSource = usageSourceId !== undefined && record.source.kind === 'contribution'
+    ? record.source.definition.usageSources?.find(source => source.id === usageSourceId)
+    : undefined;
+  const candidates = usageSourceId !== undefined ? (usageSource ? [usageSource] : []) : declaredProbes;
+  const declaredProbe = candidates.find((probe) =>
     probe.endpointTemplateId === endpoint.endpointTemplateId
     && probe.path === input.request.path
     && probe.parser === input.request.parser);
   if (!declaredProbe) {
     return { ok: false, error: createProviderErrorV1('provider_probe_authorization_invalid', context) };
   }
-  const expectedProbeRequestFingerprint = createProviderProbeRequestFingerprintV1({
+  const expectedProbeRequestFingerprint = usageSource
+    ? createProviderUsageRequestFingerprintV1({ endpointUrl: endpoint.normalizedUrl, source: usageSource, publicHeaders: endpoint.publicHeaders })
+    : createProviderProbeRequestFingerprintV1({
     method: 'GET',
     endpointUrl: endpoint.normalizedUrl,
     path: declaredProbe.path,
@@ -554,13 +561,17 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
   if (input.request.probeRequestFingerprint !== expectedProbeRequestFingerprint) {
     return { ok: false, error: createProviderErrorV1('provider_probe_authorization_invalid', context) };
   }
-  const probeTransports = facts.credential?.transports.filter((transport) =>
-    transport.protocols.includes(endpoint.protocol) && transport.uses.includes('probe')) ?? [];
+  const billingCredential = usageSource?.billingCredential;
+  const credentialRequirement = billingCredential ? { slotId: billingCredential.slotId, required: true } : facts.credential;
+  const probeTransports: readonly ProviderCredentialTransportV1[] = billingCredential && usageSource
+    ? [{ id: usageSource.id, protocols: [endpoint.protocol], uses: ['management'], destination: billingCredential.destination }]
+    : facts.credential?.transports.filter((transport) =>
+        transport.protocols.includes(endpoint.protocol) && transport.uses.includes('probe')) ?? [];
   const selectedTransport = probeTransports[0] ?? null;
-  if (facts.credential && probeTransports.length !== 1) {
+  if (credentialRequirement && probeTransports.length !== 1) {
     return { ok: false, error: createProviderErrorV1('provider_credential_transport_unavailable', context) };
   }
-  const credentialReferenceResult = facts.credential
+  const credentialReferenceResult = credentialRequirement
     ? resolveProviderCredentialReference({
         providerSettings,
         accountSettings: input.accountSettings,
@@ -568,8 +579,8 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         savedSecretMaterializer: input.savedSecretMaterializer,
         connectionId: record.connectionId,
         machineId: input.request.machineId,
-        credentialSlotId: facts.credential.slotId,
-        required: facts.credential.required,
+        credentialSlotId: credentialRequirement.slotId,
+        required: credentialRequirement.required,
       })
     : { ok: true as const, reference: { kind: 'none' as const } };
   if (!credentialReferenceResult.ok) return credentialReferenceResult;
@@ -578,7 +589,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
     selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
     selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? reference.secretRecordFingerprint : null,
     credential: reference.kind === 'apiKey' && selectedTransport
-      ? { transport: selectedTransport, selectedProtocol: endpoint.protocol, selectedUse: 'probe' }
+      ? { transport: selectedTransport, selectedProtocol: endpoint.protocol, selectedUse: billingCredential ? 'management' : 'probe' }
       : null,
   });
   return {

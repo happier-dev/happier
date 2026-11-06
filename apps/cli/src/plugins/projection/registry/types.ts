@@ -279,6 +279,7 @@ type ResolvedProviderContributionBase = Readonly<{
      * contributes, keyed by the `parser` id its declared probes name.
      */
     catalogParsers?: ResolvedProviderCatalogParsers;
+    usageParsers?: ResolvedProviderUsageParsers;
 }>;
 
 type ProviderRuntimeRegistrationValue = Extract<
@@ -295,6 +296,12 @@ export type ResolvedManagedProviderRuntime = Readonly<{
 
 export type ResolvedProviderCatalogParsers = Readonly<{
     parsersByFormat: NonNullable<ProviderRuntimeRegistrationValue['catalogParsers']>;
+    activationOccurrenceId: string;
+    sourceCustody: import('@/plugins/runtime/sourceAuthority').PluginSourceCustody;
+    isCurrent(): boolean;
+}>;
+export type ResolvedProviderUsageParsers = Readonly<{
+    parsersByFormat: NonNullable<ProviderRuntimeRegistrationValue['usageParsers']>;
     activationOccurrenceId: string;
     sourceCustody: import('@/plugins/runtime/sourceAuthority').PluginSourceCustody;
     isCurrent(): boolean;

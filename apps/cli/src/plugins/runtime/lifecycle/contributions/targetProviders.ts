@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { readContributedProviderUsageParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
@@ -10,6 +11,7 @@ import type {
     ResolvedActivationTarget,
     ResolvedManagedProviderRuntime,
     ResolvedProviderCatalogParsers,
+    ResolvedProviderUsageParsers,
     ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -65,6 +67,7 @@ export function projectTargetProviderRuntimes(input: Readonly<{
     const activationTargets = input.activationTargets ?? [];
     const runtimesByKey = new Map<string, ResolvedManagedProviderRuntime>();
     const catalogParsersByKey = new Map<string, ResolvedProviderCatalogParsers>();
+    const usageParsersByKey = new Map<string, ResolvedProviderUsageParsers>();
     const refusedKeys = new Set<string>();
     const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
 
@@ -161,6 +164,19 @@ export function projectTargetProviderRuntimes(input: Readonly<{
         }
 
         const registeredFormats = Object.keys(registered.catalogParsers ?? {}).sort();
+        const registeredUsage = Object.keys(registered.usageParsers ?? {}).sort();
+        const declaredUsage = readContributedProviderUsageParserIds(provider.definition as unknown as Readonly<Record<string, unknown>>);
+        if (registeredUsage.length > 0 || declaredUsage.length > 0) {
+            if (!isDeepStrictEqual(provider.definition.usageSources, targetProvider.usageSources)
+                || !isDeepStrictEqual(registeredUsage, [...declaredUsage]) || usageParsersByKey.has(key)) {
+                refuse(key, identity, `Provider usage parser registration '${key}' does not match its current declared usage sources`);
+                continue;
+            }
+            usageParsersByKey.set(key, Object.freeze({
+                parsersByFormat: registered.usageParsers!, activationOccurrenceId: entry.occurrenceId,
+                sourceCustody, isCurrent: () => input.isRegistrationCurrent(entry),
+            }));
+        }
         if (registeredFormats.length > 0) {
             const declaredFormats = declaredContributedCatalogParserIds(provider.definition);
             const targetFormats = declaredContributedCatalogParserIds(
@@ -195,10 +211,11 @@ export function projectTargetProviderRuntimes(input: Readonly<{
     for (const key of refusedKeys) {
         runtimesByKey.delete(key);
         catalogParsersByKey.delete(key);
+        usageParsersByKey.delete(key);
     }
 
     const diagnostics = Object.freeze({ ...diagnosticsByPluginId });
-    if (runtimesByKey.size === 0 && catalogParsersByKey.size === 0) {
+    if (runtimesByKey.size === 0 && catalogParsersByKey.size === 0 && usageParsersByKey.size === 0) {
         return Object.freeze({ providers: input.providers, diagnosticsByPluginId: diagnostics });
     }
 
@@ -207,11 +224,13 @@ export function projectTargetProviderRuntimes(input: Readonly<{
             const key = buildQualifiedPluginContributionKey(provider.identity);
             const managedRuntime = runtimesByKey.get(key);
             const catalogParsers = catalogParsersByKey.get(key);
-            if (!managedRuntime && !catalogParsers) return provider;
+            const usageParsers = usageParsersByKey.get(key);
+            if (!managedRuntime && !catalogParsers && !usageParsers) return provider;
             return Object.freeze({
                 ...provider,
                 ...(managedRuntime ? { managedRuntime } : {}),
                 ...(catalogParsers ? { catalogParsers } : {}),
+                ...(usageParsers ? { usageParsers } : {}),
             });
         })),
         diagnosticsByPluginId: diagnostics,

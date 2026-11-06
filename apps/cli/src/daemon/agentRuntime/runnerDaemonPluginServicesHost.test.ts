@@ -3,6 +3,8 @@ import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createCurrentRuntimeProviderOperationsSource } from '@/providers/runtimeServices';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type {
     JsonValue,
 } from '@happier-dev/plugin-sdk';
@@ -102,6 +104,54 @@ const direct = Object.freeze({
 const fixturePluginMaterialization = createPluginActionCallerMaterializationFixture(
     'fixture.plugin',
 );
+
+it('preserves the canonical Provider usage refusal through the real runner and daemon bridge', async () => {
+    const unavailable = createUnavailablePluginServices();
+    const lifetime = new AbortController();
+    const providers = createCurrentRuntimeProviderOperationsSource(() => null).bind({
+        signal: lifetime.signal,
+        isCurrent: () => true,
+    });
+    const services = {
+        ...unavailable,
+        providers,
+        availability: (id: PluginServiceId) => id === 'providers'
+            ? { status: 'available' as const }
+            : unavailable.availability(id),
+    };
+    const host = createRunnerDaemonPluginServicesHost({ async createInvocation() {
+        return {
+            services,
+            resourceDescriptors: {},
+            subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+            dispose() {},
+            authorizeOperation: () => true,
+            executeCurrentGlobalAction: services.actions.execute,
+            currentGlobalMcp: services.mcp,
+            currentGlobalExternalSessions: services.sessions.external,
+        };
+    } });
+    try {
+        const runnerServices = await prepareRunnerDaemonPluginServices({
+            invocationId: 'provider-usage',
+            signal: lifetime.signal,
+            local: unavailable,
+            dispatch: async (operation, options) => {
+                const response = await host.dispatch({ ...direct,
+                    operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation),
+                    ...options,
+                });
+                return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+            },
+        });
+        // Deferred Provider bootstrap owns this refusal; the bridge preserves it.
+        await expect(runnerServices.providers.usage.refresh({ connectionId: ProviderConnectionIdSchema.parse('pc_usage') }))
+            .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    } finally {
+        lifetime.abort();
+        await host.dispose();
+    }
+});
 
 const witness = Object.freeze({
     inputId: 'input-1',

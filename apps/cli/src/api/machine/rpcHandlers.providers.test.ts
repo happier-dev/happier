@@ -27,6 +27,7 @@ function harness(providersEnabled: boolean | (() => boolean) = true) {
     registerHandler(method: string, handler: (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>) { handlers.set(method, handler); },
   } as never;
   const services = {
+    refreshUsage: vi.fn(async () => ({ status: 'success' as const, sources: [{ sourceId: 'credits', status: 'not_configured' as const }] })),
     // The new operation remains the real source owner, not a test-local translator.
     prepareProfileMigrationSource: createLegacyProfileMigrationRpcServices({ credentials: { token: 'boundary-token', encryption: null } }).prepareProfileMigrationSource,
     probe: vi.fn<(
@@ -111,6 +112,18 @@ function harness(providersEnabled: boolean | (() => boolean) = true) {
 }
 
 describe('machine provider RPC registration', () => {
+  it('refreshes usage through its strict machine identity boundary and preserves source refusals', async () => {
+    const h = harness();
+    const handler = h.handlers.get('daemon.providers.usage.refresh');
+    expect(handler).toBeDefined();
+    const request = { connectionId: 'pc_1', machineId: 'machine-a' };
+    await expect(handler!(request)).resolves.toEqual({ status: 'success', sources: [{ sourceId: 'credits', status: 'not_configured' }] });
+    await expect(handler!({ ...request, machineId: 'other-machine' }))
+      .resolves.toMatchObject({ status: 'error', error: { code: 'provider_not_enabled_on_machine' } });
+    await expect(handler!({ ...request, credentialSlotId: 'billing' })).rejects.toThrow();
+    await expect(harness(false).handlers.get('daemon.providers.usage.refresh')!(request))
+      .resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
+  });
   it('dispatches source-only request-policy support discovery to its exact Machine service', async () => {
     const h = harness();
     const request = {

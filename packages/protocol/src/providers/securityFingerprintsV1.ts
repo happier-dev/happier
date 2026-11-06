@@ -663,6 +663,21 @@ export function createProviderProbeRequestFingerprintV1(input: Readonly<{
   }));
 }
 
+/** Usage is a declared GET operation with its own parser and credential authority. */
+export function createProviderUsageRequestFingerprintV1(input: Readonly<{
+  endpointUrl: string;
+  source: import('./contributions/v1.js').ProviderUsageSourceV1;
+  publicHeaders: Readonly<Record<string, string>>;
+}>): ProviderProbeRequestFingerprintV1 {
+  const source = projectUsageSourceSecurityFacts(input.source);
+  const endpointUrl = ProviderEndpointUrlSyntaxSchema.parse(input.endpointUrl);
+  return ProviderProbeRequestFingerprintV1Schema.parse(createProviderFingerprintV1('probe-request', {
+    purpose: 'usage', method: 'GET', exactRequestUrl: new URL(source.path, endpointUrl).toString(),
+    source,
+    publicHeaders: normalizeProviderPublicHeaders(input.publicHeaders),
+  }));
+}
+
 /**
  * Managed catalog requests have no durable or realized endpoint URL. Their
  * identity is the authorized public managed declaration, declared request,

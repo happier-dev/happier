@@ -1,5 +1,8 @@
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 
+/** Existing Q1 default shared by acquired snapshots and persistence freshness. */
+export const DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS = 60_000;
+
 function parsePositiveInt(raw: unknown, maximum = 2_147_483_647): number | null {
   const value = String(raw ?? '').trim();
   if (!value) return null;

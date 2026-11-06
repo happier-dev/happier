@@ -23,6 +23,7 @@ import {
   createProviderManagedProbeRequestFingerprintV1,
   createProviderObservationAuthorizationFingerprintV1,
   createProviderProbeRequestFingerprintV1,
+  createProviderUsageRequestFingerprintV1,
   encryptSecretStringV1,
   resolveProviderManagedRuntimeDeclarationV1,
   setProviderExperimentalConfirmationV1,
@@ -74,6 +75,7 @@ import {
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { createForegroundAgentRuntimeAdmissionOwner } from '@/daemon/agentRuntime/foregroundAdmission';
+import { createRuntimeProviderProbeAuthorizationPort } from './probePort';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
@@ -138,6 +140,67 @@ const authoritativeRegistry = {
   providersByContributionKey: new Map([[canonicalContributionKey, authoritativeContribution]]),
 };
 const dns = new Map([['https://gateway.example/v1', ['1.1.1.1']]]);
+
+describe('declared Provider usage authorization', () => {
+  it('uses only its declared billing slot and fences replacement without changing inference authorization', async () => {
+    const usageDefinition = ProviderContributionV1Schema.parse({ ...definition, usageSources: [{
+      id: 'credits', endpointTemplateId: 'responses', path: '/credits', parser: 'example-credits',
+      billingCredential: { slotId: 'managementKey', destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+    }, { id: 'key-info', endpointTemplateId: 'responses', path: '/key-info', parser: 'example-key-info' }] });
+    const usageRegistry = { providersByContributionKey: new Map([[canonicalContributionKey, { ...contribution, definition: usageDefinition }]]) };
+    const settings = grantedSettings(usageRegistry);
+    const source = usageDefinition.usageSources![0]!;
+    const request = { purpose: 'usage' as const, usageSourceId: source.id,
+      connectionId, machineId: 'machine-a', endpointTemplateId: 'responses', protocol: 'openai-responses' as const,
+      endpointUrl: 'https://gateway.example/v1', path: source.path, parser: source.parser,
+      probeRequestFingerprint: createProviderUsageRequestFingerprintV1({ endpointUrl: 'https://gateway.example/v1', source, publicHeaders: {} }) };
+    const accountSettings = AccountSettingsSchema.parse({ secrets: [
+      { id: 'secret-a', name: 'Inference', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+        encryptedValue: { _isSecretValue: true, encryptedValue: encryptSecretStringV1('inference', key, length => new Uint8Array(length).fill(1)) } },
+      { id: 'secret-billing', name: 'Billing', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+        encryptedValue: { _isSecretValue: true, encryptedValue: encryptSecretStringV1('billing', key, length => new Uint8Array(length).fill(2)) } },
+    ] });
+    const authorize = (providerSettings: ProviderSettingsV1) => resolveProviderProbeAuthorization(withSavedSecretMaterializer({ request, accountSettings,
+      providerSettings, registry: usageRegistry, dnsEvidenceByEndpointUrl: dns }));
+    expect(authorize(settings)).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    const bound = { ...settings, secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: 'secret-a', managementKey: 'secret-billing' } } } };
+    expect(authorize(bound)).toMatchObject({ ok: true, credentialRef: { reference: { kind: 'apiKey', secretId: 'secret-billing' } } });
+    let current: ActiveAccountSettingsSnapshot = { source: 'network', settings: accountSettings, settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [key], scopeKey: 'account-usage',
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(bound).catalog } };
+    const port = createRuntimeProviderProbeAuthorizationPort({ registry: usageRegistry, getAccountSettingsSnapshot: () => current,
+      resolveAddresses: async () => ['1.1.1.1'] });
+    const authorized = await port.authorize(request);
+    if (!authorized.ok || !authorized.credentialRef) throw new Error('Expected billing authorization');
+    const material = await port.resolveCredential(authorized.credentialRef);
+    expect(material).toMatchObject({ ok: true, lease: { credential: { value: 'Bearer billing' } } });
+    if (material.ok) material.lease.close();
+    const catalogRequest = { ...request, purpose: 'catalog' as const, path: '/models', parser: 'openai-models',
+      probeRequestFingerprint: createProviderProbeRequestFingerprintV1({ method: 'GET', endpointUrl: request.endpointUrl,
+        path: '/models', parser: 'openai-models', publicHeaders: {} }) };
+    const inference = await port.authorize(catalogRequest);
+    if (!inference.ok) throw new Error('Expected inference credential authorization');
+    expect(inference.credentialRef).toMatchObject({ reference: { secretId: 'secret-a' } });
+    const keyInfo = usageDefinition.usageSources![1]!;
+    expect(await port.authorize({ ...request, usageSourceId: keyInfo.id, path: keyInfo.path, parser: keyInfo.parser,
+      probeRequestFingerprint: createProviderUsageRequestFingerprintV1({ endpointUrl: request.endpointUrl, source: keyInfo, publicHeaders: {} }),
+    })).toMatchObject({ ok: true, credentialRef: { reference: { secretId: 'secret-a' } } });
+    current = { ...current, settingsVersion: 2, settings: AccountSettingsSchema.parse({ secrets: [accountSettings.secrets[0],
+      { ...accountSettings.secrets[1], encryptedValue: { _isSecretValue: true,
+        encryptedValue: encryptSecretStringV1('rotated-billing', key, length => new Uint8Array(length).fill(3)) } },
+    ] }) };
+    expect(await port.revalidate(authorized.ticket, request)).toEqual({ ok: true });
+    const retainedMaterial = await port.resolveCredential(authorized.credentialRef);
+    expect(retainedMaterial).toMatchObject({ ok: true, lease: { credential: { value: 'Bearer billing' } } });
+    if (retainedMaterial.ok) retainedMaterial.lease.close();
+    expect(await port.revalidate(inference.ticket, catalogRequest)).toEqual({ ok: true });
+    current = { ...current, providerConnectionsCatalog: { status: 'ready', revision: 2, catalog: splitProviderSettingsV1(settings).catalog } };
+    expect(await port.revalidate(authorized.ticket, request)).toEqual({ ok: true });
+    expect(await port.authorize(request)).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    expect(await port.revalidate(inference.ticket, catalogRequest)).toEqual({ ok: true });
+    expect(await port.authorize({ ...request, usageSourceId: 'undeclared' })).toMatchObject({ ok: false, error: { code: 'provider_probe_authorization_invalid' } });
+  });
+});
 
 const managedContribution: ResolvedProviderContribution = {
   ...contribution,

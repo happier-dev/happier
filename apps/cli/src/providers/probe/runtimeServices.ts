@@ -13,7 +13,7 @@ import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/p
 import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, ProviderCatalogRuntimeStateRecordV1, ProviderMergedCatalogRowV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
-import type { DaemonProviderDraftProbeRequestV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderDraftProbeRequestV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
 import { configuration } from '@/configuration';
@@ -103,7 +103,8 @@ import type { ProviderLocalCatalogFallbackResult } from './localCommand';
 import type { ProviderProbeOperationScope } from './authorization';
 import { admitRuntimeProviderSavedSecret } from '@/providers/spawn/runtimeCredential';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
+import { refreshProviderConnectionUsage, type ProviderUsageParserBinding } from '@/daemon/connectedServices/accountUsage/providerConnectionUsage';
+import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from '@/daemon/connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
@@ -196,6 +197,7 @@ export function projectProviderCatalogContextRuntimeState(
 }
 
 export type RuntimeProviderServices = Readonly<{
+  refreshUsage(identity: RuntimeProviderIdentity, waiterLifetime?: ProviderProbeWaiterLifetime): Promise<DaemonProviderUsageRefreshResponseV1>;
   probe(
     rawInput: unknown,
     trigger?: 'manual_refresh' | 'enable',
@@ -357,6 +359,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   >;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
+  resolveContributedUsageParsers?: (identity: Readonly<{ pluginId: string; localId: string }>) => Promise<ProviderUsageParserBinding | null>;
   openTeamDirect?: Parameters<typeof createRuntimeProviderProbeAuthorizationPort>[0]['openTeamDirect'];
 }>): RuntimeProviderServices {
   const happyHomeDir = input.happyHomeDir ?? configuration.happyHomeDir;
@@ -380,6 +383,12 @@ export function createRuntimeProviderServices(input: Readonly<{
   const resolveContributedCatalogParsers = input.resolveContributedCatalogParsers
     ?? ((identity: Readonly<{ pluginId: string; localId: string }>) =>
       acquireContributedProviderCatalogParsers(happyHomeDir, identity));
+  const resolveContributedUsageParsers = input.resolveContributedUsageParsers ?? (async (identity) => {
+    const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir });
+    try {
+      return await lease.registry.acquireProviderUsageParsers?.(identity) ?? null;
+    } finally { await lease.release(); }
+  });
   const getSnapshot = input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
   const resolveManagedPurposeBindingIntent = input.resolveManagedPurposeBindingIntent;
   const client = input.client ?? createProviderProbeHttpClient({});
@@ -1336,6 +1345,43 @@ export function createRuntimeProviderServices(input: Readonly<{
     }, signal));
   };
 
+  async function refreshUsage(identity: RuntimeProviderIdentity,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<DaemonProviderUsageRefreshResponseV1> {
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
+    if (identity.machineId !== input.machineId) return { status: 'error',
+      error: createProviderErrorV1('provider_not_enabled_on_machine', identity) };
+    const scope = withOperationLifetime(undefined, waiterLifetime?.signal);
+    const unavailable = await refreshAmbientCatalog(identity, scope.lifetime);
+    if (unavailable) return { status: 'error', error: unavailable };
+    const context = await resolveConnectionContext(identity, scope);
+    if (!context.ok) return { status: 'error', error: context.error };
+    const { connection, providerSettings, registry, accountSettingsBasis, dnsEvidenceByEndpointUrl } = context.value;
+    if (!connection.authorization.authorized) return { status: 'error',
+      error: createProviderErrorV1(connection.authorization.errorCode, identity) };
+    if (connection.source.kind !== 'contribution' || !(connection.source.definition.usageSources?.length)) return { status: 'not_supported' };
+    const parsers = await awaitWithinProviderOperation(resolveContributedUsageParsers({
+      pluginId: connection.source.pluginId, localId: connection.source.definition.id,
+    }), scope.lifetime);
+    if (!parsers) return { status: 'error',
+      error: createProviderErrorV1('provider_contribution_unavailable', identity) };
+    return refreshProviderConnectionUsage({ connection, providerSettings, parsers, client, authorization,
+      staleAfterMs: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS,
+      operationScope: { ...scope, registry, accountSettingsBasis,
+        dnsEvidenceByConnectionId: new Map([[identity.connectionId, dnsEvidenceByEndpointUrl]]),
+        isAccountCurrent: isProviderFeatureEnabled,
+      },
+      admitSource: async usageSourceId => {
+        const snapshot = context.value.readSnapshot();
+        if (!snapshot || !isProviderFeatureEnabled()) return { ok: false,
+          error: createProviderErrorV1('provider_authorization_changed', identity) };
+        return admitRuntimeProviderSavedSecret({ connection, providerSettings, snapshot,
+          getAccountSettingsSnapshot: context.value.readSnapshot, lifetime: scope.lifetime, usageSourceId,
+        });
+      },
+    });
+  }
+
   async function probeSaved(
     identity: RuntimeProviderIdentity,
     trigger: 'manual_refresh' | 'enable',
@@ -1758,7 +1804,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   };
 
   return Object.freeze({
-    probe, probeDraft, models, summary, modelLoadCatalog, modelLoadAuthorization,
+    probe, probeDraft, refreshUsage, models, summary, modelLoadCatalog, modelLoadAuthorization,
     resolveCatalogContext, resolvePresentationCatalogContext, readPlacedModelProjection, scheduleDemandRefresh, runtimeStore,
     probeInfrastructure: Object.freeze({ client, scheduler }),
   });

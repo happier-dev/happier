@@ -100,7 +100,7 @@ import {
 } from './createConnectedServiceQuotaPersistenceScheduler';
 import type { ConnectedServiceQuotaFetcher } from './types';
 import { RuntimeAccountIdentityIndex } from './identity/RuntimeAccountIdentityIndex';
-import { resolveConnectedServiceQuotasDaemonOptions } from './resolveConnectedServiceQuotasDaemonOptions';
+import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS, resolveConnectedServiceQuotasDaemonOptions } from './resolveConnectedServiceQuotasDaemonOptions';
 import { resolveSessionsSharingProviderAccount } from './identity/resolveSessionsSharingProviderAccount';
 import {
   normalizeConnectedServiceSameAccountFanoutStrategy,
@@ -156,7 +156,6 @@ import {
   resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
-const DEFAULT_QUOTA_PERSISTENCE_MIN_FRESHNESS_MS = 60_000;
 
 function quotaObservationProbeAt(input: Readonly<{
   fetchedAt: number;
@@ -1080,7 +1079,7 @@ export class ConnectedServiceQuotasCoordinator {
     this.quotaPersistenceMinFreshnessMs =
       typeof params.quotaPersistenceMinFreshnessMs === 'number' && Number.isFinite(params.quotaPersistenceMinFreshnessMs)
         ? Math.max(0, Math.trunc(params.quotaPersistenceMinFreshnessMs))
-        : DEFAULT_QUOTA_PERSISTENCE_MIN_FRESHNESS_MS;
+        : DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
     this.quotaLifecycleFreshnessMs =
       typeof params.quotaLifecycleFreshnessMs === 'number' && Number.isFinite(params.quotaLifecycleFreshnessMs)
         ? Math.max(0, Math.trunc(params.quotaLifecycleFreshnessMs))

@@ -23,6 +23,8 @@ import type {
     DaemonProviderModelSettingsMutationResponseV1,
     DaemonProviderProbeRequestV1,
     DaemonProviderProbeResponseV1,
+    DaemonProviderUsageRefreshRequestV1,
+    DaemonProviderUsageRefreshResponseV1,
     DaemonProviderProfileMigrationConfirmRequestV1,
     DaemonProviderProfileMigrationConfirmResponseV1,
     DaemonProviderProfileMigrationConflictConfirmRequestV1,
@@ -31,6 +33,7 @@ import type {
     DaemonProviderProfileMigrationPreviewResponseV1,
 } from '@happier-dev/protocol/rpc';
 import { resolveSessionModelSelectionIntentV1 as canonicalResolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+export type { DaemonProviderUsageRefreshRequestV1 } from '@happier-dev/protocol/rpc';
 export type { ProviderUsageParseResultV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveProviderBindingCompatibilityWithFingerprintV1 as canonicalResolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type {
@@ -205,6 +208,10 @@ export type ProviderProbeRequest =
 /** @realm daemon */
 export type ProviderProbeResult = DaemonProviderProbeResponseV1;
 /** @realm daemon */
+export type ProviderUsageRefreshRequest = Omit<DaemonProviderUsageRefreshRequestV1, 'machineId'>;
+/** @realm daemon */
+export type ProviderUsageRefreshResult = DaemonProviderUsageRefreshResponseV1;
+/** @realm daemon */
 export type ProviderModelsRequest =
     typeof canonicalProviderModelsRequest extends infer TRequest
         ? TRequest extends Readonly<{ machineId: unknown }>
@@ -332,5 +339,11 @@ export interface ProviderMigrationsService {
 export interface ProvidersService {
     readonly connections: ProviderConnectionsService;
     readonly catalog: ProviderCatalogService;
+    readonly usage: ProviderUsageService;
     readonly migrations: ProviderMigrationsService;
+}
+
+/** @realm daemon */
+export interface ProviderUsageService {
+    refresh(request: ProviderUsageRefreshRequest, options?: PluginCancellationOptions): Promise<ProviderUsageRefreshResult>;
 }

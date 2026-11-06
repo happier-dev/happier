@@ -44,6 +44,8 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   lifetime: ProviderOperationLifetime;
   operationContext?: SavedSecretOperationContextV1 | null;
+  /** Selects a declared usage source; callers never supply an arbitrary secret slot. */
+  usageSourceId?: string;
   /** Required companions of the operation's canonically selected transport only. */
   additionalCredentials?: readonly Readonly<{ slotId: string }>[];
   /** The same operation's full-catalog read, before its transport was selected. */
@@ -59,7 +61,14 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
   }
   if (connection.deployment.kind === 'managedLocal') return { ok: true, snapshot, catalogRead: false };
   const definition = connection.source.kind === 'contribution' ? connection.source.definition : connection.source.template;
-  const credential = definition.credential;
+  const usageSource = input.usageSourceId === undefined ? undefined
+    : connection.source.kind === 'contribution'
+      ? connection.source.definition.usageSources?.find(source => source.id === input.usageSourceId)
+      : undefined;
+  if (input.usageSourceId !== undefined && !usageSource) {
+    return { ok: false, error: createProviderErrorV1('provider_probe_authorization_invalid', context) };
+  }
+  const credential = usageSource?.billingCredential ?? definition.credential;
   if (!credential) return { ok: true, snapshot, catalogRead: false };
   let references: { ref: string }[];
   try {

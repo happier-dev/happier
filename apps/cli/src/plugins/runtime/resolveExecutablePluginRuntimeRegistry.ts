@@ -82,6 +82,8 @@ import type {
     ResolvedContributionRegistry,
     ResolvedManagedProviderRuntime,
     ResolvedProviderCatalogParsers,
+    ResolvedProviderContribution,
+    ResolvedProviderUsageParsers,
 } from '../projection/registry/types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { arePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -100,7 +102,7 @@ import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey }
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { QualifiedConnectedAccountPurposeBindingsV1, ConnectedAccountRequestAuthUseV1, ProviderRuntimeBindingBasisV1, PluginContributionIdentityV1, PluginMachineExecutionOriginV1, PluginMachineMaterializationRefV1, TargetActionApprovalReplayPlacementV1, NormalizedPluginAccountCollectionContractV1, PluginCollectionCandidatePreparationBindingV1, PluginCollectionContractRefV1, PluginReleaseRefV1, PluginUiArtifactDigestV1, PluginResourceContextV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
 import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { readContributedProviderCatalogParserIds, readContributedProviderUsageParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { DaemonMcpServersDetectWarningV1, HostSemanticEventV1 } from '@happier-dev/protocol';
 import type { HostStructuredMessageDescriptorV1 } from './invocation/services/structuredMessageDescriptor';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -822,6 +824,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     acquireProviderCatalogParsers?(
         ref: PluginContributionRef,
     ): Promise<ResolvedProviderCatalogParsers | null>;
+    acquireProviderUsageParsers?(
+        ref: PluginContributionRef,
+    ): Promise<ResolvedProviderUsageParsers | null>;
     createManagedProviderRuntimeInvocationServices?(input: Readonly<{
         accountAuthority?: ManagedProviderInvocationAccountAuthority;
         identity: PluginContributionRef;
@@ -6117,9 +6122,10 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
      * probe reaches the plugin through the same demand path the managed runtime
      * uses rather than a second registry.
      */
-    async function acquireProviderCatalogParsers(
+    async function acquireProviderParserProjection(
         ref: PluginContributionRef,
-    ): Promise<ResolvedProviderCatalogParsers | null> {
+        kind: 'catalog' | 'usage',
+    ): Promise<ResolvedProviderContribution | null> {
         const provider = (authoritativeContributes.providers ?? []).find((candidate) => (
             candidate.identity.pluginId === ref.pluginId
             && candidate.identity.localId === ref.localId
@@ -6128,9 +6134,9 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         if (
             !target
             || !provider
-            || readContributedProviderCatalogParserIds(
-                provider.definition as unknown as Readonly<Record<string, unknown>>,
-            ).length === 0
+            || (kind === 'catalog' ? readContributedProviderCatalogParserIds : readContributedProviderUsageParserIds)(
+                    provider.definition as unknown as Readonly<Record<string, unknown>>,
+                ).length === 0
         ) return null;
 
         await activateContributionsOnDemand([{
@@ -6158,8 +6164,17 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             ),
         });
         recordProviderProjectionRefusals(ref.pluginId, projected.diagnosticsByPluginId);
-        const catalogParsers = projected.providers[0]?.catalogParsers ?? null;
-        return catalogParsers?.isCurrent() === true ? catalogParsers : null;
+        return projected.providers[0] ?? null;
+    }
+
+    async function acquireProviderCatalogParsers(ref: PluginContributionRef): Promise<ResolvedProviderCatalogParsers | null> {
+        const parsers = (await acquireProviderParserProjection(ref, 'catalog'))?.catalogParsers ?? null;
+        return parsers?.isCurrent() === true ? parsers : null;
+    }
+
+    async function acquireProviderUsageParsers(ref: PluginContributionRef): Promise<ResolvedProviderUsageParsers | null> {
+        const parsers = (await acquireProviderParserProjection(ref, 'usage'))?.usageParsers ?? null;
+        return parsers?.isCurrent() === true ? parsers : null;
     }
 
     function canonicalSharedManagedProviderGatewayBinding(gateway: SharedManagedProviderGatewayBinding): SharedManagedProviderGatewayBinding {
@@ -7797,6 +7812,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         },
         acquireManagedProviderRuntime,
         acquireProviderCatalogParsers,
+        acquireProviderUsageParsers,
         runManagedProviderExplicitStart,
         retireManagedProviderExplicitStart,
         retireManagedProviderExternalApiKey,

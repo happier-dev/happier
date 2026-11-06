@@ -6,6 +6,8 @@ import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { ProviderOriginRelativePathSchema } from '@happier-dev/protocol/providers/originRelativePathSchema';
+import { ProviderUsageParseResultV1Schema } from '@happier-dev/protocol/providers/contributions';
+import type { ProviderUsageParseResultV1 } from '@happier-dev/protocol/providers/contributions';
 import { validateProviderProbeResponseMetadata } from '@happier-dev/protocol/providers/safety/response';
 import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
 import { ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
@@ -115,6 +117,10 @@ export type ProviderCatalogGetResult = Readonly<{
   catalog: ParsedProviderCatalogResponse;
 }>;
 
+type ProviderJsonGetRequest = Omit<ProviderCatalogGetRequest, 'parser' | 'contributedCatalogParsers'>;
+export type ProviderUsageGetRequest = ProviderJsonGetRequest & Readonly<{
+  parse(body: unknown): unknown;
+}>;
 export const PROVIDER_MODEL_LOAD_HTTP_LIMITS = Object.freeze({
   wallTimeMs: 10 * 60 * 1_000,
   maxDecodedBodyBytes: 1024 * 1024,
@@ -562,14 +568,13 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     }
   }
 
-  return {
-    async getCatalog(input: ProviderCatalogGetRequest): Promise<ProviderCatalogGetResult> {
+  async function getProjectedJson<T>(input: ProviderJsonGetRequest, project: (body: unknown) => T,
+    containsSensitiveValue: (value: T, lease: ProviderProbeHttpCredentialLease | undefined,
+      publicHeaderValues: readonly string[]) => boolean,
+  ): Promise<Readonly<{ value: T; finalUrl: string; compatibilityDiagnostic: boolean }>> {
       throwIfCancelled(input.signal);
       const publicHeaders = normalizeProviderPublicHeaders(input.publicHeaders);
-      const requestFingerprint = createProviderProbeRequestFingerprintV1({
-        method: 'GET', endpointUrl: input.endpointUrl, path: input.path, parser: input.parser, publicHeaders,
-      });
-      const initialUrl = new URL(input.path, input.endpointUrl).toString();
+      const initialUrl = new URL(ProviderOriginRelativePathSchema.parse(input.path), input.endpointUrl).toString();
       let currentUrl = initialUrl;
       let resolveCredential = input.resolveCredential;
       let redirectPublicHeaders: Readonly<Record<string, string>> = publicHeaders;
@@ -672,38 +677,57 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           } catch {
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          let catalog: ParsedProviderCatalogResponse;
+          let value: T;
           try {
-            catalog = parseProviderCatalogResponse(
-              input.parser,
-              json,
-              input.contributedCatalogParsers,
-            );
+            value = project(json);
           } catch (error) {
             // A declared format with no reachable implementation is a plugin
             // availability fact, not a malformed response from the endpoint.
             if (error instanceof ProviderCatalogFormatUnavailableError) {
               throw new ProviderProbeClientError('provider_contribution_unavailable');
             }
+            if (error instanceof ProviderProbeClientError && error.code === 'provider_contribution_unavailable') throw error;
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          if (catalogContainsSensitiveRequestValue(
-            catalog,
+          if (containsSensitiveValue(
+            value,
             credentialLease,
             Object.values(publicHeaders),
           )) {
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
           return {
-            requestFingerprint,
             finalUrl: currentUrl,
             compatibilityDiagnostic: metadata.compatibilityDiagnostic,
-            catalog,
+            value,
           };
         } finally {
           credentialLease?.close();
         }
       }
+  }
+
+  return {
+    async getCatalog(input: ProviderCatalogGetRequest): Promise<ProviderCatalogGetResult> {
+      const requestFingerprint = createProviderProbeRequestFingerprintV1({
+        method: 'GET', endpointUrl: input.endpointUrl, path: input.path, parser: input.parser,
+        publicHeaders: normalizeProviderPublicHeaders(input.publicHeaders),
+      });
+      const result = await getProjectedJson(input,
+        body => parseProviderCatalogResponse(input.parser, body, input.contributedCatalogParsers),
+        catalogContainsSensitiveRequestValue);
+      return { requestFingerprint, finalUrl: result.finalUrl,
+        compatibilityDiagnostic: result.compatibilityDiagnostic, catalog: result.value };
+    },
+    async getUsage(input: ProviderUsageGetRequest): Promise<ProviderUsageParseResultV1> {
+      const result = await getProjectedJson(input,
+        body => ProviderUsageParseResultV1Schema.parse(input.parse(body)),
+        (value, lease, headerValues) => {
+          const serialized = JSON.stringify(value);
+          return (lease?.containsSensitiveValue(serialized) ?? false)
+            || containsProviderRegisteredSensitiveValue(serialized, headerValues.filter(Boolean));
+        });
+      return result.value;
     },
     async postModelLoad(input: ProviderModelLoadPostRequest): Promise<ProviderModelLoadPostResult> {
       throwIfCancelled(input.signal);

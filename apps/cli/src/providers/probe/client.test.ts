@@ -54,6 +54,54 @@ type MutableProbeModelFixture = {
 };
 
 describe('provider probe HTTP client', () => {
+  it('acquires usage once through the admitted transport and normalizes only Q1 meters', async () => {
+    const close = vi.fn();
+    const transport = vi.fn<ProviderProbeTransport>(async () => response({
+      body: Buffer.from('{"balance":"-0.25","total_used":"4.50"}'),
+    }));
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'], transport,
+    });
+    const result = await client.getUsage({
+      endpointUrl: 'https://gateway.example/codex/v1', path: '/v1/credits',
+      publicHeaders: {}, credentialPolicy: 'required', ...authorizedDestination,
+      resolveCredential: async () => ({
+        credential: { kind: 'httpHeader', name: 'authorization', value: 'Bearer fixture-key' },
+        containsSensitiveValue: (value: string) => value.includes('fixture-key'), close,
+      }),
+      parse: (body: unknown) => {
+        if (!body || typeof body !== 'object' || !('balance' in body)) throw new Error('Invalid credits');
+        return { meters: [{ meterId: 'credits', label: 'Account credits', remaining: Number(body.balance),
+          used: null, limit: null, unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok' }] };
+      },
+    });
+    expect(result.meters).toMatchObject([{ remaining: -0.25, unit: 'usd', limit: null, utilizationPct: null }]);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport.mock.calls[0]?.[0].url).toBe('https://gateway.example/v1/credits');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves usage HTTP refusal codes and rejects a parser that returns credential material', async () => {
+    const close = vi.fn();
+    const transport = vi.fn<ProviderProbeTransport>(async () => response({ status: 403 }));
+    const client = createProviderProbeHttpClient({ resolveAddresses: async () => ['93.184.216.34'], transport });
+    const request = {
+      endpointUrl: 'https://gateway.example/v1', path: '/v1/credits', publicHeaders: {},
+      credentialPolicy: 'required' as const, ...authorizedDestination,
+      resolveCredential: async () => ({
+        credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer fixture-key' },
+        containsSensitiveValue: (value: string) => value.includes('fixture-key'), close,
+      }),
+      parse: () => ({ meters: [{ meterId: 'balance', label: 'fixture-key', remaining: 1,
+        used: null, limit: null, unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok' }] }),
+    };
+    await expect(client.getUsage(request)).rejects.toMatchObject({ code: 'provider_endpoint_unauthorized', httpStatus: 403 });
+    expect(transport).toHaveBeenCalledTimes(1);
+    transport.mockImplementation(async () => response());
+    await expect(client.getUsage(request)).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
   it('parses a Provider-contributed catalog format and reports an unimplemented one typed', async () => {
     const client = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],

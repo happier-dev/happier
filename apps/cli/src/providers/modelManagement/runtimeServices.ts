@@ -182,6 +182,7 @@ export type RuntimeProviderAccountModelProjectionContext = Readonly<{
 
 export type RuntimeProviderModelManagementServices = Readonly<{
   probe: RuntimeProviderServices['probe'];
+  refreshUsage: RuntimeProviderServices['refreshUsage'];
   probeDraft: RuntimeProviderServices['probeDraft'];
   models: RuntimeProviderServices['models'];
   summary: RuntimeProviderServices['summary'];
@@ -1744,6 +1745,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   });
   return Object.freeze({
     probe: sharedRuntime.probe,
+    refreshUsage: sharedRuntime.refreshUsage,
     probeDraft: sharedRuntime.probeDraft,
     models: sharedRuntime.models,
     summary: sharedRuntime.summary,

@@ -98,6 +98,7 @@ export type PluginContributionRegistrationRight = Readonly<{
   providerArms?: Readonly<{
     managedRuntime: boolean;
     catalogParserIds: readonly string[];
+    usageParserIds?: readonly string[];
   }>;
 }>;
 
@@ -909,7 +910,8 @@ function requiresFamilyRegistration(family: string, value: Readonly<Record<strin
   }
   if (family === 'providers') {
     return declaresProviderManagedRuntimeV1(value)
-      || readContributedProviderCatalogParserIds(value).length > 0;
+      || readContributedProviderCatalogParserIds(value).length > 0
+      || readContributedProviderUsageParserIds(value).length > 0;
   }
   return false;
 }
@@ -934,6 +936,17 @@ export function declaresProviderManagedRuntimeV1(
  * not bundle. Each one must be contributed by the declaring plugin's `providers`
  * activation, so declaring one is what earns the registration right.
  */
+export function readContributedProviderUsageParserIds(
+  value: Readonly<Record<string, unknown>>,
+): readonly string[] {
+  if (!Array.isArray(value.usageSources)) return [];
+  return Object.freeze([...new Set(value.usageSources.flatMap((source: unknown) => {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
+    const parser = (source as Readonly<Record<string, unknown>>).parser;
+    return typeof parser === 'string' ? [parser] : [];
+  }))].sort());
+}
+
 export function readContributedProviderCatalogParserIds(
   value: Readonly<Record<string, unknown>>,
 ): readonly string[] {
@@ -1275,6 +1288,7 @@ function derivePluginContributionRegistrationRightsForHost(
             providerArms: Object.freeze({
               managedRuntime: declaresProviderManagedRuntimeV1(record),
               catalogParserIds: readContributedProviderCatalogParserIds(record),
+              usageParserIds: readContributedProviderUsageParserIds(record),
             }),
           }];
         }

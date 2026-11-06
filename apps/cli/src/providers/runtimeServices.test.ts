@@ -38,6 +38,7 @@ const providersEnabledFeatureGate = Object.freeze({
 
 function createMachineServices(): RuntimeProviderOperationsProducer['machineServices'] {
   return {
+    refreshUsage: vi.fn(async () => ({ status: 'success' as const, sources: [{ sourceId: 'credits', status: 'not_configured' as const }] })),
     prepareTeamCredentialNativeSource: vi.fn(async () => { throw new Error('Unexpected native Team credential source RPC'); }),
     prepareProfileMigrationSource: vi.fn(async () => { throw new Error('Unexpected Profile migration source RPC'); }),
     probe: vi.fn(async () => ({
@@ -128,6 +129,21 @@ function createMachineServices(): RuntimeProviderOperationsProducer['machineServ
 }
 
 describe('runtime Provider operation production boundary', () => {
+  it('exposes usage separately from catalog and rejects a result after the invocation retires', async () => {
+    const machineServices = createMachineServices();
+    const binding = currentBinding();
+    const operations = createRuntimeProviderOperationsProducer({ machineId: 'machine-a', machineServices,
+      featureGate: providersEnabledFeatureGate }).bind(binding.binding);
+    expect(operations).toHaveProperty('usage');
+    await expect(operations.usage.refresh({ connectionId: ProviderConnectionIdSchema.parse('pc_1') }))
+      .resolves.toEqual({ status: 'success', sources: [{ sourceId: 'credits', status: 'not_configured' }] });
+    const result = deferred<Awaited<ReturnType<MachineProviderRpcServices['refreshUsage']>>>();
+    vi.spyOn(machineServices, 'refreshUsage').mockImplementation(() => result.promise);
+    const stale = operations.usage.refresh({ connectionId: ProviderConnectionIdSchema.parse('pc_1') });
+    binding.controller.abort();
+    result.resolve({ status: 'not_supported' });
+    await expect(stale).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+  });
   it('keeps an invocation bound before machine bootstrap connected to the current producer', async () => {
     const machineServices = createMachineServices();
     let currentProducer: RuntimeProviderOperationsProducer | null = null;

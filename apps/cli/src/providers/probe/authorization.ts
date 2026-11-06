@@ -61,7 +61,7 @@ export type ProviderProbeCredentialResolution =
   | Readonly<{ ok: true; lease: ProviderProbeCredentialLease }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
 
-export type ProviderExternalProbeAuthorizationRequest = Readonly<{
+type ProviderExternalProbeAuthorizationRequestBase = Readonly<{
   deployment?: 'external';
   connectionId: string;
   machineId: string;
@@ -69,9 +69,13 @@ export type ProviderExternalProbeAuthorizationRequest = Readonly<{
   endpointUrl: string;
   protocol: ProviderWireProtocol;
   path: string;
-  parser: ProviderCatalogParserV1;
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;
 }>;
+
+export type ProviderExternalProbeAuthorizationRequest = ProviderExternalProbeAuthorizationRequestBase & Readonly<
+  | { purpose?: 'catalog'; parser: ProviderCatalogParserV1 }
+  | { purpose: 'usage'; usageSourceId: string; parser: string }
+>;
 
 export type ProviderManagedProbeAuthorizationRequest = Readonly<{
   deployment: 'managedLocal';

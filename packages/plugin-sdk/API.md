@@ -2064,6 +2064,7 @@
 | `./providers` | `AgentProviderRequirementsV1` | type | any |
 | `./providers` | `BundledProviderCatalogParserId` | type | any |
 | `./providers` | `BundledProviderWireProtocol` | type | any |
+| `./providers` | `DaemonProviderUsageRefreshRequestV1` | type | any |
 | `./providers` | `ManagedProviderEndpoint` | type | daemon |
 | `./providers` | `ManagedProviderRuntime` | type | daemon |
 | `./providers` | `ManagedProviderRuntimeContext` | type | daemon |
@@ -2127,6 +2128,9 @@
 | `./providers` | `ProviderUsageParseResult` | type | daemon |
 | `./providers` | `ProviderUsageParseResultV1` | type | any |
 | `./providers` | `ProviderUsageParser` | type | daemon |
+| `./providers` | `ProviderUsageRefreshRequest` | type | daemon |
+| `./providers` | `ProviderUsageRefreshResult` | type | daemon |
+| `./providers` | `ProviderUsageService` | type | daemon |
 | `./providers` | `ProviderUsageSourceV1` | type | any |
 | `./providers` | `ProviderWireProtocol` | type | any |
 | `./providers` | `ProvidersRegistrationApi` | type | daemon |

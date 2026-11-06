@@ -37,6 +37,7 @@ import type {
     ProviderProfileMigrationConfirmRequest,
     ProviderProfileMigrationConflictConfirmRequest,
     ProviderProfileMigrationPreviewRequest,
+    ProviderUsageRefreshRequest,
 } from '@happier-dev/plugin-sdk/providers';
 import type {
     RunnerDaemonManagedProviderBootstrapV1,
@@ -1853,6 +1854,11 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 // parses the Protocol request before dispatch.
                 const request = decodeJsonValue(operation.request);
                 switch (operation.operation) {
+                    case 'usage.refresh':
+                        return result(operation, await services.providers.usage.refresh(
+                            request as ProviderUsageRefreshRequest,
+                            operationOptions,
+                        ));
                     case 'connections.describe':
                         return result(operation, await services.providers.connections.describe(
                             request as ProviderConnectionsDescribeRequest,
