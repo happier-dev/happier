@@ -12,7 +12,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { ManagedResourceDependencyV1Schema } from '../../machines/managed/managedDependencyV1.js';
+import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1 } from '../../machines/managed/managedDependencyV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { preparePluginContributionPointDeclarationsV1 } from '../contributions/targetedContributions.js';
 
@@ -31,7 +31,7 @@ export {
   type PluginCompatibilityProjectionV1,
 } from './compatibilityProjectionV1.js';
 import { PluginDeclaredUiEntriesV1Schema } from '../../daemon/contributionRegistryProjection.js';
-import { PluginIdSchema } from '../pluginId.js';
+import { PluginIdSchema, type PluginId } from '../pluginId.js';
 import {
   PluginUiArtifactIdV2Schema,
   PluginUiArtifactsManifestEntryV2Schema,
@@ -464,7 +464,18 @@ export type PluginMachineMaterializationSnapshotV1 = z.infer<typeof PluginMachin
  * intent/release/link data controls which immutable Artifact is current, while
  * a complete machine snapshot only reports exact installation correspondence.
  */
-export const PluginAccountAvailabilityIntentReadResponseV1Schema = lazyZodSchema(() => z.strictObject({
+export type PluginAccountAvailabilityIntentReadResponseV1 = {
+  availabilityCursor: number;
+  hostingCapability: PluginUiArtifactHostingCapabilityV1;
+  intent: PluginAccountPluginIntentV1 | null;
+  release: PluginReleaseFactsV1 | null;
+  uiArtifacts: readonly PluginAccountPluginUiArtifactLinkV1[];
+  packageAssets: readonly PluginAccountPluginPackageAssetLinkV1[];
+  managedResources?: readonly ManagedResourceDependencyV1[];
+  managedResourcesReviewed?: boolean;
+};
+
+export const PluginAccountAvailabilityIntentReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityIntentReadResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
   hostingCapability: PluginUiArtifactHostingCapabilityV1Schema,
   intent: z.nullable(PluginAccountPluginIntentV1Schema),
@@ -474,15 +485,22 @@ export const PluginAccountAvailabilityIntentReadResponseV1Schema = lazyZodSchema
   managedResources: z.optional(z.readonly(z.array(ManagedResourceDependencyV1Schema))),
   managedResourcesReviewed: z.optional(z.boolean()),
 }));
-export type PluginAccountAvailabilityIntentReadResponseV1 =
-  z.infer<typeof PluginAccountAvailabilityIntentReadResponseV1Schema>;
+
 
 /**
  * The Account bootstrap batch reuses the exact intent.read projection, including
  * release and Artifact facts. Failed reads remain explicit per plugin; neither
  * a partial result nor a missing intent can fabricate a current declaration.
  */
-export const PluginAccountAvailabilityIntentsListResponseV1Schema = lazyZodSchema(() => z.strictObject({
+export type PluginAccountAvailabilityIntentsListResponseV1 = {
+  availabilityCursor: number;
+  pluginIds: readonly PluginId[];
+  nextCursor?: PluginId | null;
+  intentReads: readonly { pluginId: PluginId; response: PluginAccountAvailabilityIntentReadResponseV1 }[];
+  failedPluginIds: readonly PluginId[];
+};
+
+export const PluginAccountAvailabilityIntentsListResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityIntentsListResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
   pluginIds: z.readonly(z.array(asProtocolZod(PluginIdSchema))),
   nextCursor: zMini.optional(zMini.nullable(asProtocolZod(PluginIdSchema))),
@@ -525,8 +543,7 @@ export const PluginAccountAvailabilityIntentsListResponseV1Schema = lazyZodSchem
     }
   }
 })));
-export type PluginAccountAvailabilityIntentsListResponseV1 =
-  z.infer<typeof PluginAccountAvailabilityIntentsListResponseV1Schema>;
+
 
 /**
  * Reads immutable Account release facts by exact coordinate. Selection intent
