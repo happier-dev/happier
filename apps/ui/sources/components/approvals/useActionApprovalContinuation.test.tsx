@@ -9,6 +9,7 @@ import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1 } from '@
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
     createHomeGovernanceHarness,
@@ -526,6 +527,9 @@ describe('useActionApprovalContinuation', () => {
 
     it('restores Coach digest retry after Inbox rejection and consumes its approved Automation receipt', async () => {
         const serverId = await addApprovalHome();
+        harness.answer(serverId, 'GET /v1/machines/machine-a', {
+            body: { machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: ACCOUNT_ID }) },
+        });
         await harness.requireUiApproval(serverId, 'workflow.trigger.add');
         const rows = new Map<string, ReturnType<typeof AutomationDefinitionDetailSchema.parse>>();
         harness.answer(serverId, '/v1/account/encryption/currentness', { body: { mode: 'plain', version: 1,
