@@ -1,4 +1,4 @@
-/** @moduleRealm daemon */
+/** @moduleRealm any */
 
 /** Private material for the host-admitted managed resource, never an Action input. */
 export type MachineProvisionerBootstrapCredentialLeaseV1 =
@@ -11,6 +11,12 @@ export type MachineProvisionerNativeCredentialHeadersResultV1 =
     | Readonly<{ ok: false; code: 'native_credential_binding_unavailable' }>;
 
 export interface MachineProvisionersService {
+    /**
+     * Open only this SSH acquire installer's generated guest-host private key.
+     * It is distinct from the bootstrap user key. The host retains redaction
+     * and zeroes the byte lease on disposal or invocation settlement.
+     */
+    materializeGuestHostCredential(): Promise<Extract<MachineProvisionerBootstrapCredentialLeaseV1, { kind: 'bytes' }>>;
     /**
      * Render headers only for a binding already admitted to this native apply
      * invocation. Unknown bindings and ordinary invocations return refusal.

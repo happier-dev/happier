@@ -1307,6 +1307,7 @@ export async function createPluginTestkit(
                         http: invocationServices.http,
                         secrets: invocationServices.secrets,
                         connectedAccounts: invocationServices.connectedAccounts,
+                        machineProvisioners: invocationServices.machineProvisioners,
                         storage: Object.freeze({ get account() {
                             const account = invocationServices.storage.account;
                             if (!account) throw unavailableBoundaryError('plugin_test_service_unavailable', 'Account storage fixture is unavailable');

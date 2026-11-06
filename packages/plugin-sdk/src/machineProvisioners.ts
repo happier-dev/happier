@@ -8,6 +8,7 @@ import type { PluginProcessResult } from './services/io.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
 import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginContributionRef } from './identity.js';
+export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { AcquireResultV1, ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 export type MachineProvisionerContributionV1 = Readonly<{
@@ -22,6 +23,8 @@ export type MachineProvisionerContributionV1 = Readonly<{
   resourceSchema: PluginJsonSchema;
   schemaVersion: number;
   platforms: readonly ('darwin' | 'linux' | 'win32')[];
+  /** Qualified whole browser API/bootstrap path; absence does not qualify browser acquisition. */
+  browserReachable?: boolean;
   prerequisites: readonly Readonly<{ kind: 'managedDependency' | 'systemTool'; id: string | PluginContributionRef }>[];
   billing: Readonly<{ location: 'local' | 'cloud' | 'unknown'; stoppedBilling: 'billed' | 'not-billed' | 'unknown'; storageCharges?: readonly MachineProvisionerPriceV1[] }>;
   retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: 'poweroff' | 'process-exit'; finiteOnly?: boolean; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;

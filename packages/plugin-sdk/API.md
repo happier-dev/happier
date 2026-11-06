@@ -6,6 +6,7 @@
 
 | Specifier | Export | Kind | Realm |
 |---|---|---|---|
+| `./machine-provisioners` | `MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1` | value | any |
 | `.` | `ActionConfirmationWhen` | type | any |
 | `.` | `ActionOperationDeclarationV1` | type | any |
 | `.` | `BackupDestinationContributionV1` | type | any |
@@ -125,8 +126,8 @@
 | `.` | `LoggerService` | type | daemon |
 | `.` | `MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1` | value | any |
 | `.` | `MachinePresetItemV1` | type | any |
-| `.` | `MachineProvisionerBootstrapCredentialLeaseV1` | type | daemon |
-| `.` | `MachineProvisionersService` | type | daemon |
+| `.` | `MachineProvisionerBootstrapCredentialLeaseV1` | type | any |
+| `.` | `MachineProvisionersService` | type | any |
 | `.` | `MachineRecipeSelectionV1` | type | any |
 | `.` | `MachineRecipeStepV1` | type | any |
 | `.` | `MachineRecipeV1` | type | any |
@@ -1776,6 +1777,7 @@
 | `./interactions` | `UiWidget` | type | any |
 | `./machine-provisioners` | `DevcontainerEffectReviewV1` | type | any |
 | `./machine-provisioners` | `DevcontainerNativeObservationV1` | type | any |
+| `./machine-provisioners` | `MACHINE_PROVISIONER_CLOUD_SSH_USER` | value | any |
 | `./machine-provisioners` | `MACHINE_PROVISIONER_DIMENSIONS_V1` | value | any |
 | `./machine-provisioners` | `MachineProvisionerAcquireResultV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerAcquireResultV1Schema` | value | any |
@@ -1785,6 +1787,7 @@
 | `./machine-provisioners` | `MachineProvisionerCheckInputV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerCheckResultV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerCheckResultV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerCloudHostKeyV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerConditionalPriceV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerContributionV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerDestroyResultV1` | type | any |
@@ -1815,6 +1818,12 @@
 | `./machine-provisioners` | `MachineProvisionerSelectionProjectionV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerSelectionV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerStoredReaderV1` | type | any |
+| `./machine-provisioners` | `buildMachineProvisionerCloudInit` | value | any |
+| `./machine-provisioners` | `buildMachineProvisionerDaemonStartScript` | value | any |
+| `./machine-provisioners` | `buildMachineProvisionerPinnedSshBootstrap` | value | any |
+| `./machine-provisioners` | `buildMachineProvisionerShellCommand` | value | any |
+| `./machine-provisioners` | `computeSshHostKeyFingerprint` | value | any |
+| `./machine-provisioners` | `createMachineProvisionerFetch` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerReconciliationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerSchemas` | value | any |
 | `./machine-provisioners` | `observeMachineProvisionerNativeRead` | value | any |

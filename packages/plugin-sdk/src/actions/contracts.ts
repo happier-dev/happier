@@ -1,3 +1,4 @@
+import type { MachineProvisionersService } from '../services/machineProvisioners.js';
 import type { HttpService } from '../services/io.js';
 import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
 import type { ConnectedAccountsService } from '../connectedAccounts.js';
@@ -88,6 +89,8 @@ export type PluginAccountActionContext = Readonly<{
     /** Present only when this invocation has ordinary client authoring capability. */
     ui?: PluginClientActionUi;
     services: Readonly<{
+        /** Privately admitted managed-resource byte custody; native file APIs may be unavailable. */
+        machineProvisioners: MachineProvisionersService;
         machineConnectorSecrets?: MachineConnectorSecretsService;
         /** Host HTTP with credential-scoped redirects and invocation cancellation. */
         http: HttpService;

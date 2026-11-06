@@ -48,3 +48,10 @@ export type { MachineProvisionerProcessConfigV1 } from '../machineProvisioners.j
 
 export { observeMachineProvisionerNativeRead } from './nativeReadObservation.js';
 export type { MachineProvisionerNativeReadOutcomeV1 } from './nativeReadObservation.js';
+
+export { createMachineProvisionerFetch } from './http.js';
+export { buildMachineProvisionerShellCommand, buildMachineProvisionerDaemonStartScript } from './guestShell.js';
+export { computeSshHostKeyFingerprint, buildMachineProvisionerCloudInit, buildMachineProvisionerPinnedSshBootstrap, MACHINE_PROVISIONER_CLOUD_SSH_USER,
+  type MachineProvisionerCloudHostKeyV1 } from './cloudInit.js';
+
+export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '../machineProvisioners.js';
