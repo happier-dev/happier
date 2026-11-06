@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierDataRows, HappierPressable, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
@@ -98,11 +99,7 @@ export function UsageWorkRowLead(
   return (
     <View style={styles.lead}>
       {props.expanded === undefined ? null : (
-        <Icon
-          name={props.expanded ? 'caret-down' : 'caret-right'}
-          size={ICON_SIZE.xs}
-          color={theme.colors.text.tertiary}
-        />
+        <DisclosureCaret expanded={props.expanded} size={ICON_SIZE.xs} />
       )}
       {props.icon ? (
         <Icon

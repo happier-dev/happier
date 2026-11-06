@@ -600,7 +600,6 @@ function PoolWhy(props: WhyProps) {
         accessibilityRole="button"
         accessibilityLabel={t('usage.board.plans.whyTitle')}
         expanded={open}
-        hitSlop={12}
         style={(state) => [
           styles.whyTrigger,
           state.pressed

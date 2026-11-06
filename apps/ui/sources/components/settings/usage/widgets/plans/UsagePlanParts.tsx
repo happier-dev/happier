@@ -22,6 +22,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { formatResetCountdown, formatResetCountdownPhrase } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { getPreferredLanguage, t } from '@/text';
+import { connectedServicePoolExclusionText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import {
@@ -246,27 +247,12 @@ export function planWindowStatement(
 }
 
 
-const EXCLUSION_KEYS: Readonly<Record<string, Parameters<typeof t>[0]>> = {
-  quota_exhausted: 'usage.board.plans.excludedUsedUp',
-  cooldown: 'usage.board.plans.excludedCooldown',
-  auth_invalid: 'usage.board.plans.excludedSignIn',
-  credential_unavailable: 'usage.board.plans.excludedUnavailable',
-  disabled: 'usage.board.plans.excludedOff',
-  capacity_limited: 'usage.board.plans.excludedCapacity',
-  plan_unavailable: 'usage.board.plans.excludedUnavailable',
-  validation_blocked: 'usage.board.plans.excludedUnavailable',
-  policy_wait_until_reset: 'usage.board.plans.excludedWaitReset',
-  current_active: 'usage.board.plans.usedFirstInUse',
-};
-
 export function planExclusionText(
   reason: string,
   retryAtMs: number | null,
   nowMs: number,
 ): string {
-  const base = t(
-    EXCLUSION_KEYS[reason] ?? 'usage.board.plans.excludedUnavailable',
-  );
+  const base = connectedServicePoolExclusionText(reason);
   return retryAtMs !== null && retryAtMs > nowMs
     ? `${base} · ${t('usage.board.plans.excludedBack', { time: formatPlanMoment(retryAtMs, nowMs) })}`
     : base;
@@ -560,7 +546,6 @@ export function UsagePlanDisclosure(
           accessibilityRole="button"
           accessibilityLabel={[props.title, props.meta].filter(Boolean).join(', ')}
           expanded={expanded}
-          hitSlop={10}
           style={(state) => [
             styles.disclosureHeader,
             state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,

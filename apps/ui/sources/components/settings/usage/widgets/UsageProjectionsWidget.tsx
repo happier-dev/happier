@@ -368,7 +368,6 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
                   accessibilityRole="button"
                   accessibilityLabel={`${t('usage.board.plans.windowPicker')}: ${focusTitle}`}
                   expanded={open}
-                  hitSlop={10}
                   style={(state) => [
                     styles.picker,
                     state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
