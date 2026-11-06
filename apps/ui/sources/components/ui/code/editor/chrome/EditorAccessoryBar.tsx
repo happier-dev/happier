@@ -3,7 +3,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
-import { useFloatingChromeClearance, useReportPageBottomBar } from '@/components/ui/layout/useFloatingChromeClearance';
+import { useReportPageBottomBar } from '@/components/ui/layout/useFloatingChromeClearance';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { Text } from '@/components/ui/text/Text';
@@ -28,8 +28,6 @@ export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
     const isInline = props.variant === 'inline';
-    // A page under the phone's floating tab bar: the key row sits above it, the band beneath stays the row's paint.
-    const chromeClearance = useFloatingChromeClearance();
     // The panel row is in flow at the page's bottom and cannot step aside, so floating companions sit above it.
     const onSeatLayout = useReportPageBottomBar(!isInline, 0);
     const content = <HorizontalScrollableRow
@@ -46,15 +44,15 @@ export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
         {content}
     </View>;
 
-    const bar = <View testID={props.testID} accessibilityRole="toolbar" accessibilityLabel={props.accessibilityLabel} onLayout={onSeatLayout}
+    const backgroundColor = paintColor(theme.colors.surface.inset, 'transparent');
+    const bar = <View testID={props.testID} accessibilityRole="toolbar" accessibilityLabel={props.accessibilityLabel}
         style={[stylesheet.bar, props.leading || props.trailing ? stylesheet.pinnedBar : null,
-            { backgroundColor: paintColor(theme.colors.surface.inset, 'transparent') },
-            chromeClearance > 0 ? { paddingBottom: chromeClearance } : null]}>
+            { backgroundColor }]}>
         {props.leading ? <View style={[stylesheet.pinned, stylesheet.pinnedLeading]}>{props.leading}</View> : null}
         <View style={stylesheet.scrollSlot}>{content}</View>
         {props.trailing ? <View style={[stylesheet.pinned, stylesheet.pinnedTrailing]}>{props.trailing}</View> : null}
     </View>;
-    return Platform.OS === 'web' ? bar : <KeyboardStickyFooter>{bar}</KeyboardStickyFooter>;
+    return <KeyboardStickyFooter onLayout={onSeatLayout} style={{ backgroundColor }}>{bar}</KeyboardStickyFooter>;
 }
 
 export type EditorAccessoryChipProps = Readonly<{

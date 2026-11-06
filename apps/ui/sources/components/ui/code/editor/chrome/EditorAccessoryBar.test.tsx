@@ -89,9 +89,18 @@ describe('EditorAccessoryBar', () => {
         <EditorAccessoryBar testID="key-row"><EditorAccessoryChip text="Tab" label="Tab" onPress={() => {}} /></EditorAccessoryBar>
       </SessionCockpitBottomChromeHeightContext.Provider>,
     );
-    expect(StyleSheet.flatten(screen.findHostByTestId('key-row')?.props.style)).toMatchObject({ paddingBottom: tabBarHeight });
+    const bottomReservation = () => {
+      let node = screen.findHostByTestId('key-row');
+      let bottom = 0;
+      while (node) {
+        if (typeof node.type === 'string') bottom += Number(StyleSheet.flatten(node.props.style)?.paddingBottom ?? 0);
+        node = node.parent;
+      }
+      return bottom;
+    };
+    expect(bottomReservation()).toBe(tabBarHeight);
     // With no floating chrome over the page, the row keeps its own edge.
     await screen.update(<EditorAccessoryBar testID="key-row"><EditorAccessoryChip text="Tab" label="Tab" onPress={() => {}} /></EditorAccessoryBar>);
-    expect(StyleSheet.flatten(screen.findHostByTestId('key-row')?.props.style).paddingBottom).toBeUndefined();
+    expect(bottomReservation()).toBe(0);
   });
 });

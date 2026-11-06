@@ -3,7 +3,7 @@ import { View, type StyleProp, type ViewProps, type ViewStyle } from 'react-nati
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
+import { FloatingChromeClearanceReservedContext, useFloatingChromeClearanceReservation } from '@/components/ui/layout/useFloatingChromeClearance';
 
 /**
  * A page's pinned action bar: a sibling below the page's scroll, never scrolled off, on the page
@@ -17,11 +17,15 @@ import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingCh
 export function PagePinnedBar(props: Readonly<Pick<ViewProps, 'testID' | 'children'> & { style?: StyleProp<ViewStyle> }>) {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
-    const reserved = useFloatingChromeClearance();
-    const paddingBottom = reserved > 0 ? theme.space.s12 + reserved : Math.max(theme.space.s12, insets.bottom);
+    const { clearance, reserved } = useFloatingChromeClearanceReservation();
+    const paddingBottom = reserved
+        ? theme.space.s12 + clearance
+        : Math.max(theme.space.s12, insets.bottom);
     return (
         <View testID={props.testID} style={[styles.bar, props.style, { paddingBottom }]}>
-            {props.children}
+            <FloatingChromeClearanceReservedContext.Provider value={reserved}>
+                {props.children}
+            </FloatingChromeClearanceReservedContext.Provider>
         </View>
     );
 }

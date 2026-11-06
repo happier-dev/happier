@@ -5,6 +5,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 
+// A pinned footer reserves the overlay for its whole subtree, including a nested page bar.
+export const FloatingChromeClearanceReservedContext = React.createContext(false);
+
 /**
  * How far the phone's floating bottom chrome (the tab bar and the docked Voice Island above it) covers
  * the bottom of the current page, in px (0 when none overlays it, or when the page is inside a modal that covers the bar). The one reading of that
@@ -12,8 +15,17 @@ import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
  * it to the view's body.
  */
 export function useFloatingChromeClearance(): number {
+    return useFloatingChromeClearanceReservation().clearance;
+}
+
+export function useFloatingChromeClearanceReservation(): Readonly<{ clearance: number; reserved: boolean }> {
     const chromeHeight = useSessionCockpitPageBottomClearance();
-    return useIsInsideModalBoundary() ? 0 : chromeHeight;
+    const inModal = useIsInsideModalBoundary();
+    const reserved = React.useContext(FloatingChromeClearanceReservedContext);
+    return {
+        clearance: inModal || reserved ? 0 : chromeHeight,
+        reserved: !inModal && (reserved || chromeHeight > 0),
+    };
 }
 
 /** A kept bar holds its seat; a stacked one (a selection's bar) floats above the kept bars and is kept by what floats above it. */
