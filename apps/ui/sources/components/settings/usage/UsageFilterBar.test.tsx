@@ -56,7 +56,7 @@ function renderBar(selections: string[], overrides: Partial<Bar> = {}) {
   });
   const props = {
     page: page as unknown as Bar['page'],
-    slices: [],
+    coverageIncomplete: false,
     scopeFilters: [
       filter('sources', [], [{ id: 'runtime', label: 'Happier sessions' }]),
       filter(

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { WidgetPresentationProvider, useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/protocol';
@@ -56,6 +57,7 @@ export type WidgetSurfaceProps = Readonly<{
 
 function InstalledInstanceBody(props: WidgetSurfaceProps & Readonly<{ descriptor: WidgetCandidate }>): React.ReactElement {
     const resolution = useConfiguredWidgetTarget(props);
+    useReportBindingDemand(resolution.status);
     const definition = props.instance.definition;
     if (definition.kind === 'builtin') {
         if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={props.onRepairInputs} onManagePlugin={props.onManagePlugin} />;
@@ -83,6 +85,7 @@ function InstalledInstanceBody(props: WidgetSurfaceProps & Readonly<{ descriptor
 
 function AuthoredReadyBody(props: WidgetSurfaceProps & Readonly<{ descriptor: WidgetCandidate }>): React.ReactElement {
     const resolution = useConfiguredWidgetTarget(props);
+    useReportBindingDemand(resolution.status);
     const latest = React.useRef(resolution);
     latest.current = resolution;
     const lifetime = useActiveServerAccountScopeLifetime();
@@ -109,6 +112,12 @@ function AuthoredReadyBody(props: WidgetSurfaceProps & Readonly<{ descriptor: Wi
             presentation={props.presentation} onManagePlugin={props.onManagePlugin}
             onRepairInputs={props.onRepairInputs} onIntrinsicHeightChange={props.onIntrinsicHeightChange} reference={props.reference} testID={props.testID} />;
     }
+}
+
+function useReportBindingDemand(status: ConfiguredWidgetTargetResolution['status']) {
+    const demand = React.useContext(WidgetFrameDemandContext);
+    const id = React.useContext(WidgetFrameInstanceIdContext);
+    React.useLayoutEffect(() => id === null ? undefined : demand?.refuse(id, status !== 'ready' && status !== 'loading'), [demand, id, status]);
 }
 
 /** An authored copy borrows only its destination viewer's current authority. */

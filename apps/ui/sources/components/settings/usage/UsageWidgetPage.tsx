@@ -1,14 +1,16 @@
 import * as React from 'react';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
   flattenWidgetLayoutWidgetsV1,
   readBuiltinWidgetDescriptorV1,
-  type WidgetAreaLayoutSummaryV1,
-  type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { HAPPIER_ICON_BUTTON_SIZE, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { CurrentUiContextCommandsProvider } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -20,24 +22,23 @@ import {
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { WidgetArea } from '@/components/widgets/area/WidgetArea';
+import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { WidgetAreaPresetLine } from '@/components/widgets/area/WidgetAreaPresetLine';
 import {
   useWidgetAreaLayout,
   type WidgetAreaPort,
 } from '@/components/widgets/area/useWidgetAreaLayout';
-import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import {
   WidgetAreaLayoutBar,
   type WidgetAreaLayoutLabels,
 } from '@/components/widgets/area/WidgetAreaLayoutBar';
-import { useWidgetAreaLayouts } from '@/components/projects/overview/useProjectDashboards';
-import { Modal } from '@/modal';
+import { useCorePageWidgetAreaLayoutBar } from '@/components/widgets/area/useCorePageWidgetAreaLayoutBar';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
+import { resolveAvailableCostModes } from '@/sync/api/account/usageAnalytics';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { t } from '@/text';
-import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { UsageFilterBar } from './UsageFilterBar';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
@@ -56,14 +57,17 @@ import {
 import type {
   UsageWidgetPageInitialFilters,
   UsageWidgetPageScope,
+  UsageWidgetQueryOverrides,
 } from './usageWidgetPageContext';
 import { setUsageWidgetMetric } from './usageWidgetActions';
 import {
   UsageWidgetBatchProvider,
-  useUsageWidgetBatchSlices,
+  isUsageQueryWidget,
+  useUsageWidgetPageRetry,
+  useUsageWidgetBatchSelection,
   useUsageWidgetBatchInventorySlice,
 } from './widgets/usageWidgetBatch';
-import { describeUsagePageFailedSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
+import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -105,6 +109,8 @@ export type UsageWidgetPageProps = Readonly<{
 export function UsageWidgetPage(
   props: UsageWidgetPageProps,
 ): React.ReactElement {
+  const scrollRef = React.useRef<ScrollView | null>(null);
+  const [scrollTracker] = React.useState(() => createScrollViewNearViewportTracker(scrollRef, false, { initialViewportHeight: 0 }));
   const viewer = useActiveServerAccountScope();
   const authority = React.useMemo(
     () => captureActiveServerAccountScopeLifetime(),
@@ -137,16 +143,23 @@ export function UsageWidgetPage(
   // reading column: at 1920 and 2560 the lab's two-column groups need the room (lab wgusage-CD).
   const wideColumn = useLayoutMaxWidth('wide');
   const contentMaxWidth = React.useMemo(() => ({ maxWidth: wideColumn }), [wideColumn]);
-  const inventoryQuery = React.useMemo(() => normalizeUsageQuery({ ...page.queryOverrides, ...page.scope,
-    agents: [], machines: [], projects: [], sources: [], metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'] }),
-  [page.queryOverrides, page.scope.period, page.scope.session, page.scope.costBasis]);
+  // Non-follow clauses travel with the same host context that the area admits for widget inputs.
+  // widgetProvidedContext projects only slots/session to the Action boundary.
+  const context = React.useMemo(() => ({ ...binding.context, queryOverrides: page.queryOverrides }),
+    [binding.context, page.queryOverrides]);
   return (
     <PluginSurfaceFocusEligibilityProvider
       active
-      currentUiContextActive={props.sessionId === undefined}
+      currentUiContextActive
     >
       <CurrentUiContextCommandsProvider authority={authority} active={page.isCurrent}>
+      <PluginUiScrollActivityProvider tracker={scrollTracker}>
       <ScrollView
+        ref={scrollRef}
+        onScroll={scrollTracker.onScroll}
+        onLayout={scrollTracker.onLayout}
+        onContentSizeChange={scrollTracker.onContentSizeChange}
+        scrollEventThrottle={16}
         style={styles.screen}
         contentContainerStyle={[
           styles.content,
@@ -157,11 +170,10 @@ export function UsageWidgetPage(
         testID="usage-page"
       >
         <View style={[styles.column, contentMaxWidth]}>
-          <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={inventoryQuery}>
             {binding.port ? (
               <UsagePageDocument
                 port={binding.port}
-                context={binding.context}
+                context={context}
                 binding={binding}
                 page={page}
                 names={names}
@@ -170,7 +182,7 @@ export function UsageWidgetPage(
               />
             ) : (
               <>
-                <UsagePageHeader slices={[]} query={null} />
+                <UsagePageHeader facts={readUsagePageFacts([], false).facts} retry={null} />
                 <WidgetArea
                   port={null}
                   context={binding.context}
@@ -181,9 +193,9 @@ export function UsageWidgetPage(
                 />
               </>
             )}
-          </UsageWidgetBatchProvider>
         </View>
       </ScrollView>
+      </PluginUiScrollActivityProvider>
       </CurrentUiContextCommandsProvider>
     </PluginSurfaceFocusEligibilityProvider>
   );
@@ -191,72 +203,68 @@ export function UsageWidgetPage(
 
 type UsageAreaBinding = ReturnType<typeof useUsageWidgetAreaBinding>;
 
-function UsagePageDocument(
-  props: Readonly<{
+type UsagePageDocumentProps = Readonly<{
     port: WidgetAreaPort;
-    context: WidgetSurfaceContext;
+    context: WidgetSurfaceContext & Readonly<{ queryOverrides: UsageWidgetQueryOverrides }>;
     binding: UsageAreaBinding;
     page: UsageWidgetPageContextState;
     names: Readonly<Record<UsageWidgetPresetId, string>>;
     sessionId?: string;
     authority: ReturnType<typeof captureActiveServerAccountScopeLifetime>;
-  }>,
-) {
-  const { binding, page } = props;
+}>;
+
+function UsagePageDocument(props: UsagePageDocumentProps) {
   const layout = useWidgetAreaLayout(props.port, props.context);
-  const slices = useUsageWidgetBatchSlices();
+  const admittedContext = layout.state.status === 'ready' ? layout.state.context : null;
+  const inventoryQuery = React.useMemo(() => admittedContext ? normalizeUsageQuery({
+    ...admittedContext.queryOverrides,
+    ...Object.fromEntries(Object.entries(widgetProvidedContext(admittedContext)).map(([path, values]) => [path, values[0]])),
+    agents: [], machines: [], projects: [], sources: [], metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'],
+  }) : undefined, [admittedContext]);
+  const queryWidgetIds = layout.state.status === 'ready' ? flattenWidgetLayoutWidgetsV1(layout.state.items)
+    .filter(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id))
+    .map(row => row.instance.id) : undefined;
+  const inventoryOnly = queryWidgetIds?.length === 0;
+  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly}
+    queryWidgetIds={queryWidgetIds}>
+    <UsagePageDocumentContent {...props} layout={layout} />
+  </UsageWidgetBatchProvider>;
+}
+
+function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ layout: ReturnType<typeof useWidgetAreaLayout> }>) {
+  const { binding, page } = props;
+  const layout = props.layout;
   const inventorySlice = useUsageWidgetBatchInventorySlice();
-  const filterSlices = React.useMemo(() => inventorySlice ? [inventorySlice] : slices, [inventorySlice, slices]);
-  const areaSurface = React.useMemo(
-    (): WidgetSurfaceRefV1 | null =>
-      binding.surface && binding.surface.owner.kind === 'corePage'
-        ? {
-            serverId: binding.surface.serverId,
-            accountId: binding.surface.accountId,
-            owner: {
-              kind: 'corePage',
-              pageId: binding.surface.owner.pageId,
-              area: binding.surface.owner.area,
-            },
-          }
-        : null,
-    [binding.surface?.serverId, binding.surface?.accountId],
-  );
-  const layouts = useWidgetAreaLayouts({
-    surface: areaSurface,
-    execute: binding.executeLayoutAction,
+  const needsFilterFallback = inventorySlice === undefined;
+  const selectPageFacts = React.useCallback((slices: readonly UsageQueryResultSlice[]) =>
+    readUsagePageFacts(slices, needsFilterFallback), [needsFilterFallback]);
+  const pageRead = useUsageWidgetBatchSelection(selectPageFacts, sameUsagePageFacts);
+  const { facts } = pageRead;
+  const filterSlices = React.useMemo(() => inventorySlice ? [inventorySlice] : pageRead.filterFallback ?? [], [inventorySlice, pageRead.filterFallback]);
+  const presets = React.useMemo(() => USAGE_WIDGET_PRESET_IDS.map(id => ({ id, name: props.names[id] })), [props.names]);
+  const publishedLayoutSelection = React.useRef<((layoutId: string) => Promise<boolean>) | null>(null);
+  const selectPublishedLayout = React.useCallback((layoutId: string) => {
+    if (!props.authority?.isCurrent()) return Promise.resolve(false);
+    return publishedLayoutSelection.current?.(layoutId) ?? Promise.resolve(false);
+  }, [props.authority]);
+  const bar = useCorePageWidgetAreaLayoutBar({
+    binding,
+    area: layout,
+    presets,
+    newLayoutBody: t('usage.board.page.newViewBody'),
+    newLayoutConfirmText: t('usage.board.page.newViewCreate'),
+    selectLayout: selectPublishedLayout,
   });
-  // The title/tabs and body describe the same admitted document while a selection read is pending.
-  const admittedSurface = layout.state.status === 'ready' ? layout.state.surface : binding.surface;
-  const selectedLayoutId =
-    admittedSurface?.owner.kind === 'corePage'
-      ? (admittedSurface.owner.layoutId ?? 'overview')
-      : 'overview';
-  const listed = layouts.state.dashboards;
-  const viewOf = (
-    summary:
-      | WidgetAreaLayoutSummaryV1
-      | { id: string; name: string; isPreset: boolean },
-  ) =>
-    'surface' in summary
-      ? {
-          id:
-            summary.surface.owner.kind === 'corePage'
-              ? (summary.surface.owner.layoutId ?? 'overview')
-              : summary.artifactId,
-          name: summary.name,
-          isPreset: summary.isPreset,
-          summary,
-        }
-      : { ...summary, summary: null };
-  const tabs = React.useMemo(() => listed.map(viewOf), [listed]);
+  const selectedLayoutId = bar.selectedId;
+  // The bar owner retains known views and supplies stock presets while inventory is pending or failed.
+  const tabs = bar.layouts;
   const tabViews = React.useMemo(
     () =>
       tabs.map((tab) => ({
         id: tab.id,
         name: tab.name,
         isPreset: tab.isPreset,
-        edited: tab.summary?.isEdited ?? false,
+        edited: tab.edited,
         icon:
           tab.isPreset && tab.id in PRESET_ICON
             ? PRESET_ICON[tab.id as UsageWidgetPresetId]
@@ -330,24 +338,11 @@ function UsagePageDocument(
     },
     [metricApproval.requestApproval, metricLifetime, props.port, ready, usageWidgets],
   );
-  const firstAccounting = slices.find((slice) => slice.accounting)?.accounting;
-  const costBasisOptions = React.useMemo(
-    (): readonly UsageWidgetPageScope['costBasis'][] =>
-      firstAccounting
-        ? buildUsageAnalyticsViewModel(firstAccounting, {
-            period: page.period,
-            metric: 'tokens',
-            costMode: 'auto',
-            focus: null,
-          }).availableCostModes
-        : [],
-    [firstAccounting, page.period],
-  );
+  const costBasisOptions = facts.costBasisOptions;
   // Cost bases are named by the first usage read; until it answers (or fails) the toolbar holds the chip's room.
   // The toolbar's second row is held from first paint too: until the layout answers, the widgets it follows are unknown.
   const layoutLoading = layout.state.status === 'loading';
-  const costBasisPending = (layoutLoading || usageWidgets.length > 0) && !firstAccounting
-    && slices.every(slice => readUsageCoverageGaps(slice, ['accounting']).every(gap => gap.status === 'pending' || gap.status === 'not_loaded'));
+  const costBasisPending = (layoutLoading || usageWidgets.length > 0) && facts.costBasisPending;
   const bindingSelectLayout = binding.selectLayout;
   const selectAreaLayout = React.useCallback(async (layoutId: string) => (await bindingSelectLayout(layoutId)).ok, [bindingSelectLayout]);
   const publishedLayouts = React.useMemo(() => tabs.map((tab) => ({ id: tab.id, name: tab.name })), [tabs]);
@@ -358,7 +353,9 @@ function UsagePageDocument(
     title: `${filter.title}: ${option.label}`,
     invoke: () => filter.select(option.id),
   }))), [scopeFilters]);
-  const { selectLayout, selectPeriod, selectCostBasis, selectFilter } = usePublishUsageWidgetPageContext({
+  const pageReadRetry = useUsageWidgetPageRetry();
+  const homeUnavailable = useActiveHomeUnavailable();
+  const { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts } = usePublishUsageWidgetPageContext({
     page,
     authority: props.authority,
     layoutId: selectedLayoutId,
@@ -366,89 +363,26 @@ function UsagePageDocument(
     costBasisOptions,
     filterCommands,
     selectLayout: selectAreaLayout,
+    retryRead: facts.failed && pageReadRetry ? pageReadRetry : undefined,
+    retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
   });
+  // The bar precedes publication because that publication consumes its acknowledged inventory.
+  React.useLayoutEffect(() => { publishedLayoutSelection.current = selectLayout; }, [selectLayout]);
   // Toolbar and chart intents borrow the published command, not a second setter path.
   const admittedFilters = React.useMemo(() => scopeFilters.map(filter => ({
     ...filter, select: (id: string) => selectFilter(filter.field, id),
   })), [scopeFilters, selectFilter]);
   const drill = React.useMemo(() => usageDrillFromPageFilters(admittedFilters), [admittedFilters]);
 
-  const createView = React.useCallback(() => {
-    void Modal.prompt(
-      t('usage.board.page.newViewTitle'),
-      t('usage.board.page.newViewBody'),
-      {
-        placeholder: t('usage.board.page.newViewPlaceholder'),
-        confirmText: t('usage.board.page.newViewCreate'),
-      },
-    ).then(async (name) => {
-      const trimmed = name?.trim();
-      if (!trimmed || !admittedSurface) return;
-      const created = await layouts.create(trimmed, admittedSurface);
-      if (
-        created.ok &&
-        created.dashboard?.surface.owner.kind === 'corePage' &&
-        created.dashboard.surface.owner.layoutId
-      ) {
-        await selectLayout(created.dashboard.surface.owner.layoutId);
-      }
-    });
-  }, [admittedSurface, layouts, selectLayout]);
   const selected = tabs.find((tab) => tab.id === selectedLayoutId) ?? null;
-  const actions = React.useMemo(() => {
-    const summary = selected?.summary;
-    if (!summary || selected.isPreset) return null;
-    const userViews = tabs.filter((tab) => !tab.isPreset && tab.summary);
-    const index = userViews.findIndex((tab) => tab.id === selected.id);
-    const before = index > 0 ? userViews[index - 1]! : null;
-    const after =
-      index >= 0 && index < userViews.length - 1 ? userViews[index + 1]! : null;
-    return {
-      rename: () => {
-        void Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
-          defaultValue: summary.name,
-          confirmText: t('common.save'),
-        }).then((name) => {
-          const next = name?.trim();
-          if (next && next !== summary.name) void layouts.rename(summary, next);
-        });
-      },
-      ...(before
-        ? {
-            moveBefore: {
-              name: before.name,
-              onPress: () => {
-                void layouts.reorder(summary, {
-                  anchorId: before.summary!.artifactId,
-                  placement: 'before',
-                });
-              },
-            },
-          }
-        : {}),
-      ...(after
-        ? {
-            moveAfter: {
-              name: after.name,
-              onPress: () => {
-                void layouts.reorder(summary, {
-                  anchorId: after.summary!.artifactId,
-                  placement: 'after',
-                });
-              },
-            },
-          }
-        : {}),
-      delete: {
-        onPress: () => {
-          void (async () => {
-            const removed = await layouts.remove(summary);
-            if (removed.ok && !removed.approvalPending) await selectLayout('overview');
-          })();
-        },
-      },
-    };
-  }, [selected, tabs, layouts, selectLayout]);
+  const viewName = selected?.name ?? null;
+  // The area's items take every area prop; an unchanged view keeps the same dashboard copy.
+  const dashboard = React.useMemo(() => ({
+    addLabel: t('usage.board.page.addWidget'),
+    emptyTitle: t('usage.board.page.emptyView'),
+    addTitle: t('usage.board.page.addTo', { view: viewName ?? t('usage.board.page.title') }),
+    homeLineAbove: true as const,
+  }), [viewName]);
   const labels = React.useMemo(
     (): WidgetAreaLayoutLabels => ({
       list: t('usage.board.page.viewsLabel'),
@@ -466,26 +400,25 @@ function UsagePageDocument(
   );
   const preset = ready?.preset ?? null;
 
-  // The selected document admits its widgets independently; the inventory only
-  // admits the view switcher. Hold that switcher's room while its names arrive.
+  // The selected document and the named-view inventory settle independently.
   return (
     <>
-      <UsagePageHeader slices={slices} query={null} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
-      {layouts.state.status !== 'loading' ? <WidgetAreaLayoutBar
+      <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
+      {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
+      <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
+      <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
-        onSelect={(value) => {
-          void selectLayout(value);
-        }}
-        onCreate={createView}
-        actions={actions}
+        onSelect={bar.onSelect}
+        onCreate={bar.create}
+        actions={bar.personalActions}
+        readFailure={homeUnavailable || !bar.readFailure ? undefined : { ...bar.readFailure, retry: retryLayouts }}
         labels={labels}
         testID="usage-views"
-      /> : <SkeletonRows rows={1} lines={1} rowHeight={HAPPIER_ICON_BUTTON_SIZE}
-        geometry={{ insetStart: 0, insetEnd: 0, glyphColumn: 0, gap: 0 }} accessibilityLabel={labels.list} testID="usage-views.loading" />}
+      />
       <UsageFilterBar
         page={page}
-        slices={slices}
+        coverageIncomplete={facts.coverageIncomplete}
         scopeFilters={admittedFilters}
         onPeriodChange={selectPeriod}
         onCostBasisChange={selectCostBasis}
@@ -514,13 +447,7 @@ function UsagePageDocument(
         geometry="grid"
         title={selected?.name ?? t('usage.board.page.title')}
         surfaceName={selected?.name ?? t('usage.board.page.title')}
-        dashboard={{
-          addLabel: t('usage.board.page.addWidget'),
-          emptyTitle: t('usage.board.page.emptyView'),
-          addTitle: t('usage.board.page.addTo', {
-            view: selected?.name ?? t('usage.board.page.title'),
-          }),
-        }}
+        dashboard={dashboard}
         testID="usage-area"
       />
       </UsageDrillProvider>
@@ -528,43 +455,68 @@ function UsagePageDocument(
   );
 }
 
+/** Select only facts rendered by page chrome; widget evidence stays with its body. */
+function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean) {
+  const accounting = slices.find(slice => slice.accounting)?.accounting;
+  const latest = accounting ? readUsagePageAsOfMs(slices) : null;
+  const costBasisOptions: readonly UsageWidgetPageScope['costBasis'][] = accounting ? resolveAvailableCostModes(accounting.totals.cost) : [];
+  return {
+    // Until unfiltered inventory answers, keep the existing displayed-result choices.
+    filterFallback: needsFilterFallback ? slices : null,
+    facts: {
+      pending: describeUsagePagePendingSources(slices),
+      failed: describeUsagePageFailedSources(slices),
+      newerServer: describeUsagePageNewerServerSources(slices),
+      partial: describeUsagePagePartialSources(slices),
+      observedAt: latest === null ? null : formatUsageObservedAt(latest),
+      machines: accounting?.breakdowns?.machine?.length ?? null,
+      agents: accounting?.breakdowns?.agent?.length ?? null,
+      costBasisOptions,
+      costBasisPending: !accounting && slices.every(slice => readUsageCoverageGaps(slice, ['accounting'])
+        .every(gap => gap.status === 'pending' || gap.status === 'not_loaded')),
+      coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
+    },
+  };
+}
+
+function sameUsagePageFacts(left: ReturnType<typeof readUsagePageFacts>, right: ReturnType<typeof readUsagePageFacts>): boolean {
+  const sameFallback = left.filterFallback === right.filterFallback || (left.filterFallback !== null && right.filterFallback !== null
+    && left.filterFallback.length === right.filterFallback.length && left.filterFallback.every((slice, index) => slice === right.filterFallback![index]));
+  // Compare this small chrome projection, never the widgets' accounting/evidence rows.
+  return sameFallback && sameStrictJsonValue(left.facts, right.facts);
+}
+
 /** Title, purpose and the one quiet line of facts the page is about: as of, machines, agents. */
 function UsagePageHeader(
   props: Readonly<{
-    slices: ReturnType<typeof useUsageWidgetBatchSlices>;
-    query: null;
+    facts: ReturnType<typeof readUsagePageFacts>['facts'];
+    retry: (() => void) | null;
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
   }>,
 ) {
+  const { retry } = props;
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const facts = React.useMemo((): PageHeaderMetaFact[] => {
-    // A source still being read is one cause for the whole page: said here once, never in each body.
-    const pending = describeUsagePagePendingSources(props.slices);
-    // A failed shared read is one cause too: said here once, and every body inherits it quietly.
-    const failed = describeUsagePageFailedSources(props.slices);
-    // A read that settled with only some Sessions' evidence is one cause too; bodies show what it witnessed.
-    const partial = describeUsagePagePartialSources(props.slices);
+    // Shared read progress, failure and partial coverage are said once for the page.
+    const { pending, failed, newerServer, partial, observedAt, machines, agents } = props.facts;
     const reading = [
       ...(failed ? [{ key: 'failed', icon: 'warning' as const, text: failed, testID: 'usage-page.header.failed' }] : []),
+      // The one Retry for it: bodies with nothing to draw only say they were not read (`UsageBodyReadFailed`).
+      ...(failed && retry ? [{ key: 'retry', text: t('common.retry'), onPress: retry,
+        accessibilityLabel: t('usage.board.page.retryRead'), testID: 'usage-page.header.retry' }] : []),
+      ...(newerServer ? [{ key: 'newerServer', text: newerServer, testID: 'usage-page.header.newerServer' }] : []),
       ...(partial ? [{ key: 'partial', text: partial, testID: 'usage-page.header.partial' }] : []),
       ...(pending ? [{ key: 'reading', text: pending }] : []),
     ];
-    const accounting = props.slices.find(
-      (slice) => slice.accounting,
-    )?.accounting;
-    if (!accounting) return reading;
-    const latest = readUsagePageAsOfMs(props.slices);
-    const machines = accounting.breakdowns?.machine?.length ?? null;
-    const agents = accounting.breakdowns?.agent?.length ?? null;
     return [
-      ...(latest !== null
+      ...(observedAt !== null
         ? [
             {
               key: 'asOf',
               icon: 'clock' as const,
               text: t('usage.board.page.asOf', {
-                time: formatUsageObservedAt(latest),
+                time: observedAt,
               }),
             },
           ]
@@ -587,7 +539,7 @@ function UsagePageHeader(
           ]
         : []),
     ];
-  }, [props.slices]);
+  }, [props.facts, retry]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (
@@ -607,7 +559,7 @@ function UsagePageHeader(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  screen: { flex: 1, backgroundColor: theme.colors.surface.base },
+  screen: { flex: 1 },
   content: { paddingBottom: theme.space.s32 },
   column: {
     alignSelf: 'center',

@@ -115,6 +115,8 @@ export type UsageWidgetPagePublicationInput = Readonly<{
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The existing area Action has no cancellation port; true means acknowledged success. */
     selectLayout?: (layoutId: string) => boolean | Promise<boolean>;
+    retryRead?: () => void | Promise<unknown>;
+    retryLayouts?: () => Promise<unknown>;
     filterCommands?: readonly Readonly<{ field: string; id: string; title: string; invoke(): boolean | Promise<boolean> }>[];
 }>;
 
@@ -128,6 +130,8 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     selectPeriod(period: UsagePeriod): Promise<boolean>;
     selectCostBasis(costBasis: UsageWidgetPageScope['costBasis']): Promise<boolean>;
     selectFilter(field: string, id: string): Promise<boolean>;
+    retryRead(): Promise<boolean>;
+    retryLayouts(): Promise<boolean>;
 }> {
     const { page } = input;
     const descendantCommands = useCurrentUiContextComposedCommands();
@@ -143,11 +147,9 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const applyLayout = React.useCallback(async (layoutId: string, signal?: AbortSignal): Promise<boolean> => {
         const current = latest.current;
         if (!canChange() || signal?.aborted || !current.selectLayout || !current.layouts?.some(layout => layout.id === layoutId)) return false;
-        const selected = await current.selectLayout(layoutId);
-        // Selection can itself retire its published descriptor. Its known
-        // success survives that republish, but never a Home/Account retirement.
-        if (!selected || !canChange()) return false;
-        return true;
+        // The selection owner admits the effect and acknowledges its outcome.
+        // That effect may retire this publication; keep its known settlement.
+        return await current.selectLayout(layoutId);
     }, [canChange]);
 
     const definitions = useCurrentUiContextLocalCommandDefinitions([
@@ -157,6 +159,10 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
             title: describeUsageWidgetSlotValue('costBasis', costBasis, page.period), invoke: () => page.setScope({ costBasis }) })),
         ...(input.filterCommands ?? []).map(({ field, id, title, invoke }) => ({ key: pageCommandKey('filter', field, id), title, invoke })),
         ...(input.layouts ?? []).map(layout => ({ key: pageCommandKey('layout', layout.id), title: layout.name, invoke: () => applyLayout(layout.id) })),
+        ...(input.retryRead ? [{ key: pageCommandKey('retry', 'read'), title: t('usage.board.page.retryRead'),
+            invoke: async () => { await input.retryRead!(); return true; } }] : []),
+        ...(input.retryLayouts ? [{ key: pageCommandKey('retry', 'layouts'), title: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`,
+            invoke: async () => { await input.retryLayouts!(); return true; } }] : []),
     ], canChange);
     const publication = React.useMemo(() => {
         if (!canChange()) return null;
@@ -182,5 +188,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
     const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis']) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command), [invoke]);
     const selectFilter = React.useCallback((field: string, id: string) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command), [invoke]);
-    return { selectLayout, selectPeriod, selectCostBasis, selectFilter };
+    const retryRead = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'read'))?.command), [invoke]);
+    const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
+    return { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts };
 }

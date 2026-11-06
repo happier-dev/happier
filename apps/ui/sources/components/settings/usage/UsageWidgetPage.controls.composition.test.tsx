@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Text } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { BurnUpChart, RankedRows, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
@@ -6,7 +7,7 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServiceQuotaGetResultV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -37,10 +38,14 @@ let reader: CurrentUiContextReader | null = null;
 let unregister: (() => void) | undefined;
 const NO_COST_BASES = [] as const;
 let showExtraFilter = false;
-function Publication() {
+function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
     const authority = captureActiveServerAccountScopeLifetime();
     const page = useUsageWidgetPageContext({ authority });
+    const [selected, setSelected] = React.useState('overview');
     usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: NO_COST_BASES,
+        active: !props.retireOnSelection || selected === 'overview', layoutId: selected,
+        layouts: [{ id: 'costs', name: 'Costs' }, { id: 'work', name: 'Work' }],
+        selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex', invoke: () => page.setScope({ agents: ['codex'] }) },
             ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])] });
     reader = useOptionalCurrentUiContextReader();
@@ -52,17 +57,17 @@ function Publication() {
         }));
         return unregister;
     }, [reader]);
-    return null;
+    return <Text testID="selected-layout">{selected}</Text>;
 }
-function ControlsPage(props: Readonly<{ children: React.ReactNode }>) {
+function ControlsPage(props: Readonly<{ children: React.ReactNode; retireOnSelection?: boolean }>) {
     // Capture inside the authenticated tree, after its Account authority is applied.
     const viewer = useActiveServerAccountScope();
     const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer?.serverId, viewer?.accountId]);
     return <PluginSurfaceFocusEligibilityProvider active currentUiContextActive><CurrentUiContextCommandsProvider authority={authority}>
-        <Publication />{props.children}
+        <Publication retireOnSelection={props.retireOnSelection} />{props.children}
     </CurrentUiContextCommandsProvider></PluginSurfaceFocusEligibilityProvider>;
 }
-async function mount(children: React.ReactNode) {
+async function mount(children: React.ReactNode, retireOnSelection = false) {
     home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-body-controls.test', accountId: 'account-a' }],
         route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
     const server = home.homes.a!;
@@ -71,7 +76,7 @@ async function mount(children: React.ReactNode) {
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
     const tree = (content: React.ReactNode) => <InjectedAuthProvider credentials={credentials}>
         <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-            <ControlsPage>{content}</ControlsPage>
+            <ControlsPage retireOnSelection={retireOnSelection}>{content}</ControlsPage>
         </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
     </InjectedAuthProvider>;
     const screen = await renderScreen(tree(children));
@@ -95,7 +100,24 @@ async function invoke(id: string) {
     });
 }
 
-it('keeps command addresses across equivalent filter callback updates and retires them when the scope changes', async () => {
+it('settles an acknowledged view switch after its own publication retires and refuses an old command before effects', async () => {
+    const { screen } = await mount(null, true);
+    const commands = reader!.readCurrentUiContext()!.commands;
+    const costs = commands.find(command => command.title === 'Costs')!;
+    const work = commands.find(command => command.title === 'Work')!;
+    let pending!: ReturnType<typeof executeCurrentUiContextAction>;
+    act(() => { pending = executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+        input: { commandId: costs.id }, context: { surface: 'agent' } }); });
+    await flushHookEffects({ cycles: 10 });
+    expect(screen.findByTestId('selected-layout')!.props.children).toBe('costs');
+    expect(await pending).toMatchObject({ ok: true });
+    expect(reader!.resolveCurrentUiCommand(work.id)).toBeNull();
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+        input: { commandId: work.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(screen.findByTestId('selected-layout')!.props.children).toBe('costs');
+});
+
+it('keeps page command addresses across equivalent callbacks and scope changes, retiring on Account withdrawal', async () => {
     const { retire } = await mount(null);
     const before = reader!.readCurrentUiContext()!;
     await retire();
@@ -110,7 +132,13 @@ it('keeps command addresses across equivalent filter callback updates and retire
     const detail = reader!.readCurrentUiContext()!.detail;
     if (typeof detail !== 'string') throw new Error('Expected the Usage page detail document');
     expect(JSON.parse(detail).scope.agents).toEqual(['codex']);
-    expect(reader!.resolveCurrentUiCommand(filter.id)).toBeNull();
+    // USAGE-ACTION-CONTEXT-1101 ruling: scope/view revisions do not retire page intents.
+    expect(reader!.readCurrentUiContext()!.commands).toEqual(withExtra.commands);
+    expect(reader!.resolveCurrentUiCommand(filter.id)?.retirementSignal.aborted).toBe(false);
+    await invoke(filter.id);
+    await act(async () => retireActiveServerAccountScopeLifetime());
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: filter.id },
+        context: { surface: 'agent' } })).toMatchObject({ ok: false });
 });
 
 it('composes real list and chart disclosures, isolates identical widget copies and retires their commands', async () => {

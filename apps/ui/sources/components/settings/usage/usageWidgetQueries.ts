@@ -11,5 +11,7 @@ export type UsageWidgetQueryPlan = Readonly<{
     /** The existing admitted viewer scope captured for resolution, never an access grant. */
     scope: ServerAccountScope;
     input: UsageQueryBatchInput | null;
+    /** Canonical identity computed with the normalized batch at plan construction. */
+    batchKey: string | null;
     widgets: ReadonlyMap<string, Readonly<{ resolution: WidgetBindingResolutionV1; query?: UsageQuery; key?: string }>>;
 }>;

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readUsageScopeOptions } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { useAllMachines } from '@/sync/domains/state/storage';
@@ -58,7 +59,9 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
         return Object.fromEntries(resolveMachineDisplayNames([...machines,
             ...referencedMachineIds.filter(id => !listed.has(id)).map(id => ({ id, absence: 'unlisted' as const }))]));
     }, [referencedMachineIds, sessionScoped]));
-    return React.useMemo((): readonly UsageWidgetPageFilter[] => sessionScoped ? [] :
+    const retained = React.useRef<Readonly<{ setScope: typeof setScope; filters: readonly UsageWidgetPageFilter[] }> | null>(null);
+    return React.useMemo((): readonly UsageWidgetPageFilter[] => {
+        const filters = sessionScoped ? [] :
         (['sources', 'agents', 'machines', 'projects'] as const).map(field => {
             const selected = scope[field];
             const labels = readUsageScopeOptions(slices, field, selected);
@@ -83,5 +86,18 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
                 if (id !== USAGE_SCOPE_FILTER_ALL && !labels.has(id)) return false;
                 return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) });
             } };
-        }), [machineNames, scope, setScope, sessionScoped, slices]);
+        });
+        // Batch progress can change evidence without changing any offered
+        // choice. Keep that progress out of every chart's shared drill context.
+        const previous = retained.current;
+        const shared = previous?.setScope === setScope ? filters.map((filter, index) => {
+            const prior = previous.filters[index];
+            return prior?.field === filter.field && prior.title === filter.title
+                && sameStrictJsonValue(prior.selected, filter.selected) && sameStrictJsonValue(prior.options, filter.options)
+                ? prior : filter;
+        }) : filters;
+        if (previous && previous.filters.length === shared.length && shared.every((filter, index) => filter === previous.filters[index])) return previous.filters;
+        retained.current = { setScope, filters: shared };
+        return shared;
+    }, [machineNames, scope, setScope, sessionScoped, slices]);
 }

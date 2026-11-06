@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -38,6 +39,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
@@ -67,7 +69,7 @@ import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSu
 import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { t } from '@/text';
-import { useIsNearViewport, type NearViewportSpan } from '@/components/widgets/nearViewport';
+import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -150,6 +152,8 @@ export type WidgetAreaProps = Readonly<{
          * not jump, and the heading above it already reads as it will.
          */
         holdsEmptyLineWhileLoading?: true;
+        /** The page draws the Home's one offline line above the area, so a read failed by that cause says nothing more. */
+        homeLineAbove?: true;
         /**
          * One Add that serves both areas of a dashboard (stacked and on a phone): the gallery offers the
          * areas, each with its own title, and adds into the chosen one through the same layout write.
@@ -218,7 +222,8 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
         || state.reasonCode === 'server_target_mismatch');
     const ready = state.status === 'ready' ? state : null;
     const readFailure = state.status === 'unavailable' ? state : ready?.readFailure;
-    const readFailureNotice = readFailure ? (
+    const homeUnavailable = useActiveHomeUnavailable();
+    const readFailureNotice = readFailure && !(props.dashboard?.homeLineAbove && homeUnavailable) ? (
         <DashboardAreaEdge active={!!props.dashboard}>
             <SurfaceStateCard
                 testID={`${props.testID}.${ready ? 'readFailed' : 'unavailable'}`}
@@ -714,33 +719,15 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const hover = useRowActionHoverHost();
     const tracker = useOptionalPluginUiScrollActivityTracker();
     const sectionRef = React.useRef<View | null>(null);
-    const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
-    const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
-    const near = useIsNearViewport(tracker, span);
+    const { near, measured, measure } = useMeasuredNearViewport(tracker, sectionRef, focused, instance.id);
+    const demand = React.useContext(WidgetFrameDemandContext);
+    const demandBuiltinId = instance.definition.kind === 'builtin' ? instance.definition.id
+        : candidate?.authoredDefinition?.body.kind === 'builtin' ? candidate.authoredDefinition.body.id : undefined;
     const [bodyHeight, setBodyHeight] = React.useState(0);
     const active = props.current && focused && near;
-    const measure = React.useCallback(() => {
-        if (!tracker) return;
-        const node = sectionRef.current;
-        const measurement = tracker.measureSpan(node);
-        latestMeasurement.current = measurement;
-        void measurement.then(next => {
-            if (latestMeasurement.current !== measurement || sectionRef.current !== node) return;
-            setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
-        });
-    }, [tracker]);
-    React.useEffect(() => {
-        if (!tracker) return;
-        let revision = tracker.getLayoutRevision();
-        measure();
-        const unsubscribe = tracker.subscribe(() => {
-            const next = tracker.getLayoutRevision();
-            if (next === revision) return;
-            revision = next;
-            measure();
-        });
-        return () => { unsubscribe(); latestMeasurement.current = null; };
-    }, [measure, tracker, focused, instance.id]);
+    const shown = active && !collapsed;
+    React.useLayoutEffect(() => demand?.place(instance.id, demandBuiltinId, measured ? shown : null),
+        [demand, instance.id, demandBuiltinId, measured, shown]);
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = event.nativeEvent.layout.height;
         setBodyHeight(current => current === height ? current : height);
@@ -906,6 +893,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
             <WidgetFrameBodyMetaContext.Provider value={setBodyMeta}>
             <WidgetFrameBodyActionsContext.Provider value={setBodyActions}>
+            <WidgetFrameInstanceIdContext.Provider value={instance.id}>
             <WidgetSurface
                 scope={surface}
                 admittedViewer={props.admittedViewer ?? undefined}
@@ -923,6 +911,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 testID={`${testID}.body`}
             />
+            </WidgetFrameInstanceIdContext.Provider>
             </WidgetFrameBodyActionsContext.Provider>
             </WidgetFrameBodyMetaContext.Provider>
             </WidgetFrameBodyCaptionContext.Provider>

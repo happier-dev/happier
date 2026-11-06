@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
@@ -18,7 +17,7 @@ import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import type { UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SCOPE_FILTER_ALL, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
-import { UsageAgentMark, readUsageCoverageGaps } from './widgets/usageBodyKit';
+import { UsageAgentMark } from './widgets/usageBodyKit';
 
 const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'usage.board.page.costBasisReported',
     estimated: 'usage.board.page.costBasisEstimated', api_equivalent: 'usage.board.page.factApiEquivalent' } as const;
@@ -31,7 +30,7 @@ const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'us
 export function UsageFilterBar(
   props: Readonly<{
     page: UsageWidgetPageContextState;
-    slices: readonly UsageQueryResultSlice[];
+    coverageIncomplete: boolean;
     scopeFilters: readonly UsageWidgetPageFilter[];
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The usage read that tells which cost bases exist has not answered yet. */
@@ -60,11 +59,7 @@ export function UsageFilterBar(
   );
   const { theme } = useUnistyles();
   // Coverage is said once, as a dot in Sources, while a source the page reads is incomplete.
-  const coverageIncomplete = React.useMemo(
-    () =>
-      props.slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
-    [props.slices],
-  );
+  const coverageIncomplete = props.coverageIncomplete;
   const filters = React.useMemo(
     (): SelectionListFilter[] =>
       props.scopeFilters.map((filter) => {

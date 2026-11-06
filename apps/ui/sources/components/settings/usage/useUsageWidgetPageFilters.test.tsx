@@ -9,8 +9,34 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 import { readUsageWidgetPageScope } from './usageWidgetPageContext';
 import { useUsageWidgetPageContext } from './useUsageWidgetPageContext';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
+import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 afterEach(standardCleanup);
+
+it('retains the drill choices when a batch changes only facts outside its scope options', async () => {
+    const query = normalizeUsageQuery({ agents: ['codex'] });
+    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    let slices = [base];
+    let scope = readUsageWidgetPageScope(query);
+    const hook = await renderHook(() => {
+        const page = useUsageWidgetPageContext({ authority: null,
+            initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null, scope } });
+        return useUsageWidgetPageFilters(page, slices, false);
+    });
+    try {
+        const retained = hook.getCurrent();
+        for (let index = 0; index < 20; index++) {
+            slices = [{ ...base, pending: index % 2 === 0 }];
+            await hook.rerender();
+            expect(hook.getCurrent(), 'Equal choices do not republish the drill context').toBe(retained);
+        }
+        expect(await retained.find(filter => filter.field === 'agents')!.select('codex'), 'Retention does not bypass missing authority').toBe(false);
+        scope = { ...scope, agents: [] };
+        await hook.rerender();
+        expect(hook.getCurrent().find(filter => filter.field === 'agents')!.selected).toEqual([]);
+        expect(hook.getCurrent()).not.toBe(retained);
+    } finally { await hook.unmount(); }
+});
 
 it('keeps filter consumers quiet through Machine runtime changes while names, locks and missing choices stay live', async () => {
     const original = storage.getState();
