@@ -72,6 +72,37 @@ peer.close()
   return resetting;
 }
 
+test('a waiting client carries its original arrival through a broker reconnect',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    const requests = [];
+    let firstSocket;
+    let firstArrival;
+    const arrived = new Promise(resolve => { firstArrival = resolve; });
+    const server = createServer(socket => {
+      const lines = createInterface({ input: socket });
+      lines.once('line', line => {
+        requests.push(JSON.parse(line));
+        if (requests.length === 1) { firstSocket = socket; firstArrival(); }
+        else socket.end(JSON.stringify({ kind: 'refused', reason: 'HSTACK_MEMORY_BUSY' }) + '\n');
+      });
+    });
+    server.listen(brokerAddress(fixture.native.admissionRoot));
+    await once(server, 'listening');
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const client = fixture.start('process.stdout.write("unexpected");');
+    await arrived;
+    assert.ok(Number.isSafeInteger(requests[0].arrivedAt), 'the admission request carries its original arrival time');
+    // Cross the real clock boundary so recomputing the timestamp on reconnect
+    // cannot accidentally pass when both requests fall in one millisecond.
+    while (Date.now() === requests[0].arrivedAt) await new Promise(setImmediate);
+    firstSocket.destroy();
+    assert.deepEqual(await client.closed, [75, null]);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].arrivedAt, requests[0].arrivedAt);
+    assert.equal(client.stdout(), '');
+  });
+
 test('admission reports one waiting line with enqueue facts only when capacity queues the command',
   { skip: process.platform !== 'linux' }, async t => {
     for (const mode of ['queued', 'immediate', 'older-broker']) await t.test(mode, async t => {

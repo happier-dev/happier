@@ -141,8 +141,10 @@ retains `HSTACK_ADMISSION_CAPACITY:placement` and exit 75.
 
 An admitted client retains a kernel-lived slot socket and its leases until the
 payload finishes. Broker restart reconstructs those slots before admitting new
-work; admitted payloads continue, while queued clients reconnect. The queue is
-not persisted. Nested children inherit their containing slot and its floor.
+work; admitted payloads continue, while queued clients reconnect with their
+original arrival timestamp for queue order and head reservations. Clients without
+a timestamp retain connection order. The queue is not persisted, and a reconnect
+alone does not re-run host placement. Nested children inherit their containing slot and its floor.
 Declare the composed workload's capacity and resources at the parent: an
 insufficient containing floor returns `HSTACK_NESTED_ADMISSION_CAPACITY`.
 An admitted nested publisher may wait through the canonical resource owner when

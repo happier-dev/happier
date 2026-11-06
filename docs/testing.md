@@ -706,7 +706,10 @@ only the total waiting count until that broker next starts with current source.
 
 The broker's private pathname socket and client-owned slot witnesses carry
 admission and payload lifetime. Broker restart reconnects surviving witnesses
-and recovers their floors; queued clients reconnect without a persisted queue.
+and recovers their floors; queued clients carry their original arrival timestamp
+in the existing request, preserving queue age and head-reservation ordering without
+a persisted queue. Clients without a timestamp retain connection order. Reconnect
+alone stays on the same host; terminal refusal can return control to placement.
 The separate kernel startup mutex protects listener replacement and initial
 recovery only. During the old-launcher transition, the broker also retains the
 existing old scheduler flock for its entire runtime. The one-time cutover passes

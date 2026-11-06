@@ -178,6 +178,48 @@ test('a reconnect burst shares one capacity walk and answers sample before anoth
   clients.forEach(client => client.socket.destroy());
 });
 
+test('broker replacement orders reconnecting waiters by their original arrival', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  let availableMemoryKiB = 0;
+  const { root, broker, sampleResources } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
+  });
+  await acquire(root, 70, t, { arrivedAt: 10 });
+  await acquire(root, 70, t, { arrivedAt: 20 });
+  const initial = await request(root, { kind: 'sample' });
+  assert.equal((await initial.next()).waitingCount, 2);
+  initial.socket.destroy();
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources });
+  await replacement.start();
+  t.after(() => replacement.close());
+  const younger = await acquire(root, 70, t, { arrivedAt: 20 });
+  const older = await acquire(root, 70, t, { arrivedAt: 10 });
+  const barrier = await request(root, { kind: 'sample' });
+  assert.equal((await barrier.next()).waitingCount, 2);
+  barrier.socket.destroy();
+  availableMemoryKiB = 70;
+  await clock.tick();
+  const first = await Promise.race([
+    older.next().then(response => ({ waiter: 'older', response })),
+    younger.next().then(response => ({ waiter: 'younger', response })),
+  ]);
+  assert.equal(first.response.kind, 'reserved');
+  assert.equal(first.waiter, 'older');
+});
+
+test('a late reconnect keeps younger admitted backfills out of its head reservation', linux, async t => {
+  const { root } = await fixture(t);
+  const younger = await acquire(root, 40, t, { arrivedAt: 20 });
+  await younger.admit();
+  await acquire(root, 70, t, { arrivedAt: 10 });
+  const sample = await request(root, { kind: 'sample' });
+  assert.equal((await sample.next()).unreservedMemoryKiB, 0);
+  sample.socket.destroy();
+  const backfill = await acquire(root, 20, t, { arrivedAt: 30, noWait: true });
+  assert.equal((await backfill.next()).reason, 'HSTACK_MEMORY_BUSY');
+});
+
 test('queue positions advance on existing passes and unchanged waiters stay silent', linux, async t => {
   const clock = captureRecoveryClock(t);
   const notices = [];
@@ -807,14 +849,26 @@ test('dynamic measured floor options select the most workers at the largest fitt
 });
 
 test('impossible physical capacity settles with a typed refusal instead of an unwakeable wait', linux, async t => {
-  const { root, broker } = await fixture(t);
-  const client = await request(root, { kind: 'acquire', className: 'validation', floorKiB: 101,
+  const gibKiB = 1024 * 1024;
+  let availableMemoryKiB = 25 * gibKiB;
+  const { root, broker } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 25 * gibKiB }),
+  });
+  const holder = await acquire(root, 20 * gibKiB, t);
+  const held = await holder.admit();
+  availableMemoryKiB = 16 * gibKiB;
+  const client = await request(root, { kind: 'acquire', className: 'compilation', floorKiB: 38 * gibKiB,
     pid: process.pid, repoDir: root, locks: [] });
   t.after(() => client.socket.destroy());
   const result = await client.next();
   assert.equal(result.kind, 'refused');
   assert.equal(result.reason, 'HSTACK_MEMORY_CAPACITY');
   assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().reservedMemoryKiB, 20 * gibKiB);
+  const follower = await acquire(root, 3 * gibKiB, t);
+  await held.release();
+  const admitted = await follower.admit();
+  assert.equal(admitted.admitted.floorKiB, 3 * gibKiB);
 });
 
 test('temporary memory pressure without broker slots is busy, not impossible physical capacity', linux, async t => {

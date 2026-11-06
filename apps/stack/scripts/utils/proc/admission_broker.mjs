@@ -112,6 +112,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   let started = false;
   let heldOldLockFd = oldLockFd;
 
+  const compareArrival = (left, right) => left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
+
   function slotMemoryBudget() {
     const reservedMemoryKiB = [...slots.values()].reduce((sum, slot) => sum + slot.floorKiB, 0);
     return { reservedMemoryKiB,
@@ -124,7 +126,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     for (const slot of slots.values()) {
       // Recovered slots predate every request in this broker. Younger
       // backfills must never count as releases that can make room for the head.
-      if (slot.arrivalOrder === undefined || slot.arrivalOrder < head.arrivalOrder) precedingFloorKiB += slot.floorKiB;
+      if (slot.arrivalOrder === undefined || compareArrival(slot, head) < 0) precedingFloorKiB += slot.floorKiB;
     }
     return Math.max(0, floorKiB - precedingFloorKiB);
   }
@@ -340,7 +342,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const resources = readResources(item);
       if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID());
-      const slot = { address, pid: item.pid, floorKiB, workers: fitting?.workers, control: item.socket, arrivalOrder: item.arrivalOrder };
+      const slot = { address, pid: item.pid, floorKiB, workers: fitting?.workers, control: item.socket,
+        arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       item.slot = slot;
@@ -405,6 +408,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         return;
       }
       if (request.kind !== 'acquire' || item || !Number.isSafeInteger(request.floorKiB) || request.floorKiB <= 0
+        || (request.arrivedAt !== undefined && (!Number.isSafeInteger(request.arrivedAt) || request.arrivedAt < 0))
         || !Number.isSafeInteger(request.pid) || request.pid <= 1 || typeof request.className !== 'string'
         || typeof request.repoDir !== 'string' || (request.cacheBaseDir !== undefined && typeof request.cacheBaseDir !== 'string')
         || (request.floorOptions !== undefined && (!Array.isArray(request.floorOptions) || request.floorOptions.length === 0
@@ -413,10 +417,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || !Array.isArray(request.locks ?? []) || (request.locks ?? []).some(lock => typeof lock?.path !== 'string')) {
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
       }
-      item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false, arrivalOrder: ++arrivalOrder };
+      item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
+        arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder };
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
-      waiting.push(item);
+      // The existing client carries its first arrival through reconnects.
+      // Connection order breaks ties, but cannot replace that original age.
+      const next = waiting.findIndex(other => compareArrival(item, other) < 0);
+      waiting.splice(next < 0 ? waiting.length : next, 0, item);
       refreshWatchers();
       let disk;
       try { disk = await admitDisk(item); }

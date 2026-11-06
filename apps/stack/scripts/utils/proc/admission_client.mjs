@@ -175,7 +175,8 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
       floorOptions = Array.from({ length: exportWorkers }, (_, index) => ({ workers: index + 1,
         floorKiB: resolveHeavyweightMemoryFloorKiB(className, { machine: 'worker', workers: index + 1 }) }));
     }
-    const request = { kind: 'acquire', className, floorKiB, pid: process.pid,
+    // Reuse the first arrival when this same waiter reconnects after broker loss.
+    const request = { kind: 'acquire', className, floorKiB, pid: process.pid, arrivedAt: Date.now(),
       repoDir, cacheBaseDir, noWait, locks, ...(floorOptions ? { floorOptions } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');
