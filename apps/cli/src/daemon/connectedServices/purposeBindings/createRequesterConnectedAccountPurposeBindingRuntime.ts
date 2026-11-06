@@ -19,13 +19,21 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   getAccountEncryptionMode: ApiClient['getAccountEncryptionMode'];
   isCurrent(signal?: AbortSignal): Promise<boolean>;
   subscribe?: ConnectedAccountPurposeBindingStore['subscribe'];
+  signal?: AbortSignal;
   resolveQualifiedConnectedAccountV4Support: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['resolveQualifiedConnectedAccountV4Support'];
   allowNativeAccountCredentials: boolean;
   openTeamDirect?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['openTeamDirect'];
 }>) {
   const operationContext = input.operationContext;
   const credentials = operationContext.credentials;
-  const withHome = <T>(read: () => Promise<T>) => runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl, read);
+  const withHome = async <T>(read: () => Promise<T>, signal?: AbortSignal) => {
+    input.signal?.throwIfAborted();
+    signal?.throwIfAborted();
+    const result = await runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl, read);
+    input.signal?.throwIfAborted();
+    signal?.throwIfAborted();
+    return result;
+  };
   const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials, operationContext,
     ...(input.subscribe ? { subscribe: input.subscribe } : {}) });
   const persistence = createQualifiedConnectedAccountDaemonPersistence({ credentials,

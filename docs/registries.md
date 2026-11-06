@@ -52,6 +52,18 @@ HTTPS scoped process configuration, never token argv, and refuses redirects:
 Git matches scoped headers against the original URL rather than redirected URLs.
 The source must therefore identify its final HTTPS destination.
 
+For GitHub repository reads without an explicit source token, source admission
+uses the originating Account's existing forge authentication purpose binding.
+The Connected Account owner materializes authorization for `api.github.com`;
+the transport retains that exact origin and repository path scope. In 0.3
+development, an unbound purpose may use the Machine's native `gh` login when
+authenticated Machine admission identifies the custodian or grants Manage.
+Use-only callers cannot borrow that login; without an available login, the read
+is anonymous. Checking a source never selects a connection or changes defaults.
+Explicit Saved Secret bindings retain precedence. HTTP throttle observations are scoped to the
+credential actually sent (or the anonymous origin), so an exhausted anonymous
+quota does not suppress an authenticated Check or a rotated credential.
+
 Raw shared-Machine transports retain their authenticated requester/custodian
 admission facts through registry fetch and file preparation. Public sources stay
 available to shared callers; a foreign requester cannot materialize the

@@ -4,7 +4,7 @@ import { createCliAvailableBotTemplateReaderV1 } from './availableBotTemplates';
 import { createRegistryHostV1,listRegistrySourcesV1,createPluginRegistrySourceDescriptorV1,RegistryFetchErrorV1,type RegistrySourceDescriptorV1, type RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
 import { readPromptLibraryCatalogRecordV1,updatePromptLibraryRegistrySourcesV1,type PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { StoredCredentials } from '@/persistence';
 import { createRegistryHttpV1 } from './registryHttp';
 import { createRegistryGitProtocolV1 } from './gitProtocol';
@@ -14,10 +14,13 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
-import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
+import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { resolveValueRefPlaintext } from '@/settings/valueRefs/resolveValueRefPlaintext';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
+import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { readRegistryConnectedAccountTokenV1 } from './connectedAccountToken';
 
 /** One Account snapshot source projection, shared by daemon fetch and later marketplace exact review. */
 export async function readCliRegistrySourcesV1(input:Readonly<{port?:PromptLibraryStackActionPortV1;signal?:AbortSignal}>={}):Promise<readonly RegistrySourceDescriptorV1[]> {
@@ -35,6 +38,7 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
   secretSources?:TargetSecretSourcesV1;
   actionContext?:Pick<ActionExecutorContext,'externalActionExecutionAuthorization'|'externalActionCredential'>;
   readSources?:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
+  pluginRuntime?:PluginReloadController;
   operationContext?:SavedSecretOperationContextV1;machineAdmission?:SocketRpcMachineAdmissionContextV1;
   updates?: RegistryHostDepsV1['updates']}>={}) {
   const operation=input.operationContext;
@@ -54,7 +58,20 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
   };
   const readSources=input.readSources??(async()=>readCliRegistrySourcesV1({port:await resolvePort(),signal:input.signal}));
   const resolveToken=async(source:import('@happier-dev/protocol/registries').RegistrySourceV1)=>{
-    const reference=source.token?.secretRef;if(!reference)return null;
+    const reference=source.token?.secretRef;
+    if(!reference){
+      if(!credentials)return null;
+      await resolvePort();
+      const snapshot=operation?operation.readSnapshot():getActiveAccountSettingsSnapshot();
+      if(!snapshot||snapshot.scopeKey!==scopeKey)return null;
+      const lifetime=getActiveAccountSettingsSnapshotLifetimeToken();
+      const accountOperation=operation??createInvocationSavedSecretOperationContextV1({credentials,snapshot,
+        serverHttpBaseUrl:resolveServerHttpBaseUrl(),machineAdmission:input.machineAdmission,
+        isCurrent:async()=>getActiveAccountSettingsSnapshotLifetimeToken()===lifetime
+          &&getActiveAccountSettingsSnapshot()?.scopeKey===scopeKey});
+      return readRegistryConnectedAccountTokenV1({source,operationContext:accountOperation,
+        controller:input.pluginRuntime??pluginReloadController,signal:input.signal});
+    }
     // A shared Machine grant reaches public registries, not the custodian's
     // private Account credential. Only authenticated ingress supplies this fact.
     if(input.machineAdmission&&input.machineAdmission.actorAccountId!==input.machineAdmission.custodianAccountId)
@@ -73,14 +90,16 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
   };
   const createFetchContext = (resolve: typeof resolveToken) => ({ signal: input.signal,
     http: createRegistryHttpV1({signal:input.signal,resolveToken:resolve}),
-    git: createRegistryGitProtocolV1({signal:input.signal,resolveToken:resolve}) });
+    git: createRegistryGitProtocolV1({signal:input.signal,resolveToken:async source=>{
+      const credential=await resolve(source);return typeof credential==='string'?credential:credential?.value??null;
+    }}) });
   const baseContext = createFetchContext(resolveToken);
   const admitSource: NonNullable<RegistryHostDepsV1['admitSource']> = async source => {
-    if ('packageContent' in source || !source.token) return baseContext;
+    if ('packageContent' in source) return baseContext;
     const value = await resolveToken(source);
-    if (value === null) throw new RegistryFetchErrorV1({state:'auth_failed'});
-    const reference = source.token.secretRef;
-    return createFetchContext(async selected => selected.token?.secretRef === reference ? value : null);
+    if (value === null && source.token) throw new RegistryFetchErrorV1({state:'auth_failed'});
+    return createFetchContext(async selected => selected.url === source.url
+      && selected.token?.secretRef === source.token?.secretRef ? value : null);
   };
   const fetchContext = { ...baseContext, admitSource };
   const actionBinding = input.actionContext?.externalActionExecutionAuthorization?.binding;

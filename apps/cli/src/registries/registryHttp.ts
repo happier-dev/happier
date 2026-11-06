@@ -2,27 +2,37 @@ import type { RegistryHttpV1,RegistryHttpResultV1,RegistrySourceV1 } from '@happ
 import { readRegistryHttpRateLimitV1 } from '@happier-dev/protocol/registries';
 import { registryTokenHeader } from './registryTokenHeader';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/release-runtime/httpRedirects';
+import { createHash } from 'node:crypto';
 type Memo=Readonly<{bytes:Uint8Array;etag?:string;lastModified?:string;fetchedAt:number}>;
+export type RegistryHttpCredentialV1 = Readonly<{value:string;origin:string}>;
 const rateLimitedUntil=new Map<string,number>();
-/** Node transport only. Token materialization is supplied by the incumbent Saved Secret owner. */
+/** Node transport only. Credential selection/materialization belongs to source admission. */
 export function createRegistryHttpV1(input:Readonly<{signal?:AbortSignal;fetch?:typeof fetch;
-  resolveToken?:(source:RegistrySourceV1)=>Promise<string|null>}>={}):RegistryHttpV1 {
+  resolveToken?:(source:RegistrySourceV1)=>Promise<string|RegistryHttpCredentialV1|null>}>={}):RegistryHttpV1 {
   const memo=new Map<string,Memo>();
   const request=async(url:string,source?:RegistrySourceV1):Promise<RegistryHttpResultV1<Uint8Array>>=>{
     const original=new URL(url);const sourceOrigin=source?new URL(source.url).origin:null;
-    const key=JSON.stringify([url,source?.id,source?.token?.secretRef]);const cached=memo.get(key);const seen=new Set<string>();
-    let target=original;let token:string|null=null;
-    if(source?.token){token=await input.resolveToken?.(source)??null;if(!token)return {ok:false,status:{state:'auth_failed'}};}
+    let target=original;
+    const credential=source?await input.resolveToken?.(source)??null:null;
+    const token=typeof credential==='string'?credential:credential?.value??null;
+    if(source?.token&&!token)return {ok:false,status:{state:'auth_failed'}};
+    // Anonymous IP and authenticated-token quotas are independent at GitHub.
+    // A rotated or newly admitted credential must not inherit another quota.
+    const credentialKey=token?createHash('sha256').update(token).digest('hex'):'anonymous';
+    const key=JSON.stringify([url,source?.id,credentialKey]);const cached=memo.get(key);const seen=new Set<string>();
     while(true){
       input.signal?.throwIfAborted();
       if(seen.has(target.href))return {ok:false,status:{state:'unreachable'}};seen.add(target.href);
-      const retryAt=rateLimitedUntil.get(target.origin);if(retryAt&&retryAt>Date.now())return {ok:false,status:{state:'rate_limited',retryAt}};
       const headers=new Headers();const credentialHeaderNames=new Set<string>();
       const githubSource=source&&/^https:\/\/github\.com\/[^/]+\/[^/]+(?:\/|$)/.test(source.url);
       const repo=githubSource?'/'+new URL(source!.url).pathname.split('/').filter(Boolean).slice(0,2).join('/'):null;
       const githubTarget=repo&&(target.origin==='https://api.github.com'&&(target.pathname==='/repos'+repo||target.pathname.startsWith('/repos'+repo+'/'))
         ||target.origin==='https://raw.githubusercontent.com'&&target.pathname.startsWith(repo+'/'));
-      const allowed=target.origin===sourceOrigin||githubTarget;
+      const allowed=typeof credential==='object'&&credential!==null
+        ?target.origin===credential.origin&&(target.origin===sourceOrigin||githubTarget)
+        :target.origin===sourceOrigin||githubTarget;
+      const quotaKey=JSON.stringify([target.origin,token&&allowed?credentialKey:'anonymous']);
+      const retryAt=rateLimitedUntil.get(quotaKey);if(retryAt&&retryAt>Date.now())return {ok:false,status:{state:'rate_limited',retryAt}};
       if(token&&allowed&&source){try{const header=registryTokenHeader(source,token);headers.set(header.name,header.value);credentialHeaderNames.add(header.name.toLowerCase());}catch{return {ok:false,status:{state:'auth_failed'}};}}
       if(cached&&target.href===original.href){if(cached.etag)headers.set('If-None-Match',cached.etag);if(cached.lastModified)headers.set('If-Modified-Since',cached.lastModified);}
       let response:Response;
@@ -33,7 +43,7 @@ export function createRegistryHttpV1(input:Readonly<{signal?:AbortSignal;fetch?:
       if(response.status>=300&&response.status<400&&response.status!==304){const location=response.headers.get('location');if(!location)return {ok:false,status:{state:'unreachable'}};target=new URL(location,target);if(target.protocol!=='https:'||target.username||target.password)return {ok:false,status:{state:'invalid_source'}};continue;}
       if(response.status===304&&cached)return {ok:true,value:cached.bytes,fetchedAt:cached.fetchedAt};
       const rateLimit=readRegistryHttpRateLimitV1({status:response.status,headers:response.headers,nowMs:Date.now()});
-      if(rateLimit){if(rateLimit.retryAt!==undefined)rateLimitedUntil.set(target.origin,rateLimit.retryAt);return {ok:false,status:rateLimit};}
+      if(rateLimit){if(rateLimit.retryAt!==undefined)rateLimitedUntil.set(quotaKey,rateLimit.retryAt);return {ok:false,status:rateLimit};}
       if(response.status===401||response.status===403)return {ok:false,status:{state:'auth_failed'}};
       if(!response.ok)return {ok:false,status:{state:response.status===404?'invalid_source':'unreachable'}};
       const bytes=new Uint8Array(await response.arrayBuffer());const fetchedAt=Date.now();
