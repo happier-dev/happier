@@ -46,7 +46,7 @@ async function setup() {
 }
 
 describe('Provider connection usage data resource', () => {
-    it('shares settings and picker demand, invalidates only the exact connection, and cancels only the last demand', async () => {
+    it('shares one read across settings, picker and remounts, and refreshes only an invalidated connection', async () => {
         const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
         const controller = new AbortController();
         const input = { serverId, accountId: 'account-a', machineId: 'machine-a', connectionId: 'pc_a', identity: 'declaration/key',
@@ -77,11 +77,25 @@ describe('Provider connection usage data resource', () => {
         expect(requests()).toHaveLength(1);
         await push(serverId, 'pc_a');
         await waitForHomeGovernance(() => expect(requests()).toHaveLength(2));
+        const updated = { ...snapshot, observedAtMs: 2000, fetchedAtMs: 2000 };
+        finish({ status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: updated }] });
+        await waitForHomeGovernance(() => expect(picker.resource.getSnapshot().refreshing).toBe(false));
+        expect(picker.resource.getCurrent()?.snapshotsBySourceId.credits).toEqual(updated);
         picker.release();
-        finish(good);
-        await waitForHomeGovernance(() => expect(picker.resource.getCurrent()).toBeNull());
+        expect(picker.resource.getCurrent()?.snapshotsBySourceId.credits).toEqual(updated);
+        const reopened = acquireProviderConnectionUsageRefreshResource(input);
+        expect(reopened.resource).toBe(picker.resource);
+        expect(requests()).toHaveLength(2);
+        reopened.release();
         invalidateProviderConnectionUsage({ serverId, accountId: 'account-a', connectionId: 'pc_a', machineId: 'machine-a' });
         expect(requests()).toHaveLength(2);
+        const changed = acquireProviderConnectionUsageRefreshResource(input);
+        await waitForHomeGovernance(() => expect(requests()).toHaveLength(3));
+        finish(good);
+        await waitForHomeGovernance(() => expect(changed.resource.getSnapshot().refreshing).toBe(false));
+        changed.release();
+        controller.abort();
+        expect(changed.resource.getCurrent()).toBeNull();
     });
 
     it('retires shared protected facts and pending results when the credential authority changes', async () => {

@@ -9,7 +9,6 @@ import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAc
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/serverScopedRpc/resolveMachineRpcTargetServerId';
 import * as client from './client';
-import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -72,7 +71,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
     const methods = React.useMemo(() => {
         function bind<Input extends Readonly<{ serverId: string | null }>, Output>(
             method: (input: Input, approval?: client.ProviderActionApprovalOptions) => Promise<Output>,
-        ): (input: Input, options?: Pick<UiActionOperation, 'confirmed'> & Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal;
+        ): (input: Input, options?: Pick<client.ProviderActionApprovalOptions, 'confirmed' | 'interactivePresentation'> & Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal;
             onApprovalPending?: (registration: ActionApprovalRegistration) => void }>) => Promise<Output> {
             return async (input, options) => {
                 const targetServerId = input.serverId ?? (requestedServerIds.length === 1 ? requestedServerIds[0] : null);
@@ -97,6 +96,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
                 try {
                     return await method(input, {
                         ...(options?.confirmed ? { confirmed: options.confirmed } : {}),
+                        ...(options?.interactivePresentation ? { interactivePresentation: options.interactivePresentation } : {}),
                         scope: binding.scope,
                         signal,
                         ...(options?.retainInvocationSignal ? { retainInvocationSignal: options.retainInvocationSignal } : {}),

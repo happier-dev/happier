@@ -13,13 +13,14 @@ import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ProviderActionPendingApprovalError } from './ProviderActionPendingApprovalError';
 export { ProviderActionPendingApprovalError } from './ProviderActionPendingApprovalError';
 export { providerErrorFromRpcFailure } from '@/providers/rpc/client';
 
 type IncumbentClient = typeof import('@/providers/rpc/client');
 type InvocationScope = Readonly<{ serverId: string | null; accountId?: string; signal?: AbortSignal; onDispatched?: () => void }>;
-export type ProviderActionApprovalOptions = Pick<UiActionOperation, 'confirmed'> & Readonly<{
+export type ProviderActionApprovalOptions = Pick<UiActionOperation, 'confirmed'> & Pick<ActionExecutorContext, 'interactivePresentation'> & Readonly<{
     scope: ServerAccountScope;
     signal: AbortSignal;
     onApprovalPending: (registration: ActionApprovalRegistration) => void;
@@ -54,6 +55,7 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
         });
         const result = await (approvalOptions?.confirmed ? executor.executeConfirmed : executor.execute)(actionId, input, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            ...(approvalOptions?.interactivePresentation ? { interactivePresentation: approvalOptions.interactivePresentation } : {}),
             ...(scope.serverId || approvalOptions?.scope.serverId ? { serverId: scope.serverId ?? approvalOptions?.scope.serverId } : {}),
             ...(scope.accountId || approvalOptions?.scope.accountId ? { expectedAccountId: scope.accountId ?? approvalOptions?.scope.accountId } : {}),
             ...(signal ? { signal } : {}),
@@ -73,6 +75,7 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
     } catch (caught) {
         // A declined approval is the person's decision, not a Provider failure: its code survives for the caller.
         if (getActionSpec(actionId).sideEffectClass !== 'read'
+            || (caught as { code?: unknown } | null)?.code === 'action_interactive_review_required'
             || isActionApprovalDeclinedErrorCode((caught as { code?: unknown } | null)?.code)
             || caught instanceof ProviderActionPendingApprovalError
             || ProviderErrorV1Schema.safeParse(caught).success) throw caught;
