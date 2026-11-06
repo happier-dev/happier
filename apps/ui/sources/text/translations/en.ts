@@ -1329,7 +1329,7 @@ const enPluginSurfaces = {
     },
     connecting: {
       title: 'Connecting to this machine',
-      reason: 'This view opens as soon as the machine answers.',
+      reason: 'Actions that need this machine are waiting for it to answer.',
     },
     sourceRequired: {
       title: 'Choose where this runs',
