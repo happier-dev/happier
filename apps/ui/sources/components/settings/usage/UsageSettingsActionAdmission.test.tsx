@@ -132,6 +132,43 @@ function priceSlice() {
 }
 
 describe('Usage settings UI Action admission', () => {
+    it.each(['disabled', 'approval'] as const)('announces a Coach failure and distinguishes a waiting approval: %s', async (admission) => {
+        const { evaluateUsageCoach } = await import('@happier-dev/protocol/usage/coach/evaluateUsageCoach');
+        const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
+        const key = getUsageQueryKey(query);
+        const coach = evaluateUsageCoach({ queryKey: key, period: { startMs: 0, endMs: 1000 }, asOfMs: 1000,
+            currentness: 'current', detail: { coverage: 'partial', compactions: [10, 20, 30].map((observedAtMs, index) => ({
+                evidenceId: `c${index}`, observedAtMs, sessionId: 'session', turnId: 'turn', immediateRefillToLimit: true,
+            })) } });
+        raw.actionsSettingsV1 = { v: 1, actions: { 'usage.coach.dismiss': admission === 'disabled'
+            ? { enabled: false } : { approvalRequiredSurfaces: ['ui'] } } };
+        storage.getState().applySettings(settingsParse(raw), ++version);
+        const slice = { key, requestedQuery: query, shownQuery: query, pending: false, sources: [], coach };
+        const identity = { query, authority: { serverId, accountId: 'usage-account' } };
+        const model: UsageWidgetBodyModel = { requestedQuery: identity, shownQuery: identity, slice, pending: false, error: null,
+            freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
+        const screen = await renderScreen(<UsageCoachWidget id="usage_coach" testID="coach" serverId={serverId}
+            query={query} slice={slice} model={model} />);
+        const findingId = `coach.finding.${coach.findings[0]!.detectorId}`;
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`${findingId}.more`)).toBeTruthy());
+        await screen.pressByTestIdAsync(`${findingId}.more`);
+        await screen.pressByTestIdAsync('dismiss');
+        if (admission === 'disabled') {
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${findingId}.error`)).toBeTruthy());
+            const announced = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'alert');
+            expect(announced.some(node => node.findAll(child => child.props.testID === `${findingId}.error`).length > 0)).toBe(true);
+            expect(screen.getTextContent()).toContain(t('usage.board.coach.actionFailed'));
+            expect(screen.findByTestId('usage-coach-approval-pending')).toBeNull();
+        } else {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('usage-coach-approval-pending')).toBeTruthy());
+            expect(screen.getTextContent()).toContain(t('usage.board.coach.approvalPending'));
+            expect(screen.findByTestId(`${findingId}.error`)).toBeNull();
+            expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'alert')).toHaveLength(0);
+        }
+        expect(screen.findByTestId(findingId)).toBeTruthy();
+        await screen.unmount();
+    });
+
     it('round-trips mounted Save and Clear through quota read-back when the provider reports no subscription', async () => {
         const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId} = await import('@happier-dev/protocol/connect/account-usage-primitives');
         const { ConnectedServiceQuotaGetResultV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');

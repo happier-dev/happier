@@ -19,6 +19,7 @@ import type { UsageCoachRemedy } from '@happier-dev/protocol/usage/coach/coachRe
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { NoticeLine } from '@/components/ui/lists/NoticeLine';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -259,6 +260,19 @@ function useUsageCoachController(
   return { controller, snapshot };
 }
 
+/** A finding's own outcome line: a failed Action says so (announced), a waiting approval says it is waiting. */
+function CoachNotice(props: Readonly<{ kind: 'error' | 'pending'; message: string; testID?: string }>) {
+  const { theme } = useUnistyles();
+  const line = props.kind === 'error' ? (
+    <NoticeLine testID={props.testID ?? 'usage-coach-error'} iconName="warning"
+      iconColor={theme.colors.state.danger.foreground} title={props.message} />
+  ) : (
+    <NoticeLine testID={props.testID ?? 'usage-coach-approval-pending'} iconName="info"
+      iconColor={theme.colors.text.secondary} title={props.message} />
+  );
+  return props.kind === 'error' ? <View accessibilityRole="alert">{line}</View> : line;
+}
+
 /**
  * Coach: each evidence-backed finding with what was seen, how complete it is and, only where an owner
  * admitted one, its Apply and exact Undo. Insufficient evidence is a visible result, never a finding.
@@ -405,10 +419,8 @@ export function UsageCoachWidget(props: UsageBodyProps) {
                   await controller.dismiss(props.query, finding.evidenceKey, false);
                 }
               }} />
-            {snapshot.error?.evidenceKey === finding.evidenceKey ? <Text accessibilityRole="alert" style={styles.error}>
-              {t('usage.board.coach.actionFailed')}</Text> : null}
-            {snapshot.approval?.evidenceKey === finding.evidenceKey ? <Text style={styles.pendingNote}>
-              {t('usage.board.coach.approvalPending')}</Text> : null}
+            {snapshot.error?.evidenceKey === finding.evidenceKey ? <CoachNotice kind="error" message={t('usage.board.coach.actionFailed')} /> : null}
+            {snapshot.approval?.evidenceKey === finding.evidenceKey ? <CoachNotice kind="pending" message={t('usage.board.coach.approvalPending')} /> : null}
           </View>)}
         </UsagePlanDisclosure> : null}
         {!glance && insufficient.length + clear.length > 0 ? (
@@ -478,8 +490,7 @@ function UsageCoachDigestSuggestionRow(props: Readonly<{
             testID={`${props.testID}.manage`} onPress={() => router.push(resolveTriggerEditorHref({ serverId: props.serverId }))} />
         </View>
       ) : null}
-      {error && !editing ? <Text style={[styles.error, subtitle]} testID={`${props.testID}.error`}>
-        {t('usage.board.coach.actionFailed')}</Text> : null}
+      {error && !editing ? <CoachNotice kind="error" testID={`${props.testID}.error`} message={t('usage.board.coach.actionFailed')} /> : null}
       {created ? (
         <View style={styles.appliedRow}>
           <Text style={[styles.applied, subtitle]}>{t('usage.board.coach.digestCreated')}</Text>
@@ -733,21 +744,16 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
             >{` · ${t(`usage.board.coach.method_${estimate.method}`)}`}</Text>
           </Text>)
         ) : null}
-        {approval ? (
-          <Text style={[styles.pendingNote, text('subtitle')]}>
-            {t('usage.board.coach.approvalPending')}
-          </Text>
-        ) : null}
+        {approval ? <CoachNotice kind="pending" message={t('usage.board.coach.approvalPending')} /> : null}
         {error ? (
-          <Text
-            style={[styles.error, text('subtitle')]}
+          <CoachNotice
+            kind="error"
             testID={`${props.testID}.error`}
-          >
-            {error.actionId === 'usage.coach.undo' &&
+            message={error.actionId === 'usage.coach.undo' &&
             error.failure.errorCode.endsWith('conflict')
               ? t('usage.board.coach.undoConflict')
               : t('usage.board.coach.actionFailed')}
-          </Text>
+          />
         ) : null}
         {wide ? null : <View style={styles.actionsBelow}>{action}</View>}
       </View>
@@ -915,14 +921,6 @@ const styles = StyleSheet.create((theme) => ({
     fontVariant: ['tabular-nums'],
   },
   quiet: { ...Typography.default(), color: theme.colors.text.tertiary },
-  pendingNote: {
-    ...Typography.default(),
-    color: theme.colors.state.warning.foreground,
-  },
-  error: {
-    ...Typography.default(),
-    color: theme.colors.state.danger.foreground,
-  },
   actionsBelow: {
     flexDirection: 'row',
     alignItems: 'center',
