@@ -1643,3 +1643,4 @@ export {
   type RemoteViewerModifier,
   type RemoteViewerModifierState,
 } from '../presentation/media/useRemoteViewerActions.js';
+export { RegistryShelf, RegistryShelfAddControl, RegistrySourcesUnavailable, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistrySourceFailure, type RegistrySourcesUnavailableProps } from './RegistryShelf.js';
