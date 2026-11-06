@@ -189,6 +189,18 @@ export function resolveMachineDisplayNames(machines: readonly MachineNameSource[
     return new Map([...resolveMachineDisplayNameParts(machines)].map(([id, parts]) => [id, formatMachineDisplayNameParts(parts)]));
 }
 
+/** Inventory-qualified names for fact lines, omitting Machines whose name is still loading. */
+export function resolveSettledMachineDisplayNames(
+    machines: readonly MachineNameSource[],
+    displayNames: ReadonlyMap<string, string> = resolveMachineDisplayNames(machines),
+): ReadonlyMap<string, string> {
+    const settled = new Map(displayNames);
+    for (const machine of machines) {
+        if (isMachineDisplayHydrating(machine)) settled.delete(machine.id);
+    }
+    return settled;
+}
+
 /** A machine's name and telling suffix as the one-string name ("Build box · 3ca2"). */
 export function formatMachineDisplayNameParts(parts: Readonly<{ name: string; hint: string | null }>): string {
     return parts.hint ? `${parts.name} · ${parts.hint}` : parts.name;

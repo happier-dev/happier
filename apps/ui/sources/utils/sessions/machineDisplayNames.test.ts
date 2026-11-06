@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 
-import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceName, getSettledMachineDisplayName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames } from './machineDisplayNames';
+import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceName, getSettledMachineDisplayName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames, resolveSettledMachineDisplayNames } from './machineDisplayNames';
 
 const m = (id: string, displayName?: string, host?: string) => ({ id, metadata: { displayName, host } });
 
@@ -114,6 +114,40 @@ describe('resolveMachineDisplayNames', () => {
         const pair = resolveMachineDisplayNames([m('f98b860d-63e0'), m('0c1d2e3f-9999')]);
         expect(pair.get('f98b860d-63e0')).toBe(`${unnamed} · f98b`);
         expect(pair.get('0c1d2e3f-9999')).toBe(`${unnamed} · 0c1d`);
+    });
+});
+
+describe('resolveSettledMachineDisplayNames', () => {
+    it('visits each Machine once when filtering qualified names, retaining settled names and hydration changes', () => {
+        // Match the audit's 1,000-Machine workload; count source reads rather than elapsed time.
+        let idReads = 0;
+        let metadataReads = 0;
+        const machines = Array.from({ length: 1_000 }, (_, index) => ({
+            get id() { idReads += 1; return `machine-${index}`; },
+            get metadata() { metadataReads += 1; return { displayName: `Build ${index}` }; },
+        }));
+        const names = resolveMachineDisplayNames(machines);
+        idReads = 0;
+        metadataReads = 0;
+
+        const settled = resolveSettledMachineDisplayNames(machines, names);
+
+        expect(settled).toEqual(names);
+        expect(idReads).toBeLessThanOrEqual(machines.length);
+        expect(metadataReads).toBeLessThanOrEqual(machines.length);
+
+        const pending = { id: 'pending', metadata: null };
+        const ready = m('ready', 'Build', 'mac.local');
+        const peer = m('peer', 'Build', 'linux.local');
+        const locked = { id: 'locked', metadata: null, availability: { kind: 'locked' } };
+        const inventory = [pending, ready, peer, locked];
+        const qualified = resolveMachineDisplayNames(inventory);
+        const before = resolveSettledMachineDisplayNames(inventory, qualified);
+        expect([...before]).toEqual([...qualified].filter(([id]) => id !== pending.id));
+        expect(qualified.has(pending.id)).toBe(true);
+        expect(resolveSettledMachineDisplayNames([m(pending.id, 'Now ready'), ready, peer, locked]).get(pending.id))
+            .toBe('Now ready');
+        expect(resolveSettledMachineDisplayNames([]).size).toBe(0);
     });
 });
 

@@ -89,7 +89,7 @@ import { isSessionContentUnsettled } from '@/sync/domains/session/encryptedConte
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { Icon } from '@/components/ui/icons/Icon';
-import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineDisplayNames, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { transcriptSearchUnavailableHint } from './transcriptSearchUnavailableHint';
 import { presentCommitSearchFailure, presentContentSearchError, workspaceFolderMissingFailure } from './universalSearchMachineFailures';
@@ -425,8 +425,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     // The names machines shown together go by: same-named machines read apart, as the session list header says them.
     const machineNameById = React.useMemo(() => resolveMachineDisplayNames(machines), [machines]);
     // A row's line of facts never prints the "Loading…" placeholder as if it were the Machine's name.
-    const settledMachineNameById = React.useMemo(() => new Map([...machineNameById]
-        .filter(([machineId]) => !machines.some(machine => machine.id === machineId && isMachineDisplayHydrating(machine)))), [machineNameById, machines]);
+    const settledMachineNameById = React.useMemo(() => resolveSettledMachineDisplayNames(machines, machineNameById), [machineNameById, machines]);
     const machineHomeById = React.useMemo(() => new Map(
         machines.flatMap((machine) => machine.metadata?.homeDir ? [[machine.id, machine.metadata.homeDir] as const] : []),
     ), [machines]);
