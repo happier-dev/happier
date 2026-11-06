@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod/mini';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, FeaturesResponseSchema, decodePlainArtifactStoredContent, type AccountSettings } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactJsonCreateHttpInputV1Schema, FeaturesResponseSchema, decodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker, type AccountSettings } from '@happier-dev/protocol';
 import { deriveArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
@@ -62,18 +62,20 @@ export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ 
         capabilities: { serverIdentity: { serverIdentityId: input.serverId } } });
 }
 
-type PlainArtifactRow = {
-    id: string; ownerAccountId: string; access: 'owner'; encryptionMode: 'plain'; publicAudience: 'none';
+type ArtifactRow<Mode extends 'plain' | 'e2ee'> = {
+    id: string; ownerAccountId: string; access: 'owner'; encryptionMode: Mode; publicAudience: 'none';
     header: string; body: string; dataEncryptionKey: string;
     headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
 };
 
-/** The Account Artifact HTTP surface (list, read, create, versioned update) over one in-memory plain row set. */
-export function registerPlainArtifactRoutes(app: FastifyInstance, accountId: string) {
-    const rows = new Map<string, PlainArtifactRow>();
-    const seed = (id: string, header: string, body: string) => {
-        rows.set(id, { id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none', header, body,
-            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+/** The Account Artifact HTTP surface; content remains opaque on the encrypted branch. */
+export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee'>(app: FastifyInstance, accountId: string,
+    { encryptionMode }: Readonly<{ encryptionMode: Mode }>) {
+    const rows = new Map<string, ArtifactRow<Mode>>();
+    const seed = (id: string, header: string, body: string, dataEncryptionKey = ARTIFACT_PLAIN_DATA_KEY_MARKER) => {
+        if (isPlainArtifactDataKeyMarker(dataEncryptionKey) !== (encryptionMode === 'plain')) throw new Error('artifact_mode_mismatch');
+        rows.set(id, { id, ownerAccountId: accountId, access: 'owner', encryptionMode, publicAudience: 'none', header, body,
+            dataEncryptionKey, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
     };
     const idOf = (params: unknown) => String((params as { id: string }).id);
     app.get('/v1/artifacts', async (request, reply) => {
@@ -103,7 +105,7 @@ export function registerPlainArtifactRoutes(app: FastifyInstance, accountId: str
     app.get('/v1/artifacts/:id', async (request, reply) => rows.get(idOf(request.params)) ?? reply.code(404).send({ error: 'not_found' }));
     app.get('/v1/artifacts/:id/access/recipients', async (request, reply) => {
         const row = rows.get(idOf(request.params));
-        return row ? { artifactId: row.id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+        return row ? { artifactId: row.id, ownerAccountId: accountId, access: 'owner', encryptionMode,
             dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
             provenanceDataEncryptionKey: null, callerProvenanceDataEncryptionKey: null, recipients: [] } : reply.code(404).send({ error: 'not_found' });
     });
@@ -111,11 +113,13 @@ export function registerPlainArtifactRoutes(app: FastifyInstance, accountId: str
         const row = rows.get(idOf(request.params));
         return row ? { artifactId: row.id, ownerAccountId: accountId, access: 'owner', grants: [] } : reply.code(404).send({ error: 'not_found' });
     });
-    app.post('/v1/artifacts', async request => {
-        const create = z.looseObject({ id: z.string(), header: z.string(), body: z.string() }).parse(request.body);
+    app.post('/v1/artifacts', async (request, reply) => {
+        const parsed = ArtifactJsonCreateHttpInputV1Schema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ error: 'invalid-params' });
+        const create = parsed.data;
         const incumbent = rows.get(create.id);
         if (incumbent) return incumbent;
-        seed(create.id, create.header, create.body);
+        seed(create.id, create.header, create.body, create.dataEncryptionKey);
         return rows.get(create.id);
     });
     app.post('/v1/artifacts/:id', async request => {
@@ -128,6 +132,11 @@ export function registerPlainArtifactRoutes(app: FastifyInstance, accountId: str
         return { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion };
     });
     return { seed, read: (id: string) => rows.get(id) };
+}
+
+/** Existing keyless callers retain their original storage boundary and defaults. */
+export function registerPlainArtifactRoutes(app: FastifyInstance, accountId: string) {
+    return registerAccountArtifactRoutes(app, accountId, { encryptionMode: 'plain' });
 }
 
 /** Preserve the published list envelope when an HTTP-boundary fixture has no Artifacts. */

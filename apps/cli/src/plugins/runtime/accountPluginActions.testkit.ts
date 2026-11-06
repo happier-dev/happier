@@ -9,14 +9,16 @@ import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSh
     createPluginUiArtifactArchiveV1, encodePluginUiArtifactArchiveBodyV1, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { projectVerifiedPluginUiReleaseSlotsV2 } from '@/plugins/availability/releaseFacts';
-import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { registerAccountArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import type { StoredCredentials } from '@/persistence';
 import { compileUniversalPluginUiCommonJs } from '../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { readWorkspacePackages, packageNameOfSpecifier, resolveWorkspaceSource } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { manifest as authoredAccountManifest, sourceProviderManifest } from '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index';
 
 /** Real public-author compiler and release producers, with only Home HTTP storage replaced. */
 export async function registerAuthoredAccountActionRelease(app: FastifyInstance, accountId: string,
-    options: Readonly<{ includeAccountProvider?: boolean; includeBundledPluginIds?: readonly string[];
+    options: Readonly<{ includeAccountProvider?: boolean; includeBundledPluginIds?: readonly string[]; encryptionMode?: 'plain' | 'e2ee';
         /** A package-owned author fixture using this same compiler/release/storage boundary. */
         primary?: Readonly<{ manifest: unknown; projectRoot: string; entryPath: string;
             artifactId?: string; activateExport?: string; manifestExport?: string | null }> }> = {}) {
@@ -53,7 +55,7 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
     };
     const primary = await buildRelease({ manifest: options.primary?.manifest ?? authoredAccountManifest, artifactId: options.primary?.artifactId ?? 'account-runtime',
         accountArtifactId: 'a7e5d73f-88a7-44bc-98ed-23edbffb6214', manifestExport: options.primary?.manifestExport === undefined ? 'manifest' : options.primary.manifestExport,
-        activateExport: options.primary?.activateExport ?? 'activate', archiveDigestCharacter: 'a' });
+        activateExport: options.primary?.activateExport ?? 'activateAccount', archiveDigestCharacter: 'a' });
     const provider = options.includeAccountProvider ? await buildRelease({ manifest: sourceProviderManifest,
         artifactId: 'account-source-provider-runtime', accountArtifactId: 'b7e5d73f-88a7-44bc-98ed-23edbffb6214',
         manifestExport: 'sourceProviderManifest', activateExport: 'activateSourceProvider', archiveDigestCharacter: 'b' }) : null;
@@ -77,9 +79,20 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
         const { pluginId } = PluginAvailabilityIntentReadActionInputV1Schema.parse(request.body);
         return response(fixtures.find(fixture => fixture.pluginId === pluginId));
     });
-    const artifacts = registerPlainArtifactRoutes(app, accountId);
-    for (const fixture of fixtures) artifacts.seed(fixture.artifactId, encodePlainArtifactStoredContent(fixture.archive.header),
-        encodePlainArtifactStoredContent({ body: encodePluginUiArtifactArchiveBodyV1(fixture.archive.body) }));
+    const artifacts = registerAccountArtifactRoutes(app, accountId, { encryptionMode: options.encryptionMode ?? 'plain' });
+    if (options.encryptionMode !== 'e2ee') {
+        for (const fixture of fixtures) artifacts.seed(fixture.artifactId, encodePlainArtifactStoredContent(fixture.archive.header),
+            encodePlainArtifactStoredContent({ body: encodePluginUiArtifactArchiveBodyV1(fixture.archive.body) }));
+    }
+    // E2EE publication follows listen and uses the exact Account's ordinary client writer.
+    const publishArtifacts = async (credentials: StoredCredentials) => {
+        const store = createCredentialedAccountArtifactStore(credentials);
+        for (const fixture of fixtures) {
+            if (artifacts.read(fixture.artifactId)) continue;
+            await store.create({ artifactId: fixture.artifactId, header: fixture.archive.header,
+                body: encodePluginUiArtifactArchiveBodyV1(fixture.archive.body) });
+        }
+    };
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.uiArtifact.read'], async (request, reply) => {
         const input = PluginAvailabilityUiArtifactReadActionInputV1Schema.parse(request.body);
         const fixture = fixtures.find(fixture => fixture.pluginId === input.release.pluginId
@@ -97,7 +110,7 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
         if (!enabled.has(pluginId)) throw new Error('unknown authored fixture plugin');
         enabled.set(pluginId, value);
     };
-    return { ...primary, providerPluginId: provider?.pluginId, artifacts, setPluginEnabled,
+    return { ...primary, providerPluginId: provider?.pluginId, artifacts, publishArtifacts, setPluginEnabled,
         setEnabled: (value: boolean) => { setPluginEnabled(primary.pluginId, value); },
         setBundledFallback: (value = true) => { bundledFallback = value; } };
 }

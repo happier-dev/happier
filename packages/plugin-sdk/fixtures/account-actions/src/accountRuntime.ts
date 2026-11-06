@@ -1,1 +1,1 @@
-export { manifest, activateAccount as activate } from './index.js';
+export { manifest, activate, activateAccount } from './index.js';
