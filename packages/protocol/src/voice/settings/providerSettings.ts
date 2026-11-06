@@ -12,6 +12,7 @@ import {
 } from './localDirect.js';
 import {
   stripLegacyLocalConversationOwnership,
+  normalizeLegacyLocalConversationInput,
   VoiceLocalConversationSchema,
 } from './localConversation.js';
 export type BundledVoiceSettingsContribution = Readonly<{ pluginId: string; providerId: string; declaration: import('../../plugins/contributions/voiceProviders.js').VoiceProviderContribution }>;
@@ -130,7 +131,7 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
         return parsed.success ? stripLegacyLocalConversationOwnership(parsed.data) : null;
       },
       parseStoredConfig(config: unknown) {
-        const parsed = createStoredReadSchema(VoiceLocalConversationSchema).safeParse(config);
+        const parsed = createStoredReadSchema(VoiceLocalConversationSchema).safeParse(normalizeLegacyLocalConversationInput(config));
         return parsed.success ? stripLegacyLocalConversationOwnership(parsed.data) : null;
       },
       migrateLegacy: localConversationCompatibility.migrateLegacy,

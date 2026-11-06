@@ -36,18 +36,19 @@ describe('voiceSettings', () => {
     expect(() => writeLocalConversationVoiceSettings(parsed.voice, { ...config, networkTimeoutMs: 20_000 })).not.toThrow();
   });
   it('preserves configured Voice retention, replay, segmentation and stream preferences without local ceilings', () => {
-    const agent = { maxWarmRoots: 12, idleTtlSeconds: 28_800, bootstrapTimeoutMs: 600_000,
+    const agent = { idleTtlSeconds: 28_800, bootstrapTimeoutMs: 600_000,
       replay: { strategy: 'recent_messages' as const, recentMessagesCount: 150 } };
     const streaming = { ttsChunkChars: 4_000, turnReadPollIntervalMs: 1_000,
       turnReadMaxEvents: 512, turnStreamTimeoutMs: 7_200_000 };
     const parsed = voiceSettingsParse({ providers: { local_conversation: { schemaVersion: 1,
-      config: { agent, streaming, networkTimeoutMs: 500 } } } });
+      config: { agent: { ...agent, maxWarmRoots: 12 }, streaming, networkTimeoutMs: 500 } } } });
     const config = readLocalConversationVoiceSettings(parsed);
     expect(config.agent).toMatchObject(agent);
+    expect(config.agent).not.toHaveProperty('maxWarmRoots');
     expect(config.streaming).toMatchObject(streaming);
     expect(config.networkTimeoutMs).toBe(500);
     expect(resolveVoiceTurnStreamReadConfig(config)).toEqual({
-      pollIntervalMs: 1_000, maxEvents: 512, streamTimeoutMs: 7_200_000,
+      pollIntervalMs: 1_000, maxEvents: 512,
     });
   });
 
@@ -940,8 +941,8 @@ describe('voiceSettings', () => {
     expect(voiceSettingsDefaults.executionMachine.machineId).toBe(null);
     expect(agent?.stayInVoiceHome).toBe(false);
     expect(agent?.teleportEnabled).toBe(true);
-    expect(agent?.rootSessionPolicy).toBe('single');
-    expect(agent?.maxWarmRoots).toBeTypeOf('number');
+    expect(agent?.rootSessionPolicy).toBe('continue');
+    expect(agent).not.toHaveProperty('maxWarmRoots');
     expect(agent?.voiceHomeSubdirName).toBeTypeOf('string');
   });
 
