@@ -49,6 +49,13 @@ import type {
 import type { ApprovalRequestPublicRead } from './approvalRequestPublicRead.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
 
+function isSameApprovalHome(request: ApprovalRequestV2, left: string, right: string): boolean {
+  const origin = request.executionOriginV1;
+  return left === right
+    || left === origin.serverId && right === origin.serverIdentityId
+    || left === origin.serverIdentityId && right === origin.serverId;
+}
+
 function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
@@ -64,9 +71,8 @@ function parseStrictApprovalFailure(input: Readonly<{
       const operation = details.data.operation;
       if (operation) {
         const origin = input.request.executionOriginV1;
-        const sameHome = operation.serverId === args.data.serverId
-          || args.data.serverId === origin.serverId && operation.serverId === origin.serverIdentityId;
-        if (!sameHome || origin.target?.kind === 'machine' && operation.machineId !== origin.target.machineId) return null;
+        if (!isSameApprovalHome(input.request, args.data.serverId, operation.serverId)
+          || origin.target?.kind === 'machine' && operation.machineId !== origin.target.machineId) return null;
       }
       return { ...input.failure, details: details.data };
     }

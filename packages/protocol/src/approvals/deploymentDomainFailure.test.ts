@@ -23,4 +23,29 @@ it('retains the missing Network posture and recovery guidance through Domain app
   expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
   expect(projectApprovalExecutionFailureV2({ request,
     failure: { ...failure, details: { ...details, token: 'private-fixture' } }, executedAtMs: 3 })).not.toHaveProperty('details');
+  expect(projectApprovalExecutionFailureV2({ request,
+    failure: { ...failure, details: { ...details, environmentId: 'unrelated-environment' } }, executedAtMs: 3 })).not.toHaveProperty('details');
+  expect(projectApprovalExecutionFailureV2({ request,
+    failure: { ...failure, details: { ...details, operation: { serverId: 'unrelated-home', machineId: 'machine', operationId: 'operation' } } },
+    executedAtMs: 3 })).not.toHaveProperty('details');
+  for (const [inputHome, operationHome] of [['home', 'identity'], ['identity', 'home']] as const) {
+    const aliasedRequest = ApprovalRequestV2Schema.parse({ ...request,
+      actionArgs: { ...request.actionArgs, serverId: inputHome },
+      executionOriginV1: { ...request.executionOriginV1, serverIdentityId: 'identity',
+        target: { kind: 'machine', machineId: 'machine' } } });
+    const aliasedDetails = { ...details,
+      operation: { serverId: operationHome, machineId: 'machine', operationId: 'operation' } };
+    const aliasedExecution = projectApprovalExecutionFailureV2({ request: aliasedRequest,
+      failure: { ...failure, details: aliasedDetails }, executedAtMs: 3 });
+    const aliasedStored = StoredApprovalRequestSchema.parse({ ...aliasedRequest, status: 'failed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: aliasedExecution });
+    expect(projectApprovalRequestForPublicRead(aliasedStored)).toMatchObject({ execution: { details: aliasedDetails } });
+    for (const operation of [
+      { ...aliasedDetails.operation, serverId: 'unrelated-home' },
+      { ...aliasedDetails.operation, machineId: 'other-machine' },
+    ]) {
+      expect(projectApprovalExecutionFailureV2({ request: aliasedRequest,
+        failure: { ...failure, details: { ...aliasedDetails, operation } }, executedAtMs: 3 })).not.toHaveProperty('details');
+    }
+  }
 });
