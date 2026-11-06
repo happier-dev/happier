@@ -19,6 +19,7 @@ import {
     useActivityAttentionSource,
     useActivityAttentionSummarySource,
     useActivityAttentionStoreSelector,
+    useActivityRuleAudienceScopes,
 } from './useActivityAttentionSource';
 
 export type MountedActivityOverview = Readonly<{
@@ -131,7 +132,8 @@ export function useActivitySourceProjection<T extends Readonly<{ nextAttentionBo
 ): T {
     const [boundaryVersion, advanceBoundary] = React.useReducer((value: number) => value + 1, 0);
     const selectSource = useActivityAttentionStoreSelector(false);
-    // The selector is re-created when membership changes; the published value outlives it.
+    const audienceScopes = useActivityRuleAudienceScopes();
+    // The selector is re-created when membership or scopes change; the published value outlives it.
     const published = React.useRef<T | undefined>(undefined);
     const select = React.useMemo(() => {
         let previousSource: ReturnType<typeof selectSource> | undefined;
@@ -140,10 +142,10 @@ export function useActivitySourceProjection<T extends Readonly<{ nextAttentionBo
             if (published.current && previousSource === selected) return published.current;
             previousSource = selected;
             published.current = retain(published.current,
-                project({ source: selected, nowMs: Date.now(), state }));
+                project({ source: { ...selected, audienceScopes }, nowMs: Date.now(), state }));
             return published.current;
         };
-    }, [boundaryVersion, project, retain, selectSource]);
+    }, [audienceScopes, boundaryVersion, project, retain, selectSource]);
     const value = storage(select);
     useActivityBoundaryRefresh(value.nextAttentionBoundaryMs, advanceBoundary);
     return value;

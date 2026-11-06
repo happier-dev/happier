@@ -27,6 +27,8 @@ export type ActivityAttentionSource = Readonly<{
      * query coverage preserves ordinary last-known-good candidates.
      */
     personalSessionListMembershipByServerId?: Readonly<Record<string, readonly string[]>>;
+    /** Loaded rows from the authorized rule query; these are candidates, never `my_work` membership. */
+    ruleSessionMembershipByServerId?: Readonly<Record<string, readonly string[]>>;
     /** Existing query-controller truth; consumers must not infer completeness from retained rows. */
     personalSessionListQueryStatesByServerId?: Readonly<Record<string, SessionListQueryHomeState | undefined>>;
     personalSessionListCoverageComplete?: boolean;

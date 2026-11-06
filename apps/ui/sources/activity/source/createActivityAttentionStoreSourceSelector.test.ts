@@ -61,6 +61,22 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(closed(state).sessionMessagesById).toBeUndefined();
     });
 
+    it('refreshes a changed row held only by the authorized rule query corpus', () => {
+        const base = storage.getState();
+        const session = createSessionFixture({ id: 'rule-query-source', serverId: 'home-a', ownerAccountId: 'alice' });
+        const row = buildSessionListRenderableFromSession(session);
+        const state = { ...base, sessions: {}, sessionListRowsByServerId: { 'home-a': { [session.id]: row } },
+            ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} };
+        const selector = createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: false, includeFollowRuleFacts: true,
+            ruleMembershipByServerId: { 'home-a': [session.id] } });
+        const first = selector(state);
+        const changed = selector({ ...state, sessionListRowsByServerId: { 'home-a': { [session.id]: { ...row,
+            hasPendingUserActionRequests: true } } } });
+        expect(changed).not.toBe(first);
+        expect(changed.sessionListRowsByServerId['home-a']?.[session.id]?.hasPendingUserActionRequests).toBe(true);
+        expect(selector({ ...state, lastSyncAt: 99, sessionListRowsByServerId: changed.sessionListRowsByServerId })).toBe(changed);
+    });
+
     it('uses held Section assignments for rule preview and invalidates only affected membership', () => {
         const base = storage.getState();
         const session = createSessionFixture({ id: 'section-source', serverId: 'home-a', ownerAccountId: 'alice',

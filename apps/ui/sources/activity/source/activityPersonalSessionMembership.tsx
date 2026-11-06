@@ -13,7 +13,7 @@ import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/s
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import { useSessionListQueryHomeStates } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
-import type { SessionFollowRulesSnapshot } from '@/sync/api/session/sessionFollowRulesApi';
+import type { SessionFollowRulesSnapshot, SessionFollowRulesReadResult } from '@/sync/api/session/sessionFollowRulesApi';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -28,6 +28,8 @@ export type ActivityPersonalSessionMembership = Readonly<{
     statesByServerId: Readonly<Record<string, SessionListQueryHomeState | undefined>>;
     coverageComplete: boolean;
     followRulesByServerId?: Readonly<Record<string, SessionFollowRulesSnapshot>>;
+    /** Existing all-accessible query candidates, not personal relevance or enrollment. */
+    ruleSessionMembershipByServerId?: Readonly<Record<string, readonly string[]>>;
     accountDeliveryMutesByServerId?: Readonly<Record<string, Readonly<{
         scope: ServerAccountScope; scopes: readonly FollowDeliveryMuteScopeV1[];
     }> | null>>;
@@ -42,14 +44,14 @@ const EMPTY_ACTIVITY_PERSONAL_SESSION_MEMBERSHIP: ActivityPersonalSessionMembers
 const ActivityPersonalSessionMembershipContext = React.createContext<ActivityPersonalSessionMembership>(
     EMPTY_ACTIVITY_PERSONAL_SESSION_MEMBERSHIP,
 );
-const EMPTY_FOLLOW_RULES: Readonly<Record<string, SessionFollowRulesSnapshot>> = Object.freeze({});
+const EMPTY_FOLLOW_RULES: Readonly<Record<string, SessionFollowRulesReadResult>> = Object.freeze({});
 const EMPTY_ACCOUNT_DELIVERY_MUTES: NonNullable<ActivityPersonalSessionMembership['accountDeliveryMutesByServerId']> = Object.freeze({});
 
 /** One private census per mounted Activity owner, shared by closed badges and open details. */
 function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean, generation: number) {
     const [snapshot, setSnapshot] = React.useState({ serverIds, generation, rules: EMPTY_FOLLOW_RULES, mutes: EMPTY_ACCOUNT_DELIVERY_MUTES });
     React.useEffect(() => {
-        const setRules = (update: (previous: Readonly<Record<string, SessionFollowRulesSnapshot>>) => Readonly<Record<string, SessionFollowRulesSnapshot>>) => {
+        const setRules = (update: (previous: Readonly<Record<string, SessionFollowRulesReadResult>>) => Readonly<Record<string, SessionFollowRulesReadResult>>) => {
             setSnapshot(previous => {
                 const sameScope = previous.serverIds === serverIds && previous.generation === generation;
                 const rules = update(sameScope ? previous.rules : EMPTY_FOLLOW_RULES);
@@ -231,6 +233,26 @@ export function ActivityPersonalSessionMembershipProvider(props: React.PropsWith
         enabled: props.enabled,
         homes,
     });
+    // Authored personal rules need original catch-up beyond the private my-work
+    // page, including a first foreign source created while this app was closed.
+    // This borrows the list owner's existing paging/cancellation; it stores no
+    // delivery cursor or membership/enrollment edge.
+    const receiverEnabled = props.enabled && Object.values(personalInputs.rules).some(snapshot => snapshot.status === 'ready'
+        && areServerProfileIdentifiersEquivalent(snapshot.serverId, activeServer.serverId ?? '')
+        && snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled));
+    const receiverHomes = React.useMemo(() => !receiverEnabled || !activeServer.serverId ? [] : [{
+        serverId: activeServer.serverId, query: { ...ACTIVITY_PERSONAL_SESSION_QUERY, scope: 'all_accessible' as const, includeAttention: false },
+        queryMembership: 'rowOnly' as const,
+    }], [activeServer.serverId, receiverEnabled]);
+    const receiverCorpus = useSessionListQueryHomeStates({ enabled: receiverEnabled, homes: receiverHomes });
+    React.useEffect(() => {
+        const state = activeServer.serverId ? receiverCorpus.statesByServerId[activeServer.serverId] : undefined;
+        if (receiverEnabled && state?.phase === 'ready' && state.appliedSourceKind === 'query' && state.hasNext) {
+            void receiverCorpus.loadNext().catch(() => { /* The query owner retains the exact failed page and repair state. */ });
+        }
+    }, [activeServer.serverId, receiverEnabled, receiverCorpus.loadNext, receiverCorpus.statesByServerId]);
+    const ruleSessionMembershipByServerId = React.useMemo(() => Object.fromEntries(Object.entries(receiverCorpus.membershipByServerId)
+        .map(([serverId, addresses]) => [serverId, (addresses ?? []).map(address => address.sessionId)])), [receiverCorpus.membershipByServerId]);
     // Background membership observes its first page and reports partial coverage.
     // Only a visible list or an explicit exhaustive operation demands more pages.
 
@@ -240,7 +262,8 @@ export function ActivityPersonalSessionMembershipProvider(props: React.PropsWith
         statesByServerId: querySource.statesByServerId,
         membershipByServerId: querySource.membershipByServerId,
         coverageComplete: querySource.coverageComplete,
-    }), followRulesByServerId: personalInputs.rules, accountDeliveryMutesByServerId: personalInputs.mutes }), [personalInputs, homes, props.enabled, querySource.coverageComplete, querySource.membershipByServerId, querySource.statesByServerId]);
+    }), followRulesByServerId: personalInputs.rules, accountDeliveryMutesByServerId: personalInputs.mutes,
+        ruleSessionMembershipByServerId }), [personalInputs, ruleSessionMembershipByServerId, homes, props.enabled, querySource.coverageComplete, querySource.membershipByServerId, querySource.statesByServerId]);
 
     return (
         <ActivityPersonalSessionMembershipContext.Provider value={value}>

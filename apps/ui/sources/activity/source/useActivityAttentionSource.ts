@@ -5,6 +5,8 @@ import * as React from 'react';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { StorageState } from '@/sync/store/types';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     getActiveServerSnapshot,
     getServerProfilesGeneration,
@@ -29,9 +31,11 @@ export function useActivityAttentionStoreSelector(
     const storeSourceSelector = React.useMemo(
         () => createActivityAttentionStoreSourceSelector(
             personalMembership.membershipByServerId,
-            { includeSessionMessages, detailAddresses, includeFollowRuleFacts },
+            { includeSessionMessages, detailAddresses, includeFollowRuleFacts,
+                ruleMembershipByServerId: personalMembership.ruleSessionMembershipByServerId },
         ),
-        [includeSessionMessages, detailAddresses, includeFollowRuleFacts, personalMembership.membershipByServerId],
+        [includeSessionMessages, detailAddresses, includeFollowRuleFacts, personalMembership.membershipByServerId,
+            personalMembership.ruleSessionMembershipByServerId],
     );
     const activeServer = React.useSyncExternalStore(
         React.useCallback((listener) => {
@@ -52,6 +56,7 @@ export function useActivityAttentionStoreSelector(
                 activeServer,
                 activeServerId: activeServer.serverId,
                 personalSessionListMembershipByServerId: personalMembership.membershipByServerId,
+                ruleSessionMembershipByServerId: personalMembership.ruleSessionMembershipByServerId,
                 personalSessionListQueryStatesByServerId: personalMembership.statesByServerId,
                 personalSessionListCoverageComplete: personalMembership.coverageComplete,
                 personalFollowRulesByServerId: personalMembership.followRulesByServerId,
@@ -68,6 +73,19 @@ export function useActivityAttentionStoreSelector(
 
 function useActivityAttentionStoreSource(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[]): ActivityAttentionSource {
     return storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses));
+}
+
+/**
+ * The exact-Home scopes the address-admission owner needs for rule-query candidacy. Chrome that
+ * projects a count or a pending list does not present Team labels or observe Session audiences,
+ * so it needs these scopes and not the full audience context.
+ */
+export function useActivityRuleAudienceScopes(): ReadonlyMap<string, ServerAccountScope> {
+    const personalMembership = useActivityPersonalSessionMembership();
+    const homeIds = React.useMemo(() => Object.keys(personalMembership.ruleSessionMembershipByServerId ?? {}),
+        [personalMembership.ruleSessionMembershipByServerId]);
+    const bindings = useServerCredentialAccountScopeBindings(homeIds);
+    return React.useMemo(() => new Map([...bindings].map(([home, binding]) => [home, binding.scope])), [bindings]);
 }
 
 /** Summary surfaces never subscribe to or scan detailed transcript messages. */
@@ -108,9 +126,15 @@ export function useActivityAttentionSource(options?: Readonly<{
             const address = normalizeSessionAddress(serverId, id);
             return address ? [address] : [];
         })),
+        ...Object.entries(summarySource.ruleSessionMembershipByServerId ?? {})
+        .flatMap(([serverId, ids]) => (ids ?? []).flatMap((id) => {
+            const address = normalizeSessionAddress(serverId, id);
+            return address ? [address] : [];
+        })),
     ], [
         summarySource.ordinarySessionListMembershipByServerId,
         summarySource.personalSessionListMembershipByServerId,
+        summarySource.ruleSessionMembershipByServerId,
         summarySource.sessionsById,
     ]);
     const audience = useSessionAudienceContext(audienceAddresses);

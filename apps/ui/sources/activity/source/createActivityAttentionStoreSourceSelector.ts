@@ -95,7 +95,8 @@ function readFollowRuleFactsSignature(row: Session | SessionListRenderableSessio
     ]);
 }
 
-function buildFollowRuleOrganizationSignature(state: StorageState, personalMembershipByServerId: Readonly<Record<string, readonly string[]>>): string {
+function buildFollowRuleOrganizationSignature(state: StorageState, personalMembershipByServerId: Readonly<Record<string, readonly string[]>>,
+    ruleMembershipByServerId: Readonly<Record<string, readonly string[]>>): string {
     const keys = new Set<string>();
     forEachRecordValue(state.sessions, session => {
         if (session.serverId) keys.add(buildSessionOrganizationSessionKey(session.serverId, session.id));
@@ -103,9 +104,9 @@ function buildFollowRuleOrganizationSignature(state: StorageState, personalMembe
     for (const entry of listSessionListLookupServerSessions(state)) {
         keys.add(buildSessionOrganizationSessionKey(entry.serverId, entry.session.id));
     }
-    for (const [serverId, ids] of Object.entries(personalMembershipByServerId)) {
-        for (const id of ids) keys.add(buildSessionOrganizationSessionKey(serverId, id));
-    }
+    for (const membership of [personalMembershipByServerId, ruleMembershipByServerId])
+        for (const [serverId, ids] of Object.entries(membership))
+            for (const id of ids) keys.add(buildSessionOrganizationSessionKey(serverId, id));
     return JSON.stringify([...keys].sort().map(key => {
         const folder = state.sessionOrganizationFolderAssignmentsBySessionKey[key];
         return [key, state.sessionOrganizationTagAssignmentsBySessionKey[key]?.tagIds ?? null,
@@ -441,11 +442,13 @@ function buildActivityRowsSignature(
     cache: Map<string, SignatureCacheEntry<SessionListRenderableSession>>,
     personalMembershipByServerId: Readonly<Record<string, readonly string[]>>,
     includeFollowRuleFacts: boolean,
+    ruleMembershipByServerId: Readonly<Record<string, readonly string[]>>,
 ): string {
     const addressesByKey = new Map<string, Readonly<{ serverId: string; sessionId: string }>>();
     for (const membershipByServerId of [
         state.ordinarySessionListMembershipByServerId ?? {},
         personalMembershipByServerId,
+        ruleMembershipByServerId,
     ]) {
         for (const [serverId, membership] of Object.entries(membershipByServerId)) {
             for (const sessionId of membership ?? []) {
@@ -493,7 +496,8 @@ export function readActivityAttentionStoreSource(
 
 export function createActivityAttentionStoreSourceSelector(
     personalMembershipByServerId: Readonly<Record<string, readonly string[]>> = {},
-    options: Readonly<{ includeSessionMessages?: boolean; detailAddresses?: readonly SessionAddress[]; includeFollowRuleFacts?: boolean }> = {},
+    options: Readonly<{ includeSessionMessages?: boolean; detailAddresses?: readonly SessionAddress[]; includeFollowRuleFacts?: boolean;
+        ruleMembershipByServerId?: Readonly<Record<string, readonly string[]>> }> = {},
 ): (state: StorageState) => StoreActivityAttentionSource {
     const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
     const renderableSignatureCache = new Map<string, SignatureCacheEntry<SessionListRenderableSession>>();
@@ -505,6 +509,7 @@ export function createActivityAttentionStoreSourceSelector(
     let potentialSessionIds: readonly string[] = [];
     const includeSessionMessages = options.includeSessionMessages !== false;
     const includeFollowRuleFacts = options.includeFollowRuleFacts === true;
+    const ruleMembershipByServerId = options.ruleMembershipByServerId ?? {};
 
     return (state) => {
         const inputs = readActivityAttentionStoreSource(state, includeSessionMessages, includeFollowRuleFacts);
@@ -545,13 +550,14 @@ export function createActivityAttentionStoreSourceSelector(
                 includeFollowRuleFacts && serverId ? readFollowRuleFactsSignature(session, serverId) : '',
             ]);
         });
-        if (rowsChanged || membershipChanged) signatures.rows = buildActivityRowsSignature(state, renderableSignatureCache, personalMembershipByServerId, includeFollowRuleFacts);
+        if (rowsChanged || membershipChanged) signatures.rows = buildActivityRowsSignature(state, renderableSignatureCache,
+            personalMembershipByServerId, includeFollowRuleFacts, ruleMembershipByServerId);
         if (indexChanged) signatures.index = buildSessionListIndexSignature(state.sessionListIndexByServerId);
         if (cacheChanged) signatures.cache = buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId);
         if (messagesChanged) signatures.messages = buildSessionMessagesRecordSignature(potentialSessionIds, state.sessionMessages, sessionMessagesSignatureCache);
         if (workspaceChanged) signatures.workspace = buildWorkspaceDisplaySettingsSignature(state, includeFollowRuleFacts);
         if (includeFollowRuleFacts && (organizationChanged || sessionsChanged || membershipChanged || rowsChanged || cacheChanged)) {
-            signatures.organization = buildFollowRuleOrganizationSignature(state, personalMembershipByServerId);
+            signatures.organization = buildFollowRuleOrganizationSignature(state, personalMembershipByServerId, ruleMembershipByServerId);
         }
         previousInputs = inputs;
         const signature = joinSignatureParts([

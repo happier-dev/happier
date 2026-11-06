@@ -2,10 +2,15 @@ import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { act, createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -116,4 +121,67 @@ it.each(['credentials', 'account'] as const)('withdraws an in-flight mute census
     await flushHookEffects();
     expect(reads()).toBe(after);
     expect(scopes()).toBeUndefined();
+});
+
+it.each(['credentials', 'account'] as const)('admits a row-only rule candidate only for the active Home and clears it on %s retirement', async retirement => {
+    const otherId = await homes.addHome({ name: 'Other rule Home', serverUrl: 'https://other-rule-home.test', accountId: 'alice' });
+    const serverId = await homes.addHome({ name: 'Rule corpus', serverUrl, accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const rule = (home: string, enabled = true) => ({ ruleId: `personal-${home}`, receiver: { kind: 'account' }, version: 0,
+        inception: { createdAt: 1 }, content: { t: 'plain', v: { v: 1, enabled, policy: { preset: 'everything' },
+            filter: normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [home], scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'] }) } } });
+    const foreign = createSessionFixture({ id: 'foreign-rule-only', serverId, ownerAccountId: 'bob', encryptionMode: 'plain',
+        access: createSessionAccessFixture('view'), viewer: createSessionViewerFixture() });
+    const row = { ...createPlainSessionByIdResponseFixture(foreign).session, ownerAccountId: 'bob', viewer: foreign.viewer };
+    for (const id of [otherId, serverId]) {
+        homes.answer(id, '/v1/features', { body: features });
+        homes.answer(id, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId: id, snapshot: { status: 'ready', features } });
+        homes.answer(id, '/v2/sessions', { body: { sessions: [], hasNext: false, nextCursor: null } });
+        homes.answer(id, '/v2/sessions/query', { select: input => ({ body: createSessionListSourceFixture({
+            sessions: id === serverId && input && typeof input === 'object' && 'scope' in input && input.scope === 'all_accessible' ? [row] : [],
+            hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+        }) }) });
+        homes.answer(id, '/v2/account/session-follow-rules', { body: { rules: [rule(id)] } });
+        homes.answer(id, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
+        homes.answer(id, mutePath, { body: { scopes: [] } });
+    }
+    restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
+        credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
+        configureSocket: configureConnectedServerSocketBoundary, request: createSessionReadBatchFetchBoundary(homes.request) });
+    await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
+    const { useActivityAttentionSummarySource } = await import('./useActivityAttentionSource');
+    const { collectActivitySourceSessionAddresses } = await import('./activitySourceSessionAddresses');
+    const hook = await renderHook(() => ({ membership: useActivityPersonalSessionMembership(), source: useActivityAttentionSummarySource() }), {
+        wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled>{children}</ActivityPersonalSessionMembershipProvider>,
+    });
+    const candidates = () => collectActivitySourceSessionAddresses(hook.getCurrent().source, false);
+    await vi.waitFor(() => expect(candidates()).toContainEqual({ serverId, sessionId: foreign.id }));
+    expect(hook.getCurrent().membership.membershipByServerId[serverId]).toEqual([]);
+    expect(hook.getCurrent().membership.membershipByServerId[otherId]).toEqual([]);
+    expect(homes.requests.filter(request => request.serverId === otherId && request.path === '/v2/sessions/query'
+        && request.input && typeof request.input === 'object' && 'scope' in request.input && request.input.scope === 'all_accessible')).toHaveLength(0);
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [rule(serverId, false)] } });
+    await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+    await vi.waitFor(() => expect(candidates()).not.toContainEqual({ serverId, sessionId: foreign.id }));
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [rule(serverId)] } });
+    await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+    await vi.waitFor(() => expect(candidates()).toContainEqual({ serverId, sessionId: foreign.id }));
+    const release = createDeferred<void>();
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [rule(serverId)] }, respondAfter: release.promise });
+    const reads = () => homes.requests.filter(request => request.serverId === serverId && request.path === '/v2/account/session-follow-rules').length;
+    const before = reads();
+    await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+    await vi.waitFor(() => expect(reads()).toBe(before + 1));
+    try {
+        await act(async () => {
+            if (retirement === 'credentials') await TokenStorage.removeCredentialsForServerUrl(serverUrl, { serverId });
+            else getStorage().getState().clearProfileScope();
+        });
+    } finally { await act(async () => release.resolve()); }
+    await flushHookEffects();
+    expect(candidates()).not.toContainEqual({ serverId, sessionId: foreign.id });
+    expect(hook.getCurrent().membership.followRulesByServerId?.[serverId]?.status).not.toBe('ready');
 });

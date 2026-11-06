@@ -15,13 +15,20 @@ function createAddressAdmission(source: ActivityAttentionSource) {
         if (state && isSessionListQueryHomeCoverageComplete({ state, requestedQueryKey: state.requestedQueryKey })) authoritative.add(serverId);
     }
     const ruleSource = { personalFollowRulesByServerId: source.personalFollowRulesByServerId };
+    const rule = new Map(Object.entries(source.ruleSessionMembershipByServerId ?? {}).flatMap(([serverId, ids]) => {
+        const snapshot = readActivityPersonalRuleSnapshot(ruleSource, serverId);
+        const scope = source.audienceScopes?.get(serverId);
+        if (snapshot?.status !== 'ready' || scope && snapshot.accountId !== scope.accountId
+            || !snapshot.rules.some(candidate => candidate.receiver.kind === 'account' && candidate.definition.enabled)) return [];
+        return [[serverId, new Set(ids)] as const];
+    }));
     const ordinaryAdmitted = (address: SessionAddress) => {
         if (!authoritative.has(address.serverId) || personal.get(address.serverId)?.has(address.sessionId)) return true;
         const rules = readActivityPersonalRuleSnapshot(ruleSource, address.serverId);
         return rules?.status === 'ready' && (rules.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled)
             || Object.values(rules.defaultPreferences ?? {}).some(Boolean));
     };
-    return { personal, ordinaryAdmitted };
+    return { personal, rule, ordinaryAdmitted };
 }
 
 function voiceAddress(source: ActivityAttentionSource, sessionId: string) {
@@ -43,6 +50,10 @@ function collectAddresses(source: ActivityAttentionSource, includeWarmSourceWhen
             if (address && admission.ordinaryAdmitted(address)) add(address);
         }
         for (const [serverId, ids] of admission.personal) for (const id of ids) {
+            const address = normalizeSessionAddress(serverId, id);
+            if (address) add(address);
+        }
+        for (const [serverId, ids] of admission.rule) for (const id of ids) {
             const address = normalizeSessionAddress(serverId, id);
             if (address) add(address);
         }
@@ -94,7 +105,8 @@ export function createActivitySourceSessionAddressProjection(source: ActivityAtt
                 for (const serverId of homes) {
                     const address = normalizeSessionAddress(serverId, id);
                     if (!address) continue;
-                    const candidate = admission.personal.get(serverId)?.has(id) || voice?.serverId === serverId
+                    const candidate = admission.personal.get(serverId)?.has(id) || admission.rule.get(serverId)?.has(id)
+                        || voice?.serverId === serverId
                         || ordinary.get(serverId)?.has(id) && next.sessionListRowsByServerId[serverId]?.[id] && admission.ordinaryAdmitted(address);
                     if (candidate) { add(address); changed.push(address); }
                     else if (before?.has(serverId)) {
