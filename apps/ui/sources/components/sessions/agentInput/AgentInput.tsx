@@ -17,6 +17,7 @@ import { findModelOptionForEffectiveModelId, getModelOptionsForSession, type Mod
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
 import { Modal } from '@/modal';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { SyncPerformanceReactProfiler } from '@/components/ui/performance/SyncPerformanceReactProfiler';
 import {
     getPermissionModeBadgeLabelForAgentType,
@@ -99,7 +100,7 @@ import { useTextInputCaretRect } from '@/hooks/ui/textInputCaretRect';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import type { PermissionModePickerStyles } from './components/permissionModePickerStyles';
 import { AgentInputAttentionRequests } from './components/AgentInputPermissionRequests';
-import { AgentInputSubmitButton } from './components/AgentInputSubmitButton';
+import { AgentInputSubmitButton, canAgentInputSubmitButtonStopRun } from './components/AgentInputSubmitButton';
 import {
     DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
     resolveChipOptionInteraction,
@@ -173,6 +174,7 @@ import {
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { createAbortActionButton } from './definitions/createAbortActionButton';
 import type { StyleProp } from 'react-native';
 
 /**
@@ -194,12 +196,17 @@ const INPUT_EXPANSION_TOGGLE_HIDE_OFFSET_PX = 12;
 const INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT = 32;
 const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 4;
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
+const PHONE_AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 1;
+const PHONE_AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = PHONE_AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
 const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
+const PHONE_AGENT_INPUT_PANEL_PADDING_TOP = 0;
+const PHONE_AGENT_INPUT_PANEL_PADDING_BOTTOM = 0;
 // Composer panel corner radius. Shared by the panel surface, its cast-shadow wrapper so the drop
 // shadow follows the same rounded shape, and the auxiliary banners stacked above the panel.
 const AGENT_INPUT_PANEL_RADIUS = COMPOSER_SURFACE_RADIUS;
 const AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_PANEL_PADDING_TOP + AGENT_INPUT_PANEL_PADDING_BOTTOM;
+const PHONE_AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT = PHONE_AGENT_INPUT_PANEL_PADDING_TOP + PHONE_AGENT_INPUT_PANEL_PADDING_BOTTOM;
 const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = 4;
 const EMPTY_PERMISSION_LOCATIONS_BY_ID = new Map<string, PermissionToolCallMessageLocation | null>();
 const AGENT_INPUT_TEST_IDS = {
@@ -654,6 +661,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: AGENT_INPUT_PANEL_PADDING_BOTTOM,
         paddingHorizontal: 8,
     },
+    unifiedPanelPhone: {
+        paddingTop: PHONE_AGENT_INPUT_PANEL_PADDING_TOP,
+        paddingBottom: PHONE_AGENT_INPUT_PANEL_PADDING_BOTTOM,
+    },
     // Opt-in "glass" composer: the themed glass fill, rim, and a top inset shadow.
     // Fully redefines the border so the standard hairline + highlight don't leak
     // through. The cast shadow lives on the
@@ -688,6 +699,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingRight: 8,
         paddingVertical: AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
         minHeight: 40,
+    },
+    inputContainerPhone: {
+        paddingVertical: PHONE_AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
     },
     nativeKeyboardPanelContent: {
         minHeight: 0,
@@ -926,6 +940,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
     },
+    actionButtonsRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexShrink: 0,
+    },
     actionButtonsRowWithBelow: {
         // Match the vertical rhythm of wrapped chip rows on native.
         marginBottom: Platform.OS === 'web' ? 0 : NATIVE_ACTION_BAR_SECTION_GAP_Y,
@@ -1124,6 +1143,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    const isPhoneLayout = isMobileLayoutWidth(screenWidth);
     const voiceEnabled = useFeatureEnabled('voice');
     const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
@@ -1187,31 +1207,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [actionFooterHeightPx, composerAttentionHeightPx, effectivePanelMaxHeight]);
     const fallbackInputMaxHeight = props.inputMaxHeight ?? defaultInputMaxHeight;
-    const minimumMeasuredPanelFixedChromeHeight = Platform.OS === 'web'
-        ? actionFooterHeightPx
-            + composerAttentionHeightPx
-            + variableContentBeforeInputHeightPx
-            + AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT
-            + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM
-        : undefined;
-    const resolvedInputMaxHeight = React.useMemo(() => {
-        return computeMeasuredPanelInputMaxHeight({
-            panelMaxHeight: effectivePanelMaxHeight,
-            panelHeight: panelHeightPx,
-            inputContainerHeight: inputContainerHeightPx,
-            inputContainerChromeHeight: AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT,
-            minimumFixedChromeHeight: minimumMeasuredPanelFixedChromeHeight,
-            fallbackMaxHeight: fallbackInputMaxHeight,
-            fallbackMaxHeightMode: props.sessionId ? 'cap' : 'seed',
-        });
-    }, [
-        fallbackInputMaxHeight,
-        effectivePanelMaxHeight,
-        inputContainerHeightPx,
-        minimumMeasuredPanelFixedChromeHeight,
-        panelHeightPx,
-        props.sessionId,
-    ]);
     const inputExpansionCollapsedMaxHeight = typeof props.inputExpansion?.collapsedMaxHeight === 'number'
         && Number.isFinite(props.inputExpansion.collapsedMaxHeight)
         && props.inputExpansion.collapsedMaxHeight > 0
@@ -2332,6 +2327,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
     } = useAgentInputSelectionAnchors();
     const [showActionMenu, setShowActionMenu] = React.useState(false);
+    const [controlsExpanded, setControlsExpanded] = React.useState(true);
+    const primaryControlsScrollOffsetRef = React.useRef(0);
+    const secondaryControlsScrollOffsetRef = React.useRef(0);
     const statusBadgeAnchorRef = React.useRef<any>(null);
     const [uncontrolledActiveStatusBadgeKey, setUncontrolledActiveStatusBadgeKey] = React.useState<string | null>(null);
     const activeStatusBadgeKey = props.activeStatusBadgeKey !== undefined
@@ -2486,6 +2484,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasResume = Boolean(props.onResumeClick || props.resumePopover);
     const hasFiles = Boolean(props.sessionId && props.onFileViewerPress);
     const canStopFromComposer = Boolean(props.onAbort && props.showAbortButton);
+    const submitCanStopRun = canAgentInputSubmitButtonStopRun({
+        disabled: sendActionDisabled,
+        hasSendableContent,
+        canStop: canStopFromComposer,
+        hasMicPressHandler: Boolean(micPressHandler),
+        armedContinuationTarget: props.armedContinuationTarget,
+    });
     const hasStop = canStopFromComposer;
     const hasAnyActions = getHasAnyAgentInputActions({
         showPermissionChip,
@@ -2679,6 +2684,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const {
         controlNodes: renderedActionControlNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
+        hasHideableControls,
         extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
         layout: effectiveActionBarLayout,
@@ -2699,6 +2705,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         permissionChipLabel,
         onPermissionPress: handlePermissionPress,
         hasActionMenuPopoverSections,
+        hasHideableActionMenuSections: actionMenuActions.some((action) => action.id !== 'stop'),
         actionMenuAnchorRef,
         onActionMenuPress: handleActionMenuPress,
         actionBarIsCollapsed,
@@ -2745,6 +2752,39 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sourceControlCompact: actionBarShouldScroll || !showChipLabels,
         sourceControlWrapperStyle: styles.actionItemWrapper,
     });
+    const usesPhoneDisclosureTarget = isPhoneLayout && hasHideableControls;
+    const effectivePanelVerticalChromeHeight = usesPhoneDisclosureTarget
+        ? PHONE_AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT
+        : AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT;
+    const effectiveInputContainerVerticalChromeHeight = usesPhoneDisclosureTarget
+        ? PHONE_AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT
+        : AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT;
+    const minimumMeasuredPanelFixedChromeHeight = Platform.OS === 'web'
+        ? actionFooterHeightPx
+            + composerAttentionHeightPx
+            + variableContentBeforeInputHeightPx
+            + effectivePanelVerticalChromeHeight
+            + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM
+        : undefined;
+    const resolvedInputMaxHeight = React.useMemo(() => {
+        return computeMeasuredPanelInputMaxHeight({
+            panelMaxHeight: effectivePanelMaxHeight,
+            panelHeight: panelHeightPx,
+            inputContainerHeight: inputContainerHeightPx,
+            inputContainerChromeHeight: effectiveInputContainerVerticalChromeHeight,
+            minimumFixedChromeHeight: minimumMeasuredPanelFixedChromeHeight,
+            fallbackMaxHeight: fallbackInputMaxHeight,
+            fallbackMaxHeightMode: props.sessionId ? 'cap' : 'seed',
+        });
+    }, [
+        fallbackInputMaxHeight,
+        effectivePanelMaxHeight,
+        effectiveInputContainerVerticalChromeHeight,
+        inputContainerHeightPx,
+        minimumMeasuredPanelFixedChromeHeight,
+        panelHeightPx,
+        props.sessionId,
+    ]);
 
     const handlePermissionSelect = React.useCallback((mode: PermissionMode) => {
         hapticsLight();
@@ -2913,7 +2953,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             ref={composerAnchorRef}
             collapsable={false}
             testID="agent-input-composer-input-container"
-            style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+            style={[
+                styles.inputContainer,
+                usesPhoneDisclosureTarget ? styles.inputContainerPhone : null,
+                props.minHeight ? { minHeight: props.minHeight } : undefined,
+            ]}
             onLayout={(event) => {
                 updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
             }}
@@ -3053,20 +3097,31 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         </>
     );
 
+    const effectiveControlsExpanded = !usesPhoneDisclosureTarget || controlsExpanded;
+
+    const toggleControls = () => {
+        if (controlsExpanded) {
+            closeActionMenu();
+            resetSelectionOverlays();
+        }
+        setControlsExpanded(!controlsExpanded);
+    };
+
     const renderActionRows = () => (
         <View style={styles.actionButtonsContainer}>
             <View
                 style={[
                     screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
-                    isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
+                    isPhoneLayout ? styles.actionButtonsColumnMobile : null,
                 ]}
             >{[
                 <View
                     key="row1"
-                    style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
+                    style={[styles.actionButtonsRow, effectiveControlsExpanded && showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
                 >
-                    {actionBarShouldScroll ? (
+                    {!effectiveControlsExpanded ? <View style={styles.actionButtonsLeftScroll} /> : actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
+                            scrollOffsetRef={primaryControlsScrollOffsetRef}
                             containerStyle={styles.actionButtonsLeftScroll}
                             contentStyle={styles.actionButtonsLeftScrollContent}
                             fadeColor={actionBarFadeColor}
@@ -3081,28 +3136,57 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {renderedActionControlNodes as any}
                         </View>
                     )}
-                    <AgentInputSubmitButton
-                        testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
-                        sessionId={props.sessionId}
-                        submitAccessibilityLabel={props.submitAccessibilityLabel}
-                        disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending)}
-                        isSending={props.isSending}
-                        isStopping={isAborting}
-                        hasSendableContent={hasSendableContent}
-                        canStop={canStopFromComposer}
-                        micPressHandler={micPressHandler}
-                        micActive={micActive}
-                        armedContinuationTarget={props.armedContinuationTarget ?? null}
-                        onSend={handleSend}
-                        sendMenuModes={props.sendMenuModes}
-                        sendMenuShortcuts={sendMenuShortcuts}
-                        onStop={handleAbortPress}
-                    />
+                    <View style={styles.actionButtonsRight}>
+                        {usesPhoneDisclosureTarget ? (
+                            <PrimaryCircleIconButton
+                                testID="agent-input-controls-toggle"
+                                active
+                                accessibilityLabel={t(controlsExpanded ? 'agentInput.hideControls' : 'agentInput.showControls')}
+                                accessibilityState={{ expanded: controlsExpanded }}
+                                touchTargetSize={48}
+                                onPress={toggleControls}
+                            >
+                                <Icon
+                                    name={controlsExpanded ? 'caret-up' : 'caret-down'}
+                                    size={16}
+                                    color={theme.colors.button.primary.tint}
+                                />
+                            </PrimaryCircleIconButton>
+                        ) : null}
+                        {!effectiveControlsExpanded && canStopFromComposer && !submitCanStopRun
+                            ? createAbortActionButton({
+                                shakerRef,
+                                isAborting,
+                                tint: theme.colors.composer.chipTint,
+                                buttonStyle: styles.actionButton,
+                                buttonPressedStyle: styles.actionButtonPressed,
+                                onPress: handleStopFromComposer,
+                            })
+                            : null}
+                        <AgentInputSubmitButton
+                            testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
+                            sessionId={props.sessionId}
+                            submitAccessibilityLabel={props.submitAccessibilityLabel}
+                            disabled={sendActionDisabled}
+                            isSending={props.isSending}
+                            isStopping={isAborting}
+                            hasSendableContent={hasSendableContent}
+                            canStop={canStopFromComposer}
+                            micPressHandler={micPressHandler}
+                            micActive={micActive}
+                            armedContinuationTarget={props.armedContinuationTarget ?? null}
+                            onSend={handleSend}
+                            sendMenuModes={props.sendMenuModes}
+                            sendMenuShortcuts={sendMenuShortcuts}
+                            onStop={handleAbortPress}
+                        />
+                    </View>
                 </View>,
-                showSecondaryControlsRow ? (
+                effectiveControlsExpanded && showSecondaryControlsRow ? (
                     actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
                             key="row2"
+                            scrollOffsetRef={secondaryControlsScrollOffsetRef}
                             containerStyle={styles.actionButtonsSecondaryScroll}
                             contentStyle={styles.actionButtonsScrollViewportContent}
                             fadeColor={actionBarFadeColor}
@@ -3407,6 +3491,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     style={[
                         styles.unifiedPanel,
                         isGlassComposer ? styles.unifiedPanelGlass : null,
+                        usesPhoneDisclosureTarget ? styles.unifiedPanelPhone : null,
                         props.panelStyle,
                         typeof effectivePanelMaxHeight === 'number' ? { maxHeight: effectivePanelMaxHeight } : null,
                     ]}

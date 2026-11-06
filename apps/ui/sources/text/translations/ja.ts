@@ -7204,6 +7204,8 @@ localTailscale: {
   },
 
   agentInput: {
+      showControls: "入力の操作を表示",
+      hideControls: "入力の操作を非表示",
       sendOptions: {
           title: "送信オプション",
           queue: "キューに追加",

@@ -192,7 +192,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onAbortPress,
     }) : null;
 
-    const sourceControlChip = !params.actionBarIsCollapsed ? createSourceControlActionChip({
+    const sourceControlChip = !params.actionBarIsCollapsed && params.sessionId && params.onFileViewerPress ? createSourceControlActionChip({
         sessionId: params.sessionId,
         onPress: params.onFileViewerPress,
         compact: params.sourceControlCompact,

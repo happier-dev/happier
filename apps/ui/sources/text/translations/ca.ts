@@ -6551,6 +6551,8 @@ deps: {
     },
 
     agentInput: {
+        showControls: "Mostra els controls de composició",
+        hideControls: "Amaga els controls de composició",
         sendOptions: {
             title: "Opcions d’enviament",
             queue: "Posa a la cua",

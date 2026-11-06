@@ -6942,6 +6942,8 @@ export const pl: TranslationStructure = {
   },
 
   agentInput: {
+      showControls: "Pokaż opcje edytora",
+      hideControls: "Ukryj opcje edytora",
       sendOptions: {
           title: "Opcje wysyłania",
           queue: "Dodaj do kolejki",
