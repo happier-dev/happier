@@ -1253,6 +1253,9 @@ does not select it. `--no-ui` keeps a source worker headless. Code preparation p
 and one-shot bundlers release their services rather than retain idle heaps in the Stack lifecycle owner.
 For a running source Stack, `hstack stack daemon <name> restart --runtime=source`
 prepares current daemon/plugin code on its observed host and replaces only that daemon.
+In 0.3 development, `hstack stack daemon <name> start --runtime=source` also captures
+current source and activates it through the same Session-preserving replacement path.
+Status, stop and availability recovery retain their existing selected-launch contract.
 The existing daemon lifecycle owner retires the incumbent before selecting and attesting
 the successor; recovery consumes that canonical selection instead of stale runner arguments.
 `hstack stack build <name> --web --runtime=source` prepares only the web export and

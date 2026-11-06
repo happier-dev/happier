@@ -675,6 +675,8 @@ hstack stack daemon <stack> start --identity=account-a
 hstack stack daemon <stack> stop  --identity=account-a
 ```
 
+In 0.3 development, add `--runtime=source` to daemon start to prepare current daemon/plugin source on its observed host. It activates that source through the same Session-preserving replacement path as source restart, including when an older daemon is already running.
+
 - For the **main** stack, use `<stack>=main` and the default `<port>=53288` (unless you changed it).
 - If you use Tailscale Serve, `HAPPIER_WEBAPP_URL` should be your HTTPS URL (what you get from `hstack tailscale url`).
 - Logs live under:

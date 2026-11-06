@@ -35,10 +35,11 @@ export async function resolveStackDaemonCommandContext({
   argv = [],
   activeRuntimeState = null,
 }) {
+  const preparesDaemonLaunch = argv.includes('start') || argv.includes('restart');
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState,
-    purpose: argv.includes('restart') ? 'restart' : 'cli' });
+    purpose: preparesDaemonLaunch ? 'restart' : 'cli' });
   let sourceRuntimeLaunchUpdate = null;
-  if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && argv.includes('restart')) {
+  if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && preparesDaemonLaunch) {
     const { buildSourceRuntimeBundle } = await import('../build/build_source_runtime.mjs');
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir: runtimeLaunchContext.stackBaseDir, component: 'daemon', env });
@@ -121,7 +122,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
         `  ${cyan('hstack stack daemon')} <name> start [--identity=<name>] [--json]`,
         `  ${cyan('hstack stack daemon')} <name> stop [--identity=<name>] [--json]`,
         `  ${cyan('hstack stack daemon')} <name> restart [--runtime=source] [--identity=<name>] [--json]`,
-        '  Commands follow the observed daemon host. A source restart builds current daemon/plugin source and preserves Session runners without restarting the server or UI.',
+        '  Commands follow the observed daemon host. Source start and restart build current daemon/plugin source and preserve Session runners without restarting the server or UI.',
         '',
         sectionTitle('example:'),
         `  ${cmdFmt(`hstack stack daemon ${stackName || 'main'} restart`)}`,
@@ -237,13 +238,13 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           publicServerUrl,
           runtimeStatePath: runtimePath,
           isShuttingDown: () => false,
-          forceRestart: action === 'restart',
+          forceRestart: action === 'restart' || Boolean(sourceRuntimeLaunchUpdate),
           env: envForIdentity,
           stackName,
           cliIdentity: identity,
           ...runtimeProvenance,
           sourceRuntimeLaunchUpdate,
-          preserveSessionsOnRestart: action === 'restart' && Boolean(sourceRuntimeLaunchUpdate),
+          preserveSessionsOnRestart: Boolean(sourceRuntimeLaunchUpdate),
         });
         if (startResult?.ok === false) {
           return {
