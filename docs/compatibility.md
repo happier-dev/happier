@@ -16,7 +16,7 @@ added.
 
 Continuation inspection, batch inspection and transition brief preview require
 `session.read` scope for the exact Session. Home resolves the requester's existing
-`readTranscript` access once before forwarding; the daemon binds the decoded
+`readTranscript` access before forwarding; the daemon binds the decoded
 request's Session to that proof. Machine Use alone grants no Session access, and
 Session read proof cannot authorize a mutation. Requester-owned and read-shared
 Sessions remain eligible on shared Machines.
