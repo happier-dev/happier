@@ -399,7 +399,11 @@ describe('fetchAndApplyMachines real selected-envelope hydration', () => {
         { phase: 'request', initial: 'locked' }, { phase: 'hydration', initial: 'locked' },
         { phase: 'request', initial: 'absent' }, { phase: 'hydration', initial: 'absent' },
     ] as const)('hydrates a $initial Machine despite a presence update during $phase', async ({ phase, initial }) => {
-        const { fetchAndApplyMachines, buildMachineFromMachineActivityEphemeralUpdate } = await import('./syncMachines');
+        // This suite resets modules; the real ingress and fixture must use the
+        // same current store rather than a stale statically imported instance.
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        const { fetchAndApplyMachines } = await import('./syncMachines');
         const { flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');
         const { Encryption } = await import('@/sync/encryption/encryption');
         const encryption = await Encryption.create(new Uint8Array(32).fill(17));
@@ -439,16 +443,15 @@ describe('fetchAndApplyMachines real selected-envelope hydration', () => {
         try {
             await entered.promise;
             const current = storage.getState().machines[row.id];
-            if (current) storage.getState().applyMachines([buildMachineFromMachineActivityEphemeralUpdate({ machine: current,
-                updateData: { active: true, activeAt: current.activeAt + 100 } })]);
+            if (current) flushMachineActivityUpdates({ updates: new Map([[row.id,
+                { id: row.id, active: true, activeAt: current.activeAt + 100 }]]) });
             else {
-                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: true, activeAt: 110 }]]),
-                    applyMachines: machines => storage.getState().applyMachines(machines) });
-                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: false, activeAt: 115 }]]),
-                    applyMachines: machines => storage.getState().applyMachines(machines) });
+                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: true, activeAt: 110 }]]) });
+                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: false, activeAt: 115 }]]) });
             }
-            const latestActiveAt = storage.getState().machines[row.id]!.activeAt;
-            const latestActive = storage.getState().machines[row.id]!.active;
+            const activity = readMachineActivity(storage.getState().machines[row.id]!);
+            const latestActiveAt = activity.activeAt;
+            const latestActive = activity.active;
             release.resolve();
             await pending;
             await vi.waitFor(() => expect(storage.getState().machines[row.id]).toMatchObject({

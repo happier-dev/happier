@@ -9,7 +9,8 @@ import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { Encryption } from '@/sync/encryption/encryption';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
-import { buildMachineActivityPlaceholder, fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { buildMachineActivityPlaceholder, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
 import { encodeBase64 } from '@happier-dev/protocol';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
@@ -549,8 +550,8 @@ describe('socket update handling: update-machine (missing encryption)', () => {
             availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
         const heartbeatAt = machine.activeAt + 1;
         flushMachineActivityUpdates({ updates: new Map([[machineId, { id: machineId, active: true, activeAt: heartbeatAt }]]),
-            sourceServerId, applyMachines: (rows, options) => storage.getState().applyMachines(rows, false, options) });
-        expect(storage.getState().machines[machineId]?.activeAt).toBe(heartbeatAt);
+            sourceServerId });
+        expect(readMachineActivity(storage.getState().machines[machineId]!).activeAt).toBe(heartbeatAt);
         const updateData: ApiUpdateContainer = { id: 'paired-owner-hint', seq: 2, createdAt: machine.updatedAt + 1,
             body: hint === 'registration'
                 ? { ...machine, t: 'new-machine', machineId, dataEncryptionKey: envelope, metadata, daemonState }
@@ -1303,32 +1304,68 @@ describe('flushMachineActivityUpdates', () => {
         storage.setState(initialStorageState, true);
     });
 
+    it('patches known liveness without reading content or republishing unrelated Machine inputs', () => {
+        const sourceServerId = getActiveServerSnapshot().serverId;
+        const now = Date.now();
+        storage.getState().applyMachines(Array.from({ length: 137 }, (_, index) =>
+            createMachineFixture({ id: `activity-${index}`, activeAt: now })), true, { sourceServerId });
+        const before = storage.getState();
+        const row = before.machines['activity-0'];
+        const metadata = row.metadata;
+        const metadataRead = vi.fn(() => metadata);
+        Object.defineProperty(row, 'metadata', { configurable: true, enumerable: true, get: metadataRead });
+        const notify = vi.fn();
+        const stop = storage.subscribe(notify);
+        try {
+            for (let index = 1; index <= 20; index++) flushMachineActivityUpdates({
+                updates: new Map([[row.id, { id: row.id, active: true, activeAt: now + index }]]),
+                sourceServerId,
+            });
+            expect(row.activeAt).toBe(now);
+            expect(readMachineActivity(row).activeAt).toBe(now + 20);
+            expect(storage.getState()).toBe(before);
+            expect(notify).not.toHaveBeenCalled();
+            expect(metadataRead).not.toHaveBeenCalled();
+        } finally { stop(); Object.defineProperty(row, 'metadata', { configurable: true, enumerable: true, writable: true, value: metadata }); }
+    });
+
     it('applies a placeholder machine so active status is not dropped', () => {
         const updates = new Map<string, { id: string; active: boolean; activeAt: number }>([
             ['m_unknown', { id: 'm_unknown', active: true, activeAt: 999 }],
         ]);
-        const applyMachines = vi.fn((machines: Machine[]) => storage.getState().applyMachines(machines));
-
-        flushMachineActivityUpdates({ updates, applyMachines });
-
-        expect(applyMachines).toHaveBeenCalledTimes(1);
+        flushMachineActivityUpdates({ updates });
         const machine = storage.getState().machines['m_unknown'] as Machine | undefined;
         expect(machine).toBeTruthy();
         expect(machine?.active).toBe(true);
         expect(machine?.activeAt).toBe(999);
     });
 
-    it('passes source server ids through to machine application', () => {
+    it('keeps same-id Machine content and liveness isolated between Homes and ignores older arrivals', () => {
+        const activeHome = getActiveServerSnapshot().serverId;
+        const otherHome = 'machine-activity-other-home';
+        const now = Date.now();
+        const one = createMachineFixture({ id: 'same-id', activeAt: now });
+        const other = createMachineFixture({ id: 'same-id', activeAt: now,
+            metadata: { ...one.metadata!, host: 'another computer' } });
+        storage.getState().applyMachines([one], true, { sourceServerId: activeHome });
+        storage.getState().applyMachines([other], true, { sourceServerId: otherHome });
+        for (const [active, activeAt] of [[true, now + 2], [false, now + 1]] as const) flushMachineActivityUpdates({
+            updates: new Map([['same-id', { id: 'same-id', active, activeAt }]]), sourceServerId: otherHome,
+        });
+        expect(storage.getState().machines['same-id']).toBe(one);
+        expect(one.activeAt).toBe(now);
+        const foreign = storage.getState().machineListByServerId[otherHome]![0];
+        expect(foreign).toMatchObject({ active: true, activeAt: now, metadata: { host: 'another computer' } });
+        expect(readMachineActivity(foreign).activeAt).toBe(now + 2);
+    });
+
+    it('publishes an unknown Machine only in its source Home', () => {
         const updates = new Map<string, { id: string; active: boolean; activeAt: number }>([
             ['m_scoped', { id: 'm_scoped', active: true, activeAt: 999 }],
         ]);
-        const applyMachines = vi.fn();
-
-        flushMachineActivityUpdates({ updates, applyMachines, sourceServerId: 'server-a' });
-
-        expect(applyMachines).toHaveBeenCalledWith(
-            [expect.objectContaining({ id: 'm_scoped' })],
-            { sourceServerId: 'server-a' },
-        );
+        flushMachineActivityUpdates({ updates, sourceServerId: 'server-a' });
+        expect(storage.getState().machineListByServerId['server-a']?.find(machine => machine.id === 'm_scoped'))
+            .toMatchObject({ id: 'm_scoped', active: true, activeAt: 999 });
+        expect(storage.getState().machines.m_scoped).toBeUndefined();
     });
 });

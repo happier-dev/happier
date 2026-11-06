@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { MachineWorkSummaryV1 } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
+import type { MachineWorkSummaryState } from './machineWorkSummary';
+export type { MachineWorkSummaryState } from './machineWorkSummary';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
@@ -10,14 +11,6 @@ import { t } from '@/text';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
-
-/** What the owner-or-Manage reader returned: the content-free summary, or why there is none. */
-export type MachineWorkSummaryState =
-  | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'offline' }>
-  | Readonly<{ kind: 'denied' }>
-  | Readonly<{ kind: 'summary'; summary: MachineWorkSummaryV1; asOf?: number;
-      stale?: 'loading' | 'offline' | 'unavailable' }>;
 
 /** Finite scripts, execution and workflow work share one neutral active-work count. */
 export function describeMachineWorkCounts(

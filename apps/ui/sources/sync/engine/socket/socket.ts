@@ -120,8 +120,6 @@ import {
     type TranscriptStreamSegmentSocketQueueEntry,
 } from './transcriptStreamSegmentSocketQueue';
 import {
-    buildMachineActivityPlaceholder,
-    buildMachineFromMachineActivityEphemeralUpdate,
     buildUpdatedMachineFromSocketUpdate,
 } from '@/sync/engine/machines/syncMachines';
 import { handleUpdateAccountSocketUpdate } from '@/sync/engine/account/syncAccount';
@@ -2557,24 +2555,12 @@ export function flushActivityUpdates(params: {
 
 export function flushMachineActivityUpdates(params: {
     updates: Map<string, MachineActivityUpdate>;
-    applyMachines: (machines: Machine[], options?: { sourceServerId?: string | null }) => void;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
 }): void {
-    const { updates, applyMachines, sourceServerId, shouldContinue = () => true } = params;
+    const { updates, sourceServerId, shouldContinue = () => true } = params;
     if (!shouldContinue()) return;
-    const machines: Machine[] = [];
-
-    for (const [, updateData] of updates) {
-        const existing = storage.getState().machines[updateData.id];
-        const machine = existing ?? buildMachineActivityPlaceholder(updateData);
-        machines.push(buildMachineFromMachineActivityEphemeralUpdate({ machine, updateData }));
-    }
-
-    if (machines.length > 0) {
-        if (!shouldContinue()) return;
-        applyMachines(machines, { sourceServerId });
-    }
+    storage.getState().applyMachineActivityUpdates([...updates.values()], { sourceServerId });
 }
 
 export function handleEphemeralSocketUpdate(params: {

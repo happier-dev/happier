@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor as createProtocolActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor as createProtocolActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -15,10 +16,43 @@ installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof 
 });
 afterEach(() => standardCleanup());
 
+// Cold transformation of the real store/Action/socket graph belongs to
+// collection, outside any individual mounted-operation deadline.
+await import('./MachineWorkSummaryReader');
+await import('@/sync/engine/socket/socket');
+
 const createActionExecutor = (ports: Partial<ActionExecutorDeps>) =>
     createProtocolActionExecutor(createActionExecutorBoundaryFixture(ports));
 
 describe('MachineWorkSummaryReader', () => {
+    it('shares exact Machine demand across mounted consumers and follows only its work changes', async () => {
+        const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
+        const { publishMachineWorkSummaryChanged } = await import('@/sync/store/domains/machines');
+        let sessions = 1;
+        const read = vi.fn(async () => ({ kind: 'current', requesters: [
+            { accountId: 'bob', displayName: 'Bob', sessions, tasks: 0, terminals: 0 },
+        ] }));
+        const executor = createActionExecutor({ machineWorkSummaryGet: read });
+        const props = { machineId: 'shared-demand', machineName: 'devbox',
+            scope: { serverId: 'shared-demand-home', accountId: 'alice' }, online: true, execute: executor.execute };
+        const first = await renderScreen(<MachineWorkSummaryReader {...props} />);
+        const second = await renderScreen(<MachineWorkSummaryReader {...props} />);
+        expect(read).toHaveBeenCalledTimes(1);
+        await act(async () => { publishMachineWorkSummaryChanged(props.scope.serverId, 'unrelated'); });
+        expect(read).toHaveBeenCalledTimes(1);
+        sessions = 2;
+        await act(async () => { publishMachineWorkSummaryChanged(props.scope.serverId, props.machineId); });
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(first.getTextContent()).toContain('2 sessions');
+        expect(second.getTextContent()).toContain('2 sessions');
+        await first.unmount();
+        sessions = 3;
+        await act(async () => { publishMachineWorkSummaryChanged(props.scope.serverId, props.machineId); });
+        expect(second.getTextContent()).toContain('3 sessions');
+        await second.unmount();
+        await act(async () => { publishMachineWorkSummaryChanged(props.scope.serverId, props.machineId); });
+        expect(read).toHaveBeenCalledTimes(3);
+    });
     it('holds unknown presence as unavailable without reading or claiming offline, then follows the observed verdict', async () => {
         const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
         const read = vi.fn(async () => ({ kind: 'current', requesters: [] }));
@@ -72,7 +106,7 @@ describe('MachineWorkSummaryReader', () => {
             storage.setState(previousState);
         }
     });
-    it('keeps its last answer on screen while a heartbeat re-reads it, instead of flipping back to checking', async () => {
+    it('keeps heartbeats read-free and retains its last answer during an explicit refresh', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
         const previousState = storage.getState();
@@ -80,7 +114,7 @@ describe('MachineWorkSummaryReader', () => {
         const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
         let reads = 0;
         let finish: ((value: unknown) => void) | undefined;
-        // First read answers unavailable; the heartbeat's re-read is held open at the RPC boundary.
+        // First read answers unavailable; the explicit refresh is held at the RPC boundary.
         const executor = createActionExecutor({ machineWorkSummaryGet: async () => {
             reads++;
             return reads === 1 ? { kind: 'unavailable' } : new Promise<unknown>(resolve => { finish = resolve; });
@@ -95,6 +129,8 @@ describe('MachineWorkSummaryReader', () => {
                 scope={{ serverId, accountId: 'alice' }} online execute={executor.execute} />);
             expect(screen.findByTestId('machine-work-summary.unavailable')).not.toBeNull();
             await act(async () => { storage.getState().applyMachines([{ ...machine, activeAt: machine.activeAt + 1 }], false, { sourceServerId: serverId }); });
+            expect(reads).toBe(1);
+            await act(async () => { publishHomeAccountChange(serverId, ['machine']); });
             expect(reads).toBe(2);
             expect(screen.findByTestId('machine-work-summary.unavailable')).not.toBeNull();
             expect(screen.findByTestId('machine-work-summary.loading')).toBeNull();
@@ -105,9 +141,12 @@ describe('MachineWorkSummaryReader', () => {
             // Repeated inventory hydration with unchanged liveness needs no new RPC.
             await act(async () => { storage.getState().applyMachines([{ ...machine }], false, { sourceServerId: serverId }); });
             expect(reads).toBe(2);
-            // Later heartbeats preserve the Machine object and store containers;
-            // a settled reader still needs the next exact-target receipt.
-            await act(async () => { storage.getState().applyMachines([{ ...machine, activeAt: machine.activeAt + 1 }], false, { sourceServerId: serverId }); });
+            // Liveness advances without invalidating the accepted work facts.
+            await act(async () => { storage.getState().applyMachineActivityUpdates([
+                { id: machine.id, active: true, activeAt: machine.activeAt + 2 },
+            ], { sourceServerId: serverId }); });
+            expect(reads).toBe(2);
+            await act(async () => { publishHomeAccountChange(serverId, ['machine']); });
             expect(reads).toBe(3);
             expect(screen.findByTestId('machine-work-summary.bob')).not.toBeNull();
             expect(screen.findByTestId('machine-work-summary.stale')).not.toBeNull();
@@ -120,10 +159,9 @@ describe('MachineWorkSummaryReader', () => {
             storage.setState(previousState);
         }
     });
-    it('refreshes from existing exact-Machine liveness without following another Home or Machine', async () => {
+    it('refreshes counts only from exact-Machine work facts and releases that demand on unmount', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { handleEphemeralSocketUpdate, flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');
-        const { MachineActivityAccumulator } = await import('@/sync/engine/activity/machineActivityAccumulator');
         const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
         const previousState = storage.getState();
         const serverId = 'machine-work-live-home';
@@ -131,10 +169,6 @@ describe('MachineWorkSummaryReader', () => {
         const machine = createMachineFixture({ id: 'machine', activeAt });
         const other = createMachineFixture({ id: 'other', activeAt });
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
-        const accumulator = new MachineActivityAccumulator((updates, options) => flushMachineActivityUpdates({
-            updates, ...options,
-            applyMachines: (machines, applyOptions) => storage.getState().applyMachines(machines, false, applyOptions),
-        }));
         try {
             storage.setState(state => ({ ...state, machines: { machine, other },
                 machineListByServerId: { ...state.machineListByServerId, [serverId]: [machine, other] },
@@ -143,34 +177,74 @@ describe('MachineWorkSummaryReader', () => {
             let response: unknown = { kind: 'current', requesters: [
                 { accountId: 'bob', displayName: 'Bob', sessions: 1, tasks: 0, terminals: 0 },
             ] };
-            const executor = createActionExecutor({ machineWorkSummaryGet: async () => response });
+            const read = vi.fn(async () => response);
+            const executor = createActionExecutor({ machineWorkSummaryGet: read });
             screen = await renderScreen(<MachineWorkSummaryReader machineId="machine" machineName="devbox"
                 scope={{ serverId, accountId: 'alice' }} online execute={executor.execute} />);
             expect(screen.findByTestId('machine-work-summary.bob') !== null).toBe(true);
-            response = { kind: 'current', requesters: [] };
-            const receiveLiveness = async (sourceServerId: string, id: string, activeAt: number) => {
-                // Socket receive is the external boundary. The incumbent parser,
-                // accumulator and scoped Machine store writer remain real.
-                await handleEphemeralSocketUpdate({ update: { type: 'machine-activity', id, active: true, activeAt },
+            response = { kind: 'current', requesters: [
+                { accountId: 'bob', displayName: 'Bob', sessions: 2, tasks: 0, terminals: 0 },
+            ] };
+            const receiveLiveness = async (sourceServerId: string, id: string, activeAt: number, workSummaryChanged = false) => {
+                // Socket receive is the external boundary. The incumbent parser
+                // and scoped Machine store writer remain real and apply immediately.
+                await handleEphemeralSocketUpdate({ update: workSummaryChanged
+                    ? { type: 'machine-work-summary-changed', machineId: id }
+                    : { type: 'machine-activity', id, active: true, activeAt },
                     sourceServerId,
-                    addMachineActivityUpdate: update => accumulator.addUpdate(update, { sourceServerId }),
+                    addMachineActivityUpdate: update => flushMachineActivityUpdates({ updates: new Map([[id, update]]), sourceServerId }),
                     addActivityUpdate: () => {}, getSessionEncryption: () => null,
                     getSession: () => undefined, applyMessages: () => {},
                 });
-                accumulator.flush();
             };
-            await act(async () => { await receiveLiveness('another-home', 'machine', activeAt + 1); });
+            await act(async () => { await receiveLiveness('another-home', 'machine', activeAt + 1, true); });
             expect(screen.findByTestId('machine-work-summary.bob') !== null).toBe(true);
-            await act(async () => { await receiveLiveness(serverId, 'other', activeAt + 2); });
+            await act(async () => { await receiveLiveness(serverId, 'other', activeAt + 2, true); });
             expect(screen.findByTestId('machine-work-summary.bob') !== null).toBe(true);
-            await act(async () => { await receiveLiveness(serverId, 'machine', activeAt + 3); });
-            expect(screen.findByTestId('machine-work-summary.bob') !== null).toBe(false);
-            expect(screen.findByTestId('machine-work-summary.empty') !== null).toBe(true);
+            const settledRoot = storage.getState();
+            const rootPublications = vi.fn();
+            const stopRoot = storage.subscribe(rootPublications);
+            try {
+                await act(async () => { await receiveLiveness(serverId, 'machine', activeAt + 3); });
+                expect(rootPublications).not.toHaveBeenCalled();
+                expect(storage.getState()).toBe(settledRoot);
+            } finally { stopRoot(); }
+            expect(read).toHaveBeenCalledTimes(1);
+            await act(async () => { await receiveLiveness(serverId, 'machine', activeAt + 3, true); });
+            expect(read).toHaveBeenCalledTimes(2);
+            expect(screen.getTextContent()).toContain('2 sessions');
+            await act(async () => { screen?.tree.unmount(); });
+            screen = undefined;
+            await act(async () => { await receiveLiveness(serverId, 'machine', activeAt + 4, true); });
+            expect(read).toHaveBeenCalledTimes(2);
         } finally {
-            accumulator.reset();
             await act(async () => { screen?.tree.unmount(); });
             storage.setState(previousState);
         }
+    });
+    it.each([false, true])('runs a trailing read only while still demanded after a pending work change (unmount: %s)', async unmount => {
+        const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
+        const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
+        let finish: ((value: unknown) => void) | undefined;
+        const read = vi.fn(async (): Promise<unknown> => read.mock.calls.length === 1
+            ? new Promise<unknown>(resolve => { finish = resolve; })
+            : { kind: 'current', requesters: [{ accountId: 'bob', displayName: 'Bob', sessions: 2, tasks: 0, terminals: 0 }] });
+        const executor = createActionExecutor({ machineWorkSummaryGet: read });
+        const screen = await renderScreen(<MachineWorkSummaryReader machineId="machine" machineName="devbox"
+            scope={{ serverId: 'trailing-home', accountId: 'alice' }} online execute={executor.execute} />);
+        await act(async () => {
+            await handleEphemeralSocketUpdate({ update: { type: 'machine-work-summary-changed', machineId: 'machine' }, sourceServerId: 'trailing-home',
+                addMachineActivityUpdate: () => {}, addActivityUpdate: () => {}, getSessionEncryption: () => null,
+                getSession: () => undefined, applyMessages: () => {},
+            });
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+        if (unmount) await act(async () => { screen.tree.unmount(); });
+        await act(async () => { finish?.({ kind: 'current', requesters: [
+            { accountId: 'bob', displayName: 'Bob', sessions: 1, tasks: 0, terminals: 0 },
+        ] }); });
+        expect(read).toHaveBeenCalledTimes(unmount ? 1 : 2);
+        if (!unmount) expect(screen.getTextContent()).toContain('2 sessions');
     });
     it('recovers on same-Account credential restoration without reviving a retired request', async () => {
         const storage = installLocalStorageMock();
