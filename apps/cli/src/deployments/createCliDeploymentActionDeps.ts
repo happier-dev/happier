@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
   DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema,
   type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1,
@@ -224,7 +225,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if (!actionOperationId || !requestId) return failure('operation_unavailable');
         const native = context.externalActionExecutionAuthorization?.binding.deploymentNativeAdmission;
         body = { ...transportInput, actionOperationId, requestId,
-          ...(actionId === 'deployments.domains.add' && native && 'kind' in native && native.kind === 'domain'
+          ...(actionId === 'deployments.domains.add' && isDeploymentDomainNativeAdmissionV1(native)
             && native.authoredMetadataDigest ? { authoredInputDigest: native.inputDigest } : {}) };
       }
       if (actionId === 'deployments.bindings.set') {
