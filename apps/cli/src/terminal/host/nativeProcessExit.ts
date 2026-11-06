@@ -60,7 +60,8 @@ export function createNativeProcessExitObserver(input: Readonly<{
                 } finally {
                     if (!controller.signal.aborted) {
                         timer = setTimeout(() => { void observe(); }, NATIVE_EXIT_POLL_MS);
-                        timer.unref?.();
+                        // The CLI uses Node timers even when browser globals affect overload selection.
+                        (timer as unknown as NodeJS.Timeout).unref?.();
                     }
                 }
             };

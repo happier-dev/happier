@@ -179,6 +179,7 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
             channel,
             os,
             arch,
+            runRemoteText: command => params.runTextCommand(command),
         });
     const installResult = await executeRemoteSelfDownloadFirstPartyInstallPlan({
         componentId: 'happier-cli', channel, plan,
