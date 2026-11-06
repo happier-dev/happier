@@ -492,7 +492,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         nativeSignInPurpose: ({ service }: { service: string }) => `${service}（原生登录）`,
         runsOn: ({ owner, machine }: { owner: string; machine: string }) => `在 ${owner} 的 ${machine} 上运行`,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier 会为 ${machine} 提供仅适用于此会话的登录凭据。`,
-        fullSignIn: ({ machine }: { machine: string }) => `此会话运行期间，你的 Happier 登录凭据会存储在 ${machine} 上。在那里拥有终端或代理访问权限的人可能会用它访问你的 Happier 账户。`,
+        fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `${retention === 'trigger' ? '触发器存在期间' : retention === 'run' ? '此工作流运行期间' : '此会话运行期间'}，你的 Happier 登录凭据会存储在 ${machine} 上。在那里拥有终端或代理访问权限的人可能会用它访问你的 Happier 账户。`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} 以及任何能登录 ${machine} 的人都可以在那里看到此会话的文件和输出。`,
         howShared: "共享机器如何运作",
         loading: ({ machine }: { machine: string }) => `启动会话前正在检查 ${machine}。`,

@@ -492,7 +492,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         nativeSignInPurpose: ({ service }: { service: string }) => `${service}（ネイティブログイン）`,
         runsOn: ({ owner, machine }: { owner: string; machine: string }) => `${owner} さんの ${machine} で実行`,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier は ${machine} に、このセッションでのみ有効なサインインを付与します。`,
-        fullSignIn: ({ machine }: { machine: string }) => `このセッションの実行中、Happier のサインイン情報は ${machine} に保存されます。そこでターミナルやエージェントにアクセスできる人が、あなたの Happier アカウントにアクセスするためにそれを使用する可能性があります。`,
+        fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `${retention === 'trigger' ? 'トリガーが存在する間' : retention === 'run' ? 'このワークフローの実行中' : 'このセッションの実行中'}、Happier のサインイン情報は ${machine} に保存されます。そこでターミナルやエージェントにアクセスできる人が、あなたの Happier アカウントにアクセスするためにそれを使用する可能性があります。`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} さんと ${machine} にサインインできる人は誰でも、このセッションのファイルと出力をそこで見ることができます。`,
         howShared: "共有マシンのしくみ",
         loading: ({ machine }: { machine: string }) => `セッションを開始する前に ${machine} を確認しています。`,

@@ -60,7 +60,8 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({ translate: (key, params) => key.startsWith('machineRequester.') && params
+        ? `${key}:${JSON.stringify(params)}` : key });
 });
 
 const inputs: readonly WorkflowInputDefinition[] = [
@@ -120,6 +121,32 @@ describe('workflow composer admission', () => {
         disposeLoader = undefined;
         getStorage().setState(previousState);
     });
+    it.each([false, true])('discloses the selected Machine owner and removes the own-machines footer only for a guest (H1 shared=%s)', async shared => {
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { AccessibleMachineAccessV1Schema } = await import('@happier-dev/protocol/machines/machineAccessV1');
+        const machine = createMachineFixture({ access: AccessibleMachineAccessV1Schema.parse({
+            custodian: { accountId: shared ? 'machine-owner' : 'account-a', displayName: 'Machine owner' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready',
+        }) });
+        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [appliedHome.serverId]: [machine] } });
+        home.answer(appliedHome.serverId, '/v1/artifacts/saved-workflow/access/grants', { body: ArtifactAccessGrantsListResponseV1Schema.parse({
+            artifactId: 'saved-workflow', ownerAccountId: 'workflow-owner', access: 'edit', grants: [],
+        }) });
+        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow" machineId={machine.id}
+            serverId={appliedHome.serverId} definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })}
+            inputs={[]} values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        if (shared) {
+            expect(screen.getTextContent()).toContain(t('machineRequester.runsOn', { owner: 'Machine owner', machine: 'tester.local' }));
+            expect(screen.getTextContent()).toContain(t('machineRequester.fullSignIn', { machine: 'tester.local', retention: 'run' }));
+            expect(screen.getTextContent()).toContain(t('machineRequester.osVisibility', { owner: 'Machine owner', machine: 'tester.local' }));
+            expect(screen.findByTestId('workflow-run-inputs-own-machines')).toBeNull();
+        } else {
+            expect(screen.getTextContent()).not.toContain('machineRequester.runsOn');
+            expect(screen.findByTestId('workflow-run-inputs-own-machines')).not.toBeNull();
+        }
+    });
+
     it.each([undefined, { serverId: 'other-home', sessionId: 'explicit-review-session' }])(
         'binds origin Session input defaults without replacing an explicit target (%j)', async (explicit) => {
             const originSession = { serverId: appliedHome.serverId, sessionId: 'origin-session' };

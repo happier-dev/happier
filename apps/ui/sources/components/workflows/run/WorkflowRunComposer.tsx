@@ -44,6 +44,7 @@ import { useWorkflowRunVisibility } from './useWorkflowRunVisibility';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { countWorkflowStepsV1, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
+import { useWorkflowRequesterDisclosure, WorkflowRequesterDisclosureView } from '../presentation/WorkflowRequesterDisclosure';
 import type { WorkflowRunNowRetainedRequest } from './useWorkflowRunNowController';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 
@@ -172,6 +173,11 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
     const columnInnerStyle = [styles.columnInner, column.maxWidth === undefined ? null : { maxWidth: column.maxWidth }];
     const retainedSource = retained?.input.source;
     const visibility = useWorkflowRunVisibility(acceptedRepeat ? null : props.sourceArtifactId);
+    const requesterDisclosure = useWorkflowRequesterDisclosure({
+        machineId: retained?.project?.machineId ?? props.machineId,
+        serverId: props.serverId,
+        retention: 'run',
+    });
     const visibleTeamId = retainedSource !== undefined
         ? retainedSource.kind === 'catalog' ? null : retainedSource.visibleTeamId ?? null
         : visibility.resolution.ok ? visibility.resolution.visibleTeamId : null;
@@ -386,6 +392,7 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                         extraActionChips={chips}
                     />
                 </PluginContextualResourceStoreProvider>
+                <WorkflowRequesterDisclosureView model={requesterDisclosure} />
             </View>
             <View style={columnStyle}><View testID={`${prefix}-footer`} style={[columnInnerStyle, styles.footer]}>
                 <View testID={`${prefix}-status`} style={styles.status}>
@@ -393,7 +400,7 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                     {props.reconciling ? <Text testID={`${prefix}-reconciling`} accessibilityLiveRegion="polite" style={styles.secondary}>{t('workflows.start.stillStarting')}</Text> : null}
                     {props.pending && !props.reconciling ? <Text testID={`${prefix}-starting`} accessibilityLiveRegion="polite" style={styles.secondary}>{t('workflows.start.starting')}</Text> : null}
                     {props.includesUnsavedEdits ? <Text testID={`${prefix}-unsaved`} style={styles.secondary}>{t('workflows.start.unsaved')}</Text> : null}
-                    {visibility.shared ? <Text style={styles.secondary}>{t('workflows.start.visibility.machines')}</Text> : null}
+                    {visibility.shared && requesterDisclosure === null ? <Text testID={`${prefix}-own-machines`} style={styles.secondary}>{t('workflows.start.visibility.machines')}</Text> : null}
                     {selectedTeam?.sessionCreationPolicy === 'team_required' ? <Text testID={`${prefix}-team-required`}
                         accessibilityLiveRegion="polite" style={styles.secondary}>{t('workflows.start.visibility.requiredSessionsEditable')}</Text> : null}
                     {retained !== null ? null : visibility.status !== 'ready' ? <View style={styles.readiness}>

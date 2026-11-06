@@ -492,7 +492,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         nativeSignInPurpose: ({ service }: { service: string }) => `${service} (встроенный вход)`,
         runsOn: ({ owner, machine }: { owner: string; machine: string }) => `Работает на ${machine} пользователя ${owner}`,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier выдаёт ${machine} вход, который работает только для этого сеанса.`,
-        fullSignIn: ({ machine }: { machine: string }) => `Ваш вход в Happier хранится на ${machine}, пока идёт этот сеанс. Люди с доступом к терминалу или агенту там могут использовать его для доступа к вашему аккаунту Happier.`,
+        fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Ваш вход в Happier хранится на ${machine}, ${retention === 'trigger' ? 'пока существует триггер' : retention === 'run' ? 'пока выполняется этот workflow' : 'пока идёт этот сеанс'}. Люди с доступом к терминалу или агенту там могут использовать его для доступа к вашему аккаунту Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} и все, кто может войти на ${machine}, видят там файлы и вывод этого сеанса.`,
         howShared: "Как работают общие машины",
         loading: ({ machine }: { machine: string }) => `Проверка ${machine} перед запуском вашего сеанса.`,

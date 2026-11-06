@@ -492,7 +492,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         nativeSignInPurpose: ({ service }: { service: string }) => `${service} (accesso nativo)`,
         runsOn: ({ owner, machine }: { owner: string; machine: string }) => `In esecuzione su ${machine} di ${owner}`,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier fornisce a ${machine} un accesso valido solo per questa sessione.`,
-        fullSignIn: ({ machine }: { machine: string }) => `Il tuo accesso a Happier è memorizzato su ${machine} mentre questa sessione è in esecuzione. Chi ha accesso al terminale o agli agenti su quella macchina potrebbe usarlo per accedere al tuo account Happier.`,
+        fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Il tuo accesso a Happier è memorizzato su ${machine} ${retention === 'trigger' ? 'finché il trigger esiste' : retention === 'run' ? 'mentre questo workflow è in esecuzione' : 'mentre questa sessione è in esecuzione'}. Chi ha accesso al terminale o agli agenti su quella macchina potrebbe usarlo per accedere al tuo account Happier.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} e chiunque possa accedere a ${machine} possono vedere lì i file e l’output di questa sessione.`,
         howShared: "Come funzionano le macchine condivise",
         loading: ({ machine }: { machine: string }) => `Verifica di ${machine} prima di avviare la tua sessione.`,
