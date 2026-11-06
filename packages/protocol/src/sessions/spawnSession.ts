@@ -534,6 +534,17 @@ export function isSessionCreationTerminalSpawnErrorDetail(
   return SessionCreationTerminalSpawnErrorDetailSchema.safeParse(value).success;
 }
 
+/** Recognize the typed temporary broker failure without inferring its cause from message text. */
+export function isSessionSpawnBrokerUnavailable(input: Readonly<{
+  errorCode?: unknown;
+  errorDetail?: unknown;
+}>): boolean {
+  if (input.errorCode !== SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
+    && input.errorCode !== SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED) return false;
+  const detail = normalizeSpawnSessionErrorDetail(input.errorDetail);
+  return detail?.kind === 'launch_error' && detail.code === 'broker_unavailable';
+}
+
 export function isSpawnSessionErrorDetail(value: unknown): value is SpawnSessionErrorDetail {
   return SessionSpawnLaunchErrorV1Schema.safeParse(value).success
     || SessionLaunchRetiredV1Schema.safeParse(value).success

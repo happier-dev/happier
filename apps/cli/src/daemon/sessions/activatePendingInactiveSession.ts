@@ -12,7 +12,7 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import type { AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
 import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-import { SpawnFailureSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
+import { isSessionSpawnBrokerUnavailable, SpawnFailureSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import type { PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
@@ -262,7 +262,8 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
   if (result.type === 'error'
     && (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
       || result.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
-      && result.runtimeFailureReason === 'transport_unavailable')) {
+      && result.runtimeFailureReason === 'transport_unavailable'
+      || isSessionSpawnBrokerUnavailable(result))) {
     return { status: 'not-needed', reason: 'spawn-retryable' };
   }
   if (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {

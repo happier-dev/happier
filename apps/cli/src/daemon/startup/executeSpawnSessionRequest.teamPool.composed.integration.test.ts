@@ -27,6 +27,7 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { ApiClient } from '@/api/api';
+import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
@@ -80,6 +81,13 @@ import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '../agent
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
+import { activatePendingInactiveSession } from '../sessions/activatePendingInactiveSession';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { awaitTrackedRunnerAgentSessionOpen, recordTrackedRunnerAgentSessionOpenAttestation } from '../agentRuntime/runnerAgentSessionOpenAttestation';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+
 // Only process creation is replaced. Production daemon preparation creates
 // the bootstrap/attach files; the admitted external Agent runs in this worker.
 const os = { runner: null as null | ((args: readonly string[], environment: NodeJS.ProcessEnv) => void), pid: 0,
@@ -129,15 +137,16 @@ const { registerSessionListingRoutes }: typeof import('../../../../server/source
 const { registerSessionLookupByTagsRoute }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionLookupByTagsRoute') = await import(server + 'app/api/routes/session/registerSessionLookupByTagsRoute');
 const { sessionPendingRoutes }: typeof import('../../../../server/sources/app/api/routes/session/pendingRoutes') = await import(server + 'app/api/routes/session/pendingRoutes');
 const { registerSessionArchiveRoutes }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionArchiveRoutes') = await import(server + 'app/api/routes/session/registerSessionArchiveRoutes');
+const { registerSessionTurnMutationRoute }: typeof import('../../../../server/sources/app/api/routes/session/registerSessionTurnMutationRoute') = await import(server + 'app/api/routes/session/registerSessionTurnMutationRoute');
 const { accessKeysRoutes }: typeof import('../../../../server/sources/app/api/routes/accessKeys/accessKeysRoutes') = await import(server + 'app/api/routes/accessKeys/accessKeysRoutes');
 const { db }: typeof import('../../../../server/sources/storage/db') = await import(server + 'storage/db');
 const { registerTeamRoutes }: typeof import('../../../../server/sources/app/teams/registerTeamRoutes') = await import(server + 'app/teams/registerTeamRoutes');
 const { resolveServerFeaturesForGating }: typeof import('../../../../server/sources/app/features/catalog/serverFeatureGate') = await import(server + 'app/features/catalog/serverFeatureGate');
 const { createSessionPublisherPresence }: typeof import('../../../../server/sources/app/presence/sessionPublisherPresence') = await import(server + 'app/presence/sessionPublisherPresence');
-const { openTeamCredentialProviderBroker }: typeof import('../../../../server/sources/app/teams/credentials/providerBrokerAdmission') = await import(server + 'app/teams/credentials/providerBrokerAdmission');
-const { verifyProviderBrokerRouteGrantSignatureV1 }: typeof import('../../../../server/sources/app/machines/peer/mediation/signProviderBrokerRouteGrantV1') = await import(server + 'app/machines/peer/mediation/signProviderBrokerRouteGrantV1');
 const { writeSessionTeamCredentialBindingsInTx }: typeof import('../../../../server/sources/app/teams/credentials/sessionBinding') = await import(server + 'app/teams/credentials/sessionBinding');
 const { inTx }: typeof import('../../../../server/sources/storage/inTx') = await import(server + 'storage/inTx');
+const { getOrCreateServerIdentityId }: typeof import('../../../../server/sources/app/serverIdentity/serverIdentity') = await import(server + 'app/serverIdentity/serverIdentity');
+const { setEligibleMachineAccessGrantInTx }: typeof import('../../../../server/sources/testkit/machineAccessGrant.testkit') = await import(server + 'testkit/machineAccessGrant.testkit');
 const { createQualifiedConnectedAccountServiceDigest, createQualifiedConnectedAccountGroupDigest,
   createQualifiedConnectedAccountIdentityDigest, createServiceAccountTokenIdentityFields }: typeof import('../../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/identity') = await import(server + 'app/api/routes/connect/qualifiedConnectedAccounts/identity');
 
@@ -173,7 +182,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
   afterAll(async () => { await pluginReloadController.shutdown(); });
 
   const runJourney = async (brokerOnly: boolean, onTestFailed: TestContext['onTestFailed'], resumeOnly = false, uiAuthoring = false,
-    startupOutcomes?: readonly ('exited' | 'acknowledged' | 'misbound')[]) => withTempHappyCliEntrypoint(async entrypoint => {
+    startupOutcomes?: readonly ('exited' | 'acknowledged' | 'misbound')[], pendingRestart = false) => withTempHappyCliEntrypoint(async entrypoint => {
     let phase = 'setup';
     let runnerFailure: string | null = null;
     const answersObserved: string[] = [];
@@ -205,6 +214,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     });
     const directory = await mkdtemp(join(tmpdir(), 'happier-team-pool-journey-'));
     if (startupOutcomes) os.entrypoint = writeExecutableShimSync({ dir: join(directory, 'child', 'src'), fileName: 'index.mjs',
+      contents: "process.stdin.once('data', () => process.exit(1)); process.stdin.resume();\n" });
+    if (pendingRestart) os.entrypoint = writeExecutableShimSync({ dir: join(directory, 'child', 'src'), fileName: 'index.mjs',
+      // Real readiness resolves the owned runner's entrypoint and process identity.
       contents: "process.stdin.once('data', () => process.exit(1)); process.stdin.resume();\n" });
     // The native CLI is an OS boundary: install the same version-only shim
     // used by the managed-gateway composition; no native credential is supplied.
@@ -257,6 +269,19 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     const authentication = { env: process.env, authority: 'present_user', authenticationEvidence: [], tokenEpoch: 0 } as const;
     let releaseSource: (() => Promise<void>) | undefined;
     try {
+      // Each journey installs into a new physical Home. Publish that Home's real
+      // registry before readiness consumes the suite's canonical daemon controller.
+      if (!worker.gateway) throw new Error('Expected physical worker gateway');
+      const workerAgent = worker.contributes.agents.find(agent => agent.id === worker.agentId);
+      if (!workerAgent?.pluginId) throw new Error('Expected external worker Agent');
+      const changedPluginIds = [worker.gateway.pluginId, workerAgent.pluginId];
+      const currentRegistry = await worker.gateway.createRegistry(new Set(changedPluginIds));
+      expect(await pluginReloadController.adoptPreparedRuntimeRegistry({ registry: currentRegistry, changedPluginIds,
+        runningSessionDisposition: 'retainRunningSessions' })).toMatchObject({ ok: true });
+      await worker.lease.release();
+      worker.lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+      await worker.lease.registry.activateContributionsOnDemand([{ pluginId: 'acme.managed-run', family: 'agents', localId: 'agent' }]);
+      expect(worker.lease.registry.agentRuntimesByAgentId.has(worker.agentId)).toBe(true);
       const agentEntry = await worker.lease.registry.acquireAgentCatalogEntry?.(worker.agentId);
       const auth = await agentEntry?.getCliAuthSpec?.();
       expect(await auth?.detectAuthStatus?.({ resolvedPath: nativeCli, processEnv: { ...process.env, RUN_NATIVE_API_KEY: '' } }))
@@ -272,8 +297,20 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'owner' } });
       const broker = await db.machine.create({ data: { id: `broker-${surface}`, accountId: custodian.id, metadata: '{}', kind: 'persistent', active: true,
         operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] }, irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) } }, operationProtocolCapabilitiesRevision: 1 } });
-      await db.machine.create({ data: { id: worker.machineId, accountId: recipient.id, metadata: '{}', kind: 'persistent', active: true,
-        operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) } }, operationProtocolCapabilitiesRevision: 1 } });
+      if (pendingRestart) await getOrCreateServerIdentityId();
+      const workerAccountId = pendingRestart ? custodian.id : recipient.id;
+      const workerCapabilities = { irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) },
+        ...(pendingRestart ? { sessionInputAdmission: { protocolVersions: [1, 2] } } : {}) };
+      await db.machine.create({ data: { id: worker.machineId, accountId: workerAccountId,
+        ...(pendingRestart ? { installationId: crypto.randomUUID(),
+          metadata: encodePlainMachineStoredContent({ host: 'guest', platform: process.platform, happyCliVersion: 'test',
+            homeDir: directory, happyHomeDir: worker.happyHomeDir }),
+          dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } : { metadata: '{}' }),
+        kind: 'persistent', active: true, operationProtocolCapabilities: workerCapabilities, operationProtocolCapabilitiesRevision: 1 } });
+      if (pendingRestart) expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+        actorAccountId: custodian.id, machineId: worker.machineId,
+        principal: { kind: 'account', accountId: recipient.id }, level: 'view',
+      }))).toMatchObject({ kind: 'saved', readiness: 'ready' });
       const pool = await db.connectedServiceAuthGroup.create({ data: { accountId: custodian.id, servicePluginId: service.pluginId,
         serviceLocalId: service.localId, qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
         qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId: 'pool' }), groupId: 'pool', policyJson: '{}' } });
@@ -310,9 +347,10 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         request.headers['x-test-user-id'] = recipient.id;
         request.authTokenEpoch = recipient.tokenEpoch;
       });
+      let brokerOnline = true;
       app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => [
-        { data: { clientType: 'machine-scoped', userId: recipient.id, machineId: worker.machineId } },
-        { data: { clientType: 'machine-scoped', userId: custodian.id, machineId: broker.id } },
+        { data: { clientType: 'machine-scoped', userId: workerAccountId, machineId: worker.machineId } },
+        ...(brokerOnline ? [{ data: { clientType: 'machine-scoped', userId: custodian.id, machineId: broker.id } }] : []),
       ] }) });
       // RPC is the cross-Machine boundary; retain the real Home route and
       // source runtime beneath it, including their strict request consumers.
@@ -329,6 +367,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       registerSessionLookupByTagsRoute(app);
       sessionPendingRoutes(app);
       registerSessionArchiveRoutes(app);
+      if (pendingRestart) registerSessionTurnMutationRoute(app);
       registerTeamRoutes(app);
       app.get('/v1/features', async () => resolveServerFeaturesForGating(process.env));
       app.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: recipient.id }));
@@ -438,11 +477,12 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             catch (error) { readinessErrors.push(error); throw error; }
           } });
         let runner: Promise<void> | undefined;
+        let restartAttempt = false;
+        const startupFailures: unknown[] = [];
         let sessionId = '';
         let retainedModelSelection: SpawnSessionOptions['modelSelection'];
         let closePublisher: (() => Promise<unknown>) | undefined;
         os.pid = process.pid + 1_000_000;
-        const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
         const lifetime = new AbortController();
         const runControlledRunner: NonNullable<typeof os.runner> = (args, environment) => { runner = (async () => {
           phase = `${surface}:startup-custody`;
@@ -510,7 +550,14 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             .toMatchObject({ status: 'registered' });
           // The resume regression ends at the real runner argument/launch
           // consumer above; the other journey owns native inference coverage.
-          if (!resumeOnly) {
+          if (pendingRestart && restartAttempt) {
+            const response = await control.inject({ method: 'POST', url: '/session-started',
+              headers: { 'x-happier-daemon-token': 'startup-token' },
+              payload: { sessionId, metadata: createTestMetadata({ hostPid: os.pid, startedBy: 'daemon',
+                happyHomeDir: configuration.happyHomeDir, path: directory }) } });
+            expect(response.statusCode, response.body).toBe(200);
+          }
+          if (!resumeOnly || pendingRestart && restartAttempt) {
           phase = `${surface}:native-plan`;
           // The OS adapter runs the external Agent in this test worker using
           // its admitted lease, not a daemon runner's private runtime source.
@@ -525,7 +572,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             let inferenceDialed = false;
             const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
               accountId: recipient.id, localMachineId: worker.machineId,
-              resolveTrustRoots: () => [{ keyId: 'journey', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
+              resolveTrustRoots: () => [{ keyId: 'broker-catalog', publicKey: Buffer.from(tweetnacl.sign.keyPair.fromSeed(routeSigningSeed).publicKey).toString('base64url') }],
               runtime: { endpoint: { endpointId: 'a'.repeat(64) }, openHttpTunnel: async transport => {
                 // Home admission must finish before native starts first-stream
                 // custody. Keep the signed handshake on the real launch path.
@@ -543,16 +590,13 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               agentId: worker.agentId, binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: input.resourceId,
                 expectedResourceRevision: input.expectedResourceRevision, deliveryMode: 'brokered', teamId: team.id },
               lease: worker.lease, materializationBaseDir: join(directory, 'materialized'),
-              readCatalog: signal => readSessionTeamCredentialProviderModels({ homeDomainAction, lease: worker.lease,
-                agentId: worker.agentId, agentTargetKey: worker.agentTargetKey, teamId: team.id, resourceId: resource.id, signal }),
-              openBroker: async request => {
-                const result = await openTeamCredentialProviderBroker({ actorAccountId: recipient.id, authentication,
-                request, readCurrentPresence: async () => ({ initiatorPresence: { state: 'known', machineIds: new Set([worker.machineId]) },
-                  brokerPresence: { state: 'known', machineIds: new Set([broker.id]) } }), nowMs: Date.now(), grantId: crypto.randomUUID(),
-                signingKey: { keyId: 'journey', secretKey: signingKey.secretKey }, readProviderProjection: request => project(request.application),
-                verifyRefreshAuthority: authority => verifyProviderBrokerRouteGrantSignatureV1({ authority, nowMs: Date.now(),
-                  signingCapability: { keyId: 'journey', publicKey: Buffer.from(signingKey.publicKey).toString('base64url'), expiresAt: null } }),
-                readPoolSourceEligibility: async () => ({ eligibleMachineIds: new Set([broker.id]), reasons: new Map() }) });
+              readCatalog: (signal, application) => readSessionTeamCredentialProviderModels({ homeDomainAction, lease: worker.lease,
+                agentId: worker.agentId, agentTargetKey: worker.agentTargetKey, teamId: team.id, resourceId: resource.id,
+                executionMachineId: worker.machineId,
+                deliveryMode: input.deliveryMode, signal, ...(application ? { application } : {}) }),
+              openBroker: async (request, signal) => {
+                const result = await openTeamCredentialProviderBroker({ token: credentials.token,
+                  serverBaseUrl: origin, request, signal });
                 if (request.refreshAuthority && result.ok) freshHomeAuthority = result.authority;
                 if (!result.ok) brokerRefusals.push({ reasonCode: result.reasonCode, refresh: Boolean(request.refreshAuthority) });
                 return result;
@@ -598,6 +642,16 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 deliveryMode: 'brokered', modelId: offered.descriptor.id, sourceLabel: 'Shared source' });
             } finally { publisher.dispose(); }
           }
+          if (pendingRestart) {
+            const current = tracked.get(os.pid);
+            const retained = worker.lease.registry.agentRuntimesByAgentId.get(worker.agentId)?.sessionRunnerFactoryBinding;
+            if (!current || !retained || current.processStartTimeMs === undefined || !current.processCommandHash) {
+              throw new Error('Missing current runner open authority');
+            }
+            expect(await recordTrackedRunnerAgentSessionOpenAttestation({ tracked: current, retainedAgent: retained,
+              runner: { pid: os.pid, processStartTimeMs: current.processStartTimeMs, processCommandHash: current.processCommandHash },
+              request: { kind: 'create', sessionId, cwd: directory }, providerSessionId: null })).not.toBeNull();
+          }
           const operations = (runtime as Readonly<{ operations: Readonly<{
             sendTurnPrompt(text: string, input: Readonly<{ turnId: string; localId: string; userMessageSeq: number }>): Promise<void>;
             subscribeRuntimeEvents(listener: (event: unknown) => void): (() => void) | void;
@@ -607,9 +661,11 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           const unsubscribe = operations.subscribeRuntimeEvents(event => events.push(event));
           try {
             phase = `${surface}:native-prompt`;
-            await operations.sendTurnPrompt('TEAM_POOL_NATIVE_PROMPT', { turnId: 'team-turn', localId: 'team-input', userMessageSeq: 1 });
-            expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', channel: 'assistant', text: 'TEAM_POOL_NATIVE_SENTINEL' }));
-            answersObserved.push(surface);
+            if (!pendingRestart) {
+              await operations.sendTurnPrompt('TEAM_POOL_NATIVE_PROMPT', { turnId: 'team-turn', localId: 'team-input', userMessageSeq: 1 });
+              expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', channel: 'assistant', text: 'TEAM_POOL_NATIVE_SENTINEL' }));
+              answersObserved.push(surface);
+            }
           } finally {
             phase = `${surface}:native-close`;
             unsubscribe?.();
@@ -620,18 +676,45 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           phase = `${surface}:webhook`;
           // The real waiter projects the Home-created settlement already held
           // by daemon custody; a handwritten success would discard that receipt.
-          const completed = tracked.get(os.pid);
-          const acceptWebhook = awaiters.get(os.pid);
-          if (!completed || !acceptWebhook) throw new Error('Daemon webhook custody is unavailable');
-          acceptWebhook(completed);
-        })(); void runner.catch(error => {
+          if (!pendingRestart || !restartAttempt) {
+            const completed = tracked.get(os.pid);
+            const acceptWebhook = awaiters.get(os.pid);
+            if (!completed || !acceptWebhook) throw new Error('Daemon webhook custody is unavailable');
+            acceptWebhook(completed);
+          }
+        })();
+        if (pendingRestart) {
+          runner = runner.catch(async error => {
+            runnerFailure = String(error);
+            // This external-process adapter sequences the production host-loop
+            // catch (runHostSessionRuntime): classify the actual binding error,
+            // then publish through the real lifecycle and Home turn route.
+            const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, provider: worker.agentId });
+            expect(issue, String(error)).toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
+            startupFailures.push(issue);
+            const lifecycle = createSessionTurnLifecycle({ agentId: worker.agentId, session: { sessionId,
+              enqueueSessionTurnMutation: async mutation => {
+                const response = await fetch(`${origin}/v1/sessions/${sessionId}/turns/mutations`, {
+                  method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${credentials.token}` },
+                  body: JSON.stringify(mutation),
+                });
+                expect(response.status, await response.text()).toBe(200);
+              } } });
+            try { expect(await lifecycle.failTurn({ issue, allocateWhenIdle: true })).toBe(true); }
+            finally { lifecycle.dispose(); }
+            await closePublisher?.(); closePublisher = undefined;
+            os.child?.stdin?.write('exit');
+            await closeControlledRunner();
+          });
+          void runner.catch(() => undefined);
+        } else void runner.catch(error => {
           runnerFailure = String(error);
           phase = `${surface}:runner-refused`;
           const timer = timeouts.get(os.pid); if (timer) clearTimeout(timer);
           resolvers.get(os.pid)?.({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: String(error) });
         }); };
         os.runner = runControlledRunner;
-        const spawnSession = (options: Parameters<typeof executeSpawnSessionRequest>[0]['options']) => executeSpawnSessionRequest({ options, credentials, api,
+        const spawnSession = (options: Parameters<typeof executeSpawnSessionRequest>[0]['options']) => executeSpawnSessionRequest({ options: { ...options, machineId: worker.machineId }, credentials, api,
             deviceLocalSecretStorage,
             activatePurposeBindings: worker.gateway!.purposeBindingOwner.activatePurposeBindings,
             activateSessionPurposeBindings: worker.gateway!.purposeBindingOwner.activateSessionPurposeBindings,
@@ -713,7 +796,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.5' } },
             connectedServices: { v: 2, bindingsByServiceId: { [`${service.pluginId}/${service.localId}`]: {
               source: 'team_resource', resourceId: resource.id, deliveryMode: 'brokered' } } },
-            initialInput: { text: 'TEAM_POOL_NATIVE_PROMPT' },
+            ...(pendingRestart ? {} : { initialInput: { text: 'TEAM_POOL_NATIVE_PROMPT' } }),
           }, { surface, authority: 'present_user', actionCaller: { kind: 'host' } });
           if (surface === 'cli' && !resumeOnly) {
             // Missing native tooling is a definite pre-runner refusal. Its
@@ -785,13 +868,13 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           }
           expect(result, JSON.stringify({ result, preparationFailures: startupDiagnostics.mock.calls.filter(([message]) =>
             message === '[DAEMON RUN] Session spawn failed after startup preparation') })).toMatchObject({ ok: true,
-              result: { type: 'success', initialInput: { status: 'accepted' } } });
+              result: { type: 'success', ...(pendingRestart ? {} : { initialInput: { status: 'accepted' } }) } });
           expect(readAcceptedBindingLogs()).toContainEqual(expect.objectContaining({ stage: 'session_commit',
             code: 'accepted_brokered_provider_model', sessionId, resourceId: resource.id, teamId: team.id }));
           if (refusedSessionId) expect(sessionId).toBe(refusedSessionId);
           expect(await db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { active: true, archivedAt: true } }))
             .toEqual({ active: true, archivedAt: null });
-          expect(await db.sessionPendingMessage.count({ where: { sessionId, status: 'queued' } })).toBe(1);
+          expect(await db.sessionPendingMessage.count({ where: { sessionId, status: 'queued' } })).toBe(pendingRestart ? 0 : 1);
           expect(await db.session.count({ where: { accountId: recipient.id } })).toBe(completedIngresses.length + 1);
           expect(requests.slice(requestStart)).toEqual(resumeOnly ? [] : [{ model: 'gpt-5.5', input: 'TEAM_POOL_NATIVE_PROMPT' }]);
           expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId } })).toEqual(expect.arrayContaining([
@@ -818,6 +901,100 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             tracked.clear();
             runner = undefined;
             os.runner = runControlledRunner;
+            if (pendingRestart) {
+              phase = 'guest-restart:accepted-input';
+              await db.machine.update({ where: { id: worker.machineId }, data: {
+                operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+                operationProtocolCapabilitiesRevision: { increment: 1 },
+              } });
+              const localId = crypto.randomUUID();
+              const sent = await app.inject({ method: 'POST', url: `/v2/sessions/${sessionId}/pending`, payload: {
+                localId, targetMachineId: worker.machineId, requestedAction: { v: 1, kind: 'send_now' },
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'TEAM_POOL_RESTART_PROMPT' } } },
+              } });
+              expect(sent.statusCode, sent.body).toBe(200);
+              const accepted = await db.session.findUniqueOrThrow({ where: { id: sessionId } });
+              expect(accepted).toMatchObject({ pendingCount: 1, pendingActivationStatus: 'waiting', pendingActivationRequestId: localId });
+              const retained = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId, localId } } });
+              expect(retained.inputAdmissionReceipt).toMatchObject({ actorAccountId: recipient.id,
+                admittedTarget: { accountId: recipient.id, machineId: worker.machineId, sessionId } });
+              let lastSpawnResult: Awaited<ReturnType<typeof executeSpawnSessionRequest>> | undefined;
+              const activation = () => activatePendingInactiveSession({ credentials, machineId: worker.machineId, sessionId,
+                requestId: localId, pendingVersion: accepted.pendingVersion, spawnSessionForInternalResume: async options => {
+                  lastSpawnResult = await spawnSession(options);
+                  return lastSpawnResult;
+                } });
+              phase = 'guest-restart:source-broker-offline';
+              brokerOnline = false;
+              try {
+                expect(await activation(), JSON.stringify(lastSpawnResult)).toEqual({ status: 'not-needed', reason: 'spawn-retryable' });
+                expect(lastSpawnResult).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+                  errorDetail: { kind: 'launch_error', code: 'broker_unavailable' } });
+                expect(runner).toBeUndefined();
+              } finally { brokerOnline = true; }
+              expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({
+                pendingCount: 1, pendingActivationStatus: 'waiting', pendingActivationRequestId: localId,
+              });
+              restartAttempt = true;
+              phase = 'guest-restart:broker-unavailable';
+              // Pending wake accepts real runner readiness. Native binding then
+              // fails in the runner, leaving the accepted input under Home custody.
+              expect(await activation()).toEqual({ status: 'activated' });
+              await expect(runner).resolves.toBeUndefined();
+              await Promise.all(exitTasks);
+              expect(startupFailures).toHaveLength(1);
+              expect((await fetchSessionByIdCompat({ token: credentials.token, sessionId, reason: 'session-control' }))?.lastRuntimeIssue)
+                .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
+              expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({
+                pendingCount: 1, pendingActivationStatus: 'waiting', pendingActivationRequestId: localId,
+                pendingActivationRequestedAt: accepted.pendingActivationRequestedAt,
+              });
+              expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { id: retained.id } })).toEqual(retained);
+              const resumeHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: configuration.activeServerId,
+                spawnSession });
+              const resumeDeps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+                serverId: configuration.activeServerId, machineActionDirectTargetTransport: { machineId: worker.machineId,
+                  invoke: async (method, request, options) => {
+                    if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error(`Unexpected resume RPC ${method}`);
+                    return await resumeHandler(request, options);
+                  } } });
+              const resume = () => createActionExecutor(resumeDeps).execute('session.open', {
+                sessionId, serverId: configuration.activeServerId, intent: 'resume',
+              }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, signal: lifetime.signal });
+              os.runner = runControlledRunner;
+              // Resume acknowledges runner readiness before native provider binding.
+              // The actual late broker failure remains a recoverable runner issue.
+              expect(await resume()).toMatchObject({ ok: true, result: { ok: true, status: 'opened', sessionId } });
+              await expect(runner).resolves.toBeUndefined();
+              await Promise.all(exitTasks);
+              expect(startupFailures).toHaveLength(2);
+              expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({
+                pendingCount: 1, pendingActivationStatus: 'waiting', pendingActivationRequestId: localId,
+              });
+              phase = 'guest-restart:republished';
+              await db.machine.update({ where: { id: worker.machineId }, data: {
+                operationProtocolCapabilities: workerCapabilities, operationProtocolCapabilitiesRevision: { increment: 1 },
+              } });
+              os.runner = runControlledRunner;
+              expect(await resume()).toMatchObject({ ok: true, result: { ok: true, status: 'opened', sessionId } });
+              expect(runner).toBeDefined();
+              await expect(runner).resolves.toBeUndefined();
+              // Observe native-open independently; public Resume's acknowledgment
+              // does not promise that the provider conversation has opened yet.
+              expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId, timeoutMs: null, signal: lifetime.signal,
+                getTrackedSessions: () => [...tracked.values()] })).toMatchObject({ status: 'opened' });
+              expect(startupFailures).toHaveLength(2);
+              const reopened = await app.inject({ method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1, payload: {
+                v: 1, resourceId: resource.id, expectedResourceRevision: resource.revision,
+                initiatorMachineId: worker.machineId, consumer: { kind: 'session', sessionId },
+                application: offered.application, modelId: offered.descriptor.id, sourceRevision: offered.sourceRevision,
+              } });
+              expect(ProviderBrokerOpenResponseV1Schema.parse(reopened.json())).toMatchObject({ ok: true });
+              expect(await db.sessionPendingMessage.findMany({ where: { sessionId } })).toEqual([retained]);
+              expect(await db.session.count({ where: { accountId: recipient.id } })).toBe(1);
+              completedIngresses.push(surface);
+              continue;
+            }
             const resume = SpawnDaemonSessionRequestSchema.parse(buildMachineResumeRequest({ directory,
               agentTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
               // This external-Agent OS adapter does not publish host startup
@@ -861,6 +1038,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     ({ onTestFailed }) => runJourney(false, onTestFailed));
   it('resumes a retained Team Session through normal resume admission, runner argv and the real Session launch contract',
     ({ onTestFailed }) => runJourney(false, onTestFailed, true));
+  it('retains one accepted grantee input across a guest endpoint withdrawal and resumes it after republication',
+    ({ onTestFailed }) => runJourney(false, onTestFailed, true, false, undefined, true));
   it('preserves a UI-authored Team source through submit, daemon spawn, persisted binding and brokered inference',
     ({ onTestFailed }) => runJourney(false, onTestFailed, false, true));
 });

@@ -10,6 +10,15 @@ import {
 import { normalizeSpawnSessionResult } from './_shared';
 
 describe('normalizeSpawnSessionResult errorDetail carry-through (D2)', () => {
+    it.each([{ type: 'error' }, { ok: false }])('normalizes Action resume failure without changing its typed cause (%j)', shape => {
+        const errorDetail = { kind: 'launch_error', code: 'broker_unavailable', message: 'Broker transport is unavailable' };
+        expect(normalizeSpawnSessionResult({ ...shape, errorCode: 'resume_failed', errorMessage: errorDetail.message,
+            errorDetail })).toEqual({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+            errorMessage: errorDetail.message, errorDetail });
+        expect(normalizeSpawnSessionResult({ ...shape, errorCode: 'unrecognized_failure', errorMessage: errorDetail.message,
+            errorDetail })).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorDetail });
+    });
+
     it('preserves the Remote predecessor accepted-pending recovery fields', () => {
         expect(normalizeSpawnSessionResult({
             type: 'success',

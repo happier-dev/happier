@@ -25,14 +25,18 @@ function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionErrorDeta
 }
 
 function buildSpawnSessionErrorResult(params: Readonly<{
-    errorCode: SpawnSessionErrorCode;
+    errorCode: unknown;
     errorMessage: string;
     errorDetail?: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> {
     const errorDetail = normalizeSpawnSessionErrorDetail(params.errorDetail);
+    // session.open reports a refused resume attempt with its Action-level code.
+    const errorCode = params.errorCode === 'resume_failed'
+        ? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED
+        : isSpawnSessionErrorCode(params.errorCode) ? params.errorCode : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
     return {
         type: 'error',
-        errorCode: params.errorCode,
+        errorCode,
         errorMessage: params.errorMessage,
         ...(errorDetail ? { errorDetail } : {}),
     };
@@ -81,23 +85,17 @@ export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult 
     }
 
     if (type === 'error') {
-        const errorCode = isSpawnSessionErrorCode(value.errorCode)
-            ? value.errorCode
-            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
         const errorMessage = typeof value.errorMessage === 'string' ? value.errorMessage : 'Failed to spawn session';
-        return buildSpawnSessionErrorResult({ errorCode, errorMessage, errorDetail: value.errorDetail });
+        return buildSpawnSessionErrorResult({ errorCode: value.errorCode, errorMessage, errorDetail: value.errorDetail });
     }
 
     if (value.success === false || value.ok === false) {
-        const errorCode = isSpawnSessionErrorCode(value.errorCode)
-            ? value.errorCode
-            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
         const errorMessage = typeof value.errorMessage === 'string'
             ? value.errorMessage
             : typeof value.error === 'string'
                 ? value.error
                 : 'Failed to spawn session';
-        return buildSpawnSessionErrorResult({ errorCode, errorMessage, errorDetail: value.errorDetail });
+        return buildSpawnSessionErrorResult({ errorCode: value.errorCode, errorMessage, errorDetail: value.errorDetail });
     }
 
     return {

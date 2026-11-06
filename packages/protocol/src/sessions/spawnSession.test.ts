@@ -13,9 +13,34 @@ import {
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
   normalizeSpawnSessionErrorDetail,
+  isSessionSpawnBrokerUnavailable,
   type SpawnSessionErrorDetail,
   type SpawnSessionResult,
 } from './spawnSession.js';
+
+describe('Session spawn broker availability', () => {
+  it.each([SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED])(
+    'recognizes a typed broker outage reported by %s', errorCode => {
+      expect(isSessionSpawnBrokerUnavailable({ errorCode,
+        errorDetail: { kind: 'launch_error', code: 'broker_unavailable', message: 'Private provider failure' } })).toBe(true);
+    },
+  );
+  it.each([
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: { kind: 'launch_error', code: 'resource_forbidden', message: 'broker_unavailable' } },
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: { kind: 'launch_error', code: 'resource_unavailable', message: 'broker_unavailable' } },
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorDetail: { kind: 'launch_error', code: 'held_by_person', message: 'broker_unavailable' } },
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING,
+      errorDetail: { kind: 'launch_error', code: 'broker_unavailable', message: 'No directory' } },
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: { kind: 'launch_error', code: 'broker_unavailable' } },
+    { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorDetail: 'broker_unavailable' },
+  ])('does not infer a broker outage from prose, malformed details, or a different failure: %j', input => {
+    expect(isSessionSpawnBrokerUnavailable(input)).toBe(false);
+  });
+});
 
 describe('spawn-session execution authorization', () => {
   it('preserves daemon terminal modes and strips authoring-only fields', () => {

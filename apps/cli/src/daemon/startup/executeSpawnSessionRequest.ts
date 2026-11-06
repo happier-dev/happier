@@ -34,6 +34,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    projectSessionRunnerLaunchAdmissionFailure,
 } from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
@@ -629,8 +630,9 @@ export async function executeSpawnSessionRequest(
                     teamModelRow = normalized.teamModelRow;
                 } catch (error) {
                     if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw error;
-                    return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage: error.code });
+                    return await refuseSpawn(projectSessionRunnerLaunchAdmissionFailure({
+                        kind: 'launch_error', code: error.code, message: error.code,
+                    })!);
                 }
             }
             // The Provider decision runs before the workspace is created and

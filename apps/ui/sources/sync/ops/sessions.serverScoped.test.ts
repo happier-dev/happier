@@ -5,6 +5,10 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import nacl from 'tweetnacl';
 
 // Admit the network boundary before loading runtime consumers. Module transformation
 // belongs to collection, outside the fixture hooks' runtime-operation budget.
@@ -243,6 +247,80 @@ describe('session resume and fork routing through the Home and Account boundary'
         expect(resumeRequests()).toHaveLength(1);
         expect(resumeRequests()[0]?.payload).not.toHaveProperty('executionAuthorization');
     });
+
+    it.each(['pending', 'explicit'] as const)('normalizes foreign Machine broker failures and opened outcomes during %s resume', async surface => {
+        const serverIdentityId = `srv_foreign_${surface}_resume`;
+        home = await boundary.addHome(`https://foreign-${surface}-resume.test`, 'requester', { serverIdentityId });
+        const machineId = `foreign-${surface}-machine`;
+        setSession('session-1', { active: false,
+            metadata: metadata.MetadataSchema.parse({ path: '/tmp', host: 'guest.local', machineId }) });
+        const machine = { ...machineFixtures.createPlainMachineRowFixture({ id: machineId, accountId: 'machine-owner' }),
+            installationPublicKey: encodeBase64(nacl.sign.keyPair().publicKey, 'base64') };
+        const originalHttp = respondHttp;
+        let opened = false;
+        let brokerAvailable = false;
+        const brokerDetail = { kind: 'launch_error', code: 'broker_unavailable', message: 'Broker transport is unavailable' };
+        const paths: string[] = [];
+        respondHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            paths.push(path);
+            if (path === '/v1/machines/read-batch') return machineFixtures.createMachineReadBatchResponseFixture(init?.body,
+                id => id === machineId ? machine : null);
+            if (path === `/v1/machines/${machineId}`) return Response.json({ machine });
+            if (path === '/v1/actions/session.open/execution-authorization') {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                return Response.json({ v: 1, token: 'home-resume-proof', binding: {
+                    serverIdentityId, accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 0 },
+                    actionId: 'session.open', requestId: request.envelope.requestId, target: { kind: 'machine', machineId },
+                    machineId, installationId: machine.installationId, custodianAccountId: 'machine-owner',
+                    accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                } });
+            }
+            if (path === '/v1/actions/session.open') {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                if (!brokerAvailable) return Response.json({ v: 1, actionId: 'session.open', requestId: request.envelope.requestId,
+                    execution: { ok: false, errorCode: 'resume_failed', error: brokerDetail.message,
+                        details: { errorDetail: brokerDetail } } });
+                opened = true;
+                // The daemon Action publishes opened, rather than a spawn RPC's success discriminator.
+                return Response.json({ v: 1, actionId: 'session.open', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { ok: true, status: 'opened', sessionId: 'session-1', serverId: serverIdentityId,
+                        address: { serverId: serverIdentityId, sessionId: 'session-1' } } } });
+            }
+            return await originalHttp(input, init);
+        };
+        boundary.setHttpResponder(createSessionReadBatchFetchBoundary(respondHttp));
+        const resume = () => surface === 'pending'
+            ? ops.ensureSessionRuntimeForPendingInput(resumeOptions({ machineId }))
+            : ops.resumeSession(resumeOptions({ machineId }));
+        const unavailable = await resume();
+        expect(unavailable).toEqual(surface === 'pending' ? { type: 'pending' } : {
+            type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+            errorMessage: brokerDetail.message, errorDetail: brokerDetail,
+        });
+        expect(opened).toBe(false);
+        brokerAvailable = true;
+        const result = await resume();
+        expect(opened, JSON.stringify({ result, paths })).toBe(true);
+        expect(result).toMatchObject({ type: 'success', sessionId: 'session-1' });
+        expect(resumeRequests()).toHaveLength(0);
+    });
+
+    it.each([SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED])(
+        'keeps broker unavailability pending across %s and resumes after recovery', async errorCode => {
+            boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'error', errorCode,
+                errorMessage: 'Broker transport is unavailable',
+                errorDetail: { kind: 'launch_error', code: 'broker_unavailable', message: 'Broker transport is unavailable' } });
+            await expect(ops.ensureSessionRuntimeForPendingInput(resumeOptions())).resolves.toEqual({ type: 'pending' });
+            await expect(ops.resumeSession(resumeOptions())).resolves.toMatchObject({
+                type: 'error', errorDetail: { kind: 'launch_error', code: 'broker_unavailable' },
+            });
+            boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'success', sessionId: 'session-1' });
+            await expect(ops.ensureSessionRuntimeForPendingInput(resumeOptions())).resolves.toMatchObject({
+                type: 'success', sessionId: 'session-1',
+            });
+        },
+    );
 
     it.each([undefined, 'account_automation'] as const)('does not promote %s authority from an authored Resume marker', async executionAuthority => {
         await expect(ops.resumeSession(resumeOptions({ executionAuthority,

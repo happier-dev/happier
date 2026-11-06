@@ -4,10 +4,7 @@ import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 import { createTestHomeEnvironment } from '../../scripts/testing/testHomeEnvironment.mjs'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
-import {
-    workspacePackageOptimizationExcludes,
-    workspacePackageSourcesPlugin,
-} from './scripts/vitestWorkspacePackageResolution'
+import cliVitestConfig from './vitest.config'
 
 const testEnv = dotenv.config({
     path: '.env.integration-test'
@@ -37,9 +34,11 @@ if (mergedTestEnv.HAPPIER_SERVER_URL && !mergedTestEnv.HAPPIER_WEBAPP_URL) {
 mergedTestEnv.HAPPIER_FEATURE_POLICY_ENV = '';
 
 export default defineConfig({
+    ...cliVitestConfig,
     // Vite/Vitest source maps for large TS module graphs can consume a lot of memory.
     // Integration tests in this repo don't require sourcemaps to assert behavior.
     esbuild: {
+        ...cliVitestConfig.esbuild,
         sourcemap: false,
     },
     test: {
@@ -48,6 +47,7 @@ export default defineConfig({
         isolate: true,
         globals: false,
         environment: 'node',
+        server: { deps: cliVitestConfig.test?.server?.deps },
         testTimeout: 60_000,
         hookTimeout: 60_000,
         // These integration tests mutate `process.env` (PATH overrides, server URLs, etc).
@@ -102,16 +102,4 @@ export default defineConfig({
             ...createTestHomeEnvironment().env,
         }
     },
-    optimizeDeps: {
-        exclude: workspacePackageOptimizationExcludes,
-    },
-    resolve: {
-        alias: [
-            {
-                find: '@',
-                replacement: fileURLToPath(new URL('./src', import.meta.url)),
-            },
-        ],
-    },
-    plugins: [workspacePackageSourcesPlugin],
 })
