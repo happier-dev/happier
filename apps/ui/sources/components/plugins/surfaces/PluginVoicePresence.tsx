@@ -1,12 +1,15 @@
 import * as React from 'react';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';
-import { useVoiceAttemptControl } from '@/components/voice/attempt/useVoiceAttemptControl';
+import { useVoiceAttemptControl, type VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { VoiceMark } from '@/components/voice/presence/VoiceMark';
 import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
 import { VoiceTransport } from '@/components/voice/presence/VoiceTransport';
 
-import { PluginVoiceContext as VoiceContext } from './pluginVoiceContext';
-export { usePluginVoiceAttempt } from './pluginVoiceContext';
+const VoiceContext = React.createContext<VoiceAttemptControlProjection | null>(null);
+
+export function usePluginVoiceAttempt() {
+    return React.useContext(VoiceContext)?.publicPresentation ?? null;
+}
 
 /** Context only: lifecycle, subscription and presentation decisions stay in the existing hook. */
 export function PluginVoicePresence({ target, children }: VoicePresenceProps): React.ReactElement {

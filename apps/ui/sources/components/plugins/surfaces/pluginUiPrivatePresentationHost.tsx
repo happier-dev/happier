@@ -5,7 +5,7 @@ import {
     ExecutableParticipantPickerPresentation,
 } from './pluginUiPrivateContent';
 import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
-import { usePluginVoiceAttempt } from './pluginVoiceContext';
+import { usePluginVoiceAttempt } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 import * as React from 'react';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';

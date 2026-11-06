@@ -272,18 +272,15 @@ test('web clipboard controls do not load native Action approval or execution', (
         'native controls retain the mounted Account and approval owner');
 });
 
-for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? 'collection presentation' : 'private presentation owner'} loads rich content only when its presenter is used (${platform})`, () => {
+for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? 'collection presentation' : 'private presentation owner'} defers substantial rich renderers and keeps small presenters synchronous (${platform})`, () => {
     const entry = platform === 'web'
         ? 'apps/ui/sources/components/ui/lists/collection/CoreCollectionScope.tsx'
         : 'apps/ui/sources/components/plugins/surfaces/pluginUiPrivateContent.tsx';
     const { graph, required } = collectUiWebGraph([entry], platform);
     const content = [
         '/plugins/surfaces/PluginUiMarkdown.tsx',
-        '/ui/code/blocks/CodeBlockView.tsx',
         '/ui/code/diff/DiffViewer.tsx',
         '/ui/code/diff/prose/ProseDiffViewer.tsx',
-        '/plugins/surfaces/PluginVoicePresence.tsx',
-        '/plugins/surfaces/PluginDictationButton.tsx',
     ];
     if (platform === 'web') content.push('/ui/media/stage/MediaStage.tsx');
     const matchesContent = (file, suffix) => file.replace(/\.(?:web|ios|android|native)(?=\.[^.]+$)/, '').endsWith(suffix);
@@ -291,7 +288,22 @@ for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? '
     console.log(JSON.stringify({ feature: 'collection presentation', platform, entry, staticUiModules: required.size,
         staticUiSourceBytes: [...required].reduce((sum, file) => sum + statSync(file).size, 0),
         eagerPresenters: eager.map(file => relative(repoRoot, file)) }));
-    assert.deepEqual(eager, [], 'a collection scope must not download unopened rich-content presenters');
+    // Native navigation already reaches the diff bodies independently (the approved simplicity review).
+    // Preserve demand at this owner without asserting that it controls those other native entry paths.
+    const owner = join(repoRoot, 'apps/ui/sources/components/plugins/surfaces/pluginUiPrivateContent.tsx');
+    for (const suffix of ['/plugins/surfaces/PluginUiMarkdown.tsx',
+        '/plugins/surfaces/PluginUiPrivateDiffViewer.tsx', '/ui/code/diff/prose/ProseDiffViewer.tsx']) {
+        const edges = graph.get(owner).filter(edge => matchesContent(edge.file, suffix));
+        assert.equal(edges.length, 1, `one canonical renderer boundary: ${suffix}`);
+        assert.ok(edges[0].dynamic, `rich renderer stays on demand at its owner: ${suffix}`);
+    }
+    assert.deepEqual(platform === 'web' ? eager : eager.filter(file => matchesContent(file,
+        '/plugins/surfaces/PluginUiMarkdown.tsx')), [], 'the scope excludes rich bodies not reached independently');
+    // Approved presenter-static-revert-1106: these overlapping small graphs render synchronously.
+    for (const suffix of ['/ui/code/blocks/CodeBlockView.tsx', '/plugins/surfaces/PluginVoicePresence.tsx',
+        '/plugins/surfaces/PluginDictationButton.tsx']) {
+        assert.ok([...required].some(file => matchesContent(file, suffix)), `small presenter is synchronous: ${suffix}`);
+    }
     for (const suffix of content) assert.ok([...graph.keys()].some(file => matchesContent(file, suffix)),
         `real presentation demand must retain ${suffix}`);
 });
