@@ -324,7 +324,7 @@ describe('mounted local form ordinary compute hook', () => {
     expect(current.snapshot?.inspection?.preference).toMatchObject({ status: 'ready', preference: { allowAdHoc: false } });
     expect(actions).toHaveLength(2);
   });
-  it('clears optional artifacts through the existing Advanced control before any Run', async () => {
+  it('keeps unfinished Advanced operands editable and clears optional values before any Run', async () => {
     const renderer = new AbortController();
     let current!: ReturnType<typeof useLocalActRunFormV1>;
     const actions: unknown[] = [];
@@ -363,6 +363,30 @@ describe('mounted local form ordinary compute hook', () => {
     const advanced = (await fixture.getAllByRole('button')).find(control => control.name?.startsWith('Advanced'));
     if (!advanced) throw new Error('Missing Advanced control');
     await fixture.press(advanced);
+    const edit = async (label: string, text: string) => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`);
+      if (!input) throw new Error(`Missing ${label} field`);
+      const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setValue = Object.getOwnPropertyDescriptor(prototype, 'value')!.set!;
+      await act(async () => { setValue.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })); });
+      expect((await fixture.getByRole('textbox', { label })).value).toBe(text);
+    };
+    // Partial operands must remain editable while the selection carries only parsed values.
+    await edit('Variables', 'C');
+    await edit('Variables', 'CI_SHARD=1\nC');
+    await edit('Variables', 'CI_SHARD=1\nCI_TARGET=two');
+    expect(current.snapshot?.selection.variables).toEqual([{ name: 'CI_SHARD', value: '1' }, { name: 'CI_TARGET', value: 'two' }]);
+    await edit('Matrix', 'os:ubuntu-latest,');
+    await edit('Matrix', 'os:ubuntu-latest,node:22');
+    expect(current.snapshot?.selection.matrix).toEqual(['os:ubuntu-latest', 'node:22']);
+    await act(async () => { current.controller!.setSelection({ ...current.controller!.getSnapshot().selection,
+      variables: [{ name: 'CI_EXTERNAL', value: '3' }], matrix: ['node:24'] }); });
+    expect((await fixture.getByRole('textbox', { label: 'Variables' })).value).toBe('CI_EXTERNAL=3');
+    expect((await fixture.getByRole('textbox', { label: 'Matrix' })).value).toBe('node:24');
+    await edit('Variables', '');
+    await edit('Matrix', '');
+    expect(current.snapshot?.selection).not.toHaveProperty('variables');
+    expect(current.snapshot?.selection).not.toHaveProperty('matrix');
     await fixture.press(await fixture.getByRole('switch', { name: 'Artifacts' }));
     expect(current.snapshot?.selection.artifactServerPath).toBe('.happier/act-artifacts');
     await fixture.press(await fixture.getByRole('switch', { name: 'Artifacts' }));

@@ -23,6 +23,7 @@ import type { LocalRunSelection } from '../../../actions/local/contracts.js';
 import { validateLocalActWorkflowSelectionV1 } from '../../../actions/local/command.js';
 import type { useLocalActRunFormV1 } from './LocalActRunForm.js';
 import { LocalActSecretReferenceField } from './LocalActSecretReferenceField.js';
+import { LocalActMatrixField, LocalActVariablesField } from './LocalActSelectionTextFields.js';
 
 /**
  * Run a CI job locally (lab c5). One form for every entry (a workflow's Run locally, a failed job, the
@@ -644,19 +645,13 @@ export function LocalActRunFormView(
                 'A local file; the hosted event payload isn’t available.',
               )}
             />
-            <TextField
+            <LocalActMatrixField
               label={t('plugins.github.localRun.matrix', 'Matrix')}
-              value={(selection.matrix ?? []).join(', ')}
+              value={selection.matrix}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="os:ubuntu-latest"
-              onChange={(value) => {
-                const entries = value
-                  .split(',')
-                  .map((entry) => entry.trim())
-                  .filter(Boolean);
-                set({ matrix: entries.length ? entries : undefined });
-              }}
+              onChange={(matrix) => set({ matrix })}
             />
             <Text
               variant="meta"
@@ -666,25 +661,14 @@ export function LocalActRunFormView(
                 'Free entries, passed to act as typed; nothing is evaluated.',
               )}
             />
-            <TextField
+            <LocalActVariablesField
               label={t('plugins.github.localRun.variables', 'Variables')}
               multiline
               autoCapitalize="none"
               autoCorrect={false}
-              value={(selection.variables ?? [])
-                .map((row) => `${row.name}=${row.value}`)
-                .join('\n')}
+              value={selection.variables}
               placeholder="CI_SHARD=1"
-              onChange={(value) => {
-                const rows = value
-                  .split('\n')
-                  .map((line) =>
-                    /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/u.exec(line.trim()),
-                  )
-                  .filter((match): match is RegExpExecArray => match !== null)
-                  .map((match) => ({ name: match[1]!, value: match[2]! }));
-                set({ variables: rows.length ? rows : undefined });
-              }}
+              onChange={(variables) => set({ variables })}
             />
             <Text
               variant="meta"
