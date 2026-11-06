@@ -454,3 +454,13 @@ export function readAccountIdentitiesChangeV1(change: Readonly<{ kind: string; e
 export function isAccountCurrentnessEntityIdV1(entityId: string): boolean {
   return entityId === 'self' || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1;
 }
+
+/**
+ * Account/credential currentness consumed by Team admission and shared-material readers: every
+ * linked-identity change and every `self` change except an exact settings-version fact.
+ */
+export function isAccountCurrentnessChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
+  if (change.kind !== 'account') return false;
+  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
+  return change.entityId === 'self' && readAccountSettingsVersionChangeV1(change) === null;
+}
