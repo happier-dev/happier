@@ -6,6 +6,7 @@ import {
   type ConnectedAccountMaterialization,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+  type ConnectedAccountAuthenticationModeRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { resolveClaudeCodeUsageUserAgent } from '../agent/auth/services/quota/userAgent.js';
@@ -19,7 +20,7 @@ import {
   CLAUDE_CODE_SETUP_TOKEN_SCOPES,
   findMissingClaudeCodeCredentialScopes,
 } from '../agent/auth/services/native/scopes.js';
-import { readClaudeCodeNativeCredential } from '../agent/auth/services/native/readCredential.js';
+import type { readClaudeCodeNativeCredential } from '../agent/auth/services/native/readCredential.js';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './claudeSubscriptionProfile.js';
 
 type QuotaContext = Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0];
@@ -404,10 +405,11 @@ async function readHealth(
   };
 }
 
-const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
-  authentication: {
-    modes: {
-      [CLAUDE_NATIVE_IMPORT_MODE_ID]: {
+export function createClaudeSubscriptionConnectedAccountRuntime(
+  readNativeCredential?: typeof readClaudeCodeNativeCredential,
+): PluginConnectedAccountRuntime {
+  const nativeImportMode: Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> | undefined = readNativeCredential ? {
+
         kind: 'manual',
         async complete(input, context, options) {
           const signal = options?.signal ?? context.signal;
@@ -417,7 +419,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
               'claude_subscription_native_source_unsupported', 'This Claude native login source is not supported.',
             ) };
           }
-          const native = await readClaudeCodeNativeCredential({ signal });
+          const native = await readNativeCredential({ signal });
           signal.throwIfAborted();
           if (!native) {
             return { status: 'unavailable', diagnostic: diagnostic(
@@ -444,7 +446,11 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
           await writeOptionalCredential(context.attemptCredentials, RATE_LIMIT_TIER_KEY, credential.rateLimitTier ?? '', operationOptions);
           return connectedResult(tokens);
         },
-      },
+      } : undefined;
+  const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
+  authentication: {
+    modes: {
+      ...(nativeImportMode ? { [CLAUDE_NATIVE_IMPORT_MODE_ID]: nativeImportMode } : {}),
       [CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId]: {
         kind: 'manual',
         async complete(input, context, options) {
@@ -760,6 +766,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   },
 };
 
-export const claudeSubscriptionConnectedAccountRuntime: PluginConnectedAccountRuntime = Object.freeze(
-  claudeSubscriptionRuntimeDefinition,
-);
+  return Object.freeze(claudeSubscriptionRuntimeDefinition);
+}
+
+export const claudeSubscriptionConnectedAccountRuntime = createClaudeSubscriptionConnectedAccountRuntime();

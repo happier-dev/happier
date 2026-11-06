@@ -10,6 +10,7 @@ import {
 import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './connectedAccounts/claudeSubscriptionProfile.js';
+import { claudeSubscriptionAccountAuthentication } from './connectedAccounts/account.js';
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES } from './agent/auth/services/native/scopes.js';
 import {
@@ -50,7 +51,7 @@ import { anthropicConnectedAccountRuntime, ANTHROPIC_API_KEY_INPUT_SCHEMA } from
 import {
   claudeSubscriptionConnectedAccountRuntime,
   CLAUDE_NATIVE_IMPORT_MODE_ID,
-} from './connectedAccounts/claudeSubscriptionRuntime.js';
+} from './connectedAccounts/claudeSubscriptionNativeRuntime.js';
 import { CLAUDE_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
@@ -220,6 +221,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         recoveryCredits: { supported: true },
         usageIdentity: { providerId: CLAUDE_ACCOUNT_USAGE_PROVIDER_ID, requiredContext: 'organization' },
         authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
             .setupToken.authenticationModeId,
           modes: [{
@@ -255,6 +257,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         },
       },
       runtime: claudeSubscriptionConnectedAccountRuntime,
+      accountRuntime: claudeSubscriptionAccountAuthentication,
     },
     anthropic: {
       declaration: {
