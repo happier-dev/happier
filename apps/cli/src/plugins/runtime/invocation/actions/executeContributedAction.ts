@@ -395,6 +395,7 @@ export async function executeContributedAction(params: Readonly<{
   clientId?: string;
   /** Host-only read constraint; checked before activation on this registry lease. */
   requiredDangerLevel?: 'safe';
+  resolveEnvironmentApprovalScope?: import('@happier-dev/protocol/actions').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   requiredReadOnly?: true;
   resourceSessionId?: string;
   readObservation?: import('../targetActionRegistry').InvokeTargetActionParams['readObservation'];
@@ -931,6 +932,7 @@ export async function executeContributedAction(params: Readonly<{
       invocationSurface,
       invocationAuthority: params.approvalContext?.authority ?? 'account_automation',
       ...(params.approvalContext ? { approvalContext: params.approvalContext } : {}),
+      ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
       ...(params.approvalContext?.invocationServices?.machineConnectorSecrets
         ? { machineConnectorSecrets: params.approvalContext.invocationServices.machineConnectorSecrets }
         : {}),
@@ -1017,14 +1019,14 @@ export async function executeContributedAction(params: Readonly<{
             actionSettingsProvider.getActionsSettings(),
             { surface: actionSurface },
           ),
-          isApprovalRequiredByActionSettings: (manifestDefault: boolean, parsedInput?: unknown) => isApprovalRequiredByActionsSettings(
-            contributedActionSettingsId,
-            actionSettingsProvider.getActionsSettings(),
-            { surface: actionSurface },
-            undefined,
-            manifestDefault || sharedRequester && action.definition.dangerLevel === 'writesRemote'
-              && pluginActionDeclarationRequiresConfirmationForInput(action.definition, invocationSurface, parsedInput, params.approvalContext?.authority),
-          ),
+          isApprovalRequiredByActionSettings: (manifestDefault: boolean, parsedInput?: unknown,
+            environmentAdmission?: import('@happier-dev/protocol/actions/actionApprovalPolicy').ActionEnvironmentApprovalScopeAdmissionV1) =>
+            isApprovalRequiredByActionsSettings(
+              contributedActionSettingsId, actionSettingsProvider.getActionsSettings(), { surface: actionSurface }, undefined,
+              manifestDefault || sharedRequester && action.definition.dangerLevel === 'writesRemote'
+                && pluginActionDeclarationRequiresConfirmationForInput(action.definition, invocationSurface, parsedInput, params.approvalContext?.authority),
+              parsedInput, undefined, undefined, undefined, environmentAdmission?.scope ?? undefined,
+            ),
         }),
       ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
     } as const;

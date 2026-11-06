@@ -27,9 +27,9 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
     const provider = 'provider' in input ? input.provider : undefined;
     if ('provider' in input) {
         const existing = await findExistingDeploymentTargetLinkV1(input, {
-            async list(cursor) {
+            async list(selection, cursor) {
                 const path = '/v1/deployments/targets/list';
-                const body = { serverId: input.serverId, scope: current.environment.owner, ...(cursor ? { cursor } : {}) };
+                const body = { serverId: input.serverId, scope: current.environment.owner, selection, ...(cursor ? { cursor } : {}) };
                 const response = await axios.request({ method: 'POST', url: new URL(path, host.serverHttpBaseUrl).href,
                     data: body, signal: context.signal, validateStatus: () => true,
                     headers: await host.artifactAuthorization(context)({ method: 'POST', path, body }) });

@@ -683,6 +683,7 @@ export const DaemonPluginStructuredMessageActionExecuteResponseSchema = lazyZodS
     ok: z.literal(false),
     code: z.string().check(z.trim(), z.minLength(1)),
     retryable: z.optional(z.boolean()),
+    actionHandlerInvocation: z.optional(z.literal('notStarted')),
     message: z.optional(z.string().check(z.trim(), z.minLength(1))),
     remediation: zMini.optional(PluginDiagnosticRemediationV1Schema),
   }),

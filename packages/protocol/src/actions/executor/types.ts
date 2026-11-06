@@ -514,6 +514,8 @@ export type InvokeContributedAction = (request: Readonly<{
   approvalExecutionOrigin?: ApprovalExecutionOriginV1;
   /** Host-only source-read constraint, enforced against the leased manifest. */
   requiredDangerLevel?: 'safe';
+  /** Existing credentialed host reader; never contributed business input. */
+  resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   signal?: AbortSignal;
 
 }>) => Promise<ActionExecuteResult>;

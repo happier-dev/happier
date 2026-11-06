@@ -8,6 +8,9 @@ import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/o
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
+import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent, pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginActionPresentUserGatePolicy, PluginActionInputParser } from '@happier-dev/protocol';
@@ -91,6 +94,7 @@ export type TargetActionDefinition = Readonly<{
     id: string;
     dangerLevel: PluginActionDangerLevelV2;
     readOnly?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['readOnly'];
+    approvalScope?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['approvalScope'];
     sessionTarget?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['sessionTarget'];
     scopes: readonly string[];
     surfaces: readonly string[];
@@ -195,7 +199,9 @@ export type InvokeTargetActionParams = Readonly<{
     /** Current host Action-settings enablement for this exact qualified target Action. */
     isEnabledByActionSettings?: () => boolean;
     /** Current host Action-settings policy for this exact qualified target Action. */
-    isApprovalRequiredByActionSettings?: (manifestDefault: boolean, input?: unknown) => boolean;
+    isApprovalRequiredByActionSettings?: (manifestDefault: boolean, input?: unknown,
+        environmentAdmission?: ActionEnvironmentApprovalScopeAdmissionV1) => boolean;
+    resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     /** Present only when the daemon operation runner already owns this invocation. */
     operationProgress?: TargetActionOperationProgressPort;
     /** Host-private custody admission; never projected into plugin context. */
@@ -287,6 +293,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     actions: readonly TargetActionInvocationRegistration[];
     expectedActions?: readonly Readonly<{ pluginId: string; localId: string }>[];
     readActions?: () => readonly TargetActionInvocationRegistration[];
+    resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
     evaluateCatalogPolicy?: (params: Readonly<{
         pluginId: string;
@@ -409,6 +416,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             const definition: TargetActionDefinition = Object.freeze({
                 id: registration.definition.id,
                 dangerLevel: registration.definition.dangerLevel,
+                ...(registration.definition.approvalScope === undefined ? {} : { approvalScope: registration.definition.approvalScope }),
                 ...(registration.definition.readOnly === undefined ? {} : { readOnly: registration.definition.readOnly }),
                 ...(registration.definition.sessionTarget === undefined ? {} : { sessionTarget: registration.definition.sessionTarget }),
                 scopes: Object.freeze([...registration.definition.scopes]),
@@ -919,6 +927,32 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 }
             }
             beginDiagnosticScope(preparedInput.input);
+            let environmentAdmission: ActionEnvironmentApprovalScopeAdmissionV1 | undefined;
+            if (indexed.registration.definition.approvalScope === 'environment') {
+                const resolveScope = invocation.resolveEnvironmentApprovalScope ?? params.resolveEnvironmentApprovalScope;
+                try {
+                    const admitted = resolveScope ? await resolveScope({
+                        actionId: formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId }),
+                        input: preparedInput.input,
+                        context: { ...invocation.approvalContext, signal: lifetime.signal },
+                        phase: invocation.requireCurrentIntent ? 'replay' : 'prepare',
+                    }) : { ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+                    if ('errorCode' in admitted) {
+                        await complete();
+                        return Object.freeze({ kind: 'settled' as const, result: {
+                            status: 'failed' as const, code: admitted.errorCode, message: admitted.error,
+                            actionHandlerInvocation: 'notStarted' as const,
+                        } });
+                    }
+                    environmentAdmission = admitted;
+                } catch {
+                    await complete();
+                    return Object.freeze({ kind: 'settled' as const, result: {
+                        status: 'failed' as const, code: 'deployment_unavailable', message: 'deployment_unavailable',
+                        actionHandlerInvocation: 'notStarted' as const,
+                    } });
+                }
+            }
             const resolveCurrentAction = (): ResolvedTargetAction | null => {
                 const current = actionsByKey.get(key);
                 if (!current) return null;
@@ -939,7 +973,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             invocation.invocationSurface ?? invocation.surface,
                             preparedInput.input,
                             invocation.invocationAuthority,
-                        ), preparedInput.input);
+                        ), preparedInput.input, environmentAdmission);
                 } catch {
                     // A failed host settings re-read cannot authorize a plugin Action.
                     approvalRequiredByActionSettings = true;

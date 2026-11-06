@@ -20,6 +20,8 @@ import { normalizeSessionTargetV1, type ActionSessionAddressV1 } from '@happier-
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings, type ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type { ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DaemonPluginStructuredMessageActionInvocationV1, DaemonPluginStructuredMessageActionMountedBinding } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
@@ -92,7 +94,7 @@ import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/dae
 import { createSelectedActionInputCustody } from '../hostApi/selectedActionInputCustody';
 import { createPluginActionInputSelector } from './pluginActionInputSelectionHostApi';
 
-import { isActionApprovalRequiredInState, resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
+import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -876,13 +878,15 @@ function isApprovalRequiredByActionSettings(
     action: Pick<PluginUiActionProjection, 'dangerLevel' | 'confirmation' | 'confirmationWhen'>,
     normalizedInput?: unknown,
     invocationAuthority?: ActionRequiredAuthority,
+    environmentAdmission?: ActionEnvironmentApprovalScopeAdmissionV1,
 ): boolean {
     try {
-        return isActionApprovalRequiredInState(
-            getStorage().getState(),
+        return isApprovalRequiredByActionsSettings(
             formatQualifiedPluginActionId({ pluginId: identity.pluginId, localId: identity.localId }),
-            { surface: invocationSurface },
+            resolveActionsSettingsV1FromState(getStorage().getState()),
+            { surface: invocationSurface }, undefined,
             pluginActionRequiresPresentUserIntent(action, invocationSurface, normalizedInput, invocationAuthority),
+            undefined, undefined, undefined, undefined, environmentAdmission?.scope ?? undefined,
         );
     } catch {
         // An unreadable settings snapshot cannot waive the person's decision.
@@ -959,6 +963,7 @@ async function settleDaemonActionPresentUserIntent(
     projectedAction: PluginUiActionProjection,
     settledInput: PluginUiJsonValueV1 | undefined,
     preparedInput?: Readonly<{ input: unknown }>,
+    requestedByDaemon = false,
 ): Promise<Readonly<{ ok: true; presentUserIntent?: 'confirmed' }> | PluginSurfaceActionDispatchFailure> {
     const invocationSurface = input.invocationSurface ?? 'ui';
     let normalizedInput: unknown = preparedInput?.input;
@@ -993,7 +998,9 @@ async function settleDaemonActionPresentUserIntent(
     // a condition on unvalidated JSON or requiring a daemon to authorize Account state.
     const invocationAuthority = await contributedInvocationAuthority(input);
     if (!isContributedActionEnabled(identity, invocationSurface)) return failure('denied', 'plugin_action_disabled');
-    const approvalRequiredByActionSettings = isApprovalRequiredByActionSettings(identity, invocationSurface, projectedAction, normalizedInput, invocationAuthority);
+    // The receiving daemon owns Environment admission and requests any UI decision.
+    if (projectedAction.approvalScope === 'environment' && !requestedByDaemon) return { ok: true };
+    const approvalRequiredByActionSettings = requestedByDaemon || isApprovalRequiredByActionSettings(identity, invocationSurface, projectedAction, normalizedInput, invocationAuthority);
     if (!pluginActionRequiresPresentUserIntent({
         dangerLevel: projectedAction.dangerLevel,
         ...(projectedAction.confirmation === undefined
@@ -1242,6 +1249,26 @@ async function executeClientContributedAction(
     preparation: PreparedClientContributedAction,
 ): Promise<PluginSurfaceActionDispatchOutcome> {
     const { initial, authority, invocationAuthority, invocation, preparedInput } = preparation;
+    let environmentAdmission: ActionEnvironmentApprovalScopeAdmissionV1 | undefined;
+    if (projectedAction.approvalScope === 'environment') {
+        if (!isPluginActionInputRecord(preparedInput.input) || typeof preparedInput.input.serverId !== 'string') {
+            return clientActionFailure('invalid_parameters');
+        }
+        try {
+            const account = await captureLazyActionAccountContext(preparedInput.input.serverId, input.signal);
+            try {
+                const admitted = await createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope!({
+                    actionId: formatQualifiedPluginActionId(identity), input: preparedInput.input,
+                    context: { ...input.hostAction?.context, serverId: account.serverId, signal: input.signal },
+                    phase: 'prepare',
+                });
+                if ('errorCode' in admitted) return clientActionFailure(admitted.errorCode);
+                environmentAdmission = admitted;
+            } finally { account.dispose(); }
+        } catch {
+            return clientActionFailure('deployment_unavailable');
+        }
+    }
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return failure('unavailable', 'plugin_action_origin_unavailable');
@@ -1280,7 +1307,7 @@ async function executeClientContributedAction(
                         ? {}
                         : { confirmation: current.action.confirmation }),
                     ...(current.action.confirmationWhen === undefined ? {} : { confirmationWhen: current.action.confirmationWhen }),
-                    approvalRequiredByActionSettings: isApprovalRequiredByActionSettings(identity, invocationSurface, current.action, normalizedInput, invocationAuthority),
+                    approvalRequiredByActionSettings: isApprovalRequiredByActionSettings(identity, invocationSurface, current.action, normalizedInput, invocationAuthority, environmentAdmission),
                     authorization: current.authorization,
                     ...(accountAvailability ? { availability: {
                         status: accountAvailability.outcome === 'hidden' ? 'unavailable' as const : accountAvailability.outcome,
@@ -2072,9 +2099,18 @@ async function executeContributedAction(
             : {}),
         ...(input.signal ? { signal: input.signal } : {}),
     };
-    const result = input.readObservation
+    let result = input.readObservation
         ? await observeDaemonActionRead(binding.machineId, options, input.readObservation)
         : await execute(binding.machineId, options);
+    if (!input.readObservation && projectedAction.approvalScope === 'environment'
+        && result.supported && !result.result.ok
+        && result.result.code === 'plugin_action_current_intent_unavailable'
+        && result.result.actionHandlerInvocation === 'notStarted') {
+        const confirmed = await settleDaemonActionPresentUserIntent(input, identity, projectedAction, normalizedInput, daemonPreparedInput, true);
+        if (!confirmed.ok) return confirmed;
+        result = await execute(binding.machineId, { ...options, presentUserIntent: confirmed.presentUserIntent });
+    }
+
 
     if (!result.supported) {
         if (result.reason === 'outcomeUnknown') {

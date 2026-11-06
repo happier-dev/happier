@@ -7,6 +7,8 @@ import {
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
@@ -265,11 +267,11 @@ const CLIENT_ACTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
     }),
 });
 const CLIENT_ACTION_GENERATION = 9;
-function clientAccountLifetime() {
+function clientAccountLifetime(serverId = 'server-client-action') {
     let current = true;
     const listeners = new Set<() => void>();
     const lifetime = {
-        scope: { serverId: 'server-client-action', accountId: 'test-account' },
+        scope: { serverId, accountId: 'test-account' },
         isCurrent: () => current,
         onRetire(listener: () => void) {
             listeners.add(listener);
@@ -353,6 +355,7 @@ const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
 
 function createClientTargetAction(input: Readonly<{
     identity: PluginContributionIdentityV1;
+    approvalScope?: PluginProjectedActionV2['approvalScope'];
     dangerLevel?: PluginProjectedActionV2['dangerLevel'];
     confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
     surfaces?: PluginProjectedActionV2['surfaces'];
@@ -367,6 +370,7 @@ function createClientTargetAction(input: Readonly<{
         occurrenceId: `occurrence-${input.identity.pluginId}`,
         title: input.identity.localId,
         scopes: ['global'],
+        ...(input.approvalScope ? { approvalScope: input.approvalScope } : {}),
         surfaces: input.surfaces ?? ['ui'],
         placementBindings: ['detailsPanel'],
         execution: input.accountPlacement ? { target: 'account', account: {
@@ -398,6 +402,7 @@ function createClientTargetAction(input: Readonly<{
 
 function createClientActionActivation(input: Readonly<{
     pluginId?: string;
+    approvalScope?: PluginProjectedActionV2['approvalScope'];
     localId?: string;
     dangerLevel?: PluginProjectedActionV2['dangerLevel'];
     confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
@@ -429,6 +434,7 @@ function createClientActionActivation(input: Readonly<{
     });
     const baseAction = createClientTargetAction({
         identity: { pluginId, localId },
+        approvalScope: input.approvalScope,
         dangerLevel: input.dangerLevel,
         surfaces: input.surfaces,
         accountPlacement: input.accountPlacement,
@@ -459,6 +465,7 @@ function createClientActionActivation(input: Readonly<{
     const accountDeclaration = input.accountManifest ?? (input.authoredAccount ? authoredAccountManifest : input.accountPlacement ? {
         schemaVersion: 2, id: pluginId, version: '1.2.3', displayName: 'Account author fixture', runtime: { apiVersion: 1 },
         contributes: { actions: [{ id: action.id, title: action.title, scopes: action.scopes, surfaces: action.surfaces,
+            ...(action.approvalScope ? { approvalScope: action.approvalScope } : {}),
             execution: action.execution, dangerLevel: action.dangerLevel, placementBindings: action.placementBindings,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}), inputSchema: input.inputSchema ?? {},
             ...(input.accountAvailability ? { availability: input.accountAvailability } : {}),
@@ -600,6 +607,95 @@ function resolveDaemonTargetAction(
 }
 
 describe('Account Action placement through the executable dispatcher', () => {
+    it.each(['client', 'account'] as const)('uses the preview template approval once at the UI contributed Action admission (%s)', async target => {
+        const storage = getStorage();
+        const previous = storage.getState();
+        const home = rpcHomes.get('server-client-action')!;
+        const template = createDeploymentEnvironmentHeaderV1({ serverId: 'srv_client_action' });
+        const child = createDeploymentEnvironmentHeaderV1({ id: 'preview-child', serverId: 'srv_client_action',
+            purpose: 'preview', previewTemplateEnvironmentId: template.id, previewRepositoryId: 'source-app',
+            previewPullRequestId: 'pr-42', previewTargetLinkId: 'template-link' });
+        const actionId = 'acme.releases/actions/publish';
+        const scope = { kind: 'environment', environmentId: template.id } as const;
+        let reads = 0;
+        network.setHttpResponder(async (url, init) => {
+            if (new URL(String(url)).pathname === `/v1/deployments/environments/${child.id}`) {
+                reads++;
+                return Response.json({ ok: true, environment: child, targetLinks: [] });
+            }
+            return createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init);
+        });
+        const handler = vi.fn(async () => ({ published: true }));
+        const accountLifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        const activation = createClientActionActivation({ pluginId: 'acme.releases', localId: 'publish',
+            approvalScope: 'environment', dangerLevel: 'writesRemote', accountLifetime,
+            accountPlacement: target === 'account', handler, accountHandler: handler, inputSchema: {
+            type: 'object', properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
+            required: ['serverId', 'environmentId'], additionalProperties: false,
+        } });
+        await activation.composition.reconcile([activation.activation]);
+        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
+            status: 'approved' as const, fingerprint,
+        }));
+        const dispatch = () => dispatchPluginSurfaceAction({
+            action: { pluginId: 'acme.releases', localId: 'publish' },
+            input: { serverId: home.id, environmentId: child.id },
+            clientAction: {},
+            pluginUiProjection: activation.projection,
+            resolveContributedAction: resolveExactClientAction(activation.action),
+            requestCurrentIntent,
+        });
+        try {
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: normalizeActionsSettingsV1({
+                v: 1, scopedApprovalPreferences: [{ actionId, scope,
+                    approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['ui'] }],
+            }) } }));
+            const waived = await dispatch();
+            expect(waived, JSON.stringify(waived)).toMatchObject({ ok: true, result: { published: true } });
+            expect(requestCurrentIntent).not.toHaveBeenCalled();
+            expect(reads).toBe(1);
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: normalizeActionsSettingsV1({
+                v: 1, scopedApprovalPreferences: [{ actionId, scope,
+                    approvalRequiredSurfaces: ['ui'], approvalWaivedSurfaces: [] }],
+            }) } }));
+            expect(await dispatch()).toMatchObject({ ok: true, result: { published: true } });
+            expect(requestCurrentIntent).toHaveBeenCalledOnce();
+            expect(reads).toBe(2);
+            expect(handler).toHaveBeenCalledTimes(2);
+        } finally { storage.setState(previous); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('lets the daemon Environment admission request UI confirmation without a second UI policy read', async () => {
+        let approvalRequired = false;
+        let environmentReads = 0;
+        network.setHttpResponder(async (url, init) => {
+            if (new URL(String(url)).pathname.includes('/deployments/environments/')) environmentReads++;
+            return createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init);
+        });
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async (_machine, options) => {
+            if (approvalRequired && options.presentUserIntent !== 'confirmed') return {
+                supported: true, result: { ok: false, code: 'plugin_action_current_intent_unavailable',
+                    actionHandlerInvocation: 'notStarted' },
+            };
+            return { supported: true, result: { ok: true, result: { published: true } } };
+        });
+        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
+            status: 'approved' as const, fingerprint,
+        }));
+        const dispatch = () => dispatchPluginSurfaceAction({ action: { pluginId: 'acme.releases', localId: 'publish' },
+            input: { serverId: 'server-composed', environmentId: 'preview-child' },
+            resolveContributedAction: identity => ({ ...resolveConfirmedDaemonTargetAction(identity), approvalScope: 'environment' as const }),
+            requestCurrentIntent, contributedAction: { machineId: 'machine-1', serverId: 'server-composed', execute: contributed },
+        });
+        expect(await dispatch()).toMatchObject({ ok: true, result: { published: true } });
+        expect(requestCurrentIntent).not.toHaveBeenCalled();
+        approvalRequired = true;
+        expect(await dispatch()).toMatchObject({ ok: true, result: { published: true } });
+        expect(requestCurrentIntent).toHaveBeenCalledOnce();
+        expect(contributed).toHaveBeenCalledTimes(3);
+        expect(environmentReads).toBe(0);
+    });
+
     it.each([
         { coldBinding: false, settlement: 'ready' },
         { coldBinding: true, settlement: 'ready' },

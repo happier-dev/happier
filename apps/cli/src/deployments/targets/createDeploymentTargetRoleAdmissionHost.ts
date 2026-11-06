@@ -72,13 +72,14 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         }
         return { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` };
     };
-    const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl,
+    const deployment = createCliDeploymentActionDeps({ serverHttpBaseUrl,
         admitAccount: async (requestedServerId, current) => {
             if (!await isServerProfileHomeIdentity(requestedServerId, serverId)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
             await assertCurrent(current); return null;
         }, resolveRequestHeaders: headers,
         dispatchReceipt: async () => refuse('unsupported_action'),
-    }).deploymentAction!;
+    });
+    const storage = deployment.deploymentAction!;
     const artifacts = createCredentialedAccountArtifactStore(credentials);
     const open = async (artifactId: string, current: ActionExecutorContext) => runWithServerHttpBaseUrl(serverHttpBaseUrl, () => artifacts.read(artifactId, {
         signal: current.signal, prepareRecipients: false, includeSharedAudience: false,
@@ -89,6 +90,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     return {
         serverId, machineId, credentialOwnerAccountId, credentials, serverHttpBaseUrl,
         resolveRequesterIdentity: config.resolveRequesterIdentity,
+        resolveEnvironmentApprovalScope: deployment.resolveEnvironmentApprovalScope,
         ...(installationId ? { installationId } : {}),
         assertCurrent,
         async readEnvironment(request) {

@@ -209,6 +209,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   resolveCurrentMachineId?: () => string | null;
   readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
   executeClientAction?: ClientContributedActionExecutor;
+  deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
@@ -450,6 +451,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             : {}),
           ...(params.readDaemonRequesterWorkAttribution
             ? { readDaemonRequesterWorkAttribution: params.readDaemonRequesterWorkAttribution }
+            : {}),
+          ...(params.deploymentAccountExecution
+            ? { deploymentAccountExecution: params.deploymentAccountExecution }
             : {}),
           ...(params.machineAdmissionTransport
             ? { machineAdmissionTransport: params.machineAdmissionTransport }

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -35,6 +40,74 @@ beforeEach(() => { bindApiSessionSocketMock(sockets.io, createApiSessionSocketSt
 afterEach(() => vi.restoreAllMocks());
 
 describe('plugin Action current intent through the registered daemon ingress', () => {
+    it('admits Environment scope on the receiving daemon before requesting and consuming UI confirmation', async () => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null };
+        const serverId = configuration.activeServerId;
+        const homeUrl = resolveServerHttpBaseUrl();
+        const template = createDeploymentEnvironmentHeaderV1({ serverId });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId, id: 'preview-child', purpose: 'preview',
+            previewTemplateEnvironmentId: template.id, previewRepositoryId: 'source-app',
+            previewPullRequestId: 'pr-42', previewTargetLinkId: 'template-link' });
+        const effects: unknown[] = [];
+        vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
+        const plugin = definePlugin({ id: 'acme.rpc-environment-scope', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            actions: { publish: { title: 'Publish preview', scopes: ['global'], surfaces: ['ui'],
+                dangerLevel: 'writesRemote', approvalScope: 'environment', confirmation: { title: 'Publish preview status?' },
+                inputSchema: { type: 'object', properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
+                    required: ['serverId', 'environmentId'], additionalProperties: false },
+                resultSchema: { type: 'object', properties: { published: { type: 'boolean' } }, required: ['published'], additionalProperties: false },
+                run: async input => { effects.push(input); return { published: true }; },
+            } },
+        });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: plugin.manifest,
+            files: { 'daemon.mjs': 'export function activate() {}' }, instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
+            resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+                loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
+            runtimeOptions: { deploymentAccountExecution: { credentials, serverUrl: homeUrl, serverId,
+                    serverIdentityId: serverId, machineId: 'machine-1', isCurrent: async () => true },
+                resolveCurrentMachineId: () => 'machine-1',
+                resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId: 'machine-1' }) },
+        });
+        vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credentials);
+        vi.spyOn(installationIdentity, 'readInstallationIdentityIfExistsSync').mockReturnValue({
+            version: 1, installationId: 'scope-installation', createdAt: 1, publicKey: '', privateKey: '',
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'account-1' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            throw new Error(`Unexpected Account read: ${path}`);
+        });
+        vi.spyOn(runtimeLease, 'acquireAuthoritativePluginRuntimeRegistryLease').mockImplementation(async () => ({
+            registry: fixture.registry, source: 'ephemeral', durableRevision: -1, release: async () => {},
+        }));
+        // Home HTTP is the boundary; the receiving registry and scope resolver remain real.
+        const reads = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            expect(new URL(request.url!).origin).toBe(new URL(homeUrl).origin);
+            expect(new URL(request.url!).pathname).toBe(`/v1/deployments/environments/${environment.id}`);
+            expect(request.headers?.Authorization).toBe(`Bearer ${token}`);
+            return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+        });
+        const client = new ApiMachineClient(token, { id: 'machine-1', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
+        if (!(manager instanceof RpcHandlerManager)) throw new Error('missing_machine_rpc_owner');
+        const request = { machineId: 'machine-1', expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(plugin.manifest.id),
+            qualifiedActionId: `${plugin.manifest.id}/publish`, input: { serverId, environmentId: environment.id }, executionSurface: 'ui' };
+        try {
+            expect(await manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request))
+                .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted' });
+            expect(effects).toEqual([]);
+            expect(reads).toHaveBeenCalledTimes(1);
+            expect(await manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                { ...request, presentUserIntent: 'confirmed' })).toMatchObject({ ok: true, result: { published: true } });
+            expect(effects).toEqual([request.input]);
+            expect(reads).toHaveBeenCalledTimes(2);
+        } finally { await client.shutdown(); await fixture.dispose(); }
+    });
     it('creates approval with the production machine Account binding and admitted plugin policy producer', async () => {
         const unavailableReasons: unknown[] = [];
         const requests: string[] = [];
@@ -97,6 +170,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
         } finally { await client.shutdown(); await fixture.dispose(); }
     });
     it.each([
+        { executionSurface: 'ui', tracked: false },
         { executionSurface: 'cli', tracked: false },
         { executionSurface: 'agent', tracked: false },
         { executionSurface: 'mcp', tracked: false },
@@ -206,10 +280,17 @@ describe('plugin Action current intent through the registered daemon ingress', (
             const handler: RpcHandler = input => manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, input);
             const request = { machineId: 'machine-1', expectedContributorOccurrenceId: occurrenceId,
                 qualifiedActionId: `${pluginId}/apply`, input: { value: 'approved' }, executionSurface };
-            if (executionSurface === 'cli') {
-                expect(await handler({ ...request, executionSurface: 'ui' })).toMatchObject({ ok: false,
-                    code: 'plugin_action_current_intent_unavailable' });
+            if (executionSurface === 'ui') {
+                expect(await handler(request)).toMatchObject({ ok: false,
+                    code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted' });
                 expect(stored).toBeNull();
+                expect(applied).toBeUndefined();
+                expect(await handler({ ...request, presentUserIntent: 'confirmed' })).toMatchObject({
+                    ok: true, result: { applied: 'approved-normalized' },
+                });
+                expect(applied).toMatchObject({ value: 'approved-normalized' });
+                expect(stored).toBeNull();
+                return;
             }
             const result = await handler(request);
             if (confidential) expect(result, JSON.stringify({ result, unavailableReasons })).toEqual({ ok: true, result: { applied: 'approved-normalized' } });

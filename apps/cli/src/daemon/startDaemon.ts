@@ -560,6 +560,7 @@ export async function startDaemon(
     });
     machineIrohRuntime = preparedIrohState.machine;
     homeIrohTransport = preparedIrohState.home;
+    const readDaemonHomeServerHttpBaseUrl = captureServerHttpBaseUrl();
     daemonLockHandle = bootstrapContext.daemonLockHandle;
     const credentials = bootstrapContext.credentials;
     const api = bootstrapContext.api;
@@ -1740,7 +1741,18 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       },
     };
 
-const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+    const deploymentAccountHomeServerId = configuration.activeServerId;
+    const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+      deploymentAccountExecution: {
+        credentials,
+        serverUrl: readDaemonHomeServerHttpBaseUrl(),
+        serverId: deploymentAccountHomeServerId,
+        serverIdentityId: managedPolicyHomeId ?? deploymentAccountHomeServerId,
+        ...(machineId ? { machineId } : {}),
+        isCurrent: async () => !homeTransportCancellation.signal.aborted
+          && configuration.activeServerId === deploymentAccountHomeServerId,
+      },
+
 
 
       signal: homeTransportCancellation.signal,

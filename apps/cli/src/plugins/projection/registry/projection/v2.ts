@@ -785,6 +785,7 @@ function buildActionsById(
             ...(action.definition.sessionTarget === undefined ? {} : { sessionTarget: action.definition.sessionTarget }),
             ...(action.definition.priority === undefined ? {} : { priority: action.definition.priority }),
             dangerLevel: action.definition.dangerLevel,
+            ...(action.definition.approvalScope === undefined ? {} : { approvalScope: action.definition.approvalScope }),
             ...(action.definition.confirmationWhen === undefined ? {} : { confirmationWhen: action.definition.confirmationWhen }),
             ...(action.definition.readOnly === undefined ? {} : { readOnly: action.definition.readOnly }),
             ...(action.definition.confirmation

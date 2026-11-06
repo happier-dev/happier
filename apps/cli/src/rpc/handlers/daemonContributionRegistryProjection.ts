@@ -199,6 +199,7 @@ function projectStructuredMessageActionFailure(result: Readonly<{
     errorCode: string;
     error: string;
     retryable?: boolean;
+    actionHandlerInvocation?: 'notStarted';
     data?: JsonValue;
 }>) {
     const authorPayload = readPluginActionFailureAuthorPayload(result.data);
@@ -212,6 +213,7 @@ function projectStructuredMessageActionFailure(result: Readonly<{
             ? { message: projectPluginFailureText(new Error(message)) }
             : {}),
         ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+        ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
         ...(authorPayload.remediation === undefined ? {} : { remediation: authorPayload.remediation }),
     });
 }

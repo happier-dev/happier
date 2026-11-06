@@ -1,11 +1,7 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { deriveActivationTargetRegistrationRights } from '../lifecycle/activation/targets';
-import { PluginActionConfirmationV2Schema, PluginActionConfirmationWhenV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { PluginActionDangerLevelV2Schema } from '@happier-dev/protocol/plugins/actions/vocabulary';
-import { ActionOperationDeclarationV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type { PluginActionPresentUserGatePolicy, PluginSourceCustodyV1 } from '@happier-dev/protocol';
-import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
@@ -15,7 +11,8 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { createRegistryInputTypeDeps } from './actions/createCommittedContributedActionDeps';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type { ResolvedActionAdmittedTarget, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import type { PluginTargetActivationFact } from '@/plugins/runtime/lifecycle/activation/facts';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -33,7 +30,6 @@ import type {
     ResolveTargetActionHostBinding,
     ResolveTargetActionHostPolicy,
 } from '../hostAccess/resolve';
-import { resolveManifestHostAccessRequests } from '../hostAccess/manifestRequests';
 import {
     evaluateTargetActionCatalogPolicy,
     resolveInvocationContributionPolicyFacts,
@@ -65,46 +61,27 @@ type TargetRegistration = Readonly<{
     registration: ContributionRuntimeRegistration;
 }>;
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readStringArray(value: unknown): readonly string[] | null {
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-        ? Object.freeze([...value])
-        : null;
-}
-
-function readProjectedActionSurfaces(value: unknown): readonly string[] | null {
-    const parsed = ActionSurfaceSchema.safeParse(value);
-    if (!parsed.success) return null;
-    return Object.freeze(Object.entries(parsed.data).flatMap(([surface, enabled]) => (
-        enabled ? [surface] : []
-    )));
-}
-
-function readTargetDefinition(value: unknown): TargetActionDefinition {
-    if (!isRecord(value)) throw new Error('Target action definition is not an object');
-    const scopes = readStringArray(value.scopes);
-    const surfaces = readProjectedActionSurfaces(value.surfaces);
-    if (typeof value.id !== 'string' || !scopes || !surfaces) {
-        throw new Error(`Target action '${String(value.id)}' is missing canonical action metadata`);
-    }
+function readAdmittedTargetDefinition(target: ResolvedActionAdmittedTarget): TargetActionDefinition {
+    const declaration = target.declaration;
     return Object.freeze({
-        id: value.id,
-        dangerLevel: PluginActionDangerLevelV2Schema.parse(value.dangerLevel),
-        ...(value.confirmationWhen === undefined ? {} : { confirmationWhen: PluginActionConfirmationWhenV2Schema.parse(value.confirmationWhen) }),
-        scopes,
-        surfaces,
-        ...(value.confirmation === undefined
+        id: declaration.id,
+        dangerLevel: declaration.dangerLevel,
+        ...(declaration.readOnly === undefined ? {} : { readOnly: declaration.readOnly }),
+        ...(declaration.approvalScope === undefined ? {} : { approvalScope: declaration.approvalScope }),
+        ...(declaration.confirmationWhen === undefined ? {} : { confirmationWhen: declaration.confirmationWhen }),
+        ...(declaration.sessionTarget === undefined ? {} : { sessionTarget: declaration.sessionTarget }),
+        scopes: declaration.scopes,
+        surfaces: target.surfaces,
+        ...(declaration.dangerLevel === 'safe' || declaration.confirmation === undefined
             ? {}
-            : { confirmation: PluginActionConfirmationV2Schema.parse(value.confirmation) }),
-        ...(isRecord(value.inputSchema) ? { inputSchema: value.inputSchema } : {}),
-        ...(isRecord(value.outputSchema) ? { resultSchema: value.outputSchema } : {}),
-        ...(value.availability === undefined ? {} : { availability: value.availability }),
-        ...(value.operation === undefined
+            : { confirmation: declaration.confirmation }),
+        ...(declaration.inputSchema === undefined ? {} : { inputSchema: declaration.inputSchema }),
+        ...(declaration.resultSchema === undefined ? {} : { resultSchema: declaration.resultSchema }),
+        ...(declaration.availability === undefined ? {} : { availability: declaration.availability }),
+        ...(declaration.operation === undefined
             ? {}
-            : { operation: ActionOperationDeclarationV1Schema.parse(value.operation) }),
+            : { operation: declaration.operation }),
+        hostAccessRequests: target.hostAccessRequests,
     });
 }
 
@@ -195,6 +172,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
      * bindings. The target Action lifecycle remains the operation owner.
      */
     resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
+    resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
 }>) {
     const expectedActions = params.contributes.activationTargets.flatMap((target) => (
@@ -245,13 +223,6 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 if (!hasActivePluginGeneration) return [];
                 throw new Error(`Target action '${entry.pluginId}/actions/${entry.registration.localId}' is not backed by an active occurrence fact`);
             }
-            const manifest = params.contributes.activationTargets.find((target) => target.pluginId === entry.pluginId)?.manifest;
-            const actionDefinition = manifest?.contributes.actions.find((action) => (
-                action.id === entry.registration.localId
-            ));
-            if (!manifest || !actionDefinition) {
-                throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no matching manifest action`);
-            }
             const actionIdentity = createPluginContributionIdentity({
                 pluginId: entry.pluginId,
                 localId: entry.registration.localId,
@@ -265,7 +236,11 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             ) {
                 throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no matching resolved Action projection`);
             }
-            const hostAccessIds = readStringArray(actionDefinition.hostAccess);
+            const admittedTarget = resolvedAction.admittedTarget;
+            if (!admittedTarget) {
+                throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no admitted manifest action`);
+            }
+            const actionDefinition = admittedTarget.declaration;
             const inputParser = readPluginActionInputParser(capturedHandler);
             const resultParser = readPluginActionResultParser(capturedHandler);
             const observeRead = readPluginActionReadObserver(capturedHandler);
@@ -292,18 +267,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 sourceCustody,
                 localId: entry.registration.localId,
                 definition: {
-                    ...readTargetDefinition(resolvedAction.definition),
+                    ...readAdmittedTargetDefinition(admittedTarget),
                     secretInputPaths,
                     ...(Object.keys(secretInputLabels).length ? { secretInputLabels } : {}),
-                    hostAccessRequests: resolveManifestHostAccessRequests({
-                        manifest,
-                        pluginId: entry.pluginId,
-                        contribution: {
-                            family: 'actions',
-                            localId: entry.registration.localId,
-                        },
-                        ...(hostAccessIds ? { requestIds: hostAccessIds } : {}),
-                    }),
                 },
                 ...(inputParser === undefined ? {} : { inputParser }),
                 ...(resultParser === undefined ? {} : { resultParser }),
@@ -330,65 +296,45 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         pluginId: string,
         localId: string,
     ): ResolvedTargetAction | null => {
-        const actionRegistryKey = buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId, localId }));
-        const resolvedAction = params.contributes.actionsById?.get(actionRegistryKey);
-        let catalogAction: Readonly<{
-            definition: TargetActionDefinition;
-            occurrenceId: string;
-            sourceCustody: PluginSourceCustodyV1;
-        }> | undefined;
-        if (resolvedAction) {
-            // Discovery consumes admitted declarations. Daemon handlers activate
-            // on invocation; client handlers belong to the answering UI.
-            const manifest = params.contributes.activationTargets.find((target) => target.pluginId === pluginId)?.manifest;
-            const declaration = manifest?.contributes.actions.find((action) => action.id === localId);
-            const occurrenceId = params.readCurrentPluginOccurrenceId?.(pluginId);
-            const sourceCustody = params.readCurrentPluginSourceCustody?.(pluginId);
-            if (
-                !manifest || !declaration || declaration.execution.target !== resolvedAction.definition.execution?.target
-                || (params.executionRealm === 'account' && declaration.execution.target !== 'account')
-                || (params.executionRealm !== 'account' && declaration.execution.target === 'account')
-                || resolvedAction.pluginId !== pluginId || resolvedAction.definition.id !== localId
-                || occurrenceId == null || sourceCustody == null
-            ) return null;
-            const activationFacts = params.readTargetActivationFacts?.() ?? params.targetActivationFacts;
-            // No fact is a cold declaration; an explicit inactive fact for this
-            // occurrence still suppresses a daemon contribution.
-            if (declaration.execution.target === 'daemon' && activationFacts?.some(fact =>
-                fact.pluginId === pluginId && fact.occurrenceId === occurrenceId && fact.status !== 'active')) return null;
-            catalogAction = {
-                occurrenceId,
-                sourceCustody,
-                definition: {
-                    ...readTargetDefinition(resolvedAction.definition),
-                    hostAccessRequests: resolveManifestHostAccessRequests({
-                        manifest,
-                        pluginId,
-                        contribution: { family: 'actions', localId },
-                        requestIds: declaration.hostAccess,
-                    }),
-                },
-            };
-        }
-        if (!catalogAction?.sourceCustody) return null;
+        const resolvedAction = readResolvedActionContribution(params.contributes,
+            createPluginContributionIdentity({ pluginId, localId }));
+        const target = resolvedAction?.admittedTarget;
+        if (!resolvedAction || !target) return null;
+        // Discovery consumes the same admitted declaration as invocation;
+        // source/occurrence and all live policy are still read for this call.
+        const declaration = target.declaration;
+        const occurrenceId = params.readCurrentPluginOccurrenceId?.(pluginId);
+        const sourceCustody = params.readCurrentPluginSourceCustody?.(pluginId);
+        if (
+            declaration.execution.target !== resolvedAction.definition.execution?.target
+            || (params.executionRealm === 'account' && declaration.execution.target !== 'account')
+            || (params.executionRealm !== 'account' && declaration.execution.target === 'account')
+            || resolvedAction.pluginId !== pluginId || resolvedAction.definition.id !== localId
+            || occurrenceId == null || sourceCustody == null
+        ) return null;
+        const activationFacts = params.readTargetActivationFacts?.() ?? params.targetActivationFacts;
+        // No fact is a cold declaration; an explicit inactive fact for this
+        // occurrence still suppresses a daemon contribution.
+        if (declaration.execution.target === 'daemon' && activationFacts?.some(fact =>
+            fact.pluginId === pluginId && fact.occurrenceId === occurrenceId && fact.status !== 'active')) return null;
         const availability = resolveTargetActionAvailability({
-            availability: catalogAction.definition.availability ?? undefined,
+            availability: declaration.availability ?? undefined,
             facts: resolveInvocationContributionPolicyFacts(),
         });
         return resolveCatalogTargetActionPolicy({
             pluginId,
             localId,
-            occurrenceId: catalogAction.occurrenceId,
-            sourceCustody: catalogAction.sourceCustody,
-            dangerLevel: catalogAction.definition.dangerLevel,
-            ...(catalogAction.definition.confirmationWhen === undefined ? {} : { confirmationWhen: catalogAction.definition.confirmationWhen }),
-            scopes: catalogAction.definition.scopes,
-            surfaces: catalogAction.definition.surfaces,
-            hostAccessRequests: catalogAction.definition.hostAccessRequests ?? [],
+            occurrenceId,
+            sourceCustody,
+            dangerLevel: declaration.dangerLevel,
+            ...(declaration.confirmationWhen === undefined ? {} : { confirmationWhen: declaration.confirmationWhen }),
+            scopes: declaration.scopes,
+            surfaces: target.surfaces,
+            hostAccessRequests: target.hostAccessRequests,
             ...(availability === undefined ? {} : { availability }),
-            ...(catalogAction.definition.confirmation === undefined
+            ...(declaration.dangerLevel === 'safe' || declaration.confirmation === undefined
                 ? {}
-                : { confirmation: catalogAction.definition.confirmation }),
+                : { confirmation: declaration.confirmation }),
             resolveHostPolicy: params.resolveHostPolicy,
         });
     };
@@ -397,6 +343,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         actions: readActions(),
         expectedActions,
         readActions,
+        ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
         evaluateCatalogPolicy: ({ pluginId, localId }) => {
             const action = resolveCatalogAction(pluginId, localId);
             if (!action) {

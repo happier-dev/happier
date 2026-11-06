@@ -353,6 +353,9 @@ import type {
 } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { configuration } from '@/configuration';
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import {
@@ -1840,6 +1843,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         executeClientAction?: ClientContributedActionExecutor;
         /** Existing authenticated Machine admission authority for protected Session input. */
         machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
+        externalActionHomeBinding?: ExternalActionHomeBinding;
+        /** Captured daemon custody for deployment admission; does not select an execution realm. */
+        deploymentAccountExecution?: Parameters<typeof createDeploymentTargetRoleAdmissionHost>[1]['accountExecution'];
         /** Existing daemon-local transfer carrier for host-authored media bytes. */
         resolveComposerMediaStageTransferRpcHandler?: () => RpcHandlerInvoker | null;
         /** Fresh server/machine identity; never a retained feature snapshot. */
@@ -3290,6 +3296,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }
     };
     const sessionCredentialsServerId = configuration.activeServerId;
+    const notificationServerHttpBaseUrl = params?.accountExecution?.serverUrl ?? resolveServerHttpBaseUrl();
     const sessionCredentials = await readSessionCredentials();
     // Only explicitly daemon-owned probes and admitted shared Provider bindings
     // use this Account. Absence of a Session never supplies requester evidence.
@@ -4609,7 +4616,6 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 && accountExecution.isCurrent(),
             resolveBaseUrl: () => accountExecution.serverUrl,
         }) : undefined);
-    const notificationServerHttpBaseUrl = params?.accountExecution?.serverUrl ?? resolveServerHttpBaseUrl();
     const currentDomainEdgeObservation = createCurrentDomainEdgeObservation();
     consumerAssembly.allRetirementSignal.addEventListener('abort', () => currentDomainEdgeObservation.dispose(), { once: true });
     const notificationAccountId = sessionCredentials ? readAccountIdFromToken(sessionCredentials.token) : null;
@@ -5426,7 +5432,37 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             return null;
         }
     };
+    const readDeploymentTargetRoleAdmissionHost = (context: import('@happier-dev/protocol').ActionExecutorContext) => {
+        const machineId = params?.resolveCurrentMachineId?.() ?? params?.accountExecution?.machineId ?? null;
+        // Custody and execution realm are separate: a daemon runtime may
+        // use its explicitly captured Account without becoming an Account runtime.
+        const accountExecution = params?.accountExecution ?? params?.deploymentAccountExecution ?? (scopedActionRuntime && sessionCredentials ? {
+            credentials: sessionCredentials,
+            serverUrl: notificationServerHttpBaseUrl,
+            serverId: sessionCredentialsServerId,
+            serverIdentityId: params?.externalActionHomeBinding?.serverIdentityId ?? sessionCredentialsServerId,
+            ...(machineId ? { machineId } : {}),
+            ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
+            isCurrent: async () => configuration.activeServerId === sessionCredentialsServerId,
+        } : undefined);
+        return createDeploymentTargetRoleAdmissionHost(context, {
+            resolveRequesterIdentity: async actionContext => {
+                const physical = params?.readDaemonRequesterWorkAttribution?.();
+                return selectHostRequesterExecutionIdentity({ actionContext,
+                    hostHomeServerIdentityId: physical?.serverId ?? null,
+                    hostCustodianAccountId: physical?.accountId ?? null,
+                    ...(physical ? { hostExecutionTarget: { machineId: physical.machineId, installationId: physical.installationId } } : {}) });
+            },
+            ...(accountExecution ? { accountExecution: { ...accountExecution, isCurrent: async () => accountExecution.isCurrent() } } : {}),
+            readCurrentMachineId: () => machineId,
+        });
+    };
     targetActionInvocations = buildTargetActionInvocationRegistry({
+        async resolveEnvironmentApprovalScope(request) {
+            const host = await readDeploymentTargetRoleAdmissionHost(request.context);
+            return host?.resolveEnvironmentApprovalScope?.(request)
+                ?? { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+        },
         async readAccountScope(signal) {
             const authority = params?.accountExecution;
             if (signal.aborted || !authority?.serverId || !await authority.isCurrent()) return undefined;

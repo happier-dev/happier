@@ -2844,7 +2844,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
     }
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-    const scopeAdmission = await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
+    const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope }
+      : await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
       context: ctx, deps, phase: options?.approvalReplay ? 'replay' : existingAdmission ? 'dispatch' : 'prepare',
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
@@ -2883,9 +2884,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     } };
     if (ctx.presentUserConfirmation?.inputDigest !== undefined) ctx = { ...ctx, presentUserConfirmation: undefined };
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-    if (existingAdmission && !sameStrictJsonValue(existingAdmission.approvalScope ?? null, approvalScope ?? null)) {
-      return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
-    }
     if (existingAdmission && existingAdmission.previewTemplateEnvironmentId !== previewTemplateEnvironmentId) {
       return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
     }
@@ -5290,6 +5288,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             context: ctx,
             ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
             ...(ctx.requiredContributedActionDangerLevel ? { requiredDangerLevel: ctx.requiredContributedActionDangerLevel } : {}),
+            ...(deps.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
         }
@@ -5350,6 +5349,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   ...invocation,
                   context: ctx,
                   ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
+                  ...(deps.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope } : {}),
                   ...(options.signal ? { signal: options.signal } : {}),
                 }));
               },

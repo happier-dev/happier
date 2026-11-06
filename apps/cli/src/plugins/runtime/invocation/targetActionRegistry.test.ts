@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import axios from 'axios';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     isPluginError,
@@ -106,6 +113,80 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('refuses an Environment-scoped contributed Action before its handler without admitted owner facts', async () => {
+        const handler = vi.fn(async () => ({ echoed: 'never' }));
+        const registry = createRegistry({ actions: [{ ...action({ approvalScope: 'environment' }), handler }] });
+        try {
+            expect(await registry.invoke({ pluginId: 'acme.alpha', localId: 'run',
+                surface: 'cli', input: { value: 'reviewed' } })).toMatchObject({
+                status: 'failed', code: 'deployment_unavailable', actionHandlerInvocation: 'notStarted',
+            });
+            expect(handler).not.toHaveBeenCalled();
+        } finally { registry.dispose(); }
+    });
+
+    it('reads template Environment policy once per contributed Action admission', async () => {
+        const template = createDeploymentEnvironmentHeaderV1();
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'preview-child', purpose: 'preview',
+            previewTemplateEnvironmentId: template.id, previewRepositoryId: 'source-app', previewPullRequestId: 'pr-42', previewTargetLinkId: 'template-link' });
+        const actionId = formatQualifiedPluginActionId({ pluginId: 'acme.alpha', localId: 'run' });
+        const scope = { kind: 'environment', environmentId: template.id } as const;
+        let settings = normalizeActionsSettingsV1({ v: 1, scopedApprovalPreferences: [{ actionId, scope,
+            approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['cli'] }] });
+        const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            expect(new URL(request.url!).pathname).toBe(`/v1/deployments/environments/${environment.id}`);
+            return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+        });
+        const deployment = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test',
+            admitAccount: async () => null, resolveRequestHeaders: async () => ({}),
+            async dispatchReceipt() { throw new Error('Approval admission never dispatches a receipt'); },
+        });
+        const handler = vi.fn(async () => ({ echoed: 'reviewed' }));
+        const registry = createRegistry({ actions: [{ ...action({ approvalScope: 'environment', dangerLevel: 'writesRemote',
+            confirmation: { title: 'Publish preview status?' },
+            inputSchema: { type: 'object', properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
+                required: ['serverId', 'environmentId'], additionalProperties: false } }), handler },
+            { ...action(), localId: 'plain', definition: { ...action().definition, id: 'plain' },
+                handler: async () => ({ echoed: 'ordinary' }) }] });
+        const invocation = {
+            pluginId: 'acme.alpha', localId: 'run', surface: 'cli',
+            input: { serverId: environment.serverId, environmentId: environment.id },
+            approvalContext: { serverId: environment.serverId },
+            resolveEnvironmentApprovalScope: deployment.resolveEnvironmentApprovalScope,
+            isApprovalRequiredByActionSettings: (manifestDefault: boolean, _input: unknown,
+                admission?: import('@happier-dev/protocol/actions/actionApprovalPolicy').ActionEnvironmentApprovalScopeAdmissionV1) =>
+                isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'cli' }, undefined, manifestDefault,
+                    undefined, undefined, undefined, undefined, admission?.scope ?? undefined),
+        } as const;
+        try {
+            expect(await registry.invoke({ ...invocation, localId: 'plain', input: { value: 'unrelated' } }))
+                .toMatchObject({ status: 'executed', value: { echoed: 'ordinary' } });
+            expect(http).not.toHaveBeenCalled();
+            const waived = await registry.invoke(invocation);
+            expect(waived, JSON.stringify(waived)).toMatchObject({ status: 'executed', value: { echoed: 'reviewed' } });
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(http).toHaveBeenCalledTimes(1);
+            const prepared = await registry.prepare(invocation);
+            expect(prepared.kind).toBe('ready');
+            expect(http).toHaveBeenCalledTimes(2);
+            // O-DEPLOY 2026-11-05: admitted finite work finishes; the next
+            // admission consumes a changed preference, without per-step reads.
+            settings = normalizeActionsSettingsV1({ v: 1, scopedApprovalPreferences: [{ actionId, scope,
+                approvalRequiredSurfaces: ['cli'], approvalWaivedSurfaces: [] }] });
+            if (prepared.kind === 'ready') expect(await prepared.run()).toMatchObject({
+                status: 'executed', value: { echoed: 'reviewed' },
+            });
+            expect(http).toHaveBeenCalledTimes(2);
+            const requestCurrentIntent = vi.fn(async () => ({ status: 'rejected' as const, code: 'plugin_action_current_intent_rejected' }));
+            expect(await registry.invoke({ ...invocation, requestCurrentIntent })).toMatchObject({
+                status: 'unavailable', code: 'plugin_action_current_intent_rejected', actionHandlerInvocation: 'notStarted',
+            });
+            expect(requestCurrentIntent).toHaveBeenCalledOnce();
+            expect(http).toHaveBeenCalledTimes(3);
+            expect(handler).toHaveBeenCalledTimes(2);
+        } finally { http.mockRestore(); registry.dispose(); }
+    });
+
     it('splits preparation, account binding and authored execution under the ingress request without content', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);

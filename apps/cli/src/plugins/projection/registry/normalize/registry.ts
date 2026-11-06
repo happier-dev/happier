@@ -307,6 +307,7 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     ...(definition.contextualDefaults ? { contextualDefaults: definition.contextualDefaults } : {}),
     ...(definition.sessionTarget ? { sessionTarget: definition.sessionTarget } : {}),
     ...(definition.confirmationWhen === undefined ? {} : { confirmationWhen: definition.confirmationWhen }),
+    ...(definition.approvalScope === undefined ? {} : { approvalScope: definition.approvalScope }),
     ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly }),
     ...(definition.operation ? { operation: definition.operation } : {}),
     scopes: definition.scopes,
@@ -316,6 +317,7 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     priority: definition.priority,
   } satisfies Omit<ActionDefinitionV1, 'execution' | 'inputSchema'> & Readonly<{
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
+    approvalScope?: PluginActionContributionV2['approvalScope'];
     readOnly?: PluginActionContributionV2['readOnly'];
     inputSchema?: PluginActionContributionV2['inputSchema'];
     execution: PluginActionContributionV2['execution'];
