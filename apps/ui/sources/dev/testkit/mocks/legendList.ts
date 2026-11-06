@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { vi } from 'vitest';
+import type { LegendListRef } from '@legendapp/list/react-native';
 
 export type LegendListMockState = {
     contentLength: number;
+    listen: ReturnType<LegendListRef['getState']>['listen'];
     isAtEnd: boolean;
     isNearEnd: boolean;
     isWithinMaintainScrollAtEndThreshold: boolean;
@@ -91,6 +93,9 @@ export function createCapturingLegendListMock(
         getScrollableNode: vi.fn(() => scrollableNode),
         getState: (): LegendListMockState => ({
             contentLength: 0,
+            // This fixture has static geometry: Legend subscriptions do not emit on registration,
+            // and always return cleanup. A pushed-state fixture can override this via resolveState.
+            listen: () => () => {},
             isAtEnd: true,
             isNearEnd: true,
             isWithinMaintainScrollAtEndThreshold: true,
