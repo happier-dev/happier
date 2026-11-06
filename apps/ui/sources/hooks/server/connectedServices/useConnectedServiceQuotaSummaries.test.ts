@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     buildProviderAccountUsageRecordId,
@@ -8,136 +8,57 @@ import {
     type AccountProfile,
     type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
-import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
-import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
-import type { getQualifiedConnectedAccountQuotaV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
-
+import { createRootLayoutFeaturesResponse, standardCleanup } from '@/dev/testkit';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { storage } from '@/sync/domains/state/storageStore';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
-import { __resetConnectedServiceQuotaSnapshotStore } from './connectedServiceQuotaSnapshotStore';
 import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
+import { createLegacyQuotaAuthWrapper, createLegacyQuotaTestHarness, plainQuotaResponse,
+    resetConnectedServiceQuotaSnapshotsTestState } from './useConnectedServiceQuotaSnapshots.testkit';
 
-const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
-
-const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
-const useProfileSpy = vi.fn<() => Pick<AccountProfile, 'connectedAccountsV4' | 'connectedServicesV2'>>(() => ({
-    connectedAccountsV4: [],
-    connectedServicesV2: [],
-    connectedServiceCredentialRevisionsV1: [],
-}));
-const useSettingsSpy = vi.fn(() => ({
-    connectedServicesQuotaPinnedMeterIdsByKey: {},
-    connectedServicesQuotaSummaryStrategyByKey: {},
-    connectedServicesProfileLabelByKey: {},
-    connectedServicesDefaultProfileByServiceId: {},
-}));
-
-const {
-    fetchAccountEncryptionModeSpy,
-    getConnectedServiceQuotaSnapshotPlainSpy,
-    getConnectedServiceQuotaSnapshotSealedSpy,
-    getQualifiedConnectedAccountQuotaV4Spy,
-} = vi.hoisted(() => ({
-    fetchAccountEncryptionModeSpy: vi.fn<
-        (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
-    >(async () => ({ mode: 'plain', updatedAt: 0 })),
-    getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
-        (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
-    >(async () => null),
-    getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
-        (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
-    >(async () => null),
-    getQualifiedConnectedAccountQuotaV4Spy: vi.fn<
-        (...args: Parameters<typeof getQualifiedConnectedAccountQuotaV4>) => ReturnType<typeof getQualifiedConnectedAccountQuotaV4>
-    >(async () => null),
-}));
-
-const serverFeaturesState = {
-    current: {
-        status: 'ready' as const,
-        features: {
-            capabilities: {
-                connectedServices: {
-                    credentialDelete: { revisionGuard: true },
-                    qualifiedAccounts: undefined as { protocolVersion: number } | undefined,
-                },
-            },
-        },
-    },
-};
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: stableCredentials }),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
-}));
-
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({
-        serverId: 'server-a',
-        serverUrl: 'https://server-a.example.test',
-        generation: 1,
-    }),
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesRuntimeSnapshot: () => serverFeaturesState.current,
-}));
-
-vi.mock('@/sync/store/hooks', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks');
-    return {
-        ...actual,
-        useAllMachines: () => [{ id: 'machine-a', active: true }],
-        useProfile: () => useProfileSpy(),
-        useSettingsSelector: <T,>(selector: (settings: ReturnType<typeof useSettingsSpy>) => T) => selector(useSettingsSpy()),
-    };
-});
-
-vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', () => ({
-    runConnectedAccountControlCommand: vi.fn(async (params: {
-        command: { service: { pluginId: string; localId: string } };
-    }) => ({
-        status: 'described',
-        service: params.command.service,
-        operationTransport: params.command.service.pluginId === 'acme.connected.accounts'
-            ? { kind: 'v4' }
-            : {
-                kind: 'legacy',
-                peerClass: 'revisioned_v2_v3',
-                serviceId: params.command.service.localId,
-            },
-    })),
-}));
-
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
-    fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
-}));
-
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
-    getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
-}));
-
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-    getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
-}));
-
-vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', () => ({
-    getQualifiedConnectedAccountQuotaV4: getQualifiedConnectedAccountQuotaV4Spy,
-}));
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 describe('useConnectedServiceQuotaSummaries', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = undefined;
-        // The quota store is module-level: without this reset a later case
-        // silently reads the previous case's cached snapshot.
-        __resetConnectedServiceQuotaSnapshotStore();
+    let boundary: Awaited<ReturnType<typeof createLegacyQuotaTestHarness>>;
+    const Wrapper = createLegacyQuotaAuthWrapper(() => boundary);
+    beforeEach(async () => {
+        await resetConnectedServiceQuotaSnapshotsTestState();
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
+        boundary = await createLegacyQuotaTestHarness();
+        boundary.plainRead.mockImplementation(async () => plainQuotaResponse(null));
+        setQualifiedResponse(null);
     });
+    afterEach(async () => { standardCleanup(); await boundary.dispose(); vi.restoreAllMocks(); });
+
+    function setProfile(profile: Pick<AccountProfile, 'connectedAccountsV4' | 'connectedServicesV2'>
+        & Partial<Pick<AccountProfile, 'connectedAccountGroupsV4'>>) {
+        storage.getState().applyProfile({ ...profileDefaults, id: 'quota-account', ...profile });
+    }
+    function setQuotaSettings(settings: Pick<Settings,
+        'connectedServicesQuotaPinnedMeterIdsByKey' | 'connectedServicesQuotaSummaryStrategyByKey'>) {
+        storage.getState().applySettings({ ...storage.getState().settings, ...settings }, 2);
+    }
+    function advertiseQualifiedAccounts() {
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: boundary.account.home.serverIdentityId! },
+            connectedServices: { credentialDelete: { revisionGuard: true }, qualifiedAccounts: { protocolVersion: 4 } },
+        } });
+        boundary.features.mockImplementation(async () => Response.json(features));
+        primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, snapshot: { status: 'ready', features } });
+    }
+    function setQualifiedResponse(response: ReturnType<typeof QualifiedConnectedAccountQuotaResponseV4Schema.parse> | null) {
+        boundary.read.mockImplementation(async () => response ? Response.json(response)
+            : Response.json({ error: 'connect_quotas_not_found' }, { status: 404 }));
+    }
+    function setPlainSnapshot(snapshot: ReturnType<typeof ConnectedServiceQuotaSnapshotV1Schema.parse>) {
+        boundary.plainRead.mockImplementation(async () => plainQuotaResponse(snapshot));
+    }
 
     it('summarizes a novel qualified V4 account without falling through a scalar V2 service id', async () => {
         const ref = {
@@ -178,7 +99,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 details: { limitCategory: 'usage_limit' },
             }],
         });
-        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(
+        setQualifiedResponse(
             QualifiedConnectedAccountQuotaResponseV4Schema.parse({
                 ref,
                 sourceResolution: {
@@ -201,16 +122,14 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 },
             }),
         );
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = {
-            protocolVersion: 4,
-        };
-        useProfileSpy.mockReturnValue({
+        advertiseQualifiedAccounts();
+        setProfile({
             connectedAccountsV4: [account],
             connectedServicesV2: [],
         });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
         expect(seen.at(-1)?.summaries).toHaveLength(1);
@@ -219,15 +138,9 @@ describe('useConnectedServiceQuotaSummaries', () => {
             profileId: 'work',
             fetchedAt: 1,
         });
-        expect(getQualifiedConnectedAccountQuotaV4Spy).toHaveBeenCalledWith(
-            stableCredentials,
-            ref,
-            expect.objectContaining({
-                expectedActiveServer: { serverId: 'server-a', generation: 1 },
-            }),
-        );
-        expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalled();
-        expect(getConnectedServiceQuotaSnapshotSealedSpy).not.toHaveBeenCalled();
+        expect(boundary.read).toHaveBeenCalledWith(ref);
+        expect(boundary.plainRead).not.toHaveBeenCalled();
+        expect(boundary.sealedRead).not.toHaveBeenCalled();
     });
 
     it('carries each account\'s name, email and id as they are (the one presenter hides them) and groups it under its provider', async () => {
@@ -250,7 +163,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 resetsAt: null, status: 'ok', confidence: 'exact', details: { limitCategory: 'usage_limit' },
             }],
         });
-        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
+        setQualifiedResponse(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
             ref,
             sourceResolution: {
                 source: { ref, bindingKind: 'account' },
@@ -264,11 +177,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
             content: { t: 'plain', v: snapshot },
             metadata: { fetchedAt: 5, staleAfterMs: 60_000, status: 'ok' },
         }));
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
 
         // Identity display follows the device's "Hide account emails and IDs" through
         // `presentConnectedAccountIdentity`; the summary never masks on its own.
@@ -282,9 +195,8 @@ describe('useConnectedServiceQuotaSummaries', () => {
 
     it('names a built-in service by its own name before its descriptor projection arrives, never "Connected service"', async () => {
         const { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } = await import('@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility');
-        const { resolveConnectedServiceDisplayName } = await import('@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName');
-        const { t } = await import('@/text');
-        const [legacyServiceId, compatibility] = Object.entries(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID)[0]!;
+        const legacyServiceId = 'openai-codex';
+        const compatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[legacyServiceId];
         const ref = { service: compatibility.service, accountId: '97bd5614-8970-4068-87f0-1d2c3b4a5e6f' } as const;
         const account = {
             ref,
@@ -303,7 +215,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 resetsAt: null, status: 'ok', confidence: 'exact', details: { limitCategory: 'usage_limit' },
             }],
         });
-        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
+        setQualifiedResponse(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
             ref,
             sourceResolution: {
                 source: { ref, bindingKind: 'account' },
@@ -317,15 +229,13 @@ describe('useConnectedServiceQuotaSummaries', () => {
             content: { t: 'plain', v: snapshot },
             metadata: { fetchedAt: 5, staleAfterMs: 60_000, status: 'ok' },
         }));
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
 
-        const named = resolveConnectedServiceDisplayName(legacyServiceId, t);
-        expect(named).not.toBe(t('connectedServices.fallbackName'));
-        expect(seen.at(-1)?.summaries[0]).toMatchObject({ serviceLabel: named, legacyServiceId });
+        expect(seen.at(-1)?.summaries[0]).toMatchObject({ serviceLabel: 'ChatGPT', legacyServiceId });
     });
 
     it('says which connected accounts have no usage yet: still being read, or read and unavailable', async () => {
@@ -340,13 +250,13 @@ describe('useConnectedServiceQuotaSummaries', () => {
             configurationRevision: null,
             scopes: [],
         } satisfies QualifiedConnectedAccountProfileV4;
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
 
         // The provider answers without usage: the read settled, so the account is unavailable.
-        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(null);
-        const settled = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        setQualifiedResponse(null);
+        const settled = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
         expect(settled.at(-1)?.accountsWithoutUsage).toEqual([
             expect.objectContaining({ accountLabel: null, accountId: 'work', serviceGroupKey: 'acme.connected.accounts/gateway', state: 'unavailable' }),
         ]);
@@ -354,8 +264,8 @@ describe('useConnectedServiceQuotaSummaries', () => {
         // A read still in flight is loading, never "unavailable".
         const { __resetQualifiedConnectedAccountQuotaSnapshotStore } = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
-        getQualifiedConnectedAccountQuotaV4Spy.mockImplementation(() => new Promise(() => {}));
-        const pending = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        boundary.read.mockImplementation(() => new Promise(() => {}));
+        const pending = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
         expect(pending.at(-1)?.accountsWithoutUsage).toEqual([expect.objectContaining({ state: 'loading' })]);
     });
 
@@ -375,16 +285,16 @@ describe('useConnectedServiceQuotaSummaries', () => {
         const signedOut = profile('work', { status: 'needs_reauth', providerIdentity: { email: 'leeroy@company.com' } });
         const key = profile('build', { kind: 'token' });
         const personal = profile('personal', {});
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({
+        advertiseQualifiedAccounts();
+        setProfile({
             connectedAccountsV4: [signedOut, key, personal],
             connectedServicesV2: [],
             connectedAccountGroupsV4: [{ ref: { service, groupId: 'pool' }, activeConnectedAccountId: 'personal', members: [] }],
         } as never);
-        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(null);
+        setQualifiedResponse(null);
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
 
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
         const last = seen.at(-1)!;
 
         expect(last.accountsNeedingSignIn).toEqual([
@@ -408,17 +318,17 @@ describe('useConnectedServiceQuotaSummaries', () => {
             configurationRevision: null,
             scopes: [],
         } satisfies QualifiedConnectedAccountProfileV4;
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'cache_only' }));
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'cache_only' }), { wrapper: Wrapper });
 
         expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
         expect(seen.at(-1)?.summaries).toEqual([]);
         // Nothing was read, so nothing is claimed about the account.
         expect(seen.at(-1)?.accountsWithoutUsage).toEqual([]);
-        expect(getQualifiedConnectedAccountQuotaV4Spy).not.toHaveBeenCalled();
+        expect(boundary.read).not.toHaveBeenCalled();
     });
 
     it('reads the server once per launch when asked to load once, however many surfaces mount', async () => {
@@ -433,19 +343,18 @@ describe('useConnectedServiceQuotaSummaries', () => {
             configurationRevision: null,
             scopes: [],
         } satisfies QualifiedConnectedAccountProfileV4;
-        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
-        await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+        await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
+        await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
 
-        expect(getQualifiedConnectedAccountQuotaV4Spy).toHaveBeenCalledTimes(1);
+        expect(boundary.read).toHaveBeenCalledTimes(1);
     });
 
     it('preserves pinned meter order for primary summaries', async () => {
-        useFeatureEnabledSpy.mockReturnValue(true);
-        useProfileSpy.mockReturnValue({
+        setProfile({
             connectedAccountsV4: [],
             connectedServicesV2: [
                 {
@@ -466,13 +375,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 },
             ],
         });
-        useSettingsSpy.mockReturnValue({
+        setQuotaSettings({
             connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': ['monthly', 'weekly'] },
             connectedServicesQuotaSummaryStrategyByKey: { 'anthropic/work': 'primary' },
-            connectedServicesProfileLabelByKey: {},
-            connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
+        setPlainSnapshot(ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -504,10 +411,10 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: {},
                 },
             ],
-        }) });
+        }));
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         const last = seen.at(-1);
         expect(last?.summaries[0]?.primaryMeter?.meterId).toBe('monthly');
@@ -515,8 +422,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
     });
 
     it('projects the provider-reported remaining percentage, not one derived from utilization', async () => {
-        useFeatureEnabledSpy.mockReturnValue(true);
-        useProfileSpy.mockReturnValue({
+        setProfile({
             connectedAccountsV4: [],
             connectedServicesV2: [
                 {
@@ -537,13 +443,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 },
             ],
         });
-        useSettingsSpy.mockReturnValue({
+        setQuotaSettings({
             connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': ['weekly'] },
             connectedServicesQuotaSummaryStrategyByKey: { 'anthropic/work': 'primary' },
-            connectedServicesProfileLabelByKey: {},
-            connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
+        setPlainSnapshot(ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -567,17 +471,16 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: { limitCategory: 'usage_limit' },
                 },
             ],
-        }) });
+        }));
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         expect(seen.at(-1)?.summaries[0]?.primaryMeter?.remainingPct).toBe(25);
     });
 
     it('ranks min-remaining summaries only across comparable meters', async () => {
-        useFeatureEnabledSpy.mockReturnValue(true);
-        useProfileSpy.mockReturnValue({
+        setProfile({
             connectedAccountsV4: [],
             connectedServicesV2: [
                 {
@@ -598,13 +501,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
                 },
             ],
         });
-        useSettingsSpy.mockReturnValue({
+        setQuotaSettings({
             connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': ['weekly', 'burst'] },
             connectedServicesQuotaSummaryStrategyByKey: { 'anthropic/work': 'min_remaining' },
-            connectedServicesProfileLabelByKey: {},
-            connectedServicesDefaultProfileByServiceId: {},
         });
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue({ metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' }, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse({
+        setPlainSnapshot(ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'anthropic',
             profileId: 'work',
@@ -636,10 +537,10 @@ describe('useConnectedServiceQuotaSummaries', () => {
                     details: { limitCategory: 'rate_limit' },
                 },
             ],
-        }) });
+        }));
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         // A rate-limit meter in another comparable family must not become the
         // headline number just because it has less remaining.
@@ -649,8 +550,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
     });
 
     it('requests summaries for retryable refresh-failure profiles because they remain usable', async () => {
-        useFeatureEnabledSpy.mockReturnValue(true);
-        useProfileSpy.mockReturnValue({
+        setProfile({
             connectedAccountsV4: [],
             connectedServicesV2: [
                 {
@@ -673,15 +573,11 @@ describe('useConnectedServiceQuotaSummaries', () => {
         });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
-        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ serviceId: 'anthropic', profileId: 'retryable' }),
-            expect.objectContaining({
-                expectedActiveServer: { serverId: 'server-a', generation: 1 },
-            }),
+        expect(boundary.plainRead).toHaveBeenCalledWith(
+            expect.objectContaining({ serviceId: 'anthropic', profileId: 'retryable' }), expect.anything(),
         );
     });
 
@@ -689,8 +585,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
         // Usage DISPLAY fails open: absent/'' status must not silently drop a
         // healthy profile from quota summaries; only an explicit, recognized
         // needs_reauth is excluded (shouldHideQuotaForCredentialStatus fold).
-        useFeatureEnabledSpy.mockReturnValue(true);
-        useProfileSpy.mockReturnValue({
+        setProfile({
             connectedAccountsV4: [],
             connectedServicesV2: [
                 {
@@ -724,18 +619,13 @@ describe('useConnectedServiceQuotaSummaries', () => {
         });
 
         const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
-        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries(), { wrapper: Wrapper });
 
         expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
-        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ serviceId: 'anthropic', profileId: 'unknown-status' }),
-            expect.objectContaining({
-                expectedActiveServer: { serverId: 'server-a', generation: 1 },
-            }),
+        expect(boundary.plainRead).toHaveBeenCalledWith(
+            expect.objectContaining({ serviceId: 'anthropic', profileId: 'unknown-status' }), expect.anything(),
         );
-        expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalledWith(
-            expect.anything(),
+        expect(boundary.plainRead).not.toHaveBeenCalledWith(
             expect.objectContaining({ profileId: 'reauth' }),
             expect.anything(),
         );

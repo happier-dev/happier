@@ -22,7 +22,9 @@ export async function flushHookEffects(options: number | Partial<FlushHookEffect
     });
 }
 
-export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<T[]> {
+export async function renderHookAndCollectValues<T>(useValue: () => T,
+    options: Readonly<{ wrapper?: React.ComponentType<React.PropsWithChildren> }> = {},
+): Promise<T[]> {
     const seen: T[] = [];
 
     const harness = await renderHook(() => {
@@ -31,7 +33,7 @@ export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<
             seen.push(value);
         }, [value]);
         return value;
-    });
+    }, options);
     await flushHookEffects();
     await harness.unmount();
     await flushTestkitHookEffects({ cycles: 1, turns: 1 });
