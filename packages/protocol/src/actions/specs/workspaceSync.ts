@@ -1,5 +1,6 @@
 import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipsListActionOutputV1Schema, WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
@@ -140,6 +141,10 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'workspace.sync.relationship.flush', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
+    machineRuntimeDemandForInput: (input, context) => {
+      const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
+      return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
+    },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Sync workspace now', description: 'Run one synchronization cycle between two linked folders.',
     safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_flush' },
