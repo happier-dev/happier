@@ -1,8 +1,8 @@
 import { lookup } from 'node:dns/promises';
 
-import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
-import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
-import type { ProviderSettingsV1 } from '@happier-dev/protocol';
+import { assessProviderEndpoint, normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import type { ProviderEndpointTemplateV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import { isProviderDestinationGrantFingerprintV2 } from '@happier-dev/protocol/providers/fingerprints';
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 
@@ -21,6 +21,7 @@ import type {
   ProviderEndpointDnsEvidence,
 } from './types';
 import { getProviderContribution } from './lookup';
+import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 
 type ProviderConnectionEndpointUrl = Readonly<{
   normalizedUrl: string;
@@ -35,18 +36,35 @@ function collectProviderConnectionEndpointUrls(input: Readonly<{
 }>): readonly ProviderConnectionEndpointUrl[] {
   const connection = input.providerSettings.connections.find((candidate) => candidate.id === input.connectionId);
   if (!connection || connection.deployment.kind === 'managedLocal') return [];
+  const accountGrant = input.providerSettings.accountGrants.find(grant => grant.connectionId === connection.id);
+  const machineGrant = input.providerSettings.machineGrants.find(grant =>
+    grant.connectionId === connection.id && grant.machineId === input.machineId);
+  // Destination consent retains its deliberate scope without DNS. Actual
+  // daemon HTTP requests still resolve and assess each destination themselves.
+  if ([machineGrant, accountGrant].some(grant => grant && isProviderDestinationGrantFingerprintV2(grant.connectionSecurityFingerprint))) return [];
+  const accountEnabled = accountGrant !== undefined;
+  const machineEnabled = machineGrant !== undefined;
   const rawUrls = new Set<string>();
-  for (const override of connection.endpointOverrides ?? []) rawUrls.add(override.baseUrl);
-  for (const override of readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId) ?? []) {
-    rawUrls.add(override.baseUrl);
-  }
-  if (connection.source.kind === 'custom') {
-    for (const endpoint of connection.source.template.endpointTemplates) rawUrls.add(endpoint.baseUrl);
-  } else {
-    const contribution = getProviderContribution(input.registry, connection.source.contributionKey);
-    for (const endpoint of contribution?.definition.endpointTemplates ?? []) {
-      if (endpoint.baseUrl) rawUrls.add(endpoint.baseUrl);
-      for (const candidate of endpoint.localUrlCandidates ?? []) rawUrls.add(candidate);
+  const templates: readonly ProviderEndpointTemplateV1[] = connection.source.kind === 'custom' ? connection.source.template.endpointTemplates
+    : getProviderContribution(input.registry, connection.source.contributionKey)?.definition.endpointTemplates ?? [];
+  for (const template of templates) {
+    try {
+      const effective = resolveEffectiveProviderEndpointV1({ connection, template, machineId: input.machineId });
+      if (effective.ready && effective.baseUrl) {
+        // Public Account consent does not depend on this daemon's DNS: the
+        // Agent may resolve through a proxy. Keep Machine overrides/locality
+        // discovery intact; the HTTP client assesses every actual destination.
+        if (accountEnabled && !machineEnabled && effective.machineOverrideBaseUrl === null && effective.machineOverridePublicHeaders === null
+          && new URL(effective.baseUrl).protocol === 'https:'
+          && assessProviderEndpoint(effective.baseUrl, { purpose: 'configuration' }).scope === 'account') continue;
+        rawUrls.add(effective.baseUrl);
+      }
+      else if (effective.reason === 'local_candidate_required') {
+        for (const candidate of 'localUrlCandidates' in template ? template.localUrlCandidates ?? [] : []) rawUrls.add(candidate);
+      }
+    } catch {
+      // Family and public-policy admission precedes DNS; resolution reports the typed refusal.
+      return [];
     }
   }
   const urls: ProviderConnectionEndpointUrl[] = [];

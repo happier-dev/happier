@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 
-import { ProviderOperationAbandonedError } from '../operationLifetime';
+import { ProviderOperationAbandonedError, createProviderOperationLifetime } from '../operationLifetime';
 import {
   PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
   createProviderProbeScheduler,
@@ -18,6 +18,10 @@ import {
   collectProviderConnectionsDnsEvidence,
 } from './dnsEvidence';
 import type { ProviderContributionRegistryView } from './types';
+import { resolveProviderConnectionForMachine } from './resolve';
+import { setProviderConnectionGrant } from '../connections/service/grants';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderConnectionSecurityFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 
 function customConnectionSettings(): ProviderSettingsV1 {
   return ProviderSettingsV1Schema.parse({
@@ -57,6 +61,119 @@ function customConnectionSettings(): ProviderSettingsV1 {
 
 describe('provider connection DNS evidence', () => {
   const registry = { providersByContributionKey: new Map() };
+
+  it('does not resolve Account-enabled public HTTPS endpoints before Agent launch or semantic resolution', async () => {
+    const resolveAddresses = vi.fn(async () => { throw new Error('ENOTFOUND'); });
+    const settings = customConnectionSettings();
+    const resolution = resolveProviderConnectionForMachine({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: settings, registry, dnsEvidenceByEndpointUrl: new Map() });
+    if (resolution.status !== 'resolved') throw new Error('Expected configured connection');
+    const enabled = setProviderConnectionGrant({ settings, connectionId: 'pc_custom', machineId: 'machine-a', scope: 'account',
+      enabled: true, connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: resolution.record.endpointSetFingerprint, now: 1 });
+    expect(enabled.accountGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    const evidence = await collectProviderConnectionDnsEvidence({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, resolveAddresses,
+      lifetime: createProviderOperationLifetime({}),
+    });
+    expect(evidence).toEqual(new Map());
+    expect(resolveAddresses).not.toHaveBeenCalled();
+  });
+
+  it.each(['http://localhost:11434/v1', 'https://gateway.example/v1'])('uses modern Machine consent for %s without DNS when Account consent also exists', async url => {
+    const base = customConnectionSettings();
+    const configured = url.startsWith('http:') ? { ...base, connections: base.connections.map(connection => ({ ...connection,
+      endpointOverridesByMachineId: { 'machine-a': [{ endpointTemplateId: 'responses', baseUrl: url }] },
+    })) } : base;
+    const addresses = url.startsWith('http:') ? ['127.0.0.1'] : ['10.0.0.1'];
+    const dns = new Map([[url, addresses]]);
+    const resolve = (providerSettings: ProviderSettingsV1) => resolveProviderConnectionForMachine({ connectionId: 'pc_custom',
+      machineId: 'machine-a', providerSettings, registry, dnsEvidenceByEndpointUrl: dns });
+    const local = resolve(configured);
+    if (local.status !== 'resolved') throw new Error('Expected local endpoint');
+    const account = setProviderConnectionGrant({ settings: configured, connectionId: 'pc_custom', machineId: 'machine-a',
+      scope: 'account', enabled: true, connectionSecurityFingerprint: local.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: local.record.endpointSetFingerprint, now: 1 });
+    const enabled = setProviderConnectionGrant({ settings: account, connectionId: 'pc_custom', machineId: 'machine-a',
+      scope: 'machine', enabled: true, connectionSecurityFingerprint: local.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: local.record.endpointSetFingerprint, now: 2 });
+    const resolveAddresses = vi.fn(async () => addresses);
+    const evidence = await collectProviderConnectionDnsEvidence({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, resolveAddresses, lifetime: createProviderOperationLifetime({}),
+    });
+    expect(evidence).toEqual(new Map());
+    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(resolveProviderConnectionForMachine({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, dnsEvidenceByEndpointUrl: evidence,
+    })).toMatchObject({ status: 'resolved', record: { scope: 'machine', authorization: { authorized: true, grantKind: 'machine' } } });
+  });
+
+  it('launches a named-private endpoint with modern Machine-only consent without daemon DNS', async () => {
+    const settings = customConnectionSettings();
+    const initial = resolveProviderConnectionForMachine({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: settings, registry, dnsEvidenceByEndpointUrl: new Map([['https://gateway.example/v1', ['10.0.0.1']]]) });
+    if (initial.status !== 'resolved') throw new Error('Expected private endpoint');
+    const enabled = setProviderConnectionGrant({ settings, connectionId: 'pc_custom', machineId: 'machine-a', scope: 'machine',
+      enabled: true, connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: initial.record.endpointSetFingerprint, now: 1 });
+    expect(enabled.machineGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    const resolveAddresses = vi.fn(async () => { throw new Error('ENOTFOUND'); });
+    const evidence = await collectProviderConnectionDnsEvidence({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, resolveAddresses, lifetime: createProviderOperationLifetime({}),
+    });
+    expect(evidence).toEqual(new Map());
+    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(resolveProviderConnectionForMachine({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, dnsEvidenceByEndpointUrl: evidence,
+    })).toMatchObject({ status: 'resolved', record: { scope: 'machine', authorization: { authorized: true, grantKind: 'machine' } } });
+  });
+
+  it('retains the original DNS comparison for an opaque legacy Machine grant', async () => {
+    const url = 'https://gateway.example/v1';
+    const dns = new Map([[url, ['10.0.0.1']]]);
+    const enabled = setProviderConnectionGrant({ settings: customConnectionSettings(), connectionId: 'pc_custom', machineId: 'machine-a',
+      scope: 'machine', enabled: true, now: 1,
+      connectionSecurityFingerprint: createProviderConnectionSecurityFingerprintV1({ securityContractVersion: 1,
+        endpoints: [{ endpointTemplateId: 'responses', protocol: 'openai-responses', url }], catalogProbes: [], credentialTransports: [] }),
+      endpointSetFingerprint: createProviderEndpointSetFingerprintV1({ endpoints: [{ endpointTemplateId: 'responses',
+        endpoint: assessProviderEndpoint(url, { resolvedAddresses: ['10.0.0.1'] }) }] }),
+    });
+    const resolveAddresses = vi.fn(async () => ['10.0.0.1']);
+    const evidence = await collectProviderConnectionDnsEvidence({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, resolveAddresses, lifetime: createProviderOperationLifetime({}),
+    });
+    expect(evidence).toEqual(dns);
+    expect(resolveAddresses).toHaveBeenCalledTimes(1);
+    expect(resolveProviderConnectionForMachine({ connectionId: 'pc_custom', machineId: 'machine-a',
+      providerSettings: enabled, registry, dnsEvidenceByEndpointUrl: evidence,
+    })).toMatchObject({ status: 'resolved', record: { scope: 'machine', authorization: { authorized: true, grantKind: 'machine' } } });
+  });
+
+  it('admits only the effective declared family before DNS and ignores overridden lower-layer hosts', async () => {
+    const base = customConnectionSettings();
+    const original = base.connections[0]!;
+    if (original.source.kind !== 'custom') throw new Error('Expected custom source');
+    const template = { ...original.source.template, endpointTemplates: original.source.template.endpointTemplates.map(endpoint => ({
+      ...endpoint, addressConstraint: { origin: 'https://gateway.example', pathSegments: ['v1', null, 'responses'] },
+      baseUrl: 'https://gateway.example/v1/default/responses',
+    })) };
+    const collect = async (url: string) => {
+      const calls: string[] = [];
+      const providerSettings = ProviderSettingsV1Schema.parse({ ...base, connections: [{ ...original,
+        source: { ...original.source, template },
+        endpointOverrides: [{ endpointTemplateId: 'responses', baseUrl: url }],
+      }] });
+      const evidence = await collectProviderConnectionDnsEvidence({ connectionId: 'pc_custom', machineId: 'machine-a',
+        providerSettings, registry, lifetime: createProviderOperationLifetime({}), resolveAddresses: async hostname => { calls.push(hostname); return ['1.1.1.1']; } });
+      return { calls, evidence };
+    };
+    for (const url of ['https://other.example/v1/customer/responses', 'https://gateway.example/v1/customer/messages',
+      'https://gateway.example/v1/customer/responses/extra']) {
+      expect(await collect(url)).toEqual({ calls: [], evidence: new Map() });
+    }
+    expect(await collect('https://gateway.example/v1/customer/responses')).toEqual({ calls: ['gateway.example'],
+      evidence: new Map([['https://gateway.example/v1/customer/responses', ['1.1.1.1']]]) });
+  });
 
   it('abandons a resolver that never settles once the operation budget is spent', async () => {
     const collected = collectProviderConnectionDnsEvidence({
