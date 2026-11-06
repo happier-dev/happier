@@ -54,6 +54,27 @@ describe('useSessionOrganizationProjection attention standings', () => {
         });
     });
 
+    it('publishes appearance-only and capability-only changes through the existing cached projection', async () => {
+        const hook = await renderHook(() => useSessionOrganizationProjection(SERVER_ID));
+        const initial = hook.getCurrent();
+        await act(async () => {
+            storage.setState({ sessionOrganizationSessionAppearancesSupportedByServerId: { [SERVER_ID]: true } });
+        });
+        expect(hook.getCurrent()?.sessionAppearancesSupported).toBe(true);
+        expect(hook.getCurrent()).not.toBe(initial);
+        const value = { color: { kind: 'accent', key: 'green' } };
+        await act(async () => {
+            storage.setState({ sessionOrganizationAppearancesBySessionKey: { [SESSION_KEY]: {
+                sessionId: 'session-1', display: { t: 'plain', v: value },
+                displayState: { status: 'available', value }, updatedAt: 1,
+            } } });
+        });
+        expect(hook.getCurrent()?.appearancesBySessionId).toEqual({ 'session-1': value.color });
+        const projected = hook.getCurrent();
+        await act(async () => { storage.setState({ sessionOrganizationOptimisticRecords: {} }); });
+        expect(hook.getCurrent()).toBe(projected);
+    });
+
     it('carries an explicit removal through as a stored false rather than an absent key', async () => {
         storage.setState((state) => ({
             ...state,

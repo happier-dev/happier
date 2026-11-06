@@ -49,6 +49,15 @@ describe('buildSessionOrganizationProjection', () => {
                 [sessionKey('server-a', 's2')]: { sessionId: 's2', standing: false, updatedAt: 6 },
                 [sessionKey('server-b', 's3')]: { sessionId: 's3', standing: true, updatedAt: 7 },
             },
+            appearancesBySessionKey: {
+                [sessionKey('server-a', 's1')]: { sessionId: 's1', display: { t: 'encrypted', c: 'ciphertext' },
+                    displayState: { status: 'available', value: { color: { kind: 'custom', hex: '#abc' } } }, updatedAt: 1 },
+                [sessionKey('server-a', 'locked')]: { sessionId: 'locked', display: { t: 'encrypted', c: 'locked' },
+                    displayState: { status: 'locked', reason: 'account_key_unavailable' }, updatedAt: 1 },
+                [sessionKey('server-b', 's3')]: { sessionId: 's3', display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } },
+                    displayState: { status: 'available', value: { color: { kind: 'accent', key: 'blue' } } }, updatedAt: 1 },
+            },
+            sessionAppearancesSupportedByServerId: { 'server-a': true },
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
         }, 'server-a');
@@ -65,6 +74,9 @@ describe('buildSessionOrganizationProjection', () => {
             s2: { sessionId: 's2', standing: false, updatedAt: 6 },
         });
         expect(projection.pinsBySessionId.s3).toBeUndefined();
+        expect(projection.appearancesBySessionId).toEqual({ s1: { kind: 'custom', hex: '#AABBCC' } });
+        expect(projection.sessionAppearancesSupported).toBe(true);
+        expect(Object.keys(projection.sessionAppearancesBySessionId)).toEqual(['s1', 'locked']);
     });
 
     it('collects one qualified projection for every normalized selected Home', () => {
@@ -82,6 +94,8 @@ describe('buildSessionOrganizationProjection', () => {
                     tagsByTagKey: {},
                     tagAssignmentsBySessionKey: {},
                     attentionStandingsBySessionKey: {},
+                    appearancesBySessionKey: {},
+                    sessionAppearancesSupportedByServerId: {},
                     orderEntriesByScopeKey: {},
                     labelsByLabelKey: {},
                 }, serverId);
@@ -100,7 +114,7 @@ describe('buildSessionOrganizationProjection', () => {
                 [sessionKey('server-a', 'rail')]: { sessionId: 'rail', sortKey: 'a', pinnedAt: 1, listPinned: false, railPinned: true },
                 [sessionKey('server-a', 'both')]: { sessionId: 'both', sortKey: 'c', pinnedAt: 3, listPinned: true, railPinned: true },
             }, foldersByFolderKey: {}, folderAssignmentsBySessionKey: {}, tagsByTagKey: {},
-            tagAssignmentsBySessionKey: {}, attentionStandingsBySessionKey: {}, orderEntriesByScopeKey: {
+            tagAssignmentsBySessionKey: {}, attentionStandingsBySessionKey: {}, appearancesBySessionKey: {}, sessionAppearancesSupportedByServerId: {}, orderEntriesByScopeKey: {
                 [buildSessionOrganizationOrderScopeKey({ serverId: 'server-a', scopeKind: 'pinned', scopeKey: 'pins' })]: [
                     { scopeKind: 'pinned', scopeKey: 'pins', itemKind: 'session', itemKey: 'both', sortKey: 'a' },
                     { scopeKind: 'pinned', scopeKey: 'pins', itemKind: 'session', itemKey: 'rail', sortKey: 'b' },

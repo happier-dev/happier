@@ -71,6 +71,67 @@ function folders(...entries: SessionFolderV1[]): SessionFoldersV1 {
 }
 
 describe('sessionOrganizationMutationOwner', () => {
+    it('merges concurrent workspace name and colour intents, suppresses equal writes, and deletes only both empty', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeSessionOrganizationWorkspaceDisplay } = await import('./sessionOrganizationMutationOwner');
+        const scope = { credentials, serverId: 'workspace-concurrent-home', serverIdAliases: [], serverUrl: 'https://home.example' };
+        const color = { kind: 'custom', hex: '#123456' } as const;
+        mocks.upsertSessionOrganizationLabel.mockImplementation(async ({ request }) => ({ label: {
+            ...request, archivedAt: null, createdAt: 1, updatedAt: 2,
+        } }));
+        mocks.deleteSessionOrganizationLabel.mockResolvedValue({ labelKind: 'workspace', scopeKey: 'workspace', archived: true });
+        await Promise.all([
+            writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: 'workspace', patch: { label: 'Concurrent name' } }),
+            writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: 'workspace', patch: { color } }),
+        ]);
+        await writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: 'workspace', patch: { color: { ...color } } });
+        expect(mocks.upsertSessionOrganizationLabel).toHaveBeenCalledTimes(2);
+        expect(mocks.upsertSessionOrganizationLabel.mock.calls[1]?.[0].request.display).toEqual({ t: 'plain', v: { label: 'Concurrent name', color } });
+        await writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: 'workspace', patch: { color: null } });
+        expect(mocks.deleteSessionOrganizationLabel).not.toHaveBeenCalled();
+        await writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: 'workspace', patch: { label: null } });
+        expect(mocks.deleteSessionOrganizationLabel).toHaveBeenCalledTimes(1);
+        expect(Object.values(storage.getState().sessionOrganizationLabelsByLabelKey).find(row => row.scopeKey === 'workspace')?.archivedAt).not.toBeNull();
+    }, 120_000);
+
+    it('refuses unreadable workspace displays without replacing their retained fields', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeSessionOrganizationWorkspaceDisplay } = await import('./sessionOrganizationMutationOwner');
+        storage.getState().upsertSessionOrganizationLabelOptimistic('workspace-locked-home', {
+            labelKind: 'workspace', scopeKey: 'workspace', display: { t: 'plain', v: { label: 'Private' } },
+            displayState: { status: 'locked', reason: 'content_unreadable' }, archivedAt: null, createdAt: 1, updatedAt: 1,
+        });
+        await expect(writeSessionOrganizationWorkspaceDisplay({
+            scope: { credentials, serverId: 'workspace-locked-home', serverIdAliases: [], serverUrl: 'https://home.example' },
+            workspaceKey: 'workspace', patch: { color: { kind: 'custom', hex: '#123456' } },
+        })).rejects.toThrow('workspace_display_unavailable');
+        expect(mocks.upsertSessionOrganizationLabel).not.toHaveBeenCalled();
+        expect(mocks.deleteSessionOrganizationLabel).not.toHaveBeenCalled();
+    }, 120_000);
+
+    it('keeps workspace colour and unknown display fields when its name is reset', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeSessionOrganizationWorkspaceLabels } = await import('./sessionOrganizationMutationOwner');
+        const color = { kind: 'custom', hex: '#123456' } as const;
+        const value = { label: 'Before', color, future: { retained: true } };
+        storage.getState().upsertSessionOrganizationLabelOptimistic('workspace-color-home', {
+            labelKind: 'workspace', scopeKey: 'workspace', display: { t: 'plain', v: value },
+            displayState: { status: 'available', value }, archivedAt: null, createdAt: 1, updatedAt: 1,
+        });
+        mocks.upsertSessionOrganizationLabel.mockImplementation(async ({ request }) => ({ label: {
+            ...request, archivedAt: null, createdAt: 1, updatedAt: 2,
+        } }));
+        mocks.deleteSessionOrganizationLabel.mockResolvedValue({ labelKind: 'workspace', scopeKey: 'workspace', archived: true });
+        await writeSessionOrganizationWorkspaceLabels({
+            scope: { credentials, serverId: 'workspace-color-home', serverIdAliases: [], serverUrl: 'https://home.example' },
+            current: { workspace: 'Before' }, next: {},
+        });
+        expect(mocks.deleteSessionOrganizationLabel).not.toHaveBeenCalled();
+        expect(mocks.upsertSessionOrganizationLabel.mock.calls[0]?.[0].request.display).toEqual({ t: 'plain', v: {
+            color, future: { retained: true },
+        } });
+    }, 120_000);
+
     beforeEach(() => {
         vi.resetModules();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `session-organization-owner-${Math.random()}`;
@@ -205,6 +266,14 @@ describe('sessionOrganizationMutationOwner', () => {
             serverIdAliases: ['profile-a', 'srv-old'],
             serverUrl: 'https://relay.example.test',
         };
+        const { storage } = await import('@/sync/domains/state/storage');
+        for (const [scopeKey, label] of Object.entries({ unchanged: 'Unchanged', changed: 'Before', removed: 'Removed' })) {
+            const value = { label };
+            storage.getState().upsertSessionOrganizationLabelOptimistic(scope.serverId, {
+                labelKind: 'workspace', scopeKey, display: { t: 'plain', v: value },
+                displayState: { status: 'available', value }, archivedAt: null, createdAt: 1, updatedAt: 1,
+            });
+        }
         const unchanged = folder({ id: 'folder-unchanged', name: 'Unchanged', sortKey: '0001' });
         const changedBefore = folder({ id: 'folder-changed', name: 'Before', sortKey: '0002' });
         const changedAfter = folder({ id: 'folder-changed', name: 'After', sortKey: '0002' });

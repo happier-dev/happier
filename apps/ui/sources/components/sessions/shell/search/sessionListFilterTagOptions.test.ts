@@ -30,6 +30,9 @@ function projection(tags: readonly UiSessionOrganizationTag[]): SessionOrganizat
         tagsById: Object.fromEntries(tags.map((value) => [value.tagId, value])),
         tagAssignmentsBySessionId: {},
         attentionStandingsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     };

@@ -605,6 +605,11 @@ export const AccountEncryptionMigrateSessionOrganizationDirectiveSchema =
     z.strictObject({
         action: z.literal('migrate'),
         expectedVersion: NonNegativeSafeIntegerSchema,
+        // Retained appearances share the aggregate request-byte boundary, not the visible write quota.
+        sessionAppearances: z.optional(z.array(z.strictObject({
+          sessionId: z.string().check(z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
+          ...AccountEncryptionMigrateSessionOrganizationDisplayItemShape,
+        }))),
         folders: z.array(z.strictObject({
           folderId:
             z.string().check(z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
@@ -706,6 +711,10 @@ function refineAccountEncryptionMigrateRequest(
     };
     sessionOrganization?: {
       action: string;
+      sessionAppearances?: Array<{
+        expectedDisplay: { t: string };
+        display: { t: string };
+      }>;
       folders?: Array<{
         expectedDisplay: { t: string };
         display: { t: string };
@@ -940,6 +949,10 @@ function refineAccountEncryptionMigrateRequest(
       && request.sessionOrganization.labels
     ) {
       const organizationItems = [
+        ...(request.sessionOrganization.sessionAppearances ?? []).map((item, index) => ({
+          item,
+          path: ['sessionAppearances', index] as const,
+        })),
         ...request.sessionOrganization.folders.map((item, index) => ({
           item,
           path: ['folders', index] as const,

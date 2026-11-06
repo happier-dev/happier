@@ -17,6 +17,7 @@ export {
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_ORDER_ENTRIES_PER_SCOPE,
   SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
+  SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES,
   SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS,
   SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH,
   SESSION_ORGANIZATION_MAX_TAGS,
@@ -26,6 +27,15 @@ export {
   SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENT_BEHAVIORS,
   SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENTS_DEFAULT,
 } from './constants.js';
+
+export {
+  SessionOrganizationSessionAppearanceSchema,
+  SetSessionAppearanceRequestSchema,
+  SetSessionAppearanceResponseSchema,
+  type SessionOrganizationSessionAppearance,
+  type SetSessionAppearanceRequest,
+  type SetSessionAppearanceResponse,
+} from './appearances.js';
 
 export {
   SessionOrganizationContentEnvelopeSchema,

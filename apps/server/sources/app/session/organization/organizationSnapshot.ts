@@ -1,4 +1,5 @@
 import { type SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
+import type { SessionOrganizationSessionAppearance } from '@happier-dev/protocol/sessions/organization/appearances';
 import { type SessionOrganizationContentEnvelope, type SessionOrganizationDisplayState } from '@happier-dev/protocol/sessions/organization/content';
 import { type SessionFolderAssignment, type SessionOrganizationFolder } from '@happier-dev/protocol/sessions/organization/folders';
 import { type SessionOrganizationLabel, type SessionOrganizationOrderEntry } from '@happier-dev/protocol/sessions/organization/ordering';
@@ -9,6 +10,7 @@ import { type SessionOrganizationTag, type SessionTagAssignment } from '@happier
 import type { EffectiveAccountEncryptionMode } from "@/app/encryption/accountEncryptionMode";
 import { parseSessionOrganizationDisplayEnvelope } from "./contentEnvelope";
 import type {
+    SessionAppearanceRecord,
     SessionAttentionStandingRecord,
     SessionOrganizationFolderRecord,
     SessionOrganizationLabelRecord,
@@ -72,6 +74,17 @@ export function mapSessionAttentionStanding(row: SessionAttentionStandingRecord)
         sessionId: row.sessionId,
         standing: row.standing,
         ...(row.remindAt ? { remindAt: row.remindAt.getTime() } : {}),
+        updatedAt: row.updatedAt.getTime(),
+    };
+}
+
+export function mapSessionAppearance(
+    row: SessionAppearanceRecord,
+    expectedMode?: EffectiveAccountEncryptionMode | null,
+): SessionOrganizationSessionAppearance {
+    return {
+        sessionId: row.sessionId,
+        ...projectSessionOrganizationDisplay(row.displayDbValue, expectedMode),
         updatedAt: row.updatedAt.getTime(),
     };
 }
@@ -152,6 +165,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
     orderEntries: SessionOrganizationOrderEntry[];
     labels: SessionOrganizationLabel[];
     attentionStandings?: SessionAttentionStanding[];
+    sessionAppearances?: SessionOrganizationSessionAppearance[];
 }>): SessionOrganizationSnapshot {
     return {
         schemaVersion: 1,
@@ -166,5 +180,6 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
         // Omitted unless the request asked for standings: an absent array means "not fetched",
         // which every reader must be able to tell apart from "the account has none".
         ...(params.attentionStandings ? { attentionStandings: params.attentionStandings } : {}),
+        ...(params.sessionAppearances ? { sessionAppearances: params.sessionAppearances } : {}),
     };
 }

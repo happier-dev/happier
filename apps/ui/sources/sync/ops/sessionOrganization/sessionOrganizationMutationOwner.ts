@@ -26,6 +26,10 @@ import { deleteSessionLabel } from './deleteSessionLabel';
 import { reorderSessionOrganization } from './reorderSessionOrganization';
 import { sessionOrganizationActions } from './sessionOrganizationActions';
 import { setSessionPin } from './setSessionPin';
+import { setSessionAppearance } from './setSessionAppearance';
+import { areSessionAppearanceColorsEqual, parseSessionAppearanceColor, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
+import { readSessionOrganizationDisplayRecord } from '@/sync/domains/session/organization/displayRecord';
 import { setSessionTagLabels } from './setSessionTagLabels';
 import { upsertSessionFolder } from './upsertSessionFolder';
 import { upsertSessionLabel } from './upsertSessionLabel';
@@ -329,6 +333,58 @@ export async function writeSessionOrganizationFolders(params: Readonly<{
     await Promise.all(writes);
 }
 
+export async function writeSessionOrganizationAppearance(params: Readonly<{
+    scope: SessionOrganizationMutationScope;
+    sessionId: string;
+    color: SessionAppearanceColor | null;
+}>): Promise<void> {
+    params.scope.assertCurrent?.();
+    await setSessionAppearance({ ...params.scope, sessionId: params.sessionId, color: params.color });
+    params.scope.assertCurrent?.();
+}
+
+const pendingWorkspaceDisplayWrites = new Map<string, Promise<void>>();
+
+/** Serializes name/colour intents at their shared display row, preserving all other fields. */
+export async function writeSessionOrganizationWorkspaceDisplay(params: Readonly<{
+    scope: SessionOrganizationMutationScope;
+    workspaceKey: string;
+    patch: Readonly<{ label?: string | null; color?: SessionAppearanceColor | null }>;
+}>): Promise<void> {
+    const scopeKey = normalizeId(params.workspaceKey);
+    if (!scopeKey) return;
+    const key = buildSessionOrganizationLabelKey({ serverId: params.scope.serverId, labelKind: 'workspace', scopeKey });
+    const previous = pendingWorkspaceDisplayWrites.get(key);
+    const write = (async () => {
+        if (previous) await previous.catch(() => undefined);
+        params.scope.assertCurrent?.();
+        const row = getStorage().getState().sessionOrganizationLabelsByLabelKey[key];
+        const current = row?.archivedAt == null ? row : undefined;
+        if (current && current.displayState.status !== 'available') throw new HappyError('workspace_display_unavailable', false);
+        const record = current ? readSessionOrganizationDisplayRecord(current.displayState, current.display) : {};
+        if (!record) throw new HappyError('workspace_display_unavailable', false);
+        const currentLabel = normalizeId(record.label);
+        const currentColor = parseSessionAppearanceColor(record.color);
+        const label = params.patch.label === undefined ? currentLabel : normalizeId(params.patch.label);
+        const color = params.patch.color === undefined ? currentColor : parseSessionAppearanceColor(params.patch.color);
+        if (label === currentLabel && areSessionAppearanceColorsEqual(color, currentColor)) return;
+        if (!label && !color) {
+            await deleteSessionLabel({ ...params.scope, request: { labelKind: 'workspace', scopeKey } });
+        } else {
+            const next = { ...record };
+            delete next.label;
+            delete next.color;
+            await upsertSessionLabel({ ...params.scope, request: { labelKind: 'workspace', scopeKey,
+                display: { t: 'plain', v: { ...next, ...(label ? { label } : {}), ...(color ? { color } : {}) } } } });
+        }
+        params.scope.assertCurrent?.();
+    })();
+    pendingWorkspaceDisplayWrites.set(key, write);
+    try { await write; } finally {
+        if (pendingWorkspaceDisplayWrites.get(key) === write) pendingWorkspaceDisplayWrites.delete(key);
+    }
+}
+
 export async function writeSessionOrganizationWorkspaceLabels(params: Readonly<{
     scope: SessionOrganizationMutationScope;
     current: Readonly<Record<string, string>>;
@@ -346,24 +402,7 @@ export async function writeSessionOrganizationWorkspaceLabels(params: Readonly<{
         const current = normalizeId(params.current[scopeKey]);
         const next = normalizeId(params.next[scopeKey]);
         if (current === next) continue;
-        if (next) {
-            writes.push(upsertSessionLabel({
-                ...params.scope,
-                request: {
-                    labelKind: 'workspace',
-                    scopeKey,
-                    display: { t: 'plain', v: { label: next } },
-                },
-            }));
-        } else {
-            writes.push(deleteSessionLabel({
-                ...params.scope,
-                request: {
-                    labelKind: 'workspace',
-                    scopeKey,
-                },
-            }));
-        }
+        writes.push(writeSessionOrganizationWorkspaceDisplay({ scope: params.scope, workspaceKey: scopeKey, patch: { label: next || null } }));
     }
 
     await Promise.all(writes);

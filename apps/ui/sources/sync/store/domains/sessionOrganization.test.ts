@@ -1,3 +1,4 @@
+import { countStoreNotifications } from '@/dev/testkit';
 import { describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
 import type { SessionOrganizationSnapshot } from '@happier-dev/protocol';
@@ -34,6 +35,74 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it('retains per-Home appearances, suppresses equal echoes, and detects support only on requested snapshots', () => {
+        const harness = createHarness();
+        const appearance = { sessionId: 's1', display: { t: 'plain' as const, v: { color: { kind: 'custom', hex: '#123456' } } }, updatedAt: 1 };
+        const snapshot = { ...emptySnapshot(), sessionAppearances: [appearance] };
+        harness.get().applySessionOrganizationSnapshot('srv-a', snapshot, { includeSessionAppearances: true });
+        const before = harness.get();
+        const key = buildSessionOrganizationSessionKey('srv-a', 's1');
+        expect(before.sessionOrganizationAppearancesBySessionKey[key]?.displayState).toEqual({ status: 'available', value: appearance.display.v });
+        expect(before.sessionOrganizationSessionAppearancesSupportedByServerId['srv-a']).toBe(true);
+        const notifications = countStoreNotifications(harness);
+        harness.get().applySessionOrganizationSnapshot('srv-a', structuredClone(snapshot), { includeSessionAppearances: true });
+        expect(harness.get()).toBe(before);
+        expect(notifications.read()).toEqual([]);
+        harness.get().applySessionOrganizationSnapshot('srv-b', emptySnapshot());
+        expect(harness.get().sessionOrganizationSessionAppearancesSupportedByServerId['srv-b']).toBeUndefined();
+        harness.get().applySessionOrganizationSnapshot('srv-b', emptySnapshot(), { includeSessionAppearances: true });
+        expect(harness.get().sessionOrganizationSessionAppearancesSupportedByServerId['srv-b']).toBe(false);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[key]).toBe(before.sessionOrganizationAppearancesBySessionKey[key]);
+        harness.get().clearSessionOrganizationForServer('srv-a');
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[key]).toBeUndefined();
+        expect(harness.get().sessionOrganizationSessionAppearancesSupportedByServerId['srv-a']).toBeUndefined();
+        notifications.stop();
+    });
+
+    it('rolls back appearance changes without losing newer confirmed colours or another Session', () => {
+        const harness = createHarness();
+        const appearance = (sessionId: string, key: string, updatedAt: number) => ({ sessionId,
+            display: { t: 'plain' as const, v: { color: { kind: 'accent', key } } },
+            displayState: { status: 'available' as const, value: { color: { kind: 'accent', key } } }, updatedAt });
+        const first = harness.get().setSessionAppearanceOptimistic('srv-a', 'one', appearance('one', 'blue', 1));
+        const second = harness.get().setSessionAppearanceOptimistic('srv-a', 'two', appearance('two', 'red', 2));
+        const newer = harness.get().setSessionAppearanceOptimistic('srv-a', 'one', appearance('one', 'green', 3));
+        const oneKey = buildSessionOrganizationSessionKey('srv-a', 'one');
+        const twoKey = buildSessionOrganizationSessionKey('srv-a', 'two');
+        harness.get().confirmSessionOrganizationOptimistic(second, 'sessionOrganizationAppearancesBySessionKey', twoKey, appearance('two', 'red', 4));
+        harness.get().confirmSessionOrganizationOptimistic(newer, 'sessionOrganizationAppearancesBySessionKey', oneKey, appearance('one', 'green', 5));
+        harness.get().rollbackSessionOrganizationOptimistic(first);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[oneKey]?.updatedAt).toBe(5);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[twoKey]?.updatedAt).toBe(4);
+        expect(harness.get().sessionOrganizationOptimisticRecords).toEqual({});
+        for (const order of [[0, 1], [1, 0]]) {
+            const writes = [harness.get().setSessionAppearanceOptimistic('srv-a', 'one', null),
+                harness.get().setSessionAppearanceOptimistic('srv-a', 'one', appearance('one', 'orange', 6))];
+            for (const index of order) harness.get().rollbackSessionOrganizationOptimistic(writes[index]!);
+            expect(harness.get().sessionOrganizationAppearancesBySessionKey[oneKey]?.updatedAt).toBe(5);
+        }
+    });
+
+    it.each(['set', 'clear'] as const)('retires pending appearance %s writes with their Home while retaining another Home', (operation) => {
+        const harness = createHarness();
+        const appearance = (key: string) => ({ sessionId: 'one',
+            display: { t: 'plain' as const, v: { color: { kind: 'accent', key } } },
+            displayState: { status: 'available' as const, value: { color: { kind: 'accent', key } } }, updatedAt: 1 });
+        const homeKey = buildSessionOrganizationSessionKey('retired', 'one');
+        const otherKey = buildSessionOrganizationSessionKey('other', 'one');
+        harness.get().commitSessionOrganizationOptimistic(harness.get().setSessionAppearanceOptimistic('retired', 'one', appearance('blue')));
+        const pending = harness.get().setSessionAppearanceOptimistic('retired', 'one', operation === 'clear' ? null : appearance('green'));
+        const otherPending = harness.get().setSessionAppearanceOptimistic('other', 'one', appearance('red'));
+        harness.get().clearSessionOrganizationForServer('retired');
+        expect(harness.get().sessionOrganizationOptimisticRecords[pending]).toBeUndefined();
+        harness.get().rollbackSessionOrganizationOptimistic(pending);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[homeKey]).toBeUndefined();
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[otherKey]?.displayState).toEqual(appearance('red').displayState);
+        expect(Object.keys(harness.get().sessionOrganizationOptimisticRecords)).toEqual([otherPending]);
+        harness.get().rollbackSessionOrganizationOptimistic(otherPending);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey[otherKey]).toBeUndefined();
+    });
+
     it('proves zero section membership only after a complete assignment snapshot and retains that evidence through scoped updates', () => {
         const harness = createHarness();
         harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot(), { assignmentSessionIds: ['one'] });

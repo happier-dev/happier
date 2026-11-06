@@ -1273,6 +1273,8 @@ export function readSessionOrganizationProjectionCached(
     state.sessionOrganizationTagsByTagKey,
     state.sessionOrganizationTagAssignmentsBySessionKey,
     state.sessionOrganizationAttentionStandingsBySessionKey,
+    state.sessionOrganizationAppearancesBySessionKey,
+    state.sessionOrganizationSessionAppearancesSupportedByServerId,
     state.sessionOrganizationOrderEntriesByScopeKey,
     state.sessionOrganizationLabelsByLabelKey,
   ]) {
@@ -1296,6 +1298,8 @@ export function readSessionOrganizationProjectionCached(
     tagsByTagKey: state.sessionOrganizationTagsByTagKey,
     tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
     attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
+    appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey,
+    sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId,
     orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
     labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
   }, serverId);

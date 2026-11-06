@@ -10,7 +10,9 @@ import type {
     UiSessionOrganizationFolder,
     UiSessionOrganizationLabel,
     UiSessionOrganizationTag,
+    UiSessionOrganizationSessionAppearance,
 } from './types';
+import { readSessionAppearanceColorFromDisplay, type SessionAppearanceColor } from './appearanceColor';
 import type {
     SessionAttentionStanding,
     SessionOrganizationOrderEntry,
@@ -34,6 +36,8 @@ export function buildSessionOrganizationProjection(
     const tagsById: Record<string, UiSessionOrganizationTag> = {};
     const tagAssignmentsBySessionId: Record<string, readonly string[]> = {};
     const attentionStandingsBySessionId: Record<string, SessionAttentionStanding> = {};
+    const appearancesBySessionId: Record<string, SessionAppearanceColor> = {};
+    const sessionAppearancesBySessionId: Record<string, UiSessionOrganizationSessionAppearance> = {};
     const orderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]> = {};
     const labelsByLabelKey: Record<string, UiSessionOrganizationLabel> = {};
 
@@ -66,6 +70,12 @@ export function buildSessionOrganizationProjection(
         if (key === buildSessionOrganizationSessionKey(serverId, standing.sessionId)) {
             attentionStandingsBySessionId[standing.sessionId] = standing;
         }
+    }
+    for (const [key, appearance] of Object.entries(state.appearancesBySessionKey)) {
+        if (key !== buildSessionOrganizationSessionKey(serverId, appearance.sessionId)) continue;
+        sessionAppearancesBySessionId[appearance.sessionId] = appearance;
+        const color = readSessionAppearanceColorFromDisplay(appearance.display, appearance.displayState);
+        if (color) appearancesBySessionId[appearance.sessionId] = color;
     }
     for (const entries of Object.values(state.orderEntriesByScopeKey)) {
         const firstEntry = entries[0];
@@ -115,6 +125,9 @@ export function buildSessionOrganizationProjection(
         tagsById,
         tagAssignmentsBySessionId,
         attentionStandingsBySessionId,
+        appearancesBySessionId,
+        sessionAppearancesBySessionId,
+        sessionAppearancesSupported: state.sessionAppearancesSupportedByServerId[serverId] === true,
         orderEntriesByScopeKey,
         labelsByLabelKey,
     };

@@ -1,6 +1,8 @@
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_PINNED_SESSIONS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
+import { SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES } from '@happier-dev/protocol/sessions/organization/constants';
+import type { SetSessionAppearanceRequest, SetSessionAppearanceResponse } from '@happier-dev/protocol/sessions/organization/appearances';
 
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import { scheduleAccountActivityBadgeRefresh } from "@/app/activity/refreshAccountActivityBadgePushes";
@@ -25,6 +27,7 @@ import {
 import { hashSessionOrganizationKey } from "./hashKeys";
 import {
     mapSessionAttentionStanding,
+    mapSessionAppearance,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationPin,
@@ -553,6 +556,68 @@ export async function setSessionAttentionStanding(params: Readonly<{
     authentication: SessionAccessAuthentication;
 }>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
     return await inTx(async (tx) => await setSessionAttentionStandingInTx(tx, params), { isolationLevel: "ReadCommitted" });
+}
+
+type SetSessionAppearanceResult = SetSessionAppearanceResponse | {
+    error: "session-not-found" | "invalid-display-envelope" | "session-appearance-limit-exceeded";
+};
+
+/** Store a personal appearance through the existing Account aggregate admission and change owner. */
+export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAppearanceRequest;
+    authentication: SessionAccessAuthentication;
+}>): Promise<SetSessionAppearanceResult> {
+    await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
+    if (params.request.display === null) {
+        const deleted = await tx.sessionAppearance.deleteMany({ where: { accountId: params.accountId, sessionId: params.sessionId } });
+        if (deleted.count === 0) return { appearance: null };
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId, scope: "sessionAppearances", sessionIds: [params.sessionId],
+        });
+        return { appearance: null };
+    }
+    if (!await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
+    if (!await isSessionOrganizationDisplayEnvelopeAllowedForAccount({ tx, accountId: params.accountId, display: params.request.display })) {
+        return { error: "invalid-display-envelope" };
+    }
+    const existing = await tx.sessionAppearance.findUnique({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        select: { sessionId: true, displayDbValue: true, updatedAt: true },
+    });
+    const displayDbValue = serializeSessionOrganizationDisplayEnvelope(params.request.display)!;
+    if (existing?.displayDbValue === displayDbValue) return { appearance: mapSessionAppearance(existing) };
+    if (!existing) {
+        const count = await tx.sessionAppearance.count({
+            where: {
+                accountId: params.accountId,
+                session: await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication),
+            },
+        });
+        if (count >= SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES) {
+            return { error: "session-appearance-limit-exceeded" };
+        }
+    }
+    const appearance = await tx.sessionAppearance.upsert({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        create: { accountId: params.accountId, sessionId: params.sessionId, displayDbValue },
+        update: { displayDbValue },
+        select: { sessionId: true, displayDbValue: true, updatedAt: true },
+    });
+    await markSessionOrganizationChanged(tx, {
+        accountId: params.accountId, scope: "sessionAppearances", sessionIds: [params.sessionId],
+    });
+    return { appearance: mapSessionAppearance(appearance) };
+}
+
+export async function setSessionAppearance(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAppearanceRequest;
+    authentication: SessionAccessAuthentication;
+}>): Promise<SetSessionAppearanceResult> {
+    return await inTx(tx => setSessionAppearanceInTx(tx, params), { isolationLevel: "ReadCommitted" });
 }
 
 export async function upsertSessionOrganizationFolderInTx(tx: SessionOrganizationTx, params: Readonly<{

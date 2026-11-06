@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { inTx, type Tx } from "@/storage/inTx";
+import { inTxPostgresControlStatementMock } from '@/app/api/testkit/dbMocks';
 
 const transactionState = vi.hoisted<{ tx: Tx | null }>(() => ({ tx: null }));
 
@@ -113,6 +114,7 @@ function createTx(overrides: {
 } = {}) {
     const rows = createRows();
     return {
+        ...inTxPostgresControlStatementMock,
         sessionOrganizationCheckpoint: {
             findUnique: vi.fn(async () =>
                 overrides.checkpoint === undefined
@@ -139,6 +141,10 @@ function createTx(overrides: {
             updateMany: vi.fn(async () => ({
                 count: overrides.updateCount ?? 1,
             })),
+        },
+        sessionAppearance: {
+            findMany: vi.fn(async () => []),
+            updateMany: vi.fn(async () => ({ count: overrides.updateCount ?? 1 })),
         },
         account: {
             update: vi.fn(async () => ({ seq: 8 })),

@@ -11,6 +11,7 @@ import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } 
 import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { EMPTY_PROJECT_AUTHORING_SESSION_INPUTS } from '@/sync/store/domains/projectAuthoringSessions';
+import { subscribeHomeAccountRetirement } from '@/sync/domains/scope/homeAccountRetirement';
 import {
     publishHomeAccountChange,
     subscribeHomeAccountChange,
@@ -1246,6 +1247,8 @@ type SessionOrganizationSyncState = Pick<
     | 'sessionOrganizationTagsByTagKey'
     | 'sessionOrganizationTagAssignmentsBySessionKey'
     | 'sessionOrganizationAttentionStandingsBySessionKey'
+    | 'sessionOrganizationAppearancesBySessionKey'
+    | 'sessionOrganizationSessionAppearancesSupportedByServerId'
     | 'sessionOrganizationOrderEntriesByScopeKey'
     | 'sessionOrganizationLabelsByLabelKey'
 >;
@@ -1262,6 +1265,8 @@ function resolveOrganizationPinnedSessionIdsForServer(state: SessionOrganization
         tagsByTagKey: state.sessionOrganizationTagsByTagKey,
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
         attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
+        appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey,
+        sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     }, normalizedServerId).orderedPinSessionIds];
@@ -1560,6 +1565,15 @@ class Sync {
                 fireAndForget(this.fetchPendingMessages(session.id, undefined, undefined, { invalidateSnapshot: true }), {
                     tag: 'Sync.accountChange.fetchPendingMessages',
                 });
+            }
+        });
+        // Organization keys and its version guard name the Home, while its content and version
+        // are one Account's: retained, they would render for the next Account and reject its snapshot.
+        if (!isEmbedWindowContext()) subscribeHomeAccountRetirement(serverId => {
+            const state = storage.getState();
+            state.clearSessionOrganizationForServer(serverId);
+            for (const key of Object.keys(state.sessionOrganizationSnapshotVersionByServerId)) {
+                if (key !== serverId && areServerProfileIdentifiersEquivalent(key, serverId)) state.clearSessionOrganizationForServer(key);
             }
         });
         if (!isEmbedWindowContext()) subscribeHomeCredentialChange(({ serverId }) => {
@@ -13078,6 +13092,7 @@ class Sync {
                                     includeTags: plan.includeTags,
                                     includeLabels: plan.includeLabels,
                                     includeAttentionStandings: true,
+                                    includeSessionAppearances: true,
                                     includeAttentionReminderTimes: true,
                                     assignmentSessionIds: plan.assignmentSessionIds,
                                     folderIds: plan.folderIds,

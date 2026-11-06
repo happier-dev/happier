@@ -184,6 +184,7 @@ model Account {
     SessionFolderAssignment SessionFolderAssignment[]
     SessionPin                    SessionPin[]
     SessionAttentionStanding      SessionAttentionStanding[]
+    SessionAppearance            SessionAppearance[]
     SessionOrganizationFolder     SessionOrganizationFolder[]
     SessionOrganizationTag        SessionOrganizationTag[]
     SessionTagAssignment          SessionTagAssignment[]
@@ -1582,6 +1583,7 @@ model Session {
     sessionFolderAssignments SessionFolderAssignment[]
     sessionPins                   SessionPin[]
     sessionAttentionStandings     SessionAttentionStanding[]
+    sessionAppearances SessionAppearance[]
     accountReadStates             AccountSessionReadState[]
     sessionTagAssignments         SessionTagAssignment[]
     systemRecords    SessionSystemRecord[]
@@ -1741,6 +1743,21 @@ model AccountSessionReadState {
     session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
     @@id([accountId, sessionId])
+    @@index([sessionId])
+}
+
+model SessionAppearance {
+    id             String   @id @default(cuid())
+    accountId      String
+    sessionId      String
+    displayDbValue String
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
     @@index([sessionId])
 }
 

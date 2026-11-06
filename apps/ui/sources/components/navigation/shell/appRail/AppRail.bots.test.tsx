@@ -80,6 +80,8 @@ function railWithPinnedBot() {
   const organization = buildSessionOrganizationProjection(
     {
       schemaVersionByServerId: {},
+      appearancesBySessionKey: {},
+      sessionAppearancesSupportedByServerId: {},
       snapshotVersionByServerId: {},
       pinsBySessionKey: {
         [buildSessionOrganizationSessionKey(serverId, bot.id)]: {

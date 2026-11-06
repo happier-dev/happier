@@ -21,6 +21,7 @@ import {
 import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import type { SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
 import { sessionAddressKey } from '../sessionAddress';
+import { readSessionAppearanceColorFromDisplay, type SessionAppearanceColor } from './appearanceColor';
 
 import type {
     SessionOrganizationDisplayState,
@@ -72,6 +73,8 @@ export type SessionOrganizationListViewState = Readonly<{
     sessionListGroupOrderV1: Record<string, readonly string[]>;
     sessionWorkspaceOrderV1: SessionWorkspaceOrderV1;
     workspaceLabelsV1: Record<string, HumanDisplayState>;
+    workspaceColorsV1: Record<string, SessionAppearanceColor>;
+    workspaceColorsByServerId: Record<string, Readonly<Record<string, SessionAppearanceColor>>>;
     folderDisplayStatesByFolderKey: Record<string, HumanDisplayState>;
     labelDisplayStatesByKey: Record<string, HumanDisplayState>;
     sessionTagDisplayStatesBySessionKey: Record<
@@ -480,6 +483,8 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             sessionListGroupOrderV1: {},
             sessionWorkspaceOrderV1: {},
             workspaceLabelsV1: {},
+            workspaceColorsV1: {},
+            workspaceColorsByServerId: {},
             folderDisplayStatesByFolderKey: {},
             labelDisplayStatesByKey: {},
             sessionTagDisplayStatesBySessionKey: {},
@@ -580,6 +585,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
     const sessionListGroupOrderV1: Record<string, string[]> = {};
     const sessionWorkspaceOrderV1: Record<string, string[]> = {};
     const workspaceLabelsV1: Record<string, HumanDisplayState> = {};
+    const workspaceColorsV1: Record<string, SessionAppearanceColor> = {};
     const labelDisplayStatesByKey: Record<string, HumanDisplayState> = {};
     for (const entries of Object.values(projection.orderEntriesByScopeKey)) {
         const orderedEntries = [...entries].sort((a, b) => compareBySortKey(a, b) || a.itemKey.localeCompare(b.itemKey));
@@ -603,13 +609,15 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
     for (const [labelKey, label] of Object.entries(projection.labelsByLabelKey)) {
         if (label.labelKind !== 'workspace' || label.archivedAt != null) continue;
         const displayLabel = readSessionOrganizationWorkspaceLabel(label);
-        labelDisplayStatesByKey[labelKey] = displayLabel
-            ? { status: 'available', value: displayLabel }
+        const color = readSessionAppearanceColorFromDisplay(label.display, label.displayState);
+        labelDisplayStatesByKey[labelKey] = displayLabel || color
+            ? { status: 'available', value: displayLabel ?? '' }
             : label.displayState.status === 'locked'
                 ? label.displayState
                 : lockedUnreadable;
         const scopeKey = label.scopeKey.trim();
         if (scopeKey) {
+            if (color) workspaceColorsV1[scopeKey] = color;
             workspaceLabelsV1[scopeKey] =
                 labelDisplayStatesByKey[labelKey]!;
         }
@@ -628,6 +636,8 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         sessionListGroupOrderV1: normalizeSessionOrganizationGroupOrder([], sessionListGroupOrderV1),
         sessionWorkspaceOrderV1,
         workspaceLabelsV1,
+        workspaceColorsV1,
+        workspaceColorsByServerId: { [serverId]: workspaceColorsV1 },
         folderDisplayStatesByFolderKey,
         labelDisplayStatesByKey,
         sessionTagDisplayStatesBySessionKey,
@@ -685,6 +695,8 @@ export function buildSessionOrganizationListViewStateForServers(params: Readonly
         sessionListGroupOrderV1: mergeOrderedRecords(states.map((state) => state.sessionListGroupOrderV1)),
         sessionWorkspaceOrderV1: mergeOrderedRecords(states.map((state) => state.sessionWorkspaceOrderV1)),
         workspaceLabelsV1: Object.assign({}, ...states.map((state) => state.workspaceLabelsV1)),
+        workspaceColorsV1: Object.assign({}, ...states.map((state) => state.workspaceColorsV1)),
+        workspaceColorsByServerId: Object.assign({}, ...states.map((state) => state.workspaceColorsByServerId)),
         folderDisplayStatesByFolderKey: Object.assign({}, ...states.map((state) => state.folderDisplayStatesByFolderKey)),
         labelDisplayStatesByKey: Object.assign({}, ...states.map((state) => state.labelDisplayStatesByKey)),
         sessionTagDisplayStatesBySessionKey: Object.assign(

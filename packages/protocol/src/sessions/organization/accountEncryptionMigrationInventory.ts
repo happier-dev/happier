@@ -15,6 +15,11 @@ const SessionOrganizationMigrationInventoryVersionSchema = z
 
 export const SessionOrganizationAccountEncryptionMigrationInventorySchema = z.strictObject({
     version: SessionOrganizationMigrationInventoryVersionSchema,
+    // Include all retained rows, even when archived Sessions put them beyond the visible write quota.
+    sessionAppearances: z.optional(z.array(z.strictObject({
+      sessionId: z.string().check(z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
+      display: SessionOrganizationContentEnvelopeSchema,
+    }))),
     folders: z.array(z.strictObject({
       folderId: z.string().check(z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
       display: SessionOrganizationContentEnvelopeSchema,

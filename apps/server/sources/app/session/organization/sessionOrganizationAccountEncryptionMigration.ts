@@ -22,6 +22,9 @@ export type SessionOrganizationAccountEncryptionMigrationDirective =
     | Readonly<{
         action: "migrate";
         expectedVersion: number;
+        sessionAppearances?: readonly (
+            SessionOrganizationAccountEncryptionMigrationDisplayItem & Readonly<{ sessionId: string }>
+        )[];
         folders: readonly (
             SessionOrganizationAccountEncryptionMigrationDisplayItem
             & Readonly<{ folderId: string }>
@@ -87,13 +90,14 @@ type SessionOrganizationDisplayInventory = Readonly<{
     folders: readonly DisplayRow[];
     tags: readonly DisplayRow[];
     labels: readonly LabelDisplayRow[];
+    sessionAppearances: readonly (DisplayRow & Readonly<{ sessionId: string }>)[];
 }>;
 
 async function loadDisplayInventory(
     tx: Tx,
     accountId: string,
 ): Promise<SessionOrganizationDisplayInventory> {
-    const [checkpoint, folders, tags, labels] = await Promise.all([
+    const [checkpoint, folders, tags, labels, sessionAppearances] = await Promise.all([
         tx.sessionOrganizationCheckpoint.findUnique({
             where: { accountId },
             select: { version: true },
@@ -124,9 +128,14 @@ async function loadDisplayInventory(
                 updatedAt: true,
             },
         }),
+        tx.sessionAppearance.findMany({
+            where: { accountId },
+            select: { id: true, sessionId: true, displayDbValue: true, updatedAt: true },
+        }),
     ]);
     return {
         version: checkpoint?.version ?? 0,
+        sessionAppearances,
         folders: folders.filter(
             (row): row is DisplayRow => row.displayDbValue !== null,
         ),
@@ -176,6 +185,12 @@ export async function readSessionOrganizationAccountEncryptionMigrationInventory
             scopeKey: row.scopeKey,
             display: parseRequiredStoredDisplay(row.displayDbValue),
         })),
+        ...(inventory.sessionAppearances.length ? {
+            sessionAppearances: inventory.sessionAppearances.map(row => ({
+                sessionId: row.sessionId,
+                display: parseRequiredStoredDisplay(row.displayDbValue),
+            })),
+        } : {}),
     });
     if (!parsed.success) {
         throw new SessionOrganizationAccountEncryptionMigrationInvalidContentError();
@@ -221,6 +236,7 @@ function directiveModesAreValid(
         ...directive.folders,
         ...directive.tags,
         ...directive.labels,
+        ...(directive.sessionAppearances ?? []),
     ].every(
         (item) =>
             item.expectedDisplay.t === sourceType
@@ -243,10 +259,12 @@ function inventoryMatchesDirective(params: Readonly<{
         inventory.folders.length !== directive.folders.length
         || inventory.tags.length !== directive.tags.length
         || inventory.labels.length !== directive.labels.length
+        || inventory.sessionAppearances.length !== (directive.sessionAppearances?.length ?? 0)
     ) {
         return false;
     }
     const folderById = new Map(inventory.folders.map((row) => [row.id, row]));
+    const appearanceBySessionId = new Map(inventory.sessionAppearances.map(row => [row.sessionId, row]));
     const tagById = new Map(inventory.tags.map((row) => [row.id, row]));
     const labelByIdentity = new Map(
         inventory.labels.map((row) => [
@@ -254,7 +272,12 @@ function inventoryMatchesDirective(params: Readonly<{
             row,
         ]),
     );
-    return directive.folders.every((item) => {
+    return (directive.sessionAppearances ?? []).every(item => {
+        const row = appearanceBySessionId.get(item.sessionId);
+        const expected = useTarget ? item.display : item.expectedDisplay;
+        return row !== undefined && storedDisplayIsValid(row.displayDbValue)
+            && row.displayDbValue === serializeDirectiveDisplay(expected);
+    }) && directive.folders.every((item) => {
         const row = folderById.get(item.folderId);
         const expected = useTarget ? item.display : item.expectedDisplay;
         return row !== undefined
@@ -283,7 +306,7 @@ function directiveHasUniqueIdentities(
         { action: "migrate" }
     >,
 ): boolean {
-    return !hasDuplicateIdentities(
+    return !hasDuplicateIdentities((directive.sessionAppearances ?? []).map(item => item.sessionId)) && !hasDuplicateIdentities(
         directive.folders.map((item) => item.folderId),
     ) && !hasDuplicateIdentities(
         directive.tags.map((item) => item.tagId),
@@ -300,6 +323,7 @@ function inventoryContentIsValid(
         ...inventory.folders,
         ...inventory.tags,
         ...inventory.labels,
+        ...inventory.sessionAppearances,
     ].every((row) => storedDisplayIsValid(row.displayDbValue));
 }
 
@@ -320,6 +344,7 @@ export async function migrateSessionOrganizationAccountEncryptionInTx(
         return inventory.folders.length === 0
             && inventory.tags.length === 0
             && inventory.labels.length === 0
+            && inventory.sessionAppearances.length === 0
             ? { status: "applied" }
             : { status: "not_empty" };
     }
@@ -417,11 +442,22 @@ export async function migrateSessionOrganizationAccountEncryptionInTx(
         }
     }
 
+    const appearanceBySessionId = new Map(inventory.sessionAppearances.map(row => [row.sessionId, row]));
+    for (const item of params.directive.sessionAppearances ?? []) {
+        const row = appearanceBySessionId.get(item.sessionId)!;
+        const updated = await params.tx.sessionAppearance.updateMany({
+            where: { accountId: params.accountId, sessionId: item.sessionId, displayDbValue: row.displayDbValue },
+            data: { displayDbValue: serializeDirectiveDisplay(item.display)!, updatedAt: row.updatedAt },
+        });
+        if (updated.count !== 1) throw new SessionOrganizationAccountEncryptionMigrationConflictError();
+    }
+
     await markSessionOrganizationDisplayMigrationChanged(params.tx, {
         accountId: params.accountId,
         folderIds: params.directive.folders.map((item) => item.folderId),
         tagIds: params.directive.tags.map((item) => item.tagId),
         scopeKeys: params.directive.labels.map((item) => item.scopeKey),
+        sessionIds: (params.directive.sessionAppearances ?? []).map(item => item.sessionId),
     });
     return { status: "applied" };
 }
@@ -443,6 +479,7 @@ export async function matchSessionOrganizationAccountEncryptionMigrationPostStat
         return inventory.folders.length === 0
             && inventory.tags.length === 0
             && inventory.labels.length === 0
+            && inventory.sessionAppearances.length === 0
             ? { status: "matched" }
             : { status: "mismatch" };
     }

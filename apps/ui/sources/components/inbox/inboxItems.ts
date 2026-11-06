@@ -1,3 +1,4 @@
+import { areSessionAppearanceColorsEqual, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import type { InboxWorkGroup } from '@/activity/presentation/buildInboxWorkGroups';
 import { classifyInboxSessionCandidate, type InboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
 import { type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
@@ -33,6 +34,7 @@ export function classifyInboxExecutionRun(run: ExecutionRunPublicState): 'approv
 export type InboxItem = Readonly<{
     /** Exact readable operation explaining this existing health condition. */
     expectedDuring?: AccountNoticeArtifact['expectedDuring'];
+    appearanceColor?: SessionAppearanceColor | null;
     key: string;
     producer: 'live' | 'notice';
     type: InboxItemType;
@@ -217,6 +219,7 @@ export function selectInboxItemsForView(items: readonly InboxItem[], view: Inbox
 
 function sameItem(left: InboxItem, right: InboxItem): boolean {
     return left.producer === right.producer && left.type === right.type && left.view === right.view && left.title === right.title
+        && areSessionAppearanceColorsEqual(left.appearanceColor, right.appearanceColor)
         && left.context === right.context && left.createdAt === right.createdAt && left.read === right.read
         && left.pageRoute === right.pageRoute && createInboxItemRoute(left.focus).params.item === createInboxItemRoute(right.focus).params.item
         && left.source.kind === right.source.kind && left.source.id === right.source.id && left.source.serverId === right.source.serverId

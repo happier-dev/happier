@@ -148,6 +148,9 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
                 }),
         ),
         attentionStandingsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         orderEntriesByScopeKey: Object.fromEntries(
             Object.entries(fixture.sessionListGroupOrderV1 ?? {}).map(([scopeKey, itemKeys]) => [
                 normalizeOrderScopeKey(fixture.serverId, scopeKey),

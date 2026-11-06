@@ -18,6 +18,12 @@ export interface SessionAttentionStandingRecord {
     readonly updatedAt: Date;
 }
 
+export interface SessionAppearanceRecord {
+    readonly sessionId: string;
+    readonly displayDbValue: string;
+    readonly updatedAt: Date;
+}
+
 export interface SessionOrganizationFolderRecord {
     readonly id: string;
     readonly folderKey: string;

@@ -5,6 +5,7 @@ import type { SessionOrganizationFolder } from '@happier-dev/protocol/sessions/o
 import type { SessionOrganizationLabel } from '@happier-dev/protocol/sessions/organization/ordering';
 import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
 import type { SessionOrganizationTag } from '@happier-dev/protocol/sessions/organization/tags';
+import type { SessionOrganizationSessionAppearance } from '@happier-dev/protocol/sessions/organization/appearances';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import {
@@ -13,12 +14,14 @@ import {
 } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import type {
     SessionOrganizationDisplayState,
     UiSessionOrganizationFolder,
     UiSessionOrganizationLabel,
     UiSessionOrganizationSnapshot,
     UiSessionOrganizationTag,
+    UiSessionOrganizationSessionAppearance,
 } from '@/sync/domains/session/organization/types';
 
 type PlainSessionOrganizationDisplayEnvelope = Extract<SessionOrganizationContentEnvelope, { t: 'plain' }>;
@@ -92,10 +95,14 @@ export async function prepareSessionOrganizationDisplayEnvelope(params: Readonly
     credentials: AuthCredentials;
     value: unknown;
     accountMode?: 'plain' | 'e2ee';
+    serverUrl?: string;
     request?: (path: string, init?: RequestInit) => Promise<Response>;
 }>): Promise<SessionOrganizationContentEnvelope> {
+    const request = params.request ?? (params.serverUrl
+        ? createServerFetchAtEndpoint({ endpointUrl: params.serverUrl, credentials: params.credentials })
+        : undefined);
     const accountMode = params.accountMode
-        ?? (await fetchAccountEncryptionMode(params.credentials, { request: params.request, usage: 'fresh-authority' })).mode;
+        ?? (await fetchAccountEncryptionMode(params.credentials, { request, usage: 'fresh-authority' })).mode;
     const envelope = prepareSessionOrganizationDisplayEnvelopeForAccountModeV1({
         envelope: plainEnvelope(params.value), accountMode,
         material: accountMode === 'plain' ? null
@@ -110,6 +117,7 @@ export async function prepareSessionOrganizationDisplayEnvelopeForWrite(params: 
     credentials: AuthCredentials;
     envelope: SessionOrganizationContentEnvelope | null | undefined;
     accountMode?: 'plain' | 'e2ee';
+    serverUrl?: string;
     request?: (path: string, init?: RequestInit) => Promise<Response>;
 }>): Promise<SessionOrganizationContentEnvelope | null> {
     if (!params.envelope) return null;
@@ -118,6 +126,7 @@ export async function prepareSessionOrganizationDisplayEnvelopeForWrite(params: 
         credentials: params.credentials,
         value: params.envelope.v,
         accountMode: params.accountMode,
+        serverUrl: params.serverUrl,
         request: params.request,
     });
 }
@@ -376,6 +385,7 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
     credentials: AuthCredentials;
     snapshot: SessionOrganizationSnapshot;
 }>): Promise<UiSessionOrganizationSnapshot> {
+    const { sessionAppearances, ...snapshot } = params.snapshot;
     const hasEncryptedDisplay = params.snapshot.folders.some(
         (folder) => !folder.displayState && folder.display?.t === 'encrypted',
     )
@@ -384,6 +394,9 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
         )
         || params.snapshot.labels.some(
             (label) => !label.displayState && label.display?.t === 'encrypted',
+        )
+        || (sessionAppearances ?? []).some(
+            (appearance) => !appearance.displayState && appearance.display?.t === 'encrypted',
         );
     const machineKey = hasEncryptedDisplay
         ? await getAccountMachineKeyForRead(params.credentials)
@@ -445,9 +458,25 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
     });
 
     return {
-        ...params.snapshot,
+        ...snapshot,
         folders,
         tags,
         labels,
+        ...(sessionAppearances === undefined ? {} : {
+            sessionAppearances: sessionAppearances.map(appearance => ({
+                ...appearance,
+                displayState: mapProtocolUnavailableDisplayState(appearance.displayState) ?? open(appearance.display).displayState,
+            })),
+        }),
     };
+}
+
+export async function openSessionOrganizationSessionAppearanceDisplay(params: Readonly<{
+    credentials: AuthCredentials;
+    appearance: SessionOrganizationSessionAppearance;
+}>): Promise<UiSessionOrganizationSessionAppearance> {
+    const unavailableDisplayState = mapProtocolUnavailableDisplayState(params.appearance.displayState);
+    if (unavailableDisplayState) return { ...params.appearance, displayState: unavailableDisplayState };
+    const opened = await openSessionOrganizationDisplayEnvelope({ credentials: params.credentials, envelope: params.appearance.display });
+    return { ...params.appearance, displayState: opened.displayState };
 }

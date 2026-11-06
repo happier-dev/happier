@@ -1,8 +1,9 @@
 import { AnyClientUpgradeRequiredV1Schema, CLIENT_UPGRADE_REQUIRED_ERROR_CODE, CLIENT_UPGRADE_REQUIRED_HTTP_STATUS } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_LEGACY_MAX_ATTENTION_STANDINGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, DeleteSessionOrganizationLabelRequestSchema, DeleteSessionOrganizationLabelResponseSchema, DeleteSessionOrganizationFolderRequestSchema, DeleteSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationTagRequestSchema, DeleteSessionOrganizationTagResponseSchema, ImportLegacySessionOrganizationRequestSchema, ImportLegacySessionOrganizationResponseSchema, MoveSessionFolderAssignmentsRequestSchema, MoveSessionFolderAssignmentsResponseSchema, ReorderSessionOrganizationRequestSchema, ReorderSessionOrganizationResponseSchema, SetSessionFolderAssignmentRequestSchema, SetSessionFolderAssignmentResponseSchema, SetSessionPinRequestSchema, SetSessionPinResponseSchema, MutateSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema, UpsertSessionOrganizationLabelRequestSchema, UpsertSessionOrganizationLabelResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
-import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, sessionOrganizationSnapshotRequestFromQueryV1 } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
+import { SetSessionAppearanceRequestSchema, SetSessionAppearanceResponseSchema } from '@happier-dev/protocol/sessions/organization/appearances';
 import { z } from "zod/mini";
 
 import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -18,6 +19,7 @@ import {
     importLegacySessionOrganization,
     moveSessionFolderAssignments,
     setSessionAttentionStanding,
+    setSessionAppearance,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
@@ -42,61 +44,6 @@ const tagIdParamsSchema = z.object({
     tagId: z.string().check(z.minLength(1)),
 });
 
-function parseOptionalBoolean(value: unknown): boolean | undefined {
-    if (value === true || value === "true" || value === "1") return true;
-    if (value === false || value === "false" || value === "0") return false;
-    return undefined;
-}
-
-function parseDelimitedQueryList(value: unknown): string[] | undefined {
-    if (typeof value !== "string") return undefined;
-    const values = value
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-    return values.length > 0 ? Array.from(new Set(values)) : undefined;
-}
-
-function parseOrderScopesQuery(value: unknown): unknown[] | undefined {
-    if (typeof value !== "string") return undefined;
-    try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed : [{}];
-    } catch {
-        return [{}];
-    }
-}
-
-function buildSnapshotRequestFromQuery(query: unknown) {
-    const record = query && typeof query === "object" ? query as Record<string, unknown> : {};
-    const orderScopes = parseOrderScopesQuery(record.orderScopes);
-    return {
-        ...(record.projectionVersion !== undefined
-            ? { projectionVersion: record.projectionVersion === String(SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION)
-                ? SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION : record.projectionVersion }
-            : {}),
-        ...(parseOptionalBoolean(record.includeFolders) !== undefined ? { includeFolders: parseOptionalBoolean(record.includeFolders) } : {}),
-        ...(parseOptionalBoolean(record.includeTags) !== undefined ? { includeTags: parseOptionalBoolean(record.includeTags) } : {}),
-        ...(parseOptionalBoolean(record.includeLabels) !== undefined ? { includeLabels: parseOptionalBoolean(record.includeLabels) } : {}),
-        ...(parseOptionalBoolean(record.includeAllFolderAssignments) !== undefined
-            ? { includeAllFolderAssignments: parseOptionalBoolean(record.includeAllFolderAssignments) }
-            : {}),
-        ...(parseOptionalBoolean(record.includeAllTagAssignments) !== undefined
-            ? { includeAllTagAssignments: parseOptionalBoolean(record.includeAllTagAssignments) }
-            : {}),
-        ...(parseOptionalBoolean(record.includeAttentionStandings) !== undefined
-            ? { includeAttentionStandings: parseOptionalBoolean(record.includeAttentionStandings) }
-            : {}),
-        ...(parseOptionalBoolean(record.includeAttentionReminderTimes) !== undefined
-            ? { includeAttentionReminderTimes: parseOptionalBoolean(record.includeAttentionReminderTimes) }
-            : {}),
-        ...(parseDelimitedQueryList(record.assignmentSessionIds) ? { assignmentSessionIds: parseDelimitedQueryList(record.assignmentSessionIds) } : {}),
-        ...(parseDelimitedQueryList(record.folderIds) ? { folderIds: parseDelimitedQueryList(record.folderIds) } : {}),
-        ...(parseDelimitedQueryList(record.tagIds) ? { tagIds: parseDelimitedQueryList(record.tagIds) } : {}),
-        ...(orderScopes ? { orderScopes } : {}),
-    };
-}
-
 export function registerSessionOrganizationRoutes(app: Fastify) {
     app.get("/v2/session-organization", {
         preHandler: app.authenticate,
@@ -108,7 +55,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             },
         },
     }, async (request, reply) => {
-        const parsedRequest = SessionOrganizationSnapshotRequestSchema.safeParse(buildSnapshotRequestFromQuery(request.query));
+        const parsedRequest = SessionOrganizationSnapshotRequestSchema.safeParse(sessionOrganizationSnapshotRequestFromQueryV1(request.query));
         if (!parsedRequest.success) {
             return reply.code(400).send({ error: "invalid-session-organization-snapshot-request" });
         }
@@ -139,6 +86,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             ...snapshot.folders,
             ...snapshot.tags,
             ...snapshot.labels,
+            ...(snapshot.sessionAppearances ?? []),
         ].some((entry) => entry.displayState?.status === "unavailable");
         if (
             includesCurrentOnlyDisplayState
@@ -250,6 +198,37 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             return reply.code(404).send({ error: "Session not found" });
         }
 
+        return reply.send(result);
+    });
+
+    app.put("/v2/session-organization/appearances/:sessionId", {
+        preHandler: app.authenticate,
+        schema: {
+            params: sessionIdParamsSchema,
+            body: SetSessionAppearanceRequestSchema,
+            response: {
+                200: SetSessionAppearanceResponseSchema,
+                400: z.object({ error: z.literal("invalid-session-appearance") }),
+                404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal("session-appearance-limit-exceeded") }),
+            },
+        },
+    }, async (request, reply) => {
+        const parsedParams = sessionIdParamsSchema.safeParse(request.params);
+        const parsedBody = SetSessionAppearanceRequestSchema.safeParse(request.body);
+        if (!parsedParams.success || !parsedBody.success) return reply.code(400).send({ error: "invalid-session-appearance" });
+        const access = { accountId: request.userId, sessionId: parsedParams.data.sessionId,
+            authentication: readSessionAccessAuthenticationFromRequest(request) };
+        const visible = parsedBody.data.display === null
+            ? await canAccessSyncedSessionForOrganization(access)
+            : await canAccessVisibleUnarchivedSessionForOrganization(access);
+        if (!visible) return reply.code(404).send({ error: "Session not found" });
+        const result = await setSessionAppearance({ ...access, request: parsedBody.data });
+        if ("error" in result) {
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
+            if (result.error === "invalid-display-envelope") return reply.code(400).send({ error: "invalid-session-appearance" });
+            return reply.code(409).send({ error: result.error });
+        }
         return reply.send(result);
     });
 

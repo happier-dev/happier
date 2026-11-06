@@ -581,6 +581,9 @@ describe('UniversalSearchController exact Home scope', () => {
             },
             tagAssignmentsBySessionId: { 'session-b': ['urgent'] },
             attentionStandingsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
         };

@@ -102,6 +102,7 @@ describe('app rail model', () => {
                 rowsBySessionId: Object.fromEntries(homeRows.map(row => [row.session.id, row.session])),
                 organization: buildSessionOrganizationProjection({
                     schemaVersionByServerId: {}, snapshotVersionByServerId: {},
+                    appearancesBySessionKey: {}, sessionAppearancesSupportedByServerId: {},
                     pinsBySessionKey: Object.fromEntries(homeRows.map(row => [buildSessionOrganizationSessionKey(serverId, row.session.id), row.pin])),
                     foldersByFolderKey: {}, folderAssignmentsBySessionKey: {}, tagsByTagKey: {}, tagAssignmentsBySessionKey: {},
                     attentionStandingsBySessionKey: {}, orderEntriesByScopeKey: {}, labelsByLabelKey: {},

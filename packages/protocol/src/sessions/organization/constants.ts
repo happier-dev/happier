@@ -11,6 +11,9 @@ export const SESSION_ORGANIZATION_MAX_ID_LENGTH = 191;
 export const SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH = 191;
 
 export const SESSION_ORGANIZATION_MAX_PINNED_SESSIONS = 1_000;
+// The snapshot is the first-paint payload parsed on the JS thread. Bound appearances at
+// the same ceiling as pins; the writer rejects new rows past it rather than growing the payload.
+export const SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES = 1_000;
 export const SESSION_ORGANIZATION_MAX_FOLDERS = 500;
 export const SESSION_ORGANIZATION_MAX_TAGS = 500;
 export const SESSION_ORGANIZATION_MAX_LABELS = 1_000;

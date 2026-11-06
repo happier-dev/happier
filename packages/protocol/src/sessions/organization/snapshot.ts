@@ -6,6 +6,7 @@ import {
   SESSION_ORGANIZATION_MAX_FOLDERS,
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
+  SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES,
   SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS,
   SESSION_ORGANIZATION_MAX_TAGS,
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
@@ -14,6 +15,7 @@ import { SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from '
 import { SessionOrganizationLabelSchema, SessionOrganizationOrderEntrySchema } from './ordering.js';
 import { SessionOrganizationPinSchema } from './pins.js';
 import { SessionAttentionStandingSchema } from './standings.js';
+import { SessionOrganizationSessionAppearanceSchema } from './appearances.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
 
 const SessionOrganizationScopedIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(10_000)));
@@ -36,6 +38,7 @@ export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z.st
     orderScopes: z._default(z.array(SessionOrganizationOrderScopeRequestSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS)), []),
     includeAttentionStandings: z._default(z.boolean(), false),
     includeAttentionReminderTimes: z._default(z.boolean(), false),
+    includeSessionAppearances: z._default(z.boolean(), false),
   }));
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 
@@ -91,6 +94,7 @@ export const SessionOrganizationSnapshotSchema = lazyZodSchema(() => z.strictObj
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),
     labels: z.array(SessionOrganizationLabelSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_LABELS)),
     attentionStandings: z.optional(z.array(SessionAttentionStandingSchema)),
+    sessionAppearances: z.optional(z.array(SessionOrganizationSessionAppearanceSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES))),
   }));
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;
 

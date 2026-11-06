@@ -1,3 +1,5 @@
+import type { SessionOrganizationSessionAppearance } from '@happier-dev/protocol/sessions/organization/appearances';
+import type { SessionAppearanceColor } from './appearanceColor';
 import type {
     SessionAttentionStanding,
     SessionOrganizationFolder,
@@ -45,13 +47,18 @@ export type UiSessionOrganizationLabel = Omit<SessionOrganizationLabel, 'display
     displayState: SessionOrganizationDisplayState;
 }>;
 
+export type UiSessionOrganizationSessionAppearance = Omit<SessionOrganizationSessionAppearance, 'displayState'> & Readonly<{
+    displayState: SessionOrganizationDisplayState;
+}>;
+
 export type UiSessionOrganizationSnapshot = Omit<
     SessionOrganizationSnapshot,
-    'folders' | 'tags' | 'labels'
+    'folders' | 'tags' | 'labels' | 'sessionAppearances'
 > & Readonly<{
     folders: UiSessionOrganizationFolder[];
     tags: UiSessionOrganizationTag[];
     labels: UiSessionOrganizationLabel[];
+    sessionAppearances?: UiSessionOrganizationSessionAppearance[];
 }>;
 
 export type NormalizedSessionOrganizationState = Readonly<{
@@ -64,6 +71,8 @@ export type NormalizedSessionOrganizationState = Readonly<{
     tagsByTagKey: Readonly<Record<string, UiSessionOrganizationTag>>;
     tagAssignmentsBySessionKey: Readonly<Record<string, SessionOrganizationTagAssignmentEntry>>;
     attentionStandingsBySessionKey: Readonly<Record<string, SessionAttentionStanding>>;
+    appearancesBySessionKey: Readonly<Record<string, UiSessionOrganizationSessionAppearance>>;
+    sessionAppearancesSupportedByServerId: Readonly<Record<string, boolean>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, UiSessionOrganizationLabel>>;
 }>;
@@ -73,6 +82,7 @@ export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
     | 'includeFolders'
     | 'includeTags'
     | 'includeLabels'
+    | 'includeSessionAppearances'
     | 'includeAllFolderAssignments'
     | 'includeAllTagAssignments'
     | 'assignmentSessionIds'
@@ -96,6 +106,9 @@ export type SessionOrganizationProjection = Readonly<{
     tagsById: Readonly<Record<string, UiSessionOrganizationTag>>;
     tagAssignmentsBySessionId: Readonly<Record<string, readonly string[]>>;
     attentionStandingsBySessionId: Readonly<Record<string, SessionAttentionStanding>>;
+    appearancesBySessionId: Readonly<Record<string, SessionAppearanceColor>>;
+    sessionAppearancesBySessionId: Readonly<Record<string, UiSessionOrganizationSessionAppearance>>;
+    sessionAppearancesSupported: boolean;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, UiSessionOrganizationLabel>>;
 }>;

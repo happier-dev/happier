@@ -121,6 +121,8 @@ function organizationProjection(serverId: string, params: Readonly<{
 }>) {
     return buildSessionOrganizationProjection({
         schemaVersionByServerId: { [serverId]: 1 },
+        appearancesBySessionKey: {},
+        sessionAppearancesSupportedByServerId: {},
         snapshotVersionByServerId: { [serverId]: params.version ?? 1 },
         pinsBySessionKey: Object.fromEntries((params.pinnedSessionIds ?? []).map((sessionId, index) => [
             buildSessionOrganizationSessionKey(serverId, sessionId),

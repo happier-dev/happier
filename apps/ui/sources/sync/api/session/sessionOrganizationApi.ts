@@ -9,6 +9,7 @@ import { SetSessionAttentionStandingResponseSchema, type SetSessionAttentionStan
 import type { z } from 'zod/mini';
 import { SetSessionPinRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { SetSessionAppearanceRequestSchema, SetSessionAppearanceResponseSchema, type SetSessionAppearanceRequest, type SetSessionAppearanceResponse } from '@happier-dev/protocol/sessions/organization/appearances';
 
 const SESSION_ORGANIZATION_ROUTE = '/v2/session-organization';
 
@@ -135,6 +136,7 @@ function buildSnapshotQuery(request: Partial<SessionOrganizationSnapshotRequest>
     appendBooleanParam(params, 'includeFolders', request.includeFolders);
     appendBooleanParam(params, 'includeTags', request.includeTags);
     appendBooleanParam(params, 'includeLabels', request.includeLabels);
+    appendBooleanParam(params, 'includeSessionAppearances', request.includeSessionAppearances);
     appendBooleanParam(params, 'includeAllFolderAssignments', request.includeAllFolderAssignments);
     appendBooleanParam(params, 'includeAllTagAssignments', request.includeAllTagAssignments);
     appendBooleanParam(params, 'includeAttentionStandings', request.includeAttentionStandings);
@@ -217,6 +219,24 @@ export async function setSessionPin(params: Readonly<{
         },
     });
     return parseJsonResponse(response, SetSessionPinResponseSchema, 'Failed to set session pin');
+}
+
+export async function setSessionAppearance(params: Readonly<{
+    credentials: AuthCredentials;
+    serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
+    sessionId: string;
+    request: SetSessionAppearanceRequest;
+}>): Promise<SetSessionAppearanceResponse> {
+    const request = SetSessionAppearanceRequestSchema.parse(params.request);
+    const response = await fetchSessionOrganizationRoute({
+        credentials: params.credentials,
+        serverUrl: params.serverUrl,
+        requestAtEndpoint: params.requestAtEndpoint,
+        path: `${SESSION_ORGANIZATION_ROUTE}/appearances/${encodeURIComponent(params.sessionId)}`,
+        init: { method: 'PUT', headers: authHeaders(params.credentials), body: JSON.stringify(request) },
+    });
+    return parseJsonResponse(response, SetSessionAppearanceResponseSchema, 'Failed to set session appearance');
 }
 
 export async function setSessionAttentionStanding(params: Readonly<{
@@ -434,11 +454,13 @@ export async function setSessionTagAssignments(params: Readonly<{
 export async function upsertSessionOrganizationLabel(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     request: UpsertSessionOrganizationLabelRequest;
 }>): Promise<UpsertSessionOrganizationLabelResponse> {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
+        requestAtEndpoint: params.requestAtEndpoint,
         path: `${SESSION_ORGANIZATION_ROUTE}/labels`,
         init: {
             method: 'POST',
@@ -452,11 +474,13 @@ export async function upsertSessionOrganizationLabel(params: Readonly<{
 export async function deleteSessionOrganizationLabel(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     request: DeleteSessionOrganizationLabelRequest;
 }>): Promise<DeleteSessionOrganizationLabelResponse> {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
+        requestAtEndpoint: params.requestAtEndpoint,
         path: `${SESSION_ORGANIZATION_ROUTE}/labels`,
         init: {
             method: 'DELETE',

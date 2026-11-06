@@ -29,7 +29,8 @@ export type SessionOrganizationChangeScope =
     | "tagAssignments"
     | "order"
     | "labels"
-    | "attentionStandings";
+    | "attentionStandings"
+    | "sessionAppearances";
 
 export function buildSessionOrganizationHint(params: Readonly<{
     scope: SessionOrganizationChangeScope;
@@ -117,8 +118,17 @@ export async function markSessionOrganizationDisplayMigrationChanged(
         folderIds: readonly string[];
         tagIds: readonly string[];
         scopeKeys: readonly string[];
+        sessionIds?: readonly string[];
     }>,
 ): Promise<void> {
+    if (params.sessionIds?.length) {
+        await markAccountChanged(tx, {
+            accountId: params.accountId,
+            kind: "account",
+            entityId: "session-organization-appearances",
+            hint: buildSessionOrganizationHint({ scope: "sessionAppearances", sessionIds: params.sessionIds }),
+        });
+    }
     await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "account",

@@ -47,12 +47,28 @@ function projectOrganizationPins(
         tagsByTagKey: {},
         tagAssignmentsBySessionKey: {},
         attentionStandingsBySessionKey: {},
+        appearancesBySessionKey: {},
+        sessionAppearancesSupportedByServerId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     }, serverId);
 }
 
 describe('buildSessionOrganizationListViewState', () => {
+    it('retains readable colour-only workspace labels without classifying them as locked', () => {
+        const color = { kind: 'custom', hex: '#123456' } as const;
+        const value = { color };
+        const label = { labelKind: 'workspace' as const, scopeKey: 'colour-only', display: { t: 'plain' as const, v: value },
+            displayState: { status: 'available' as const, value }, archivedAt: null, createdAt: 1, updatedAt: 1 };
+        const state = buildSessionOrganizationListViewState({ serverId: 'color-only-home', projection: {
+            ...projectOrganizationPins('color-only-home'), labelsByLabelKey: { opened: label,
+                locked: { ...label, scopeKey: 'locked', displayState: { status: 'locked', reason: 'content_unreadable' } } },
+        } });
+        expect(state).toMatchObject({ workspaceColorsV1: { 'colour-only': color },
+            workspaceLabelsV1: { 'colour-only': { status: 'available', value: '' } } });
+        expect(state).not.toHaveProperty('workspaceColorsV1.locked');
+    });
+
     it('projects Account sections with private icons and preserves unloaded assignment membership', () => {
         const projection = projectOrganizationPins('home-a');
         const state = buildSessionOrganizationListViewState({
