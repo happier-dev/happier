@@ -11,6 +11,9 @@ import {
   type CollectionConditionRow,
   type CollectionConditionValueCountRequest,
   type CollectionConditionValueCounts,
+  collectionConditionChoiceValues,
+  isCollectionConditionChoiceOn,
+  toggleCollectionConditionValue,
 } from '@happier-dev/plugin-ui/components';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import type { EntityFilterRegistryV1 } from '@happier-dev/protocol/collections/filter/fieldRegistryV1';
@@ -25,6 +28,7 @@ import {
 } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
+import type { SelectionListFilter } from '@/components/ui/selectionList';
 import { t } from '@/text';
 
 import {
@@ -103,6 +107,8 @@ export function useCollectionConditionHeader<Filter, Facts>(
     onSaveAsSpace?: () => void;
     /** Fields a control on the page already states (a kind segment): one indicator, so no token or count for them. */
     statedFields?: readonly string[];
+    /** What people filter this list by most: each a value of a registry field, one press from on or off. */
+    quickFilters?: readonly Readonly<{ fieldId: string; value: JsonValue; label: string }>[];
   }>,
 ) {
   const { registry, bindings, testIDPrefix, filters, baseFilter, setFilters } =
@@ -110,8 +116,8 @@ export function useCollectionConditionHeader<Filter, Facts>(
   const phone = useViewportClass() === 'compact';
   const buttonAnchorRef = React.useRef<View | null>(null);
   const searchAnchorRef = React.useRef<View | null>(null);
-  // The editor opens under the search field's left edge (lab `sfcols:mcpFilter`); a list without a search
-  // field hangs it from the filter button in its header.
+  // The editor opens under the search field, from its end where the filter button sits (lab `sfcols:mcpFilter`);
+  // a list without a search field hangs it from the filter button in its header.
   const anchorRef = React.useMemo<React.RefObject<View | null>>(
     () =>
       input.anchorRef ?? {
@@ -168,14 +174,24 @@ export function useCollectionConditionHeader<Filter, Facts>(
     [model.rows, tokenRows],
   );
   const statedFields = input.statedFields;
+  const quickFilters = input.quickFilters;
+  const pickedByChip = React.useCallback(
+    (row: CollectionConditionRow) => {
+      const stated = (quickFilters ?? []).filter((quick) => quick.fieldId === row.fieldId)
+        .flatMap((quick) => collectionConditionChoiceValues(model, quick.fieldId, quick.value));
+      return row.operator === 'is' && stated.length > 0 && row.values.every((value) => stated.some((item) => sameStrictJsonValue(item, value)));
+    },
+    [model, quickFilters],
+  );
   const tokens = React.useMemo<readonly CollectionConditionToken[]>(
     () =>
-      tokenRows.filter((row) => !statedFields?.includes(row.fieldId)).map((row) => ({
+      // A chip that says a filter is on is that filter's one indicator.
+      tokenRows.filter((row) => !statedFields?.includes(row.fieldId) && !pickedByChip(row)).map((row) => ({
         id: row.fieldId,
         label: row.field.label,
         valueLabel: collectionConditionValueWords(row.field, row.values),
       })),
-    [statedFields, tokenRows],
+    [pickedByChip, statedFields, tokenRows],
   );
 
   const applyEdit = React.useCallback(
@@ -217,13 +233,25 @@ export function useCollectionConditionHeader<Filter, Facts>(
     [applyEdit, baseModel, model.rows],
   );
 
+  const quickFilterChips = React.useMemo<readonly SelectionListFilter[]>(
+    () => (quickFilters ?? []).map((quick) => ({
+      id: `${quick.fieldId}:${JSON.stringify(quick.value)}`,
+      testID: `${testIDPrefix}-quick-filter:${quick.fieldId}:${String(quick.value)}`,
+      label: quick.label,
+      valueLabel: quick.label,
+      selected: isCollectionConditionChoiceOn(model, quick.fieldId, quick.value),
+      onToggle: () => applyEdit(toggleCollectionConditionValue(model, quick.fieldId, quick.value)),
+    })),
+    [applyEdit, model, quickFilters, testIDPrefix],
+  );
   const tokenRow =
-    tokens.length > 0 ? (
+    tokens.length > 0 || quickFilterChips.length > 0 ? (
       <CollectionConditionTokens
         testIDPrefix={`${testIDPrefix}-filter`}
+        quickFilters={quickFilterChips}
         tokens={tokens}
         onRemove={removeToken}
-        {...(input.onSaveAsSpace ? { onSave: input.onSaveAsSpace } : {})}
+        {...(input.onSaveAsSpace && tokens.length > 0 ? { onSave: input.onSaveAsSpace } : {})}
       />
     ) : null;
   const button = (
@@ -307,6 +335,7 @@ export function useCollectionConditionHeader<Filter, Facts>(
     model,
     tokens,
     tokenRow,
+    quickFilterChips,
     filterButton,
     searchAnchorRef,
     editorOverlay,

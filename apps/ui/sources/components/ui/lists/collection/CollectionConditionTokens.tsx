@@ -50,6 +50,8 @@ export const CollectionConditionTokens = React.memo(function CollectionCondition
     /** `<prefix>-chips`, `<prefix>-token:<id>`, `<prefix>-tokens-save`. */
     testIDPrefix: string;
     tokens: readonly CollectionConditionToken[];
+    /** The list's one-press chips, leading the row: what it narrows by most, then what else is on. */
+    quickFilters?: readonly SelectionListFilter[];
     onRemove: (id: string) => void;
     /** Saved-space lists offer Save as space at the end of the row. */
     onSave?: () => void;
@@ -69,6 +71,7 @@ export const CollectionConditionTokens = React.memo(function CollectionCondition
   );
   return (
     <View testID={`${testIDPrefix}-chips`} style={styles.row}>
+      {props.quickFilters?.map((filter) => <SelectionListFilterChip key={filter.id} filter={filter} />)}
       {filters.map((filter) => <SelectionListFilterChip key={filter.id} filter={filter} />)}
       {props.onSave ? <HappierPressable
         testID={`${testIDPrefix}-tokens-save`}
