@@ -6,6 +6,7 @@ import {
     openSessionOrganizationLabelDisplay,
     prepareSessionOrganizationDisplayEnvelopeForWrite,
 } from './sessionOrganizationDisplayEnvelope';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function upsertSessionLabel(params: Readonly<{
     credentials: AuthCredentials;
@@ -13,6 +14,7 @@ export async function upsertSessionLabel(params: Readonly<{
     serverUrl?: string;
     request: UpsertSessionOrganizationLabelRequest;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const request: UpsertSessionOrganizationLabelRequest = {
         ...params.request,
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
@@ -40,6 +42,7 @@ export async function upsertSessionLabel(params: Readonly<{
             credentials: params.credentials,
             label: response.label,
         });
+        if (!isAccountCurrent()) return;
         const reconcileRecordId = getStorage().getState().upsertSessionOrganizationLabelOptimistic(params.serverId, label);
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {

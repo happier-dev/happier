@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { deleteSessionOrganizationFolder as deleteSessionOrganizationFolderApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { DeleteSessionOrganizationFolderRequest } from '@happier-dev/protocol';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function deleteSessionFolder(params: Readonly<{
     credentials: AuthCredentials;
@@ -9,6 +10,7 @@ export async function deleteSessionFolder(params: Readonly<{
     serverUrl?: string;
     request: DeleteSessionOrganizationFolderRequest;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const recordId = getStorage().getState().deleteSessionOrganizationFolderOptimistic(params.serverId, params.request.folderId);
     try {
         const response = await deleteSessionOrganizationFolderApi({
@@ -17,6 +19,7 @@ export async function deleteSessionFolder(params: Readonly<{
             request: params.request,
         });
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        if (!isAccountCurrent()) return;
         for (const folderId of response.deletedFolderIds) {
             const reconcileRecordId = getStorage().getState().deleteSessionOrganizationFolderOptimistic(params.serverId, folderId);
             getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);

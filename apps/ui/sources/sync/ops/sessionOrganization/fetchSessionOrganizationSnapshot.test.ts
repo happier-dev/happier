@@ -65,6 +65,7 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
         }));
 
         await fetchAndApplySessionOrganizationSnapshot({
+            shouldContinue: () => true,
             credentials: { token: 'token-a', secret: 'secret-a' },
             serverId: 'server-a',
             request: {
@@ -124,6 +125,7 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
         }));
 
         await fetchAndApplySessionOrganizationSnapshot({
+            shouldContinue: () => true,
             credentials: { token: 'token-a', secret: 'secret-a' },
             serverId: 'server-a',
             request: {
@@ -173,6 +175,7 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
         });
 
         await fetchAndApplySessionOrganizationSnapshot({
+            shouldContinue: () => true,
             credentials: { token: 'token-a', secret: 'secret-a' },
             serverId: 'server-a-before-identity',
             request: { includeFolders: true },

@@ -96,6 +96,7 @@ function loadedSeqs(): number[] {
 async function seedSession(initialSeq = 1): Promise<SyncGapTestAccess> {
     const { sync } = await import('./sync');
     sync.disconnectServer();
+    (sync as unknown as { credentials: unknown }).credentials = { token: 'test-token' };
     storage.getState().applySessions([createSessionFixture({
         id: SESSION_ID,
         seq: initialSeq,

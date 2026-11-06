@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { syncSwitchServer } from '@/sync/sync';
+import { syncLogout, syncSwitchServer } from '@/sync/sync';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { clearPersistence, loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
@@ -93,7 +93,9 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             });
         }
         await TokenStorage.removeCredentials();
-        await syncSwitchServer(null);
+        // Stopped first: a refresh landing after the retirement would write the old Account's rows back.
+        stopConcurrentSessionCacheSync();
+        await syncLogout();
         setCredentials(null);
         setIsAuthenticated(false);
     }, []);

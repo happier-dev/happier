@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { moveSessionFolderAssignments as moveSessionFolderAssignmentsApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function moveSessionFolderAssignments(params: Readonly<{
     credentials: AuthCredentials;
@@ -9,6 +10,7 @@ export async function moveSessionFolderAssignments(params: Readonly<{
     fromFolderIds: readonly string[];
     toFolderId: string | null;
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const recordId = getStorage().getState().moveSessionFolderAssignmentsOptimistic(
         params.serverId,
         params.fromFolderIds,
@@ -26,6 +28,7 @@ export async function moveSessionFolderAssignments(params: Readonly<{
         if (recordId) {
             getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
         }
+        if (!isAccountCurrent()) return;
         if (response.assignments.length > 0) {
             getStorage().getState().applySessionFolderAssignments(
                 params.serverId,

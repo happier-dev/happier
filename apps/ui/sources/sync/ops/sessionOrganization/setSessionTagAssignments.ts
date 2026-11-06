@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionTagAssignments as setSessionTagAssignmentsApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { captureOrganizationAccount } from './organizationAccountGuard';
 
 export async function setSessionTagAssignments(params: Readonly<{
     credentials: AuthCredentials;
@@ -9,6 +10,7 @@ export async function setSessionTagAssignments(params: Readonly<{
     sessionId: string;
     tagIds: readonly string[];
 }>): Promise<void> {
+    const isAccountCurrent = captureOrganizationAccount();
     const recordId = getStorage().getState().setSessionTagAssignmentsOptimistic(params.serverId, params.sessionId, params.tagIds);
     try {
         const response = await setSessionTagAssignmentsApi({
@@ -18,6 +20,7 @@ export async function setSessionTagAssignments(params: Readonly<{
             request: { tagIds: [...params.tagIds] },
         });
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        if (!isAccountCurrent()) return;
         const reconcileRecordId = getStorage().getState().setSessionTagAssignmentsOptimistic(params.serverId, response.sessionId, response.tagIds);
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {

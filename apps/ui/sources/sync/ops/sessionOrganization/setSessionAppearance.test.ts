@@ -20,7 +20,7 @@ describe('setSessionAppearance', () => {
         const color = { kind: 'custom', hex: '#123456' };
         const display = await prepareSessionOrganizationDisplayEnvelope({ credentials, value: { color } });
         http.serverFetch.mockResolvedValueOnce(json({ snapshot: { schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [], sessionAppearances: [{ sessionId: 's1', display, updatedAt: 9 }] } }));
-        await fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: context.serverId, request: { includeSessionAppearances: true } });
+        await fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: context.serverId, request: { includeSessionAppearances: true }, shouldContinue: () => true });
         expect(getStorage().getState().sessionOrganizationAppearancesBySessionKey['appearance-server:s1']?.display).toEqual({ t: 'plain', v: { color } });
         expect(getStorage().getState().sessionOrganizationSessionAppearancesSupportedByServerId[context.serverId]).toBe(true);
     });

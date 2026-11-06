@@ -26,10 +26,10 @@ export function setServerSessionListCache(
     return { ...next, [serverId]: rows };
 }
 
-export function clearServerSessionListCache(
-    current: Record<string, SessionListViewItem[] | null>,
+export function clearServerScopedEntries<T>(
+    current: Record<string, T>,
     serverIdRaw: string,
-): Record<string, SessionListViewItem[] | null> {
+): Record<string, T> {
     const serverId = resolveServerProfileScopeIdForIdentifier(serverIdRaw);
     if (!serverId) return current;
     let next = current;
@@ -39,6 +39,13 @@ export function clearServerSessionListCache(
         delete next[cachedServerId];
     }
     return next;
+}
+
+export function clearServerSessionListCache(
+    current: Record<string, SessionListViewItem[] | null>,
+    serverIdRaw: string,
+): Record<string, SessionListViewItem[] | null> {
+    return clearServerScopedEntries(current, serverIdRaw);
 }
 
 export function setActiveServerSessionListCache(
