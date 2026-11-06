@@ -8,7 +8,7 @@ import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/r
 import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
-import { getMachineDisplayName, resolveMachineDisplayNames, type MachineNameSource } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineDisplayNames, type MachineNameSource } from '@/utils/sessions/machineDisplayNames';
 
 import type {
     SessionServerStartDraftSeed,
@@ -87,7 +87,6 @@ export type SessionPlacementCandidateRow = Readonly<{
     subtitle: string | undefined;
     availability: 'available' | 'unknown' | 'unavailable';
 }>;
-
 
 /** The words the Machine picker uses, sharper where a Machine is gone. An unlisted Machine's own name says why. */
 function placementUnavailableReason(readiness: ReturnType<typeof resolveMachineSpawnReadiness>['status']): string | null {
@@ -168,31 +167,4 @@ export function presentSessionPlacementCandidates(params: Readonly<{
         };
     });
     return rows.sort((left, right) => left.rank - right.rank).map((entry) => entry.row);
-}
-
-/**
- * What a placement candidate row says: the folder (its label, else its path relative to the
- * machine's home) and the machine's name. Raw machine and server ids are never shown; a machine this
- * device cannot resolve simply goes unnamed.
- */
-export function presentSessionServerStartCandidate(params: Readonly<{
-    candidate: Candidate;
-    activeServerId: string;
-    activeMachines: readonly Machine[];
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
-}>): Readonly<{ title: string; subtitle: string | undefined }> {
-    const machine = resolveExactServerScopedMachine({
-        machineId: params.candidate.machineId,
-        serverId: params.candidate.serverId,
-        activeServerId: params.activeServerId,
-        activeMachines: params.activeMachines,
-        machineListByServerId: params.machineListByServerId,
-        machineListStatusByServerId: params.machineListStatusByServerId,
-    });
-    return {
-        title: params.candidate.label
-            ?? formatSessionPath(params.candidate.rootPath, machine?.metadata?.homeDir ?? undefined),
-        subtitle: getMachineDisplayName(machine) ?? undefined,
-    };
 }

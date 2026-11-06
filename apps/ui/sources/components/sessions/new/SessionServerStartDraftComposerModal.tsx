@@ -49,9 +49,9 @@ import type {
 } from './serverStartDraftComposer';
 import {
     findSessionServerStartCandidateForDirectory,
-    presentSessionServerStartCandidate,
     resolveSessionServerStartCandidateSelection,
 } from './serverStartDraftCandidateSelection';
+import { useSessionPlacementCandidateRows } from './useSessionPlacementCandidateRows';
 
 type Props = CustomModalInjectedProps & Readonly<{
     seed: SessionServerStartDraftSeed;
@@ -111,6 +111,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
     const machineListByServerId = useMachineListByServerId();
     const machineListStatusByServerId = useMachineListStatusByServerId();
     const activeServer = useActiveServerSnapshot();
+    const placementRows = useSessionPlacementCandidateRows(props.seed.candidates);
     const initialCandidateIndex = seededDirectory === undefined
         ? -1
         : props.seed.candidates?.findIndex((candidate) => (
@@ -340,20 +341,14 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
                 ) : null}
             </ItemGroup>
             <ItemGroup title={t('newSession.recipeComposerDirectory')}>
-                {props.seed.candidates?.map((candidate, index) => {
-                    const presentation = presentSessionServerStartCandidate({
-                        candidate,
-                        activeServerId: String(activeServer.serverId ?? ''),
-                        activeMachines: machines,
-                        machineListByServerId,
-                        machineListStatusByServerId,
-                    });
-                    return <Item
+                {placementRows.map(({ candidate, index, title, subtitle }) => (
+                    <Item
                         key={'id' in candidate.projectKey
                             ? candidate.projectKey.id
                             : `${candidate.serverId}:${candidate.machineId}:${candidate.rootPath}`}
-                        title={presentation.title}
-                        subtitle={presentation.subtitle}
+                        title={title}
+                        subtitle={subtitle}
+                        subtitleLines={2}
                         selected={index === directoryCandidateIndex}
                         onPress={() => {
                             setError(false);
@@ -363,8 +358,8 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
                         }}
                         showChevron={false}
                         showDivider={true}
-                    />;
-                })}
+                    />
+                ))}
                 <PathSelectionList
                     initialValue={directory}
                     machineHomeDir={machine?.metadata?.homeDir ?? '/home'}
