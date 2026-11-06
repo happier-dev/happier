@@ -47,6 +47,8 @@ export type HappierListDetailLayoutProps = HappierCollectionRailSizingProps & Re
 
 const fillStyle: ViewStyle = { flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' };
 const hiddenStyle: ViewStyle = { display: 'none' };
+/** The divider's drawn width; the handle grows its own target to the pointer floor around it. */
+const SEAM_HANDLE_WIDTH_PX = 10;
 
 /**
  * The Collection's `split` geometry: a measured composition, not a selection or navigation owner.
@@ -100,16 +102,21 @@ export function HappierListDetailLayout({
           style={[fillStyle, listStyle, { flex: split?.listRatio ?? 1 }, !listVisible && hiddenStyle]}
         >
           {typeof list === 'function' ? list(layout) : list}
-          {split && resize.canResize && labels ? <HappierResizeHandle
-            axis="x" edge="end" labels={{ label: labels.resize, hint: labels.resizeHint, value: labels.resizeValue }}
-            testID={testID ? `${testID}-resize-handle` : undefined}
-            interactionProps={Platform.OS === 'web' ? resize.webHandleProps : resize.panHandlers}
-            accessibilityHandleProps={resize.accessibilityHandleProps}
-            showIndicator={false}
-            active={resize.dragging}
-            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 10, zIndex: 1000 }}
-          /> : null}
         </View>
+        {split && resize.canResize && labels && availableWidth !== null ? <HappierResizeHandle
+          // It resizes the list's trailing edge and its target reaches past that seam over the detail, so it sits in this
+          // row, outside the list pane's clip, and after the list in focus order.
+          axis="x" edge="end" labels={{ label: labels.resize, hint: labels.resizeHint, value: labels.resizeValue }}
+          testID={testID ? `${testID}-resize-handle` : undefined}
+          interactionProps={Platform.OS === 'web' ? resize.webHandleProps : resize.panHandlers}
+          accessibilityHandleProps={resize.accessibilityHandleProps}
+          showIndicator={false}
+          active={resize.dragging}
+          style={{
+            position: 'absolute', top: 0, bottom: 0, width: SEAM_HANDLE_WIDTH_PX, zIndex: 1000,
+            left: (availableWidth - gap) * split.listRatio - SEAM_HANDLE_WIDTH_PX,
+          }}
+        /> : null}
         <View
           testID={detailTestID}
           aria-hidden={!detailVisible || undefined}

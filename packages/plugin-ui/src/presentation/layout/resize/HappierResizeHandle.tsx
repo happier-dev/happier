@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import type { HappierStyleProp } from '../../portableTypes.js';
 import { useOptionalHappierUiTheme } from '../../../environment/context.js';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../../environment/interactiveTarget.js';
 
 /** The seam's ink while pointing at the handle, and while dragging it (lab ade-shell SH2/SH3). */
 const SEAM_HOVER = { widthPx: 1, opacity: 0.28 } as const;
@@ -59,10 +60,23 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
     const inkColor = props.inkColor ?? theme?.colors.text ?? null;
     const [hovered, setHovered] = React.useState(false);
     const seam = props.active ? SEAM_ACTIVE : hovered ? SEAM_HOVER : null;
-    const seamAlign = props.edge === 'start' ? 'flex-start' : props.edge === 'end' ? 'flex-end' : 'center';
     const nativeTouchTargetSize = resolveResizablePaneNativeTouchTargetSize();
     const visualHandleSize = props.axis === 'x' ? 10 : 18;
-    const inwardExpansion = Math.max(0, (nativeTouchTargetSize ?? visualHandleSize) - visualHandleSize);
+    const webTargetSize = Platform.OS === 'web' ? HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE : null;
+    const inwardExpansion = Math.max(0, (nativeTouchTargetSize ?? webTargetSize ?? visualHandleSize) - visualHandleSize);
+    // Negative margins keep the caller's position whether it anchors from left/top or right/bottom.
+    // A centred divider expands equally. On the web an edge handle grows only outward, over the
+    // neighbour beyond the edge it resizes: it never covers more of its own pane than the drawn divider,
+    // which pane gutters are laid out around, so the pane's trailing controls stay clickable. Its host
+    // leaves that seam unclipped and paints the pane above the neighbour it reaches into.
+    const startExpansion = props.edge === undefined ? inwardExpansion / 2 : props.edge === 'start' ? inwardExpansion : 0;
+    const endExpansion = inwardExpansion - startExpansion;
+    // The seam ink draws on the edge: the drawn box's outer edge, offset from the web target's centre;
+    // on native the target is the drawn box itself.
+    const seamAlign = props.edge === undefined || webTargetSize !== null ? 'center' : props.edge === 'start' ? 'flex-start' : 'flex-end';
+    const seamOffset = props.edge === undefined || webTargetSize === null ? 0
+        : (props.edge === 'end' ? startExpansion + visualHandleSize : startExpansion) - (visualHandleSize + inwardExpansion) / 2;
+    const indicatorOffset = Platform.OS === 'web' ? (startExpansion - endExpansion) / 2 : 0;
     // Native HitRects cannot extend beyond the pane parent. Expand only inward
     // from the owning edge so the full 44/48pt target remains reachable without
     // shifting the visual divider or overlapping the adjacent pane.
@@ -105,6 +119,9 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
                 } as object) : null,
                 props.style,
                 centeredNativeTargetStyle,
+                Platform.OS === 'web' ? (props.axis === 'x'
+                    ? { minWidth: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, marginLeft: -startExpansion, marginRight: -endExpansion }
+                    : { minHeight: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, marginTop: -startExpansion, marginBottom: -endExpansion }) : null,
             ]}
         >
             {seam && inkColor && !showIndicator ? (
@@ -116,8 +133,8 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
                         : { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: seamAlign }}
                 >
                     <View style={props.axis === 'x'
-                        ? { width: seam.widthPx, height: '100%', backgroundColor: inkColor, opacity: seam.opacity }
-                        : { height: seam.widthPx, width: '100%', backgroundColor: inkColor, opacity: seam.opacity }} />
+                        ? { width: seam.widthPx, height: '100%', backgroundColor: inkColor, opacity: seam.opacity, transform: [{ translateX: seamOffset }] }
+                        : { height: seam.widthPx, width: '100%', backgroundColor: inkColor, opacity: seam.opacity, transform: [{ translateY: seamOffset }] }} />
                 </View>
             ) : null}
             {showIndicator ? (
@@ -126,12 +143,14 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
                         ? {
                             width: 1,
                             height: '100%',
+                            transform: [{ translateX: indicatorOffset }],
                             backgroundColor: props.indicatorColor,
                             opacity: props.indicatorOpacity ?? 1,
                         }
                         : {
                             width: 56,
                             height: 5,
+                            transform: [{ translateY: indicatorOffset }],
                             borderRadius: 999,
                             backgroundColor: props.indicatorColor,
                             opacity: props.indicatorOpacity ?? 1,

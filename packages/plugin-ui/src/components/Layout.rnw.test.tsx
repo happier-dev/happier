@@ -6,6 +6,8 @@ import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testS
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Button } from './Button.js';
 import { ListDetailLayout, Row, Screen, ScrollArea, Stack } from './Layout.js';
+import { hitAreaClippingAncestors } from '../presentation/interaction/hitArea.testSupport.js';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../environment/interactiveTarget.js';
 
 /**
  * React Native Web keeps a node's layout observer callback on the host element
@@ -60,6 +62,33 @@ describe('plugin-ui semantic layout', () => {
       expect(handle.getAttribute('aria-valuenow')).toBe('420');
       act(() => handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
       expect(reset).toHaveBeenCalledOnce();
+    } finally { mount.unmount(); }
+  });
+  it('reaches the divider target past the seam over the detail so it never covers the rail\'s trailing controls', async () => {
+    // The rail's header action sits at its trailing edge. A divider target reaching only inward from that
+    // edge covered it (the Machines "+", 2026-11-06). Inside the rail it keeps to the drawn divider, which the
+    // rail's gutter is laid out around; the rest of the pointer floor lands over the detail.
+    const mount = mountLayout(
+      <ListDetailLayout testID="panes" listTestID="rail" detailTestID="body"
+        minListWidth={200} minDetailWidth={400} preferredListRatio={0.4}
+        listWidthPx={320} onListWidthChange={() => {}}
+        labels={{ resize: 'Resize collection' }}
+        list={<Stack />} detail={<Button title="Detail action" />} />,
+    );
+    try {
+      const root = mount.container.querySelector('[data-testid="panes"]') as HTMLElement;
+      const measure = Reflect.get(root, DOM_LAYOUT_HANDLER_NAME) as (event: unknown) => void;
+      act(() => measure({ nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 600 } } }));
+      const handle = mount.container.querySelector('[role="slider"]') as HTMLElement;
+      // Positioned by the layout row, outside the rail's clip, so the part over the detail is hit-tested.
+      expect(handle.parentElement).toBe(root);
+      expect(hitAreaClippingAncestors(handle, root)).toEqual([]);
+      const px = (value: string) => Number.parseFloat(value) || 0;
+      const start = px(handle.style.left) + px(handle.style.marginLeft);
+      const size = Math.max(px(handle.style.width), px(handle.style.minWidth));
+      expect(size).toBe(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      expect(start).toBe(320 - 10);
+      expect(start + size).toBe(320 + HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE - 10);
     } finally { mount.unmount(); }
   });
   it('holds the split with an idle detail so the first selection does not reflow the list', async () => {

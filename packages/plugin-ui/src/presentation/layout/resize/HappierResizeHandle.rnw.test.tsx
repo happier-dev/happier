@@ -42,6 +42,36 @@ describe('HappierResizeHandle', () => {
         expect(current).toHaveBeenCalledOnce();
     });
 
+    it('grows an edge handle\'s pointer target outward, never further into its own pane than the drawn divider', async () => {
+        // An edge handle that reached inward covered the pane's trailing controls (the Machines rail "+", 2026-11-06:
+        // inward-only 24 px covered its centre; a centred target still covered its last 2 px). Pane gutters are laid
+        // out around the drawn divider, so the floor's extra size goes over the neighbour beyond the edge.
+        const { HappierResizeHandle } = await import('./HappierResizeHandle.js');
+        const { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE: floor } = await import('../../../environment/interactiveTarget.js');
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        const px = (value: string) => Number.parseFloat(value) || 0;
+        const reach = async (edge: 'start' | 'end', axis: 'x' | 'y') => {
+            const drawn = axis === 'x' ? 10 : 18;
+            const anchor = axis === 'x' ? (edge === 'end' ? 'right' : 'left') : (edge === 'end' ? 'bottom' : 'top');
+            const inner = axis === 'x' ? (edge === 'end' ? 'left' : 'right') : (edge === 'end' ? 'top' : 'bottom');
+            await act(async () => root!.render(
+                <HappierResizeHandle labels={{ label: 'Resize' }} axis={axis} edge={edge} testID="handle"
+                    style={{ position: 'absolute', [anchor]: 0, ...(axis === 'x' ? { width: drawn } : { height: drawn }) }} />,
+            ));
+            const style = container!.querySelector<HTMLElement>('[data-testid="handle"]')!.style;
+            const size = axis === 'x' ? Math.max(px(style.width), px(style.minWidth)) : Math.max(px(style.height), px(style.minHeight));
+            const margin = (side: string) => px(style.getPropertyValue(`margin-${side}`));
+            // Past the edge it resizes (outward), and into its own pane beyond the drawn divider (inward).
+            return { size, outward: 0 - margin(anchor), inwardBeyondDrawn: 0 - margin(inner), drawn };
+        };
+        for (const axis of ['x', 'y'] as const) for (const edge of ['start', 'end'] as const) {
+            const measured = await reach(edge, axis);
+            expect(measured).toEqual({ size: floor, outward: floor - measured.drawn, inwardBeyondDrawn: 0, drawn: measured.drawn });
+        }
+    });
+
     it('announces the current pane size and updates the range and spoken value after resizing', async () => {
         const { HappierResizeHandle } = await import('./HappierResizeHandle.js');
         container = document.createElement('div');
