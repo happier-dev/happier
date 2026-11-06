@@ -356,10 +356,12 @@ In development source, the same target resolver reads user-scoped Claude Code `a
 settings when the canonical launch settings-source policy includes `user`. Explicit auth tokens/API
 keys precede the helper; `CLAUDE_CODE_OAUTH_TOKEN` and saved login follow it. The existing
 `ANTHROPIC_OAUTH_TOKEN` bearer alias remains supported. A configured helper failure is terminal;
-it cannot substitute another account. Project helpers are not executed without Claude Code's
+it cannot substitute another account. Malformed user JSON is skipped, matching Claude Code's
+non-interactive settings loading. Project helpers are not executed without Claude Code's
 workspace-trust decision. The helper receives the effective profile/session environment, and its
 credential kind and value remain part of the existing endpoint-scoped cache identity. Helper and
-HTTP phases share the caller's deadline, cancellation and owned-resource cleanup. Helper output
+HTTP and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource
+cleanup. Helper output
 uses both API-key and Bearer headers without the subscription OAuth beta header. Custom endpoint
 path prefixes are preserved, while saved subscription credentials remain restricted to Anthropic.
 For Claude, a successful account response is authoritative for membership and API capability/context

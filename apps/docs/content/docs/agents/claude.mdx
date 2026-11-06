@@ -252,7 +252,8 @@ In development source, model discovery also supports Claude Code's user-scoped `
 It reads the selected Claude configuration directory, passes the session environment to the helper,
 and preserves a gateway's `ANTHROPIC_BASE_URL` path prefix. **Setting sources** must include user
 settings; project helpers are not executed by discovery. A configured helper that fails leaves
-discovery unavailable rather than selecting a saved account. Turning off **Discover available
+discovery unavailable rather than selecting a saved account. Malformed user JSON is skipped, as in
+Claude Code's non-interactive mode. Turning off **Discover available
 models** also prevents helper execution. This behavior is not yet available in a released build.
 
 For the full user-facing MCP guide in Happier, see:

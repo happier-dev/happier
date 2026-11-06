@@ -24,6 +24,7 @@ import {
 const realFetch = globalThis.fetch;
 const fetchMock = vi.fn<typeof fetch>();
 let configDir: string;
+/** Encode endpoint-shaped responses while keeping credential, parser and catalog logic real. */
 function modelsResponse(entries: AnthropicModelEntry[] | null): Response {
   return new Response(JSON.stringify({ data: entries?.map(entry => ({
     id: entry.id, display_name: entry.displayName, max_input_tokens: entry.maxInputTokens,

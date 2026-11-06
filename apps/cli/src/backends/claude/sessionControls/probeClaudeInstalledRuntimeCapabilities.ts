@@ -4,6 +4,8 @@ import { statSync } from 'node:fs';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { remainingCatalogProbeMs, withCatalogProbeLifecycle, type CatalogProbeLifecycle, type NativeCatalogCleanup, type RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
 import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
 import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
 import {
@@ -66,11 +68,14 @@ export function resolveClaudeInstalledRuntimeSessionMode<
   };
 }
 
-type ProbeClaudeCli = (params: Readonly<{
-  args: readonly string[];
+type RuntimeProbeParams = CatalogProbeLifecycle & Readonly<{
   cwd: string;
-  timeoutMs: number;
   processEnv?: NodeJS.ProcessEnv;
+  onNativeCleanup?: RegisterNativeCatalogCleanup;
+}>;
+
+type ProbeClaudeCli = (params: RuntimeProbeParams & Readonly<{
+  args: readonly string[];
 }>) => Promise<string | null>;
 
 function reportsUnknownEffortValue(output: string, value: string): boolean {
@@ -78,106 +83,96 @@ function reportsUnknownEffortValue(output: string, value: string): boolean {
   return normalized.includes('unknown --effort value') && normalized.includes(value.toLowerCase());
 }
 
-async function probeClaudeCli(params: Readonly<{
+async function probeClaudeCli(params: RuntimeProbeParams & Readonly<{
   args: readonly string[];
-  cwd: string;
-  timeoutMs: number;
-  processEnv?: NodeJS.ProcessEnv;
 }>): Promise<string | null> {
-  const timeoutMs = Math.max(250, params.timeoutMs);
   const processEnv = params.processEnv ?? process.env;
-
-  let command: string;
-  let args: string[];
-  let windowsVerbatimArguments: boolean | undefined;
-
-  try {
-    const launch = requireProviderCliLaunchSpec('claude', { processEnv });
-    const launchArgs = [...launch.args, ...params.args];
-    if (isClaudeCliJavaScriptFile(launch.resolvedPath)) {
-      const runtimeExecutable = await requireJavaScriptRuntimeExecutable({
-        isBunRuntime: isBun(),
-        targetLabel: 'Claude Code capability probe',
-      });
-      const invocation = resolveWindowsCommandInvocation({
-        command: runtimeExecutable,
-        args: [launch.resolvedPath, ...params.args],
-        env: processEnv,
-      });
-      command = invocation.command;
-      args = [...invocation.args];
-      windowsVerbatimArguments = invocation.windowsVerbatimArguments ? true : undefined;
-    } else {
-      const invocation = resolveWindowsCommandInvocation({
-        command: launch.command,
-        args: launchArgs,
-        env: processEnv,
-      });
-      command = invocation.command;
-      args = [...invocation.args];
-      windowsVerbatimArguments = invocation.windowsVerbatimArguments ? true : undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  let childClosed: Promise<void> | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () => cleanupPromise ??= (async () => {
+    try {
+      if (child) await killProcessTree(child);
+    } finally {
+      // An exited root may leave descendants holding either inherited pipe. Its PID is no
+      // longer ours to signal; close our readers so cleanup still observes child close.
+      child?.stdout?.destroy();
+      child?.stderr?.destroy();
+      await childClosed;
     }
-  } catch {
-    return null;
-  }
+  })();
 
-  return await new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let outputBytes = 0;
-    let settled = false;
-
-    const finish = (result: string | null) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    const child = spawn(command, args, {
-      cwd: params.cwd,
-      env: { ...processEnv, CI: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-    });
-
-    const stopForFailure = () => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // Best-effort process cleanup after a bounded capability probe.
+  return await withCatalogProbeLifecycle(params, async (lifecycle) => {
+    let command: string;
+    let args: string[];
+    let windowsVerbatimArguments: boolean | undefined;
+    try {
+      const launch = requireProviderCliLaunchSpec('claude', { processEnv });
+      const launchArgs = [...launch.args, ...params.args];
+      if (isClaudeCliJavaScriptFile(launch.resolvedPath)) {
+        const runtimeExecutable = await requireJavaScriptRuntimeExecutable({
+          isBunRuntime: isBun(),
+          targetLabel: 'Claude Code capability probe',
+        });
+        const invocation = resolveWindowsCommandInvocation({
+          command: runtimeExecutable,
+          args: [launch.resolvedPath, ...params.args],
+          env: processEnv,
+        });
+        command = invocation.command;
+        args = [...invocation.args];
+        windowsVerbatimArguments = invocation.windowsVerbatimArguments ? true : undefined;
+      } else {
+        const invocation = resolveWindowsCommandInvocation({ command: launch.command, args: launchArgs, env: processEnv });
+        command = invocation.command;
+        args = [...invocation.args];
+        windowsVerbatimArguments = invocation.windowsVerbatimArguments ? true : undefined;
       }
-      finish(null);
-    };
+    } catch {
+      return null;
+    }
+    remainingCatalogProbeMs(lifecycle);
 
-    const timer = setTimeout(stopForFailure, timeoutMs);
-
-    child.on('error', () => {
-      clearTimeout(timer);
-      finish(null);
+    return await new Promise<string | null>((resolve, reject) => {
+      let stdout = '';
+      let stderr = '';
+      let outputBytes = 0;
+      let settled = false;
+      const finish = (result: string | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      const started = spawn(command, args, {
+        cwd: params.cwd,
+        env: { ...processEnv, CI: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+      });
+      child = started;
+      childClosed = new Promise<void>((closed) => started.once('close', () => closed()));
+      params.onNativeCleanup?.(cleanup);
+      started.once('error', () => finish(null));
+      const append = (target: 'stdout' | 'stderr', chunk: Buffer) => {
+        if (settled) return;
+        outputBytes += chunk.length;
+        if (outputBytes > MAX_PROBE_OUTPUT_BYTES) {
+          settled = true;
+          void cleanup().then(() => resolve(null), reject);
+          return;
+        }
+        if (target === 'stdout') stdout += chunk.toString('utf8');
+        else stderr += chunk.toString('utf8');
+      };
+      started.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
+      started.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
+      started.once('close', (code) => {
+        if (code !== 0) return finish(null);
+        finish(`${stderr}\n${stdout}`.trim() || null);
+      });
     });
-
-    const append = (target: 'stdout' | 'stderr', chunk: Buffer) => {
-      if (settled) return;
-      outputBytes += chunk.length;
-      if (outputBytes > MAX_PROBE_OUTPUT_BYTES) {
-        clearTimeout(timer);
-        stopForFailure();
-        return;
-      }
-      if (target === 'stdout') stdout += chunk.toString('utf8');
-      else stderr += chunk.toString('utf8');
-    };
-    child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
-    child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (typeof code !== 'number' || code !== 0) return finish(null);
-      const output = `${stderr}\n${stdout}`.trim();
-      finish(output || null);
-    });
-  });
+  }, cleanup);
 }
 
 type InstalledRuntimeCapabilitiesProbeOutcome = Readonly<{
@@ -200,10 +195,13 @@ type InstalledRuntimeCapabilitiesProbeOutcome = Readonly<{
  * separate catalog prerequisite at the option/launch resolver.
  */
 async function runInstalledRuntimeCapabilitiesProbe(
-  params: Readonly<{ cwd: string; timeoutMs: number; processEnv?: NodeJS.ProcessEnv }>,
+  params: RuntimeProbeParams,
   probe: ProbeClaudeCli,
 ): Promise<InstalledRuntimeCapabilitiesProbeOutcome> {
-  const runProbeFailClosed = (args: readonly string[]) => probe({ args, ...params }).catch(() => null);
+  const runProbeFailClosed = (args: readonly string[]) => {
+    params.signal?.throwIfAborted();
+    return probe({ args, ...params }).catch(() => null);
+  };
   const helpText = await runProbeFailClosed(['--help']);
   const supportsEffort = typeof helpText === 'string' && /\B--effort\b/i.test(helpText);
   if (!supportsEffort) {
@@ -282,38 +280,74 @@ export function resolveInstalledClaudeCliIdentity(processEnv: NodeJS.ProcessEnv 
 /**
  * Installed-runtime capabilities for the Claude binary this process would launch.
  *
- * Cached and de-duplicated per binary fingerprint **within one process**: three `claude --help`
- * spawns are far more expensive than the answer is volatile. The concurrent callers this actually
- * coalesces are the daemon's new-session preflight probes — `claudePreflightModelsProbeAdapter`
- * declares `modelProbeCachePolicy: 'provider-owned'`, so `agentModelsProbe` deliberately skips its
- * own cache and de-dupe and leaves both to this owner. A spawned session process is a separate
+ * Completed binary facts are cached **within one process**. Unsignalled callers also coalesce
+ * their process work; caller-owned deadlines and cancellation keep independent operations.
+ * `claudePreflightModelsProbeAdapter` declares `modelProbeCachePolicy: 'provider-owned'`, so
+ * `agentModelsProbe` leaves cache and lifecycle decisions to this owner. A spawned session process is a separate
  * process with its own empty module state, so nothing here can be shared with it: `runClaude`
  * resolves this once per session process and hands the value to the `sessionModelsV1` publisher, so
  * neither the cache nor the de-dupe has a second reader there.
  */
 export async function probeClaudeInstalledRuntimeCapabilities(
-  params: Readonly<{ cwd: string; timeoutMs: number; processEnv?: NodeJS.ProcessEnv }>,
+  params: RuntimeProbeParams,
   probe: ProbeClaudeCli = probeClaudeCli,
   options: Readonly<{
     resolveInstalledCliIdentity?: (processEnv?: NodeJS.ProcessEnv) => string | null;
     nowMs?: () => number;
   }> = {},
 ): Promise<ClaudeInstalledRuntimeCapabilities> {
+  const callerOwnsLifecycle = params.deadlineAt !== undefined || params.signal !== undefined || params.onNativeCleanup !== undefined;
+  if (callerOwnsLifecycle) remainingCatalogProbeMs(params);
   const identity = (options.resolveInstalledCliIdentity ?? resolveInstalledClaudeCliIdentity)(params.processEnv);
-  if (identity === null) return (await runInstalledRuntimeCapabilitiesProbe(params, probe)).capabilities;
-
   const nowMs = options.nowMs ?? Date.now;
-  const cached = installedRuntimeCapabilitiesCache.get(identity);
-  if (cached?.kind === 'success' && installedRuntimeCapabilitiesCache.isFresh(cached, nowMs())) return cached.value;
 
-  return await installedRuntimeCapabilitiesCache.runDedupe(identity, async () => {
-    const settled = installedRuntimeCapabilitiesCache.get(identity);
-    if (settled?.kind === 'success' && installedRuntimeCapabilitiesCache.isFresh(settled, nowMs())) return settled.value;
-
-    const outcome = await runInstalledRuntimeCapabilitiesProbe(params, probe);
-    if (outcome.conclusive) {
-      installedRuntimeCapabilitiesCache.setSuccess(identity, outcome.capabilities, { nowMs: nowMs() });
+  const run = async (): Promise<ClaudeInstalledRuntimeCapabilities> => {
+    if (identity !== null) {
+      const cached = installedRuntimeCapabilitiesCache.get(identity);
+      if (cached?.kind === 'success' && installedRuntimeCapabilitiesCache.isFresh(cached, nowMs())) return cached.value;
     }
-    return outcome.capabilities;
-  });
+
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(params.signal?.reason);
+    params.signal?.addEventListener('abort', onAbort, { once: true });
+    if (params.signal?.aborted) onAbort();
+    const cleanups = new Set<NativeCatalogCleanup>();
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = () => cleanupPromise ??= (async () => {
+      controller.abort();
+      // RPC retains one callback. Both parallel parser probes belong to this operation.
+      const results = await Promise.allSettled([...cleanups].map((stop) => stop()));
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    })();
+    params.onNativeCleanup?.(cleanup);
+    const runAndCache = async (lifecycle: CatalogProbeLifecycle) => {
+      const outcome = await runInstalledRuntimeCapabilitiesProbe({
+        ...params,
+        ...lifecycle,
+        onNativeCleanup: (stop) => { cleanups.add(stop); },
+      }, probe);
+      if (callerOwnsLifecycle) remainingCatalogProbeMs(lifecycle);
+      if (identity !== null && outcome.conclusive) {
+        installedRuntimeCapabilitiesCache.setSuccess(identity, outcome.capabilities, { nowMs: nowMs() });
+      }
+      return outcome.capabilities;
+    };
+    try {
+      if (callerOwnsLifecycle) {
+        return await withCatalogProbeLifecycle({ ...params, signal: controller.signal }, runAndCache, cleanup);
+      }
+      // Standalone session probes retain their per-command timeout and fail-closed result.
+      return await runAndCache({ timeoutMs: params.timeoutMs, signal: controller.signal });
+    } finally {
+      params.signal?.removeEventListener('abort', onAbort);
+      await cleanup();
+    }
+  };
+
+  // A caller-owned deadline or abort cannot govern another caller's process operation. Completed
+  // binary facts remain shareable; only legacy unsignalled work shares an in-flight operation.
+  return identity === null || callerOwnsLifecycle
+    ? await run()
+    : await installedRuntimeCapabilitiesCache.runDedupe(identity, run);
 }

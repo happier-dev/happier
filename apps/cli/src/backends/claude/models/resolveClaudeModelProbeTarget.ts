@@ -61,6 +61,7 @@ export function resolveClaudeProbeBinding(
   return null;
 }
 
+/** Explicit environment credentials precede user-helper and setup-token fallback resolution. */
 function readPrimaryEnvCredential(env: NodeJS.ProcessEnv): ClaudeModelProbeCredential | null {
   // Preserve the existing ANTHROPIC_OAUTH_TOKEN alias alongside the explicit auth token.
   const bearer = readNonBlankString(env.ANTHROPIC_AUTH_TOKEN) ?? readNonBlankString(env.ANTHROPIC_OAUTH_TOKEN);

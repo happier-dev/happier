@@ -47,6 +47,12 @@ export async function readClaudeApiKeyHelperCredential(params: CatalogProbeLifec
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
           return { status: 'absent' };
         }
+        // Claude Code's non-interactive path skips malformed user JSON; no helper was loaded.
+        // https://code.claude.com/docs/en/settings#fix-a-broken-settings-file
+        if (error instanceof SyntaxError) {
+          logger.warnFile('[claude-models] Invalid user settings JSON; apiKeyHelper settings skipped');
+          return { status: 'absent' };
+        }
         throw error;
       }
       if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return { status: 'failed' };

@@ -104,6 +104,18 @@ describe('resolveClaudeModelProbeTarget', () => {
     }
   });
 
+  it('continues native credential precedence when the user settings file has invalid JSON', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-invalid-settings-'));
+    try {
+      await writeFile(join(claudeConfigDir, 'settings.json'), '{ not json');
+      await expect(resolveClaudeModelProbeTarget({ timeoutMs: 5_000, processEnv: {
+        PATH: process.env.PATH, CLAUDE_CONFIG_DIR: claudeConfigDir, CLAUDE_CODE_OAUTH_TOKEN: 'setup-token',
+      } })).resolves.toMatchObject({ credential: { kind: 'bearer', value: 'setup-token' } });
+    } finally {
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not substitute a setup token when the configured helper fails', async () => {
     const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-helper-failure-'));
     try {

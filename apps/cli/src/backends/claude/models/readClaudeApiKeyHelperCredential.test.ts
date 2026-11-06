@@ -40,13 +40,13 @@ describe('readClaudeApiKeyHelperCredential', () => {
     })).resolves.toEqual({ status: 'ok', value: 'from-session-env' });
   });
 
-  it('distinguishes an absent helper from unreadable settings and configured helper failures', async () => {
+  it('skips absent or invalid JSON settings while retaining configured helper failures', async () => {
     const read = () => readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env, timeoutMs: 5_000 });
     await expect(read()).resolves.toEqual({ status: 'absent' });
     await writeUserSettings({ theme: 'dark' });
     await expect(read()).resolves.toEqual({ status: 'absent' });
     await writeFile(join(claudeConfigDir, 'settings.json'), '{ not json', 'utf8');
-    await expect(read()).resolves.toEqual({ status: 'failed' });
+    await expect(read()).resolves.toEqual({ status: 'absent' });
     for (const apiKeyHelper of ['exit 3', 'exit 0', 'echo first & echo second']) {
       await writeUserSettings({ apiKeyHelper });
       await expect(read()).resolves.toEqual({ status: 'failed' });
@@ -92,7 +92,9 @@ describe('readClaudeApiKeyHelperCredential', () => {
       const child = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 3000)'], { stdio: ['ignore', 'inherit', 'ignore'] });
       require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ shellPid: process.ppid, childPid: child.pid }));
       child.unref();`);
-    await writeUserSettings({ apiKeyHelper: `"${process.execPath}" "${script}"` });
+    // A second command keeps shells from replacing themselves with the script process.
+    const afterScript = process.platform === 'win32' ? ' & rem fixture' : '; :';
+    await writeUserSettings({ apiKeyHelper: `"${process.execPath}" "${script}"${afterScript}` });
     const controller = new AbortController();
     let settled = false;
     const reading = readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env, timeoutMs: 5_000,

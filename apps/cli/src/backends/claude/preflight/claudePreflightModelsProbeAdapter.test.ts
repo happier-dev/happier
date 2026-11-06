@@ -206,6 +206,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
     expect(probeClaudeInstalledRuntimeCapabilitiesMock).toHaveBeenCalledWith({
       cwd: '/tmp',
       timeoutMs: 1_500,
+      deadlineAt: expect.any(Number),
       processEnv,
     });
   });
