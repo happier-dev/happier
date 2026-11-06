@@ -85,6 +85,7 @@ function Pending(props: UsageBodyProps) {
   return (
     <UsageChartPending
       slice={props.slice}
+      onRetry={props.model.refresh}
       testID={props.testID}
       title={t('usage.board.charts.needsDataTitle')}
       reason={t('usage.board.charts.needsCalendarReason')}

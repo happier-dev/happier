@@ -38,7 +38,12 @@ export {
  * The app's side of the shared Usage chart bodies: Agent identities from the catalog, the Usage accent and card
  * paper, the Brand planet through the canonical planet canvas, and localized wording. Bodies stay pure.
  */
-export function useUsageChartHost(serverId: string | null) {
+export function useUsageChartHost(serverId: string | null): {
+  theme: ReturnType<typeof useUsagePluginTheme>;
+  paint: UsageChartPaint;
+  agent: (agentId: string) => UsageChartAgent;
+  renderPlanet: UsagePlanetSlot;
+} {
   const { theme } = useUnistyles();
   const pluginTheme = useUsagePluginTheme();
   const paint = React.useMemo<UsageChartPaint>(

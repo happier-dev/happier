@@ -41,8 +41,6 @@ import {
   USAGE_CHART_FRAME_PX,
 } from './usageBodyKit';
 
-const CHROME_PX = USAGE_CHART_FRAME_PX.chrome;
-
 /** Only a roomy, full-size Daily draws the peak figure above its plot; a phone and a compact card do not. */
 function dailyShowsPeak(phone: boolean, compact: boolean): boolean {
   return !phone && !compact;
@@ -56,7 +54,7 @@ function dailyShowsPeak(phone: boolean, compact: boolean): boolean {
  */
 export function resolveUsageDailyChartShape(presentation: ReturnType<typeof useWidgetPresentation>, phone: boolean): Readonly<{ kind: 'chart'; plotPx: number; peak: boolean }> {
   if (presentation?.size === 'small' || presentation?.size === 'wide')
-    return { kind: 'chart', plotPx: Math.max(1, (presentation.geometry?.height ?? 96) - CHROME_PX / 2), peak: false };
+    return { kind: 'chart', plotPx: Math.max(1, (presentation.geometry?.height ?? 96) - USAGE_CHART_FRAME_PX.chrome / 2), peak: false };
   const peak = dailyShowsPeak(phone, false);
   return { kind: 'chart', peak, plotPx: resolveUsageChartPlotPx(presentation?.geometry, phone ? 140 : 120 - USAGE_CHART_FRAME_PX.peak, { peak }) };
 }
@@ -79,7 +77,8 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   );
   // The query's own calendar: a quiet day keeps its place on the axis instead of vanishing.
   const coverage = props.slice.accounting?.coverage;
-  const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, coverage, props.slice.accounting), [props.query, coverage, props.slice.accounting]);
+  const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, coverage, props.slice.accounting, props.slice.accountingObservationRange),
+    [props.query, coverage, props.slice.accounting, props.slice.accountingObservationRange]);
   const bucketLabel = React.useCallback(
     (startMs: number) =>
       formatUsageCalendarDate(

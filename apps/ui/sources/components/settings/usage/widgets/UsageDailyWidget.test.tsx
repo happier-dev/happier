@@ -121,7 +121,7 @@ describe('Daily keeps its shape: declared plot height and a chart-shaped first r
       const slice = resolveUsagePageAggregation({ queries: [query], sources: [{ source: 'accounting', status: 'pending' as const }] }).results[0]!;
       const geometry = { width: 560, height: 336 };
       const settled = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>);
-      const reading = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry }}><UsageDailyWidget {...props} slice={slice} model={{ ...props.model, slice }} /></WidgetPresentationProvider>);
+      const reading = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry }}><UsageDailyWidget {...props} slice={slice} /></WidgetPresentationProvider>);
       const plot = reading.findHostByTestId('daily.loading.plot');
       expect(plot).not.toBeNull();
       expect(plot!.props.style).toEqual(expect.objectContaining({ height: plotOf(settled) }));

@@ -21,8 +21,10 @@ import {
 } from '../usageSeriesPresentation';
 import {
   UsageBodyInsufficient,
+  UsageBodyReadFailed,
   UsageBodyReading,
   UsageCoverageLine,
+  isUsageReadFailed,
   isUsageReadOutstanding,
   useUsageAnalyticsView,
   useUsagePluginTheme,
@@ -71,10 +73,10 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
   const activity = view?.activity;
   const language = getPreferredLanguage();
   const calendar = React.useMemo(() => {
-    const range = resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting);
+    const range = resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting, props.slice.accountingObservationRange);
     return activity && range ? usageHeatmapPresentation({ calendarDays: activity.calendarDays, mode: 'daily', range,
       coverage: props.slice.accounting?.coverage, accentColor: accent, emptyColor: theme.colors.surface.inset }) : null;
-  }, [activity, props.query, props.slice.accounting, accent, theme.colors.surface.inset, language]);
+  }, [activity, props.query, props.slice.accounting, props.slice.accountingObservationRange, accent, theme.colors.surface.inset, language]);
   const hasCalendar = (activity?.calendarDays.length ?? 0) > 0;
   const hasRhythm =
     (view?.punchCard.total ?? 0) > 0 || (view?.hourRhythm.total ?? 0) > 0;
@@ -91,6 +93,8 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
           <UsageBodyReading testID={`${props.testID}.loading`} />
         </View>
       );
+    if (isUsageReadFailed(props.slice, ['accounting']))
+      return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}

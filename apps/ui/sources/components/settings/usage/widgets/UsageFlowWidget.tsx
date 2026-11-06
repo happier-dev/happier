@@ -30,6 +30,8 @@ import {
 import {
   UsageAgentMark,
   UsageBodyInsufficient,
+  UsageBodyReadFailed,
+  isUsageReadFailed,
   UsageCoverageLine,
   usageAgentTitle,
   usageDimensionLabel,
@@ -65,8 +67,8 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const cost = metric === 'cost';
   const format = usageSeriesValueFormatter(metric, view?.pageCost.selection?.currency ?? 'USD');
   const accounting = cost ? view?.pageCost.accounting : props.slice.accounting;
-  const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting),
-    [props.query, props.slice.accounting]);
+  const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting, props.slice.accountingObservationRange),
+    [props.query, props.slice.accounting, props.slice.accountingObservationRange]);
   const sourceSeries = React.useMemo(() => usageSourceTimelineSeries({
     timeline: byModel ? accounting?.modelTimeline : accounting?.engineTimeline,
     range, coverage: props.slice.accounting?.coverage,
@@ -153,6 +155,8 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   if ((series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData)) && isUsageReadOutstanding(props.slice, ['accounting']))
     return <UsageBodyReading testID={`${props.testID}.loading`} shape={{ kind: 'chart', plotPx: resolveUsageChartPlotPx(presentation?.geometry, 120) }}
       waitingOn={{ slice: props.slice, sources: ['accounting'] }} />;
+  if ((series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData)) && isUsageReadFailed(props.slice, ['accounting']))
+    return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
   if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData))
     return (
       <UsageBodyInsufficient
