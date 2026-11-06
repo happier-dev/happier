@@ -5,7 +5,6 @@ import { getActionSpec } from '../actionSpecs.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
-import { PublicProfileAccountScopeError } from './publicProfileActions.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
 import { MemoryDocFailureV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import { ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFailureDetailsV1Schema } from '../../prompts/library/promptFolderActionsV1.js';
@@ -46,7 +45,6 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
 }
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
-  if (error instanceof PublicProfileAccountScopeError) return { errorCode: error.code, error: error.code };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
     if (status.success && status.data.state !== 'ok') {
@@ -68,6 +66,9 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     return { errorCode: error.code, error: error.message };
   }
   const errorRecord = readRecord(error);
+  if (errorRecord.code === 'action_account_scope_changed') {
+    return { errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+  }
   const sshFailure = readSshCommandFailure(errorRecord.code, errorRecord.message);
   if (sshFailure) return { errorCode: sshFailure.code, error: sshFailure.message };
   const enrollmentFailure = readRemoteEnrollmentCommandFailure(errorRecord.code, errorRecord.message);

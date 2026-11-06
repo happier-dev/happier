@@ -5,6 +5,14 @@ import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpected
 import * as actionResults from './actionExecutionResult.js';
 
 describe('Action failure cause projection', () => {
+  it('retains the captured Account retirement refusal without disclosing its error payload', () => {
+    const error = Object.assign(new Error('PRIVATE_MESSAGE'), {
+      code: 'action_account_scope_changed', details: { token: 'PRIVATE_TOKEN' },
+    });
+    const result = normalizeActionExecutorThrownError(error, 'usage.recap.private.deliver');
+    expect(result).toMatchObject({ errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_MESSAGE|PRIVATE_TOKEN/);
+  });
   it('reads only one immediate cause and never carries text or traverses a deeper wrap', () => {
     let reads = 0;
     const error = new TypeError('token=PRIVATE_TOKEN');
