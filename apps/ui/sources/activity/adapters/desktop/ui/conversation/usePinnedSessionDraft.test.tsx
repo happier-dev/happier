@@ -26,6 +26,9 @@ const ipc = vi.hoisted(() => ({
     text: string;
     expectedRevision: number;
     settle: (revision: number) => void;
+    refuse: () => void;
+    fail: () => void;
+    invalidate: () => void;
   }>,
 }));
 vi.mock('../../runtime/desktopActivityOverlayActions', () => ({
@@ -50,13 +53,16 @@ vi.mock('../../runtime/desktopActivityOverlayActions', () => ({
     };
   }) => {
     const { ref, transaction } = input.request.input;
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       ipc.writes.push({
         sessionId: ref.sessionId,
         text: transaction.operations[0]!.text,
         expectedRevision: transaction.expectedRevision,
         settle: (revision) =>
           resolve({ ok: true, result: { status: 'applied', revision } }),
+        refuse: () => resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }),
+        fail: () => reject(Object.assign(new Error('IPC disconnected'), { code: 'ipc_disconnected' })),
+        invalidate: () => resolve({ ok: true, result: { invalid: true } }),
       });
     });
   },
@@ -73,20 +79,23 @@ async function renderDraft(initial: Target) {
   const handle: {
     draft: ReturnType<typeof usePinnedSessionDraft> | null;
     retarget: (target: Target) => void;
+    show: (visible: boolean) => void;
   } = {
     draft: null,
     retarget: () => {},
+    show: () => {},
   };
+  function Field({ target }: { target: Target }) {
+    handle.draft = usePinnedSessionDraft({ ...target });
+    return null;
+  }
   function Host() {
     const [target, setTarget] = React.useState(initial);
+    const [visible, setVisible] = React.useState(true);
     // The caller rebuilds the qualified target object on every render, as the route does.
-    handle.draft = usePinnedSessionDraft({
-      serverId: target.serverId,
-      accountId: target.accountId,
-      sessionId: target.sessionId,
-    });
     handle.retarget = setTarget;
-    return null;
+    handle.show = setVisible;
+    return visible ? <Field target={target} /> : null;
   }
   await renderScreen(<Host />);
   await flushHookEffects();
@@ -141,6 +150,7 @@ describe('usePinnedSessionDraft', () => {
       { sessionId: 'bot-flake', text: 'a', expectedRevision: 1 },
       { sessionId: 'bot-flake', text: 'ab', expectedRevision: 2 },
     ]);
+    await draft.settle(1, 3);
   });
 
   it('keeps writing text already entered for a Bot after switching to another Bot', async () => {
@@ -164,5 +174,104 @@ describe('usePinnedSessionDraft', () => {
       { sessionId: 'bot-flake', text: 'a' },
       { sessionId: 'bot-flake', text: 'ab' },
     ]);
+    await draft.settle(1, 3);
+  });
+
+  it('keeps a late send clear bound to its original Bot after retargeting', async () => {
+    ipc.writes = [];
+    const original = { ...flake, sessionId: 'late-send-original' };
+    const next = { ...flake, sessionId: 'late-send-next' };
+    const draft = await renderDraft(original);
+    await draft.push(original.sessionId, 1, '');
+    await draft.type('send this reply');
+    // A send already in flight retains this callback when its composer unmounts on retarget.
+    const clearSentDraft = draft.handle.draft!.setText;
+
+    await act(async () => draft.handle.retarget(next));
+    await flushHookEffects();
+    await draft.push(next.sessionId, 4, 'saved next reply');
+    await draft.type('keep the newest next reply');
+    let stillCurrent = true;
+    await act(async () => { stillCurrent = clearSentDraft(''); });
+
+    expect(draft.handle.draft!.text).toBe('keep the newest next reply');
+    expect(draft.handle.draft!.textRef.current).toBe('keep the newest next reply');
+    expect(stillCurrent).toBe(false);
+    await draft.settle(0, 2);
+    expect(ipc.writes.map(({ sessionId, text }) => ({ sessionId, text }))).toEqual([
+      { sessionId: original.sessionId, text: 'send this reply' },
+      { sessionId: next.sessionId, text: 'keep the newest next reply' },
+      { sessionId: original.sessionId, text: '' },
+    ]);
+    await draft.settle(1, 5);
+    await draft.settle(2, 3);
+  });
+
+  it.each([
+    ['refuse', 'target_unavailable'],
+    ['fail', 'ipc_disconnected'],
+    ['invalidate', 'invalid_action_output'],
+  ] as const)('retains unsaved text through %s, close and retarget, and retries only on request', async (failure, code) => {
+    ipc.writes = [];
+    const target = { ...flake, sessionId: `recover-${failure}` };
+    const draft = await renderDraft(target);
+    await draft.push(target.sessionId, 1, 'saved');
+    await draft.type('keep this reply');
+    await act(async () => {
+      ipc.writes[0]![failure]();
+      await Promise.resolve();
+    });
+    await flushHookEffects();
+    // An owner echo must not overwrite the unsaved local text after the failed write.
+    await draft.push(target.sessionId, 2, 'saved elsewhere');
+    expect(draft.handle.draft!.text).toBe('keep this reply');
+    expect(draft.handle.draft!.writeError).toBe(code);
+    expect(ipc.writes).toHaveLength(1);
+
+    await act(async () => draft.handle.show(false));
+    await flushHookEffects();
+    await act(async () => draft.handle.show(true));
+    await flushHookEffects();
+    await draft.push(target.sessionId, 3, 'owner text');
+    expect(draft.handle.draft!.text).toBe('keep this reply');
+    expect(draft.handle.draft!.writeError).toBe(code);
+    await act(async () => draft.handle.retarget({ ...target, sessionId: `other-${failure}` }));
+    await flushHookEffects();
+    await draft.push(`other-${failure}`, 4, 'other reply');
+    expect(draft.handle.draft!.text).toBe('other reply');
+    await act(async () => draft.handle.retarget(target));
+    await flushHookEffects();
+    await draft.push(target.sessionId, 5, 'owner text');
+    expect(draft.handle.draft!.text).toBe('keep this reply');
+    expect(ipc.writes).toHaveLength(1);
+    await act(async () => draft.handle.draft!.retry());
+    expect(ipc.writes[1]).toMatchObject({ text: 'keep this reply', expectedRevision: 5, sessionId: target.sessionId });
+    await draft.settle(1, 6);
+    expect(draft.handle.draft!.writeError).toBeNull();
+    await draft.push(target.sessionId, 7, 'after recovery');
+    expect(draft.handle.draft!.text).toBe('after recovery');
+  });
+
+  it('reattaches to an in-flight writer and retains the newest queued text when that write fails', async () => {
+    ipc.writes = [];
+    const target = { ...flake, sessionId: 'remount-in-flight' };
+    const draft = await renderDraft(target);
+    await draft.push(target.sessionId, 1, '');
+    await draft.type('a');
+    await act(async () => draft.handle.show(false));
+    await flushHookEffects();
+    await act(async () => draft.handle.show(true));
+    await flushHookEffects();
+    expect(draft.handle.draft!.text).toBe('a');
+    await draft.type('ab');
+    await act(async () => ipc.writes[0]!.refuse());
+    await flushHookEffects();
+    await draft.push(target.sessionId, 2, 'owner echo');
+    expect(draft.handle.draft!.text).toBe('ab');
+    expect(draft.handle.draft!.writeError).toBe('target_unavailable');
+    expect(ipc.writes).toHaveLength(1);
+    await act(async () => draft.handle.draft!.retry());
+    expect(ipc.writes[1]).toMatchObject({ text: 'ab', expectedRevision: 2 });
+    await draft.settle(1, 3);
   });
 });

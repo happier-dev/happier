@@ -92,6 +92,8 @@ export function DesktopActivityOverlayConversation(
     cards: readonly DesktopActivityOverlayExpandedCard[];
     phrases: readonly string[];
     draft: string;
+    draftWriteError: string | null;
+    onRetryDraft: () => void;
     initialFocusRef?: DesktopActivityOverlayFocusTargetRef;
     onDraftChange: (draft: string) => void;
     onSend: (message: string) => Promise<boolean>;
@@ -282,6 +284,18 @@ export function DesktopActivityOverlayConversation(
             onOpenSession={() => runExtract()}
             onAction={props.onAction}
             onDismissKey={props.onDismissKey}
+          />
+        ) : null}
+        {props.draftWriteError ? (
+          <SurfaceFreshnessLine
+            testID="desktop-activity-overlay-conversation-draft-failed"
+            tone="warning"
+            reason={t('common.saveError')}
+            action={{
+              testID: 'desktop-activity-overlay-conversation-draft-retry',
+              label: t('common.retry'),
+              onPress: props.onRetryDraft,
+            }}
           />
         ) : null}
         <DesktopActivityOverlayQuickReplyComposer

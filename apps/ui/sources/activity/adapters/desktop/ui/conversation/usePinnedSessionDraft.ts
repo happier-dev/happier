@@ -14,7 +14,10 @@ export type PinnedSessionDraft = Readonly<{
     text: string;
     /** The latest text at event time (a key handler must see the character just typed). */
     textRef: React.RefObject<string>;
-    setText: (next: string) => void;
+    /** Returns whether this writer still belongs to the mounted field. */
+    setText: (next: string) => boolean;
+    writeError: string | null;
+    retry: () => void;
 }>;
 
 /**
@@ -27,7 +30,13 @@ type SessionDraftWriter = {
     inFlight: boolean;
     pending: string | null;
     latest: string;
+    writeError: string | null;
+    notify: (() => void) | null;
 };
+
+// Only unsaved/in-flight writers survive a panel unmount. This is the overlay's transient edit
+// buffer; the addressed Session draft remains the persisted owner.
+const writers = new Map<string, SessionDraftWriter>();
 
 function readSessionKey(target: ExactSessionMachineTargetIdentity): string {
     return JSON.stringify([target.serverId, target.accountId, target.sessionId]);
@@ -35,6 +44,55 @@ function readSessionKey(target: ExactSessionMachineTargetIdentity): string {
 
 function isBusy(writer: SessionDraftWriter): boolean {
     return writer.inFlight || writer.pending !== null;
+}
+
+function drain(writerKey: string, writer: SessionDraftWriter): void {
+    const next = writer.pending;
+    const revision = writer.revision;
+    if (next === null || revision === null || writer.inFlight || writer.writeError !== null) {
+        if (!isBusy(writer) && !writer.notify) writers.delete(writerKey);
+        return;
+    }
+    writer.pending = null;
+    writer.inFlight = true;
+    const { target: address } = writer;
+    fireAndForget((async () => {
+        try {
+            const outcome = await executeDesktopActivityOverlayAction({
+                serverId: address.serverId,
+                accountId: address.accountId,
+                request: buildUiActionDispatchRequestV1({
+                    actionId: 'composer.transaction.apply',
+                    input: {
+                        scope: { serverId: address.serverId, accountId: address.accountId },
+                        ref: { kind: 'session', sessionId: address.sessionId },
+                        transaction: { expectedRevision: revision, operations: [{ kind: 'text.set', text: next }] },
+                    },
+                    context: { surface: 'ui', authority: 'present_user' },
+                }),
+            });
+            const parsed = outcome.ok ? ComposerTransactionResultV1Schema.safeParse(outcome.result) : null;
+            if (parsed?.success && parsed.data.status === 'applied') {
+                writer.revision = Math.max(writer.revision ?? 0, parsed.data.revision);
+            } else if (parsed?.success && parsed.data.status === 'conflict') {
+                writer.revision = parsed.data.currentRevision;
+                // The person's latest text wins over a concurrent edit elsewhere.
+                writer.pending ??= next;
+            } else {
+                writer.pending ??= next;
+                writer.writeError = outcome.ok ? 'invalid_action_output' : outcome.errorCode;
+            }
+        } catch (error) {
+            writer.pending ??= next;
+            writer.writeError = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                ? error.code
+                : 'draft_write_failed';
+        } finally {
+            writer.inFlight = false;
+            writer.notify?.();
+            drain(writerKey, writer);
+        }
+    })(), { tag: 'DesktopActivityOverlay.pinnedDraft.write' });
 }
 
 /**
@@ -48,72 +106,33 @@ function isBusy(writer: SessionDraftWriter): boolean {
  */
 export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity | null): PinnedSessionDraft {
     const [text, setLocalText] = React.useState('');
+    const [writeError, setWriteError] = React.useState<string | null>(null);
     const textRef = React.useRef('');
-    const writersRef = React.useRef(new Map<string, SessionDraftWriter>());
     const currentKeyRef = React.useRef<string | null>(null);
     const key = target ? readSessionKey(target) : null;
     currentKeyRef.current = key;
     const { serverId, accountId, sessionId } = target ?? { serverId: '', accountId: '', sessionId: '' };
 
-    const show = React.useCallback((writerKey: string, next: string) => {
-        if (currentKeyRef.current !== writerKey) return;
-        textRef.current = next;
-        setLocalText(next);
-    }, []);
-
-    const drain = React.useCallback((writerKey: string, writer: SessionDraftWriter) => {
-        const next = writer.pending;
-        const revision = writer.revision;
-        if (next === null || revision === null || writer.inFlight) {
-            // An idle writer for a Session no longer shown has nothing left to carry.
-            if (!isBusy(writer) && currentKeyRef.current !== writerKey) writersRef.current.delete(writerKey);
-            return;
-        }
-        writer.pending = null;
-        writer.inFlight = true;
-        const { target: address } = writer;
-        fireAndForget((async () => {
-            try {
-                const outcome = await executeDesktopActivityOverlayAction({
-                    serverId: address.serverId,
-                    accountId: address.accountId,
-                    request: buildUiActionDispatchRequestV1({
-                        actionId: 'composer.transaction.apply',
-                        input: {
-                            scope: { serverId: address.serverId, accountId: address.accountId },
-                            ref: { kind: 'session', sessionId: address.sessionId },
-                            transaction: { expectedRevision: revision, operations: [{ kind: 'text.set', text: next }] },
-                        },
-                        context: { surface: 'ui', authority: 'present_user' },
-                    }),
-                });
-                const parsed = outcome.ok ? ComposerTransactionResultV1Schema.safeParse(outcome.result) : null;
-                if (parsed?.success && parsed.data.status === 'applied') {
-                    writer.revision = Math.max(writer.revision ?? 0, parsed.data.revision);
-                } else if (parsed?.success && parsed.data.status === 'conflict') {
-                    writer.revision = parsed.data.currentRevision;
-                    // The person's latest text wins over a concurrent edit elsewhere; it is retried on the new revision.
-                    writer.pending ??= next;
-                }
-            } finally {
-                writer.inFlight = false;
-                drain(writerKey, writer);
-            }
-        })(), { tag: 'DesktopActivityOverlay.pinnedDraft.write' });
-    }, []);
-
     React.useEffect(() => {
         if (!key || !sessionId) {
             textRef.current = '';
             setLocalText('');
+            setWriteError(null);
             return;
         }
-        const writers = writersRef.current;
-        const writer = writers.get(key) ?? { target: { serverId, accountId, sessionId }, revision: null, inFlight: false, pending: null, latest: '' };
+        const writer = writers.get(key) ?? { target: { serverId, accountId, sessionId }, revision: null, inFlight: false, pending: null, latest: '', writeError: null, notify: null };
         writers.set(key, writer);
+        const show = () => {
+            if (currentKeyRef.current !== key) return;
+            textRef.current = writer.latest;
+            setLocalText(writer.latest);
+            setWriteError(writer.writeError);
+        };
+        writer.notify = show;
         // Text typed for this Bot and not yet written stays on screen until the owner has it.
         textRef.current = isBusy(writer) ? writer.latest : '';
         setLocalText(textRef.current);
+        setWriteError(writer.writeError);
         const cancellation = new AbortController();
         let stop: (() => Promise<void>) | null = null;
         fireAndForget(watchDesktopActivityOverlaySessionDraft({ serverId, accountId, sessionId }, (snapshot) => {
@@ -122,7 +141,7 @@ export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity 
             // A local edit not yet written is newer than the echo of an older revision.
             if (!isBusy(writer)) {
                 writer.latest = snapshot.text;
-                show(key, snapshot.text);
+                show();
             }
             drain(key, writer);
         }, { signal: cancellation.signal }).then((dispose) => {
@@ -131,21 +150,33 @@ export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity 
         }), { tag: 'DesktopActivityOverlay.pinnedDraft.watch' });
         return () => {
             cancellation.abort();
+            if (writer.notify === show) writer.notify = null;
             if (stop) fireAndForget(stop(), { tag: 'DesktopActivityOverlay.pinnedDraft.unwatch' });
             if (!isBusy(writer)) writers.delete(key);
         };
-    }, [accountId, drain, key, serverId, sessionId, show]);
+    }, [accountId, key, serverId, sessionId]);
 
     const setText = React.useCallback((next: string) => {
-        const writerKey = currentKeyRef.current;
-        textRef.current = next;
-        setLocalText(next);
-        const writer = writerKey ? writersRef.current.get(writerKey) : undefined;
-        if (!writerKey || !writer) return;
+        const writerKey = key;
+        const writer = writerKey ? writers.get(writerKey) : undefined;
+        if (!writerKey || !writer) return false;
         writer.latest = next;
         writer.pending = next;
+        writer.writeError = null;
+        const isCurrent = currentKeyRef.current === writerKey && writer.notify !== null;
+        writer.notify?.();
         drain(writerKey, writer);
-    }, [drain]);
+        return isCurrent;
+    }, [key]);
 
-    return React.useMemo(() => ({ text, textRef, setText }), [setText, text]);
+    const retry = React.useCallback(() => {
+        const writerKey = key;
+        const writer = writerKey ? writers.get(writerKey) : undefined;
+        if (!writerKey || !writer) return;
+        writer.writeError = null;
+        writer.notify?.();
+        drain(writerKey, writer);
+    }, [key]);
+
+    return React.useMemo(() => ({ text, textRef, setText, writeError, retry }), [retry, setText, text, writeError]);
 }

@@ -49,6 +49,14 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+// The browser recycler is the platform boundary; keep the real overlay list, rows and actions.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({
+        refHandle: { getScrollableNode: vi.fn(() => ({ clientWidth: 480, clientHeight: 320 })) },
+        resolveState: () => ({ contentLength: 0, listen: () => () => {} }),
+    });
+});
 vi.mock('@/components/ui/text/Text', async () => {
     const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
     return createUiTextModuleMock();
@@ -76,6 +84,7 @@ vi.mock('../runtime/isDesktopActivityOverlayWindowContext', () => ({
 const draftIpc = vi.hoisted(() => ({
     drafts: {} as Record<string, string>,
     writes: [] as Array<{ sessionId: string; text: string; expectedRevision: number }>,
+    nextWriteError: null as string | null,
 }));
 vi.mock('../runtime/desktopActivityOverlayActions', () => ({
     watchDesktopActivityOverlaySessionDraft: async (
@@ -89,6 +98,11 @@ vi.mock('../runtime/desktopActivityOverlayActions', () => ({
         ref: { sessionId: string }; transaction: { expectedRevision: number; operations: Array<{ text: string }> } } } }) => {
         const { ref, transaction } = input.request.input;
         draftIpc.writes.push({ sessionId: ref.sessionId, text: transaction.operations[0]!.text, expectedRevision: transaction.expectedRevision });
+        if (draftIpc.nextWriteError) {
+            const errorCode = draftIpc.nextWriteError;
+            draftIpc.nextWriteError = null;
+            return { ok: false, errorCode, error: errorCode };
+        }
         draftIpc.drafts[ref.sessionId] = transaction.operations[0]!.text;
         return { ok: true, result: { status: 'applied', revision: transaction.expectedRevision + 1 } };
     },
@@ -220,6 +234,7 @@ describe('DesktopActivityOverlayRoute', () => {
     });
 
     afterEach(() => {
+        draftIpc.nextWriteError = null;
         getDesktopActivityOverlayWindowStateMock.mockReset();
         listenDesktopActivityOverlayWindowStateMock.mockReset();
         reducedMotion.value = false;
@@ -813,6 +828,37 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(screen.findByTestId('desktop-activity-overlay-notch-body')?.props).toBe(island);
         });
 
+        it('keeps a refused reply after closing the panel and offers Retry before sending it', async () => {
+            draftIpc.drafts = { 'bot-flake': '' };
+            draftIpc.writes = [];
+            const screen = await renderRoute(withBots());
+            await act(async () => { presentation.handler?.({ state: 'pinned', focus: false }); });
+            await flushHookEffects();
+            draftIpc.nextWriteError = 'target_unavailable';
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-quick-reply-input'), 'onChangeText', 'Keep the full reply');
+            });
+            await flushHookEffects();
+            expect(screen.findByTestId('desktop-activity-overlay-conversation-draft-failed')).toBeTruthy();
+            await act(async () => { screen.pressByTestId('desktop-activity-overlay-conversation-back'); });
+            await flushHookEffects();
+            await act(async () => { presentation.handler?.({ state: 'pinned', focus: false }); });
+            await flushHookEffects();
+            expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')?.props.value).toBe('Keep the full reply');
+            expect(draftIpc.writes).toHaveLength(1);
+            await act(async () => { screen.pressByTestId('desktop-activity-overlay-conversation-draft-retry'); });
+            await flushHookEffects();
+            expect(draftIpc.drafts['bot-flake']).toBe('Keep the full reply');
+            expect(screen.findByTestId('desktop-activity-overlay-conversation-draft-failed')).toBeNull();
+            await act(async () => { screen.pressByTestId('desktop-activity-overlay-quick-reply-send'); });
+            await flushHookEffects();
+            expect(executeDesktopActivityOverlayInteractionWithResultMock).toHaveBeenLastCalledWith({
+                actionIdentifier: 'session.message.send',
+                data: { sessionId: 'bot-flake', serverId: 'server-1', message: 'Keep the full reply' },
+            });
+            expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')?.props.value).toBe('');
+        });
+
         it('holds Escape while the pinned reply has typed text, and collapses once it is empty', async () => {
             draftIpc.drafts = { 'bot-flake': '' };
             draftIpc.writes = [];
@@ -860,14 +906,17 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(keyboardWanted.calls).toEqual([true]);
         });
 
-        it('says where a pinned Bot runs while it asks', async () => {
+        it.each([true, false])('uses the pinned Home for its context and fallback name (face present: %s)', async (hasFace) => {
             draftIpc.drafts = { 'bot-flake': '' };
             draftIpc.writes = [];
             const base = withBots();
             const asking = {
                 ...base,
-                model: { ...base.model, expanded: { ...base.model.expanded,
-                    rows: [{ sessionId: 'bot-flake', serverId: 'server-1', title: 'Flake hunter', subtitle: 'happier · devbox', statusText: 'Needs you', previewText: null }],
+                model: { ...base.model, faces: { faces: hasFace ? base.model.faces.faces : [], overflowCount: 0 }, expanded: { ...base.model.expanded,
+                    rows: [
+                        { sessionId: 'bot-flake', serverId: 'another-home', title: 'Wrong Home name', subtitle: 'wrong · machine', statusText: 'Needs you', previewText: null },
+                        { sessionId: 'bot-flake', serverId: 'server-1', title: 'Flake hunter', subtitle: 'happier · devbox', statusText: 'Needs you', previewText: null },
+                    ],
                     cards: [{
                         id: 'permission:rq-1', kind: 'permission_request', requestId: 'rq-1', sessionId: 'bot-flake', serverId: 'server-1',
                         title: 'Edit a file', summary: 'Edit', toolLabel: 'Edit', questionText: null, count: 1, risk: 'low',
@@ -882,6 +931,9 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(screen.findByTestId('desktop-activity-overlay-conversation-state')).toBeNull();
             expect(screen.findByTestId('desktop-activity-overlay-conversation-context')).toBeTruthy();
             expect(screen.getTextContent()).toContain('happier · devbox');
+            expect(screen.getTextContent()).toContain('Flake hunter');
+            expect(screen.getTextContent()).not.toContain('Wrong Home name');
+            expect(screen.getTextContent()).not.toContain('wrong · machine');
         });
 
         it('goes back to how a pinned Bot is once it no longer asks', async () => {

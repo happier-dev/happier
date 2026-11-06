@@ -75,8 +75,7 @@ export function DesktopActivityOverlayPinnedPanel(
   );
   const onDraftChange = React.useCallback(
     (next: string) => {
-      draft.setText(next);
-      onDraftDirtyChange(next.length > 0);
+      if (draft.setText(next)) onDraftDirtyChange(next.length > 0);
     },
     [draft, onDraftDirtyChange],
   );
@@ -116,7 +115,7 @@ export function DesktopActivityOverlayPinnedPanel(
         entry.serverId === conversation.serverId,
     ) ?? null;
   const row = listDetail?.rows.find(
-    (entry) => entry.sessionId === conversation.sessionId,
+    (entry) => entry.sessionId === conversation.sessionId && entry.serverId === conversation.serverId,
   );
   const fallbackName = row?.title ?? '';
 
@@ -129,6 +128,8 @@ export function DesktopActivityOverlayPinnedPanel(
       cards={cards}
       phrases={props.phrases}
       draft={draft.text}
+      draftWriteError={draft.writeError}
+      onRetryDraft={draft.retry}
       initialFocusRef={props.initialFocusRef}
       onDraftChange={onDraftChange}
       onSend={send}
