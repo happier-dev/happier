@@ -8,6 +8,7 @@ import type { ActionId } from '../actions/actionIds.js';
 import type { PublicActionResultById } from '../actions/actionSpecs.js';
 import { AgentInventoryProbeInputSchema } from '../actions/actionSpecs.js';
 import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
+import { isWorkflowSavedDefinitionActionId } from '../actions/workflowSavedDefinitionActionIds.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
@@ -498,6 +499,8 @@ export async function resolveInputOptions(params: Readonly<{
       import('../workflows/actionsV1.js'), import('../workflows/builtins/catalog.js'), import('../workflows/workflowDefinitionResolverV1.js'),
     ]);
     const options: Array<{ value: string; label?: string }> = [];
+    // A saved-definition field (workflow.definition.get and its siblings) offers saved workflows only, by name.
+    const savedOnly = isWorkflowSavedDefinitionActionId(actionId);
     let cursor: string | undefined;
     do {
       ctx.signal?.throwIfAborted();
@@ -506,7 +509,7 @@ export async function resolveInputOptions(params: Readonly<{
       const failure = params.readFailure(result);
       if (failure) return failure;
       const page = WorkflowDefinitionListResultV1Schema.parse(result);
-      for (const plugin of page.pluginWorkflows ?? []) {
+      for (const plugin of savedOnly ? [] : page.pluginWorkflows ?? []) {
         options.push({ value: plugin.workflow, label: plugin.title });
       }
       for (const definition of page.definitions) {
@@ -520,7 +523,7 @@ export async function resolveInputOptions(params: Readonly<{
       }
       cursor = page.nextCursor;
     } while (cursor);
-    for (const entry of getBuiltinWorkflowCatalogV1()) {
+    for (const entry of savedOnly ? [] : getBuiltinWorkflowCatalogV1()) {
       const resolved = await resolveWorkflowDefinitionRefV1(entry.id, { signal: ctx.signal });
       if (resolved?.kind === 'catalog') {
         options.push({ value: resolved.ref, label: entry.id });

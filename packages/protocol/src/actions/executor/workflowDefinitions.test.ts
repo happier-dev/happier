@@ -92,6 +92,16 @@ describe('shared workflow definition create', () => {
     expect(result).toMatchObject({ ok: true, result: expect.arrayContaining([
       { value: definitionId, label: definitionId }, { value: neighborId, label: 'Readable neighbor' },
     ]) });
+    // A saved-definition field (workflow.definition.get's definitionId) offers only saved workflows, by name
+    // (FIN-DESIGN-REVIEW L4): built-in and plugin references are not definition ids.
+    const saved = await resolveInputOptions({ deps, ctx: { surface: 'ui' }, actionId: 'workflow.definition.get',
+      optionsSourceId: 'workflows.references.available', input: {},
+      readFailure: value => { const parsed = ActionExecuteFailureSchema.safeParse(value); return parsed.success ? parsed.data : null; },
+      resolveSessionId: unused, reviewScope: unused,
+    });
+    expect(saved).toEqual({ ok: true, result: [
+      { value: definitionId, label: definitionId }, { value: neighborId, label: 'Readable neighbor' },
+    ] });
   });
   it.each(['owner', 'edit', 'admin', 'view'] as const)('returns the Artifact-effective %s access through the definition Action', async (access) => {
     const definitions = createWorkflowDefinitionActions({ artifactStore: {

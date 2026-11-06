@@ -9,7 +9,7 @@ const runRevision = {
   description: 'Use run.revision from the current workflow.run.get response. A stale revision is refused; reread before deciding again.',
 } as const satisfies Field;
 const definitionId = {
-  path: 'definitionId', title: 'Saved definition id', widget: 'text', required: true,
+  path: 'definitionId', title: 'Saved workflow', widget: 'select', optionsSourceId: 'workflows.references.available', required: true,
   description: 'Use the saved definitionId returned by workflow.definition.list or workflow.definition.get.',
 } as const satisfies Field;
 const definitionRevision = {
@@ -95,7 +95,7 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
         { path: 'limit', title: 'Page size preference', widget: 'number' },
       ]
       : actionId === 'workflow.definition.get'
-        ? [{ path: 'definitionId', title: 'Saved definition id', widget: 'text', required: true, description: 'Use a definitionId returned by workflow.definition.list.' }]
+        ? [{ ...definitionId, description: 'Use a definitionId returned by workflow.definition.list.' }]
       : actionId === 'workflow.trigger.list'
         // Keep the union's authored selection semantics at this owner;
         // shared catalog derivation supplies uncovered structural operands.
