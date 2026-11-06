@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import type { McpExecutionSource } from './mcpExecutionSource';
 import { resolveSessionMcpNativeLaunchMaterial } from './sessionMcpNativeLaunchMaterial';
+import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConnectedServices';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { RunnerDaemonPluginServiceOperationV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import type { ApiClient } from '@/api/api';
 
 const native = vi.hoisted(() => ({ missing: false }));
 // Public passwd lookup is the OS boundary. Native parsing and placement stay real.
@@ -35,11 +40,59 @@ describe.skipIf(process.platform !== 'linux')('native Session MCP placement', ()
     const memberRuntime = `${member.home}/runtime/operations/session-b`;
     await expect(resolveSessionMcpNativeLaunchMaterial({ ...input,
       launch: { agentIsolationRuntimeHome: memberRuntime, agentIsolationMemberIdentity: member } })).resolves.toEqual({
-      identity: member, target: { runtimeHome: memberRuntime, memberIdentity: member },
+      identity: { home: member.home, agentUid: member.agentUid, agentGid: member.agentGid },
+      target: { runtimeHome: memberRuntime, memberIdentity: member },
     });
     await expect(resolveSessionMcpNativeLaunchMaterial({ ...input,
       source: { ...source, identity: { ...source.identity, kind: 'isolated', requester: { ...requester, accountId: 'other-member' }, separationRequired: true } },
       launch: { agentIsolationRuntimeHome: memberRuntime, agentIsolationMemberIdentity: member } })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+  });
+
+  it('passes isolated Use-member MCP material for a brokered Team model through the strict runner consumer without a local login', async () => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+    let cleanup: (() => void | Promise<void>) | undefined;
+    try {
+      const member = { ...deriveAgentIsolationMemberIdentity({ requester, homeServerIdentityId }), agentUid: 2404, agentGid: 2404 };
+      // Admission already selected this native member. No local Account login
+      // or connected-service secret may be acquired for the brokered model.
+      const api = new Proxy({} as ApiClient, { get() { throw new Error('Brokered member launch must not acquire local credentials'); } });
+      const prepared = await prepareDaemonConnectedServices({
+        options: { directory: member.workspaceRoot, requesterWorkAttributionV1: requester,
+          modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+            providerConnectionId: null, modelId: 'gpt-5.6-luna' } },
+          teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'team-model',
+            teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered' }] },
+        preparedAgentIsolationIdentity: { memberIdentity: member, nativeIdentity: member },
+        normalizedExistingSessionId: '', requestedSessionId: 'session-b', effectiveResume: '', catalogAgentId: 'codex',
+        credentials: { token: 'synthetic-requester', encryption: null }, api,
+        activeServerDir: `${runtime.happyHomeDir}/server`,
+        connectedServicesMaterializationBaseDir: `${runtime.happyHomeDir}/materialized`, connectedServiceRefreshCoordinator: null,
+        processEnv: {}, pluginRuntimeRegistry: runtime.registry,
+      });
+      expect(prepared).toMatchObject({ ok: true });
+      if (!prepared.ok) throw new Error('Brokered member preparation refused');
+      cleanup = prepared.auth?.cleanupOnExit ?? undefined;
+      const material = prepared.agentLaunchMaterials;
+      if (!material) throw new Error('Member native material unavailable');
+      const resolved = await resolveSessionMcpNativeLaunchMaterial({ ...input,
+        launch: { agentIsolationRuntimeHome: material.runtimeHome, agentIsolationMemberIdentity: material.memberIdentity } });
+      if (!resolved?.target) throw new Error('Native MCP target unavailable');
+      // The real placement producer's values enter the same private operation
+      // envelope as native Session and stdio MCP launch preparation.
+      const mcpLaunchMaterial = { ...resolved.target, nativeIdentity: resolved.identity,
+        environment: material.environment, selectedMaterials: material.selectedMaterials };
+      expect(mcpLaunchMaterial.memberIdentity).toEqual(member);
+      for (const operation of [{
+        kind: 'plugin_exec.resolved_agent_launch.authorize_v1', agentLaunchKind: 'exec',
+        launch: { command: '/native/agent', args: [], env: {} },
+      }, {
+        kind: 'plugin_exec.launch.authorize_v1', agentNativeLaunch: true,
+        request: { executable: { kind: 'systemTool', id: 'native-agent' }, args: [] },
+      }]) expect(RunnerDaemonPluginServiceOperationV1Schema.parse({
+        ...operation, requestId: 'mcp-material', invocationId: 'member-team', mcpLaunchMaterial,
+      })).toMatchObject({ mcpLaunchMaterial });
+    } finally { await cleanup?.(); await runtime.dispose(); }
   });
 
   it.each(['foreign-home', 'local-user', 'missing-host-home', 'outside-native-home', 'missing-native-user'] as const)(

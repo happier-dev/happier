@@ -34,7 +34,10 @@ export async function resolveSessionMcpNativeLaunchMaterial({ launch, source, ho
     if (!runtimeHome || !isCanonicalAbsolutePathInsideRoot(nativeIdentity.home, runtimeHome)) {
       return refuseMcpExecutionSource('requester_authority_unavailable');
     }
-    return { identity: nativeIdentity, target: { runtimeHome, memberIdentity: nativeIdentity } };
+    // The native launch tuple is closed on the runner wire. Keep requester
+    // provenance only in the separately typed member placement carrier.
+    return { identity: { home: nativeIdentity.home, agentUid: nativeIdentity.agentUid, agentGid: nativeIdentity.agentGid },
+      target: { runtimeHome, memberIdentity: nativeIdentity } };
   }
   if (runtimeHome || isolationEnabled) {
     if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
