@@ -7,6 +7,57 @@ const specs = [
   { id: 'settings.set', surfaces: { ui: true, agent: true, mcp: true, cli: true }, cli: { commands: [{ path: ['settings', 'set'] }] } },
 ];
 
+test('current-context hook commands use opaque keys while arbitrary invoke calls remain Actions', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Commands.tsx', content: `
+    import { useCurrentUiContextLocalCommands as useCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+    import { useCurrentUiContextLocalCommands as useForeignCommands } from './foreignCommands';
+    const commands = useCommands([]);
+    commands.invoke('store.bots');
+    const retained = commands;
+    retained.invoke('store.bots');
+    const invoke = retained.invoke;
+    invoke('store.bots');
+    commands.invoke('demo.edit');
+    executor.invoke('demo.edit');
+    executor.invoke('real.missing');
+    const foreign = useForeignCommands([]);
+    foreign.invoke('foreign.missing');
+    function shadow(useCommands) {
+      const commands = useCommands([]);
+      commands.invoke('shadow.missing');
+    }
+    function shadowReceiver(commands) { commands.invoke('receiver.missing'); }
+    function shadowDeclaration() {
+      function useCommands() { return executor; }
+      const commands = useCommands([]);
+      commands.invoke('declared.missing');
+    }
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), [
+    'demo.edit', 'real.missing', 'foreign.missing', 'shadow.missing', 'receiver.missing', 'declared.missing',
+  ]);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['unregistered_action', 'real.missing'],
+    ['unregistered_action', 'foreign.missing'],
+    ['unregistered_action', 'shadow.missing'],
+    ['unregistered_action', 'receiver.missing'],
+    ['unregistered_action', 'declared.missing'],
+  ]);
+});
+
+test('declaration shadowing preserves typed local Action adapter argument positions', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/ScopedCommands.tsx', content: `
+    type ScopedActionId = 'demo.edit';
+    function executeForScope(scope: unknown, actionId: ScopedActionId) {}
+    executeForScope('workspace', 'demo.edit');
+    executeForScope('workspace', 'adapter.missing');
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'adapter.missing']);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['unregistered_action', 'adapter.missing'],
+  ]);
+});
+
 test('exempts machine presentation state and validated Action forwarding only at their canonical owners', () => {
   const sources = [
     { filePath: 'apps/ui/sources/components/navigation/shell/appRail/AppRailMachines.tsx',

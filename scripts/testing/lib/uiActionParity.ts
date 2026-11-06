@@ -349,7 +349,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     const dependency = modules.has(file.filePath);
     const source = module(file.filePath)!.source;
     const aliases = new Map<string, string>();
-    type Binding = Readonly<{ initializer?: ts.Expression; annotation?: ts.TypeNode; parameter?: boolean; writer?: string; dispatch?: boolean;
+    const currentUiContextLocalCommandHooks = new Set<string>();
+    type Binding = Readonly<{ initializer?: ts.Expression; annotation?: ts.TypeNode; parameter?: boolean; writer?: string; dispatch?: boolean; actionArgument?: number;
       iterations?: readonly ts.Expression[];
       mutable?: Readonly<{ key: ts.Expression; scope: string }> }>;
     const bindings = new Map<ts.Node, Map<string, Binding>>();
@@ -522,6 +523,14 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       }
       return resolve(node);
     }
+    function isCurrentUiContextCommandInvoke(expression: ts.Expression): boolean {
+      const callee = localValue(expression);
+      if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== 'invoke') return false;
+      const owner = localValue(callee.expression);
+      if (!ts.isCallExpression(owner)) return false;
+      const hook = localValue(owner.expression);
+      return ts.isIdentifier(hook) && currentUiContextLocalCommandHooks.has(hook.text) && !lookup(hook, hook.text);
+    }
     function iterationFields(node: ts.Expression): (ts.Expression | undefined)[] | undefined {
       if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
       return lookup(node.expression, node.expression.text)?.iterations?.map(value => property(value, node.name.text));
@@ -565,7 +574,17 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         && /^(RPC_METHODS|SESSION_RPC_METHODS)$/.test(declaration.name.text);
     }
     function collect(node: ts.Node): void {
-      if (ts.isImportSpecifier(node)) aliases.set(node.name.text, node.propertyName?.text ?? node.name.text);
+      if (ts.isImportSpecifier(node)) {
+        const imported = node.propertyName?.text ?? node.name.text;
+        aliases.set(node.name.text, imported);
+        const statement = node.parent.parent.parent;
+        if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
+          && statement.moduleSpecifier.text === '@/components/appShell/currentUiContext/CurrentUiContextCommands'
+          && imported === 'useCurrentUiContextLocalCommands') currentUiContextLocalCommandHooks.add(node.name.text);
+      }
+      if (ts.isFunctionDeclaration(node) && node.name) declare(node, node.name.text, {
+        actionArgument: ts.isSourceFile(node.parent) ? actionArgument(file.filePath, node.name.text) : undefined,
+      });
       if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
         const callback = node.parent;
         const call = callback.parent;
@@ -729,12 +748,12 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const effectOwner = file.filePath.startsWith('apps/ui/sources/sync/ops/actions/');
         const directRunnerRestart = !effectOwner && ts.isIdentifier(node.expression)
           && runnerRestartWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
-        const adapterArgument = ts.isIdentifier(node.expression) && !lookup(node.expression, node.expression.text)
-          ? actionArgument(file.filePath, node.expression.text) : undefined;
-        const first = node.arguments[adapterArgument ?? (/^executeOn(Machine|Session|Source)$/.test(called) ? 1 : 0)];
         const callable = ts.isIdentifier(node.expression) ? lookup(node.expression, node.expression.text)
           : ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
             ? lookup(node.expression, node.expression.expression.text) : undefined;
+        const adapterArgument = ts.isIdentifier(node.expression)
+          ? callable?.actionArgument ?? (!callable ? actionArgument(file.filePath, node.expression.text) : undefined) : undefined;
+        const first = node.arguments[adapterArgument ?? (/^executeOn(Machine|Session|Source)$/.test(called) ? 1 : 0)];
         const writer = callable?.writer ?? (ts.isPropertyAccessExpression(node.expression)
           && /^(applySettings|applyLocalSettings)$/.test(called) ? called === 'applyLocalSettings' ? 'local' : 'account' : undefined);
         if (directRunnerRestart) {
@@ -749,7 +768,9 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             if (values.length) for (const value of values) checkAnchor(value, location(first));
             else findings.push({ ...location(first), code: 'dynamic_setting', operation: ts.SyntaxKind[first.kind] });
           } else delta(operand, writer);
-        } else if (first && !/^(getActionSpec|isActionSpec|resolveAction|readAction)/.test(called)) {
+        } else if (first && !isCurrentUiContextCommandInvoke(node.expression)
+          && !/^(getActionSpec|isActionSpec|resolveAction|readAction)/.test(called)) {
+          // The canonical mounted-command hook admits its own Action; its invoke operand is an opaque local key.
           // Literal ids also find thin family clients whose method is simply named `run`.
           const conventional = /^(execute|executeAction|invoke|dispatch|executeOnMachine|executeOnSession|executeOnSource|useAction)$/.test(called);
           const receiver = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression.getText(source) : '';
