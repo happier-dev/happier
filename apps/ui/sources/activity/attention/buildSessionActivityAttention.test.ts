@@ -17,6 +17,17 @@ function createMetadata(overrides: Partial<NonNullable<Session['metadata']>> = {
 }
 
 describe('buildSessionActivityAttention', () => {
+    it('projects canonical successful Turn completion without a transcript fallback watermark', () => {
+        const base = createSessionFixture({ latestTurnId: 'canonical-turn', lastTurnCompletedAt: null,
+            latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: 900 });
+        for (const status of ['in_progress', 'failed', 'cancelled'] as const) {
+            expect(buildSessionActivityAttention({ session: { ...base, latestTurnStatus: status }, nowMs: 1_000 }).lastTurnCompletedAt).toBeNull();
+        }
+        const completed = { ...base, latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: 980 };
+        expect(buildSessionActivityAttention({ session: completed, nowMs: 1_000 }).lastTurnCompletedAt).toBe(980);
+        // A later Ready publication is the same completion, not a second answer.
+        expect(buildSessionActivityAttention({ session: { ...completed, latestReadyEventAt: 990, latestReadyEventSeq: 2 }, nowMs: 1_000 }).lastTurnCompletedAt).toBe(980);
+    });
     it('does not resurrect an acknowledged failure from the operational history', () => {
         const session = createSessionFixture({ active: true, activeAt: 1_000, encryptionMode: 'plain',
             latestTurnStatus: 'failed', metadata: createMetadata(),

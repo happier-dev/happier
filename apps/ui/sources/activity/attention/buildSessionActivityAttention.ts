@@ -12,6 +12,8 @@ import { readSessionAwarenessPresentationRankV1 } from '@happier-dev/protocol/se
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { sessionWorkStatusFactsFromStatus } from '@/components/work/status/sessionWorkStatusFacts';
 
+import { readSessionTurnCompletedAt } from '@/sync/domains/session/sessionLifecycleProjection';
+
 import type { SessionActivityAttention } from './activityAttentionTypes';
 import { isSessionAdmittedToPersonalActivity } from './isSessionAdmittedToPersonalActivity';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -76,7 +78,7 @@ export function buildSessionActivityAttention<T extends SessionPresentationRecor
         ...(followRulePolicies?.length ? { followRulePolicies } : {}),
         hasAttention: personal.needsAttention && personalReasons.length > 0,
         priority: readSessionAwarenessPresentationRankV1(attentionState),
-        lastTurnCompletedAt: lifecycle.lastTurnCompletedAt ?? null,
+        lastTurnCompletedAt: readSessionTurnCompletedAt(lifecycle),
         reasons: {
             hasUnread: personalReasons.some(isUnreadContentAttentionReason),
             hasPendingPermissionRequests: personalReasons.includes('permission_required'),
