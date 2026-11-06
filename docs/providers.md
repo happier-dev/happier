@@ -11,6 +11,49 @@ This distinction is a product and architecture invariant:
 
 See [Agents catalog](./agents-catalog.md) for executable-agent ownership.
 
+### Connected Account sign-in placement (0.3 development)
+
+Portable authentication shares one plugin exchange and one authentication-attempt
+owner across the app, daemon and CLI. The UI authentication host chooses placement
+at attempt start. Expo and Tauri use their native HTTP host locally. A web browser
+uses its existing local OAuth path unless the mode explicitly declares
+`browserReachability: 'unreachable'`. Only that declaration uses the existing
+selected online Machine owned by the person and its authentication admission. The Machine must
+advertise `connectedAccountAuthentication` V1 in its existing operation-capability
+record; its installed authentication runtime owns that advertisement. Package
+versions do not establish this support. Unsupported picker rows show the existing
+Machine update indication. If only unsupported Machines are online, setup asks
+the person to update Happier there or use the phone or desktop app before Continue.
+The shared sign-in support decision also consumes the inventory's published
+custodian scope: this sign-in picker offers only the person's own Machines,
+omitting its “Shared with you” group, including Use and Manage grants. A retained
+selection of another person's Machine explains that only its owner can sign in
+on it. The shared Machine selector is unchanged by default for
+other uses, and Home remains the authentication admission owner. When
+Machines supporting this sign-in are online but none is selected, setup points to the existing Machine
+picker before Continue. With no usable Machine online, setup explains the
+requirement and offers the phone or desktop app. Home does not
+proxy vendor tokens. Paste, callback and recovery remain addressed to the original
+attempt's Machine, retaining that owner's state and PKCE; transport failures
+surface through the existing typed results without automatic retries.
+
+Among portable OAuth modes, only Claude OAuth declares `unreachable`: independent credential-free preflights
+on 2026-11-05 returned HTTP 403 and HTTP 400 without Access-Control-Allow-Origin
+for the required JSON POST. Codex device OAuth's HTTP 530 is inconclusive;
+Cloudflare's rejected unregistered preflight does not establish the behavior of
+its per-client registered origins or CORS-safelisted POST. Antigravity and Codex
+authorization-code OAuth allowed the tested origin in preflight. All four modes
+retain browser execution without a declaration; an unknown result introduces no
+new placement restriction. Positive preflight is not proof of a successful
+credential exchange. The evidence and limitations are in the
+`connect-uncertain-1105` audit lane under the amended “Portable sign-in placement”
+ruling. Established-credential refresh placement is unchanged and separate from
+this sign-in/reauth decision.
+
+Plugin failure diagnostics survive the shared attempt owner's non-reconcilable
+outcome response. Claude's known HTTP refusals and credential identity mismatches
+are conclusive results; only a lost exchange response remains outcome unknown.
+
 ## User experience
 
 Users manage model sources under **Settings → Providers**. A provider connection may be a built-in plugin contribution or a custom OpenAI-/Anthropic-compatible connection.

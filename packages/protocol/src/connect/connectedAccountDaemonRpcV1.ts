@@ -347,6 +347,7 @@ export const ConnectedAccountAttemptResponseSchema =
       status: z.literal('reconnectRequired'),
       attemptId: BoundedIdentitySchema,
       code: BoundedIdentitySchema,
+      diagnostic: z.optional(z.unknown()),
     }),
     z.strictObject({
       status: z.literal('connected'),

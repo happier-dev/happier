@@ -9,6 +9,7 @@ import { useConnectedAccountPurposeSetup } from './useConnectedAccountPurposeSet
 import { resolveConnectSheetOpening } from './connectSheetOpening';
 import type { ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import type { ConnectSheetAccountRequest, ConnectSheetAccountResult } from './ConnectedServiceSetupModal';
+import type { MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 
 /** Account inventory, purpose admission and returned selection belong to their existing owners. */
 export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
@@ -28,10 +29,13 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
             ? { kind: 'reconnect', serviceKey, accountId: request.account.accountId } : { kind: 'service', serviceKey };
     });
     const demandKey = JSON.stringify([viewer, target]);
-    const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean }> | null>(null);
+    const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean;
+        availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'] }> | null>(null);
     const machineRequired = machineDemand?.key === demandKey ? machineDemand.required : false;
-    const onMachineRequirementChange = React.useCallback((required: boolean) => setMachineDemand(current =>
-        current?.key === demandKey && current.required === required ? current : { key: demandKey, required }), [demandKey]);
+    const machineAvailability = machineDemand?.key === demandKey ? machineDemand.availability : undefined;
+    const onMachineRequirementChange = React.useCallback((required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => setMachineDemand(current =>
+        current?.key === demandKey && current.required === required && current.availability === availability
+            ? current : { key: demandKey, required, availability }), [demandKey]);
     const { indexModel, targetSelection } = useConnectedServicesIndex({
         agents: machineRequired || target.kind === 'catalog' ? 'load' : 'cached', registry: purposeSetup.registry,
         targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget,
@@ -55,7 +59,7 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
         else onResult({ kind: 'connected', account });
     };
     return { initialMode: opening.initialMode, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
-        savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, targetSelection, onMachineRequirementChange,
+        savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, machineAvailability, targetSelection, onMachineRequirementChange,
         unavailableReason: request.scope !== undefined && !areServerAccountScopesEqual(request.scope, viewer)
             ? 'account_scope_mismatch' as const : purposeSetup.unavailableReason };
 }

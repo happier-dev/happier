@@ -65,6 +65,7 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     // Finite Project execution support is installed-handler-backed, independently
     // of user accepting policy and current queue capacity.
     projectFiniteExecution: z.optional(MachineOperationProtocolCapabilityV1Schema),
+    connectedAccountAuthentication: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Host-owned optional context composition. Wake is deliberately absent
     // until the centralized context-only producer exists.
     sessionFollow: z.optional(z.readonly(z.strictObject({

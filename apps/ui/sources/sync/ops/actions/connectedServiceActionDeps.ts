@@ -22,7 +22,7 @@ import { randomUUID } from '@/platform/randomUUID';
 
 export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
     const content = createUiConnectedAccountContent(account);
-    const invoke = async ({ actionId, input, signal }: Parameters<NonNullable<ActionExecutorDeps['connectedServiceAction']>>[0], prepare: boolean) => {
+    const invoke = async ({ actionId, input, signal, context }: Parameters<NonNullable<ActionExecutorDeps['connectedServiceAction']>>[0], prepare: boolean) => {
         const assertCurrent = () => { signal?.throwIfAborted(); account.assertCurrent(); };
         const localSettings = actionId === 'connectedServices.identityPrivacy.set'
             ? (await import('@/sync/domains/state/storageStore')).storage : null;
@@ -245,16 +245,16 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     }));
                 },
                 controlCommand: async (machineId, command) => {
-                    const { runConnectedAccountControlCommand } = await import('@/sync/ops/connectedAccounts/connectedAccountDaemon');
+                    const { createUiConnectedAccountAuthenticationHost } = await import('@/sync/ops/connectedAccounts/connectedAccountAuthenticationHost');
                     assertCurrent();
-                    return await withActionAccountRequestSignal(account, signal, ownedSignal => runConnectedAccountControlCommand({ serverId: account.serverId, machineId, command,
-                        assertCurrent, signal: ownedSignal }));
+                    return await withActionAccountRequestSignal(account, signal, ownedSignal =>
+                        createUiConnectedAccountAuthenticationHost(account, ownedSignal, context.actionRequestId ?? undefined).controlCommand(machineId, command));
                 },
                 authenticationCommand: async (machineId, command) => {
-                    const { runConnectedAccountAuthenticationCommand } = await import('@/sync/ops/connectedAccounts/connectedAccountDaemon');
+                    const { createUiConnectedAccountAuthenticationHost } = await import('@/sync/ops/connectedAccounts/connectedAccountAuthenticationHost');
                     assertCurrent();
-                    return await withActionAccountRequestSignal(account, signal, ownedSignal => runConnectedAccountAuthenticationCommand({ serverId: account.serverId, accountId: account.accountId,
-                        machineId, command, assertCurrent, signal: ownedSignal }));
+                    return await withActionAccountRequestSignal(account, signal, ownedSignal =>
+                        createUiConnectedAccountAuthenticationHost(account, ownedSignal, context.actionRequestId ?? undefined).authenticationCommand(machineId, command));
                 },
                 openBillingDestination: async url => {
                     const { Linking } = await import('react-native');

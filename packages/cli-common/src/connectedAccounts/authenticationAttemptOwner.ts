@@ -267,7 +267,7 @@ export type ConnectedAccountAttemptResponse =
     }>
     | Readonly<{ status: 'pending'; attemptId: string; retryAfterMs: number }>
     | Readonly<{ status: 'outcomeUnknown'; attemptId: string; diagnostic: unknown }>
-    | Readonly<{ status: 'reconnectRequired'; attemptId: string; code: string }>
+    | Readonly<{ status: 'reconnectRequired'; attemptId: string; code: string; diagnostic?: unknown }>
     | Readonly<{ status: 'connected'; attemptId: string; account: PluginConnectedAccountRef }>
     | Readonly<{ status: 'cancelled'; attemptId: string }>
     | Readonly<{
@@ -2134,6 +2134,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     status: 'reconnectRequired',
                     attemptId: attempt.id,
                     code: 'connected_account_authentication_outcome_unknown',
+                    diagnostic: result.diagnostic,
                 };
                 attempt.lastResponse = response;
                 await destroyAttempt(attempt, response);
@@ -3645,6 +3646,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         status: 'reconnectRequired',
                         attemptId: attempt.id,
                         code: 'connected_account_authentication_outcome_unknown',
+                        diagnostic: attempt.lastResponse?.status === 'outcomeUnknown'
+                            ? attempt.lastResponse.diagnostic : undefined,
                     };
                     attempt.phase = 'reconnectRequired';
                     attempt.lastResponse = response;
@@ -3880,6 +3883,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 status: 'reconnectRequired',
                 attemptId: attempt.id,
                 code: 'connected_account_authentication_reconciliation_unavailable',
+                diagnostic: attempt.lastResponse?.status === 'outcomeUnknown'
+                    ? attempt.lastResponse.diagnostic : undefined,
             };
             attempt.lastResponse = response;
             await destroyAttempt(attempt, response);

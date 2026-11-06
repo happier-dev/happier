@@ -30,7 +30,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { UiConnectedAccountAuthenticationModes } from './connectedAccountAuthenticationHost';
 
 type MountedActionExecute = (actionId: ActionId, input: unknown,
-    operation?: Readonly<{ signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
+    operation?: Readonly<{ signal?: AbortSignal; actionRequestId?: string }>) => Promise<ActionExecuteResult>;
 
 export {
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
@@ -106,10 +106,13 @@ export async function describeConnectedAccountAuthenticationService(input: Reado
             new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
         const assertCurrent = () => { assertCallerCurrent(); account.assertCurrent(); };
         assertCurrent();
-        const result = await createUiConnectedAccountAuthenticationHost({ ...account, assertCurrent }, input.signal)
+        const requestId = randomUUID();
+        const result = await createUiConnectedAccountAuthenticationHost({ ...account, assertCurrent }, input.signal, requestId)
             .describeService(input.service, input.machineId);
         assertCurrent();
-        return result;
+        // Correlation belongs to this UI invocation, outside the daemon response schema.
+        const description = { ...result.description, requestId };
+        return { ...result, description };
     } finally { account.dispose(); }
 }
 
@@ -122,6 +125,7 @@ export async function runConnectedAccountAuthenticationCommand(
         assertCurrent?: () => void;
         command: ConnectedAccountDaemonCommand;
         signal?: AbortSignal;
+        requestId?: string;
     }>,
 ): Promise<ConnectedAccountAttemptResponse> {
     const quotaServerBasis = input.expectedActiveServer ?? getActiveServerSnapshot();
@@ -153,6 +157,7 @@ export async function runConnectedAccountAuthenticationCommand(
             ? { onIssued: assertCurrent }
             : {}),
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.requestId ? { requestId: input.requestId } : {}),
     });
     const parsed = ConnectedAccountAttemptResponseSchema.parse(response);
     if (parsed.status === 'connected') {
@@ -169,7 +174,7 @@ export async function runConnectedAccountAuthenticationCommand(
 export async function runConnectedAccountAuthenticationAction(
     input: Omit<Parameters<typeof runConnectedAccountAuthenticationCommand>[0], 'serverId' | 'accountId' | 'machineId'>
         & Readonly<{ serverId: string; expectedAccountId: string; machineId?: string; executeAction?: MountedActionExecute }>,
-): Promise<ConnectedAccountAttemptResponse> {
+): Promise<ConnectedAccountAttemptResponse & Readonly<{ requestId: string }>> {
     const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
     input.signal?.throwIfAborted();
     assertExpected?.();
@@ -185,15 +190,22 @@ export async function runConnectedAccountAuthenticationAction(
     const actionId = CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION[operation];
     const actionInput = { ...operands,
         ...((operation === 'beginConnect' || operation === 'beginReconnect') && input.machineId ? { machineId: input.machineId } : {}) };
-    const result = input.executeAction
-        ? await input.executeAction(actionId, actionInput, { signal: input.signal })
-        : await createDefaultActionExecutor().execute(actionId, actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
-            expectedAccountId: input.expectedAccountId,
-            ...(input.signal ? { signal: input.signal } : {}) });
-    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-    assertExpected?.();
-    input.assertCurrent?.();
-    return ConnectedAccountAttemptResponseSchema.parse(result.result);
+    const requestId = input.requestId ?? randomUUID();
+    try {
+        const result = input.executeAction
+            ? await input.executeAction(actionId, actionInput, { signal: input.signal, actionRequestId: requestId })
+            : await createDefaultActionExecutor().execute(actionId, actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
+                expectedAccountId: input.expectedAccountId, actionRequestId: requestId,
+                ...(input.signal ? { signal: input.signal } : {}) });
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        assertExpected?.();
+        input.assertCurrent?.();
+        // UI-local correlation is added after parsing the daemon/Action wire response.
+        return { ...ConnectedAccountAttemptResponseSchema.parse(result.result), requestId };
+    } catch (error) {
+        if (error && typeof error === 'object') Object.assign(error, { requestId });
+        throw error;
+    }
 }
 
 export async function listPendingConnectedAccountAuthenticationActions(
@@ -201,7 +213,7 @@ export async function listPendingConnectedAccountAuthenticationActions(
         expectedActiveServer?: ExpectedActiveServer; assertCurrent?: () => void;
         service: Extract<ConnectedAccountDaemonControlCommand, { operation: 'listPendingAttempts' }>['service']; signal?: AbortSignal;
         executeAction?: MountedActionExecute }>,
-): Promise<ConnectedAccountDaemonControlResponse> {
+): Promise<ConnectedAccountDaemonControlResponse & Readonly<{ requestId: string }>> {
     const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
     input.signal?.throwIfAborted();
     assertExpected?.();
@@ -211,14 +223,21 @@ export async function listPendingConnectedAccountAuthenticationActions(
     assertExpected?.();
     input.assertCurrent?.();
     const actionInput = { service: input.service, ...(input.machineId ? { machineId: input.machineId } : {}) };
-    const result = input.executeAction
-        ? await input.executeAction('connectedServices.authentication.pending.list', actionInput, { signal: input.signal })
-        : await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list', actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
-            expectedAccountId: input.expectedAccountId, ...(input.signal ? { signal: input.signal } : {}) });
-    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-    assertExpected?.();
-    input.assertCurrent?.();
-    return ConnectedAccountDaemonControlResponseSchema.parse(result.result);
+    const requestId = randomUUID();
+    try {
+        const result = input.executeAction
+            ? await input.executeAction('connectedServices.authentication.pending.list', actionInput, { signal: input.signal, actionRequestId: requestId })
+            : await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list', actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
+                expectedAccountId: input.expectedAccountId, actionRequestId: requestId, ...(input.signal ? { signal: input.signal } : {}) });
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        assertExpected?.();
+        input.assertCurrent?.();
+        // Keep UI invocation metadata outside the strict daemon/Action response.
+        return { ...ConnectedAccountDaemonControlResponseSchema.parse(result.result), requestId };
+    } catch (error) {
+        if (error && typeof error === 'object') Object.assign(error, { requestId });
+        throw error;
+    }
 }
 
 export async function runConnectedAccountControlCommand(
@@ -230,6 +249,7 @@ export async function runConnectedAccountControlCommand(
         assertCurrent?: () => void;
         command: ConnectedAccountDaemonControlCommand;
         signal?: AbortSignal;
+        requestId?: string;
     }>,
 ): Promise<ConnectedAccountDaemonControlResponse> {
     const assertExpectedActiveServer =
@@ -246,7 +266,7 @@ export async function runConnectedAccountControlCommand(
         machineId: input.machineId,
         command: input.command,
     });
-    const requestId = randomUUID();
+    const requestId = input.requestId ?? randomUUID();
     try {
         const response = await machineRpcWithServerScope<
             unknown,

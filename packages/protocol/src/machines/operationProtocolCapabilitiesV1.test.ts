@@ -14,6 +14,16 @@ function readCapabilitySchema(): CapabilitySchema {
 }
 
 describe('MachineOperationProtocolCapabilitiesV1', () => {
+  it('requires advertised Connected Account authentication support and isolates an unsupported leaf', () => {
+    const capabilities = { connectedAccountAuthentication: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, 'connectedAccountAuthentication')).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1({}, 'connectedAccountAuthentication')).toBe(false);
+    const newer = { ...capabilities, connectedAccountAuthentication: { protocolVersions: [2] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(newer).success).toBe(false);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(newer, 'connectedAccountAuthentication')).toBe(false);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(newer, 'sessionSpawn')).toBe(true);
+  });
   it('advertises enforce-or-refuse requester execution without treating native readiness as support', () => {
     const capabilities = { requesterExecutionIsolation: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
     expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);

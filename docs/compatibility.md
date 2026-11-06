@@ -4309,6 +4309,29 @@ Exact socket addresses expire on reconnect,
 and a missing selected client refuses without replacement. No persisted format,
 Run-on writer or store is added.
 
+Unreleased 0.3 Account authentication-mode declarations may carry the closed
+`browserReachability: 'unreachable'` field. Omission preserves browser execution;
+there is no separate reachable/unknown wire state. The existing UI authentication
+host consumes this declaration only at sign-in/reauth start: native HTTP stays
+local; an explicitly browser-unreachable mode uses the existing selected Machine
+attempt owner on web. Established refresh placement is unchanged. Matching Protocol,
+SDK projections, bundled plugin declarations and UI refresh together; older
+strict readers reject the new declaration. This is a direct development-contract
+evolution, with no alternate parser, new wire epoch or Home token proxy.
+
+Web placement admits only a Machine advertising `connectedAccountAuthentication`
+V1 through the existing operation-capability projection. The installed runtime
+publishes that optional leaf only after the Home advertises acceptance of the
+same leaf in `capabilities.machines`; older strict Homes keep receiving the
+projection without it. The existing socket-claim withdrawal removes this leaf
+when another daemon claims the Machine; that runtime must advertise support
+again. Other sibling capabilities retain their existing lifecycle. Missing
+support yields the existing `cli_update_required`
+refusal before dispatch. CLI package versions cannot discriminate this operation:
+the inspected 0.2 predecessor reports 0.2.20 while current source reports 0.2.10.
+Neither projection revision nor this version identifies a loaded daemon build.
+
+
 ## SDK protocol evolution
 
 Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.

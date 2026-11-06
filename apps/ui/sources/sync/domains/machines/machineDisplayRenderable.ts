@@ -22,6 +22,8 @@ export interface MachineDisplayRenderable {
     active: boolean;
     activeAt: number;
     presenceProtocolVersion?: 1;
+    operationProtocolCapabilities?: Machine['operationProtocolCapabilities'];
+    operationProtocolCapabilitiesRevision?: Machine['operationProtocolCapabilitiesRevision'];
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;
@@ -84,6 +86,9 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine): Mach
         active: machine.active,
         activeAt: machine.activeAt,
         ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
+        ...(machine.operationProtocolCapabilities ? { operationProtocolCapabilities: machine.operationProtocolCapabilities } : {}),
+        ...(machine.operationProtocolCapabilitiesRevision !== undefined
+            ? { operationProtocolCapabilitiesRevision: machine.operationProtocolCapabilitiesRevision } : {}),
         revokedAt: machine.revokedAt ?? null,
         replacedByMachineId: machine.replacedByMachineId ?? null,
         replacedAt: machine.replacedAt ?? null,
@@ -134,6 +139,8 @@ function areMachineDisplayValuesEqual(
         && (!includeHeartbeatTimestamps || previous.updatedAt === next.updatedAt)
         && previous.active === next.active
         && previous.presenceProtocolVersion === next.presenceProtocolVersion
+        && previous.operationProtocolCapabilities === next.operationProtocolCapabilities
+        && previous.operationProtocolCapabilitiesRevision === next.operationProtocolCapabilitiesRevision
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)
         && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
         && previous.metadataVersion === next.metadataVersion

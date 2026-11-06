@@ -22,7 +22,9 @@ import {
     useProjectedPluginLocalizedTextResolver,
     useProjectedConnectedServicesRegistry,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { MachineAdministrationTargetSelector, type MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
+import { isMachineAdministrationCandidateSelectable, machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { MachineScopedSection } from '@/components/settings/machines/MachineScopedSection';
@@ -74,6 +76,7 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import {
     isConnectedServiceCredentialReferencedByGroupError,
     readConnectedServiceSettingsErrorCode,
+    readConnectedServiceSettingsErrorDetailsCode,
     readConnectedServiceSettingsErrorRequestId,
     resolveConnectedServiceSettingsErrorMessage,
     resolveConnectedServiceSettingsErrorRecovery,
@@ -193,7 +196,7 @@ type ConnectedAccountServiceControllerProps = Readonly<{
         ReturnType<typeof useProjectedConnectedServicesRegistry>;
     activeServer: ReturnType<typeof useActiveServerSnapshot>;
     targetSelection: MachineAdministrationTargetSelectionV1;
-    onMachineRequirementChange?: (required: boolean) => void;
+    onMachineRequirementChange?: (required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => void;
     localizePluginText: PluginLocalizedTextResolver;
     navigation: unknown;
     /**
@@ -211,7 +214,7 @@ export type ConnectedAccountSetupPanelIntent = Readonly<{
     modeId?: string | null;
     onModeChange?: (modeId: string) => void;
     /** The registered selected mode, not its display kind, decides Machine demand. */
-    onMachineRequirementChange?: (required: boolean) => void;
+    onMachineRequirementChange?: (required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => void;
     /** Cancel was pressed: the sign-in has already left; the panel steps back or closes. */
     onCancel?: () => void;
 }>;
@@ -339,12 +342,12 @@ const ConnectedAccountServiceController = React.memo(
     const accountDirectIdRef = React.useRef<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     // Whether the failure came from loading the sign-in (nothing changed) or from a change: one copy owner reads it.
-    const [{ code: errorCode, phase: errorPhase, requestId: errorRequestId }, setError] = React.useState<{
-        code: string | null; phase: 'load' | 'change'; requestId?: string;
+    const [{ code: errorCode, phase: errorPhase, requestId: errorRequestId, detailsCode: errorDetailsCode }, setError] = React.useState<{
+        code: string | null; phase: 'load' | 'change'; requestId?: string; detailsCode?: string;
     }>({ code: null, phase: 'change' });
-    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change', requestId?: string) => {
+    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change', requestId?: string, detailsCode?: string) => {
         setError(previous => phase === 'load' && code !== null && previous.code !== null && previous.phase === 'change'
-            ? previous : { code, phase, requestId });
+            ? previous : { code, phase, requestId, detailsCode });
     }, []);
     const panelRef = React.useRef(controllerProps.panel);
     panelRef.current = controllerProps.panel;
@@ -422,16 +425,48 @@ const ConnectedAccountServiceController = React.memo(
         ? focusedSavedAccount?.authenticationModeId
         : reconnectedAccount?.authenticationModeId;
     const selectedAuthenticationModeId = configuration?.mode.id ?? activeModeId ?? focusedModeId
-        ?? (controllerProps.panel ? null : selectedSetupMode?.id ?? null);
+        ?? (panelIntent?.kind === 'add' || !controllerProps.panel ? selectedSetupMode?.id ?? null : null);
     const machineRequired = accountDirectMode === null && accountModeIds !== null
         && selectedAuthenticationModeId !== null && !accountModeIds.includes(selectedAuthenticationModeId);
     const hasPortableAuthenticationModes = accountModeIds !== null && accountModeIds.length > 0;
     const selectedModeIsPortable = selectedAuthenticationModeId !== null && accountModeIds?.includes(selectedAuthenticationModeId) === true;
+    const browserRequiresMachine = selectedAuthenticationModeId !== null && accountAuthenticationModes?.status === 'available'
+        && accountAuthenticationModes.machineRequiredModeIds?.includes(selectedAuthenticationModeId) === true;
+    const resolveBrowserMachineAvailability = React.useCallback<NonNullable<MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']>>((candidate) => {
+        if (!browserRequiresMachine) return undefined;
+        const row = targetSelection.pickerRows.find(value => machineAdministrationTargetsEqual(value.candidate.target, candidate.target));
+        const support = readConnectedAccountBrowserSignInMachineSupport(row?.machine);
+        if (support === 'custodian_only') return {
+            detail: t('connectedServices.errors.browserSignInMachineCustodianRequired'),
+            selectable: false,
+            hidden: true,
+        };
+        if (!isMachineAdministrationCandidateSelectable(candidate)) return undefined;
+        return support === 'supported' ? undefined : {
+            detail: t('sessionInfo.cliVersionOutdated'),
+            selectable: false,
+        };
+    }, [browserRequiresMachine, targetSelection.pickerRows]);
+    const browserMachineAvailability = browserRequiresMachine ? resolveBrowserMachineAvailability : undefined;
+    const hasOnlineBrowserMachine = browserRequiresMachine && targetSelection.pickerRows.some(row =>
+        isMachineAdministrationCandidateSelectable(row.candidate)
+        && readConnectedAccountBrowserSignInMachineSupport(row.machine) !== 'custodian_only');
+    const hasSupportedBrowserMachine = hasOnlineBrowserMachine && targetSelection.pickerRows.some(row =>
+        isMachineAdministrationCandidateSelectable(row.candidate)
+        && readConnectedAccountBrowserSignInMachineSupport(row.machine) === 'supported');
     const executionTarget = machineRequired ? targetSelection.resolveExecutionTarget() : null;
+    const selectedBrowserMachineSupport = browserRequiresMachine && executionTarget !== null
+        ? readConnectedAccountBrowserSignInMachineSupport(executionTarget.machine) : null;
+    const selectedBrowserMachineNeedsUpdate = selectedBrowserMachineSupport === 'cli_update_required';
     const machineId = targetSelection.selectedTargetServerMatchesActiveAccount
+        && (selectedBrowserMachineSupport === null || selectedBrowserMachineSupport === 'supported')
         && executionTarget?.target.serverIdentityId === targetSelection.selectedTarget?.serverIdentityId
         && executionTarget?.target.machineId === targetSelection.selectedTarget?.machineId
         ? executionTarget?.machine.id ?? '' : '';
+    const browserMachineUnavailableCode = !machineId && !attempt && !configuration
+        && browserRequiresMachine && accountAuthenticationModes?.status === 'available'
+        ? selectedBrowserMachineNeedsUpdate || hasOnlineBrowserMachine && !hasSupportedBrowserMachine
+            ? 'cli_update_required' : accountAuthenticationModes.machineUnavailableCode : undefined;
     // A Machine change retires native work, but cannot retire a portable Account attempt.
     const nativeMachineId = machineRequired ? targetSelection.selectedTarget?.machineId : undefined;
     const nativeServerIdentityId = machineRequired ? targetSelection.selectedTarget?.serverIdentityId : undefined;
@@ -444,15 +479,16 @@ const ConnectedAccountServiceController = React.memo(
                 && accountServiceDescription.current?.machineId === machineId ? accountDescription : null
         : accountDescription;
     React.useEffect(() => {
-        controllerProps.onMachineRequirementChange?.(machineRequired);
-        controllerProps.panel?.onMachineRequirementChange?.(machineRequired);
-    }, [controllerProps.onMachineRequirementChange, controllerProps.panel?.onMachineRequirementChange, machineRequired]);
+        controllerProps.onMachineRequirementChange?.(machineRequired, browserMachineAvailability);
+        controllerProps.panel?.onMachineRequirementChange?.(machineRequired, browserMachineAvailability);
+    }, [controllerProps.onMachineRequirementChange, controllerProps.panel?.onMachineRequirementChange, machineRequired, browserMachineAvailability]);
     React.useEffect(() => {
         if (accountDirectMode || !accountServiceDescription.current) return;
         if (accountAuthenticationModes?.status === 'unavailable') {
             setErrorCode(accountAuthenticationModes.code, 'load');
         } else if (accountDescriptionResponse && accountDescriptionResponse.status !== 'described') {
-            setErrorCode(readControlFailureCode(accountDescriptionResponse, 'connected_account_service_description_unavailable'), 'load');
+            setErrorCode(readControlFailureCode(accountDescriptionResponse, 'connected_account_service_description_unavailable'), 'load',
+                readConnectedServiceSettingsErrorRequestId(accountDescriptionResponse));
         } else {
             setErrorCode(null);
         }
@@ -683,6 +719,7 @@ const ConnectedAccountServiceController = React.memo(
             || !exactRoute
             || accountDirectMode !== null
         ) return;
+        const requestId = randomUUID();
         const result = await runConnectedAccountControlCommand({
             serverId,
             machineId,
@@ -696,6 +733,7 @@ const ConnectedAccountServiceController = React.memo(
                 requiredOperation: 'account_list',
             },
             signal,
+            requestId,
         });
         if (!isControllerCurrent() || signal.aborted) return;
         if (
@@ -705,7 +743,7 @@ const ConnectedAccountServiceController = React.memo(
             setErrorCode(readControlFailureCode(
                 result,
                 'connected_account_service_description_unavailable',
-            ), 'load');
+            ), 'load', requestId);
             return;
         }
         setDescribedOperation({ description: result, signal: getLifecycleSignal() });
@@ -877,7 +915,11 @@ const ConnectedAccountServiceController = React.memo(
             || response.status === 'reconnectRequired'
             || response.status === 'cleanupPending'
         ) {
-            setErrorCode(response.code);
+            setErrorCode(response.code, 'change', readConnectedServiceSettingsErrorRequestId(response),
+                readConnectedServiceSettingsErrorDetailsCode(response) ?? undefined);
+        } else if (response.status === 'outcomeUnknown') {
+            setErrorCode('connected_account_authentication_outcome_unknown', 'change', readConnectedServiceSettingsErrorRequestId(response),
+                readConnectedServiceSettingsErrorDetailsCode(response) ?? undefined);
         } else if (!options?.retainUnresolvedError) {
             setErrorCode(null);
         }
@@ -908,7 +950,8 @@ const ConnectedAccountServiceController = React.memo(
             if (!isControllerCurrent() || request.signal.aborted || generation !== flowGenerationRef.current) return;
             if (listed.status !== 'pendingAttempts') {
                 discoveredScopeRef.current = null;
-                setErrorCode(readControlFailureCode(listed, 'connected_account_attempt_discovery_unavailable'), 'load');
+                setErrorCode(readControlFailureCode(listed, 'connected_account_attempt_discovery_unavailable'), 'load',
+                    readConnectedServiceSettingsErrorRequestId(listed));
                 return;
             }
             const pending = listed.attempts[0];
@@ -1270,6 +1313,7 @@ const ConnectedAccountServiceController = React.memo(
             actions={machineChip ? (
                 <MachineAdministrationTargetSelector
                     selection={targetSelection}
+                    resolveCandidateAvailability={browserMachineAvailability}
                     presentation="chip"
                     testIDPrefix="connected-account-target"
                     chipOpen={targetPickerOpen}
@@ -1279,8 +1323,18 @@ const ConnectedAccountServiceController = React.memo(
         />
     );
 
+    const browserMachineRequirementMessage = browserMachineUnavailableCode
+        ? browserMachineUnavailableCode === 'cli_update_required' || !hasOnlineBrowserMachine
+            ? resolveConnectedServiceSettingsErrorMessage({ code: browserMachineUnavailableCode })
+            : t('connectedServicesSettings.setupChooseMachine') : undefined;
+    const machineRequirement = browserMachineRequirementMessage ? <SurfaceStateCard
+        testID="connected-account-browser-machine-unavailable"
+        size="line" kind="unavailable"
+        title={browserMachineRequirementMessage}
+    /> : <ConnectedServiceSetupFlowBody state="chooseMachine" />;
+
     if (controllerProps.panel && !hasAccountDirectSetup && !hasPortableAuthenticationModes
-        && machineRequired && (!serverId || !machineId) && !description && !errorCode) {
+        && !browserMachineUnavailableCode && machineRequired && (!serverId || !machineId) && !description && !errorCode) {
         return <ConnectedServiceSetupFlowBody state="chooseMachine" />;
     }
     if (!hasAccountDirectSetup && machineRequired && (!serverId || !machineId) && !accountDetailAvailable && !description && !errorCode) {
@@ -1300,11 +1354,15 @@ const ConnectedAccountServiceController = React.memo(
                 {serviceHeader(pendingTitle, false)}
                 <MachineScopedSection
                     selection={targetSelection}
-                    unselectedInvitation={t('connectedServicesSettings.chooseMachineDescription')}
+                    resolveCandidateAvailability={browserMachineAvailability}
+                    unselectedInvitation={browserMachineRequirementMessage
+                        ? browserMachineRequirementMessage
+                        : t('connectedServicesSettings.chooseMachineDescription')}
                     testIDPrefix="connected-account-target"
                 >
                     {/* A chosen machine whose inventory has not answered yet is not usable yet. */}
-                    <SurfaceStateCard testID="connected-account-target.state" size="line" kind="loading" title={t('common.loading')} />
+                    {browserMachineUnavailableCode ? machineRequirement
+                        : <SurfaceStateCard testID="connected-account-target.state" size="line" kind="loading" title={t('common.loading')} />}
                 </MachineScopedSection>
             </ItemList>
         );
@@ -1635,8 +1693,8 @@ const ConnectedAccountServiceController = React.memo(
                         }}
                     />
                     <ConnectedAccountFailureDetails
-                        key={`${errorCode}:${errorRequestId ?? attemptId ?? ''}`}
-                        code={errorCode}
+                        key={`${errorDetailsCode ?? errorCode}:${errorRequestId ?? attemptId ?? ''}`}
+                        code={errorDetailsCode ?? errorCode}
                         correlationId={errorRequestId ?? attemptId}
                         scope={'scope' in accountLifetime ? accountLifetime.scope : null}
                     />
@@ -1674,7 +1732,7 @@ const ConnectedAccountServiceController = React.memo(
             <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
             <ConnectedServiceSetupFlowBody
-                state={choosingMethod || accountDirectMode || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
+                state={browserMachineUnavailableCode || choosingMethod || accountDirectMode || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
                 methods={ranked.map((entry) => ({
                     id: entry.mode.id,
                     title: entry.mode.kind === 'oauthAuthorizationCode' ? t('connectedServicesSettings.methodBrowser')
@@ -1693,7 +1751,7 @@ const ConnectedAccountServiceController = React.memo(
                     setActiveModeId(modeId);
                     panelRef.current?.onModeChange?.(modeId);
                 }}
-                flow={choosingMethod ? null : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId ? <ConnectedServiceSetupFlowBody state="chooseMachine" /> : flowActive ? renderFlow(true) : activeMode?.kind === 'oauthDeviceCode' ? (
+                flow={browserMachineUnavailableCode ? machineRequirement : choosingMethod ? null : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId && !attempt && !configuration ? machineRequirement : flowActive ? renderFlow(true) : activeMode?.kind === 'oauthDeviceCode' ? (
                     <ConnectedServiceSetupFlowActions
                         onCancel={panelCancel}
                         primary={{

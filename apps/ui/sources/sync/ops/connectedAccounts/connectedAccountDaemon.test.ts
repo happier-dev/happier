@@ -45,6 +45,15 @@ async function waiveCallbackApproval() {
     restoreCallbackApproval = () => storage.getState().applySettingsLocal({ actionsSettingsV1: previous });
 }
 
+function answerAddressedOAuthAttempt(attemptId: string, machineId: string,
+    attemptService: Readonly<{ pluginId: string; localId: string }> = service) {
+    homes.answer(serverId, `/v2/connect/connected-account-attempt-transactions/${attemptId}`, { body: {
+        kind: 'oauth', revision: 1, content: { t: 'plain', v: {} }, expiresAtMs: Date.now() + 60_000,
+        scope: { machineId, service: attemptService, modeId: 'oauth', intent: 'connect',
+            phase: 'awaitingOAuth', createdAtMs: Date.now() },
+    } });
+}
+
 describe('connected-account daemon machine RPC', () => {
     beforeEach(async () => {
         // restoreAllMocks retires the credential-store boundary after each case.
@@ -133,6 +142,44 @@ describe('connected-account daemon machine RPC', () => {
         expect(outgoing).toMatchObject([{ method: 'machine-1:daemon.connectedAccounts.authentication.command',
             params: { v: 1, machineId: 'machine-1', command: beginConnect } }]);
         expect(homes.requestsFor('/v1/machines/read-batch')[0]?.serverId).toBe(serverId);
+    });
+    it.each(['connected', 'alreadyConnected', 'wrongCallback', 'stale'] as const)('routes the generic exact attempt through the real Action/socket owners without a service catalog (%s)', async result => {
+        await waiveCallbackApproval();
+        const { completeConnectedAccountOAuthCallback } = await import('./connectedAccountOAuthCallback');
+        const { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } = await import('@happier-dev/protocol/connect/oauthAuthorizationResponse');
+        homes.answer(serverId, '/v1/machines/machine-2', { body: { machine: createPlainMachineRowFixture({ id: 'machine-2', accountId: 'account-a' }) } });
+        answerAddressedOAuthAttempt('attempt.with.dots', 'machine-2');
+        const connected = { status: 'connected', attemptId: 'attempt.with.dots', account: { service, accountId: 'generic-account' } };
+        answers.push(
+            result === 'stale' ? { status: 'rejected', attemptId: 'attempt.with.dots', code: 'attempt_expired' }
+                : result === 'alreadyConnected' ? connected
+                : { status: 'awaitingOAuth', attemptId: 'attempt.with.dots', callbackUrl: result === 'wrongCallback'
+                    ? 'https://other.example/callback' : CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 });
+        if (result === 'connected') answers.push(connected);
+        const callbackUrl = `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?code=code-1&state=attempt.with.dots.nonce&iss=`;
+        const outcome = await completeConnectedAccountOAuthCallback({ callbackUrl, account: {
+            serverId, expectedAccountId: 'account-a', assertCurrent() {},
+        } });
+        const readRequestId = outgoing.find(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD))?.requestId;
+        expect(readRequestId).toEqual(expect.any(String));
+        expect(outcome).toEqual(result === 'connected' || result === 'alreadyConnected'
+            ? { kind: 'connected', returnTo: '/settings/connected-services' }
+            : { kind: 'unfinished', callbackUrl, response: result === 'stale'
+                ? { requestId: readRequestId, status: 'rejected', attemptId: 'attempt.with.dots', code: 'attempt_expired' }
+                : { requestId: readRequestId, status: 'awaitingOAuth', attemptId: 'attempt.with.dots', callbackUrl: 'https://other.example/callback' } });
+        const issued = outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)
+            || request.method.endsWith(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD));
+        expect(issued).toMatchObject([
+            { method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
+                operation: 'read', attemptId: 'attempt.with.dots',
+            } } },
+            ...(result === 'connected' ? [{ method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
+                operation: 'completeOAuth', attemptId: 'attempt.with.dots', completion: { code: 'code-1', state: 'attempt.with.dots.nonce',
+                    iss: '', callbackUrl: CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 },
+            } } }] : []),
+        ]);
+        expect(issued).toHaveLength(result === 'connected' ? 2 : 1);
+        expect(answers).toEqual([]);
     });
     it('completes the MCP callback on its exact pending machine through the real Action and socket owners', async () => {
         await waiveCallbackApproval();
@@ -302,6 +349,34 @@ describe('connected-account daemon machine RPC', () => {
         const { runConnectedAccountAuthenticationCommand } = await import('./connectedAccountDaemon');
         await expect(runConnectedAccountAuthenticationCommand({ serverId, machineId: 'machine-1', command: beginConnect }))
             .resolves.toEqual({ status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' });
+    });
+    it.each([undefined, 'caller-request-id'])('retains the issued Action request identity on typed failure responses (%s)', async suppliedRequestId => {
+        const attemptId = 'correlated-attempt';
+        homes.answer(serverId, `/v2/connect/connected-account-attempt-transactions/${attemptId}`, { body: {
+            kind: 'manual', revision: 1, content: { t: 'plain', v: {} }, expiresAtMs: Date.now() + 60_000,
+            scope: { machineId: 'machine-1', service, modeId: 'manual', intent: 'connect',
+                phase: 'awaitingManual', createdAtMs: Date.now() },
+        } });
+        answers.push({ status: 'unavailable', code: 'connected_account_daemon_response_invalid' });
+        const { runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
+        const response = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: 'account-a',
+            command: { operation: 'read', attemptId },
+            ...(suppliedRequestId ? { requestId: suppliedRequestId } : {}),
+        });
+        const issued = outgoing.find(request => request.method === `machine-1:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`);
+        expect(issued?.requestId).toEqual(suppliedRequestId ?? expect.any(String));
+        expect(response).toMatchObject({ status: 'unavailable', code: 'connected_account_daemon_response_invalid',
+            requestId: issued?.requestId });
+    });
+    it('retains the issued pending discovery request identity on typed failure responses', async () => {
+        answers.push({ status: 'unavailable', code: 'connected_account_daemon_response_invalid' });
+        const { listPendingConnectedAccountAuthenticationActions } = await import('./connectedAccountDaemon');
+        const response = await listPendingConnectedAccountAuthenticationActions({ serverId, machineId: 'machine-1',
+            expectedAccountId: 'account-a', service });
+        const issued = outgoing.find(request => request.method === `machine-1:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}`);
+        expect(issued?.requestId).toEqual(expect.any(String));
+        expect(response).toMatchObject({ status: 'unavailable', code: 'connected_account_daemon_response_invalid',
+            requestId: issued?.requestId });
     });
     it('routes strict descriptor/config control through the same exact owner', async () => {
         const described = {

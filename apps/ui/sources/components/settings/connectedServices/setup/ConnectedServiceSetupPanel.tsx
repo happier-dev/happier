@@ -13,7 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Typography } from '@/constants/Typography';
-import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { MachineAdministrationTargetSelector, type MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useMachineAdministrationTargetSelection, type MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { ConnectedServiceId, PluginContributionIdentityV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -67,7 +67,7 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     initialMachineTarget?: MachineAdministrationTargetV1 | null;
     registry?: ConnectedServiceRegistrySnapshot;
     /** The enclosing page consumes this selected method's demand; the controller owns the choice. */
-    onMachineRequirementChange?: (required: boolean) => void;
+    onMachineRequirementChange?: (required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => void;
     /** Consumer-scoped setup must finish on its captured controller. */
     targetLocked?: boolean;
     /**
@@ -135,12 +135,15 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const selectionKey = JSON.stringify([accountScope ? serverAccountScopeKeySuffix(accountScope) : null, props.target]);
     const [method, setMethod] = React.useState<Readonly<{ key: string; id: string | null }>>({ key: selectionKey, id: null });
     const selectedModeId = method.key === selectionKey ? method.id : null;
-    const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean }> | null>(null);
+    const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean;
+        availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'] }> | null>(null);
     const machineRequired = machineDemand?.key === selectionKey ? machineDemand.required : false;
-    const reportMachineRequirement = React.useCallback((required: boolean) => setMachineDemand(current =>
-        current?.key === selectionKey && current.required === required ? current : { key: selectionKey, required }), [selectionKey]);
+    const machineAvailability = machineDemand?.key === selectionKey ? machineDemand.availability : undefined;
+    const reportMachineRequirement = React.useCallback((required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => setMachineDemand(current =>
+        current?.key === selectionKey && current.required === required && current.availability === availability
+            ? current : { key: selectionKey, required, availability }), [selectionKey]);
     const selectMode = React.useCallback((id: string) => setMethod({ key: selectionKey, id }), [selectionKey]);
-    React.useLayoutEffect(() => props.onMachineRequirementChange?.(machineRequired), [machineRequired, props.onMachineRequirementChange]);
+    React.useLayoutEffect(() => props.onMachineRequirementChange?.(machineRequired, machineAvailability), [machineRequired, machineAvailability, props.onMachineRequirementChange]);
     const defaultTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
         { enabled: props.targetSelection === undefined && machineRequired,
@@ -292,6 +295,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
                 {machineRequired ? (
                     <MachineAdministrationTargetSelector
                         selection={targetSelection}
+                        resolveCandidateAvailability={machineAvailability}
                         disabled={props.targetLocked}
                         presentation="chip"
                         testIDPrefix="connected-service-setup-target"
@@ -369,7 +373,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
             {props.chrome === 'page' ? <PageHeader title={title} description={purpose} alwaysShowTitle
                 cancelAction={props.targetLocked ? { title: t('common.cancel'), onPress: onClose, testID: 'connected-service-setup:close' } : undefined}
                 leading={selected ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} size="row" /> : <Icon name="plug" size={24} />}
-                actions={<MachineAdministrationTargetSelector selection={targetSelection} disabled={props.targetLocked} presentation="chip" testIDPrefix="connected-service-setup-target" />} /> : onSheet ? null : head}
+                actions={<MachineAdministrationTargetSelector selection={targetSelection} resolveCandidateAvailability={machineAvailability} disabled={props.targetLocked} presentation="chip" testIDPrefix="connected-service-setup-target" />} /> : onSheet ? null : head}
             <View style={onSheet ? styles.sheetBody : styles.body}>
                 {body}
                 {!selected && scope === 'home' ? (

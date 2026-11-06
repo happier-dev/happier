@@ -5,10 +5,40 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import {
   isConnectedServiceCredentialReferencedByGroupError,
+  readConnectedServiceSettingsErrorCode,
+  readConnectedServiceSettingsErrorDetailsCode,
   resolveConnectedServiceSettingsErrorMessage,
 } from './connectedServiceSettingsErrors';
 
 describe('connected-service settings errors', () => {
+  it('keeps the specific safe provider code for reconnect and uncertain details', () => {
+    for (const status of ['reconnectRequired', 'outcomeUnknown']) {
+      const error = { status, code: 'connected_account_authentication_outcome_unknown',
+        diagnostic: { code: 'claude_subscription_oauth_response_invalid' } };
+      expect(readConnectedServiceSettingsErrorDetailsCode(error))
+        .toBe('claude_subscription_oauth_response_invalid');
+      expect(readConnectedServiceSettingsErrorCode(error)).toBe('connected_account_authentication_outcome_unknown');
+      expect(resolveConnectedServiceSettingsErrorMessage(error))
+        .toBe(t('connectedServices.errors.accountStateUncertain'));
+    }
+    expect(readConnectedServiceSettingsErrorDetailsCode({ status: 'reconnectRequired',
+      code: 'connected_account_authentication_outcome_unknown', diagnostic: { message: 'private prose' } }))
+      .toBe('connected_account_authentication_outcome_unknown');
+  });
+  it.each(['claude_subscription_oauth_identity_mismatch', 'claude_subscription_profile_identity_mismatch'])(
+    'explains the established credential identity mismatch (%s)', code => {
+      expect(resolveConnectedServiceSettingsErrorMessage({ status: 'rejected', code }))
+        .toBe(t('connectedServices.errors.accountIdentityMismatch'));
+    });
+  it('explains how browser sign-in can continue when no trusted Machine is online', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable',
+      code: 'connected_account_browser_sign_in_machine_unavailable' }))
+      .toBe(t('connectedServices.errors.browserSignInMachineUnavailable'));
+  });
+  it('offers an update or app handoff when the chosen Machine cannot run sign-in', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable', code: 'cli_update_required' }))
+      .toBe(t('connectedServices.errors.browserSignInMachineUpdateRequired'));
+  });
   it('keeps pre-dispatch discovery failure retryable while an issued effect stays uncertain', () => {
     expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private transport diagnostics', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE)))
       .toBe(t('connectedServices.errors.accountMachineUnavailable'));

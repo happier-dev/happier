@@ -236,11 +236,12 @@ function ConnectAccountSheetLeaf(
   const machineChip = React.useMemo(() => showTargetSelector ? (
     <MachineAdministrationTargetSelector
       selection={targetSelection}
+      resolveCandidateAvailability={model.machineAvailability}
       disabled={Boolean(purposeRequest)}
       presentation="chip"
       testIDPrefix="connected-service-setup-target"
     />
-  ) : null, [showTargetSelector, purposeRequest, targetSelection]);
+  ) : null, [showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);
 
   // A repair names its account once, as the band's quiet second line under "Sign in to … again" (owner 11-01):
   // who it is, never a card of its own.

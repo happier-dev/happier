@@ -9,6 +9,9 @@ import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { MachineUpdateStateRequestSchema, type MachineUpdateStateResponse } from '@happier-dev/protocol/machines/metadataUpdate';
 import type { MachineUpdateOperationProtocolCapabilitiesResponseV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createConnectedAccountDaemonRuntime, createUnavailableConnectedAccountDaemonPersistence } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 
 function createMachine(): Machine {
   return {
@@ -34,6 +37,67 @@ function createCapabilityPublicationClient(): ApiMachineClient {
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
+  it('publishes Connected Account support only after runtime attachment and retains it on replacement transport', async () => {
+    const client = createCapabilityPublicationClient();
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { connectedAccountAuthentication: { protocolVersions: [1] } } } });
+    const lifecycleDependencies = { resolveServerFeaturesSnapshot: async () => ({ status: 'ready' as const, features }) };
+    Reflect.set(client, 'lifecycleDependencies', lifecycleDependencies);
+    const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 3 }));
+    const socket = { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) };
+    Reflect.set(client, 'socket', socket);
+    const internal = client as unknown as {
+      resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
+    };
+    await client.setProjectFiniteExecutionLive(true);
+    expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+      machineId: 'machine-1', capabilities: { projectFiniteExecution: { protocolVersions: [1] } },
+    });
+    const reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => { throw new Error('No plugin source in this publication fixture'); } });
+    const persistence = createUnavailableConnectedAccountDaemonPersistence();
+    const establishedRuntimeOwner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController,
+      credentials: { token: 'publication-fixture', encryption: null },
+      getAccountEncryptionMode: async () => 'plain', configuration: persistence.configuration,
+    });
+    const runtime = createConnectedAccountDaemonRuntime({
+      reloadController, persistence,
+      configurationConsequences: { assertAvailable: async () => undefined, apply: async () => undefined },
+      revocation: { token: 'publication-fixture', establishedRuntimeOwner, resolveV4Support: () => 'absent' },
+    });
+    try {
+      client.registerConnectedAccountDaemonRuntime(runtime);
+      await vi.waitFor(() => expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+        machineId: 'machine-1', capabilities: {
+          projectFiniteExecution: { protocolVersions: [1] }, connectedAccountAuthentication: { protocolVersions: [1] },
+        },
+      }));
+      const publications = emitWithAck.mock.calls.length;
+      client.registerConnectedAccountDaemonRuntime(runtime);
+      await client.setProjectFiniteExecutionLive(true);
+      expect(emitWithAck).toHaveBeenCalledTimes(publications + 1);
+      socket.connected = false;
+      await expect(internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).resolves.toEqual({
+        projectFiniteExecution: { protocolVersions: [1] }, connectedAccountAuthentication: { protocolVersions: [1] },
+      });
+      const replacement = createCapabilityPublicationClient();
+      Reflect.set(replacement, 'lifecycleDependencies', lifecycleDependencies);
+      replacement.registerConnectedAccountDaemonRuntime(runtime);
+      await expect((replacement as unknown as typeof internal).resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).resolves.toEqual({
+        connectedAccountAuthentication: { protocolVersions: [1] },
+      });
+      for (const support of [undefined, { protocolVersions: [2] }]) {
+        const olderHomeFeatures = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { connectedAccountAuthentication: support } } });
+        Reflect.set(client, 'lifecycleDependencies', { resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features: olderHomeFeatures }) });
+        socket.connected = true;
+        await client.setProjectFiniteExecutionLive(true);
+        expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+          machineId: 'machine-1', capabilities: { projectFiniteExecution: { protocolVersions: [1] } },
+        });
+      }
+    } finally {
+      runtime.dispose();
+    }
+  });
   it('leaves Machine presence authority with Home instead of daemon capability publication', async () => {
     for (const support of [undefined, { protocolVersions: [1] }] as const) {
       const client = createCapabilityPublicationClient();

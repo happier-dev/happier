@@ -66,7 +66,9 @@ export type MachineAdministrationTargetSelectorProps = Readonly<{
     resolveCandidateAvailability?: (candidate: MachineAdministrationCandidateV1) => Readonly<{
         detail: string;
         selectable: boolean;
-    }>;
+        /** Omit from picker choices; a retained selection keeps its reason. */
+        hidden?: boolean;
+    }> | undefined;
     /** Safe domain presentation when opaque Machine ids must not be disclosed. */
     resolveCandidatePresentation?: (candidate: MachineAdministrationCandidateV1) => Readonly<{
         title: string;
@@ -210,9 +212,11 @@ export function presentMachineAdministrationTargetState(state: MachineAdministra
 
 function buildPickerGroups(
     selection: MachineAdministrationTargetSelectionV1,
+    resolveCandidateAvailability: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'],
 ): readonly ServerScopedMachineGroup<MachineAdministrationPickerMachine>[] {
     const groups = new Map<string, ServerScopedMachineGroup<MachineAdministrationPickerMachine>>();
     for (const row of selection.pickerRows) {
+        if (resolveCandidateAvailability?.(row.candidate)?.hidden === true) continue;
         const machine: MachineAdministrationPickerMachine = {
             ...row.machine,
             serverId: row.serverId,
@@ -289,7 +293,7 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
         compact,
         props.selection.pickerRows,
     );
-    const groups = buildPickerGroups(props.selection);
+    const groups = buildPickerGroups(props.selection, props.resolveCandidateAvailability);
     const canOpenPicker = groups.length > 0 || (compact && props.selection.selectedTarget !== null);
     const selectedRow = props.selection.selectedTarget
         ? props.selection.pickerRows.find((row) => machineAdministrationTargetsEqual(
@@ -389,7 +393,7 @@ export function useMachineAdministrationTargetFilter(
         true,
         props.selection.pickerRows,
     );
-    const groups = buildPickerGroups(props.selection);
+    const groups = buildPickerGroups(props.selection, props.resolveCandidateAvailability);
     const selectedRow = props.selection.selectedTarget
         ? props.selection.pickerRows.find((row) => machineAdministrationTargetsEqual(
             row.candidate.target,
@@ -397,13 +401,14 @@ export function useMachineAdministrationTargetFilter(
         ))
         : undefined;
     const hasTarget = props.selection.selectedTarget !== null && !current.gone;
+    const selectedHidden = selectedRow && props.resolveCandidateAvailability?.(selectedRow.candidate)?.hidden === true;
     const presence = props.selection.state.kind === 'online' || props.selection.state.kind === 'offline'
         ? props.selection.state.kind
         : undefined;
     const changeTarget = useTargetChange(props.selection.changeIntent);
     const { selection, resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy } = props;
     const selectedServerId = selectedRow?.serverId ?? null;
-    const canOpen = groups.length > 0 && props.disabled !== true;
+    const canOpen = (groups.length > 0 || props.chipOpen === true) && props.disabled !== true;
     const renderPopoverContent = React.useCallback(({ close, maxHeight }: Readonly<{ close: () => void; maxHeight: number }>) => (
         <MachineTargetChipList
             groups={groups}
@@ -423,7 +428,7 @@ export function useMachineAdministrationTargetFilter(
     return {
         id: props.filterId ?? 'machine',
         label: groupTitle,
-        valueLabel: current.title,
+        valueLabel: selectedHidden ? [current.title, current.detail].filter(Boolean).join(' · ') : current.title,
         icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
         ...(hasTarget && presence ? { presence } : {}),
         muted: !hasTarget,

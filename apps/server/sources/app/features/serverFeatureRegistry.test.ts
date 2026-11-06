@@ -34,6 +34,12 @@ function readProducedEnabledBit(delta: FeaturesPayloadDelta, featureId: FeatureI
 describe('features/serverFeatureRegistry', () => {
     afterEach(() => resetSessionSystemRecordsProtocolV1ActivationForTests());
 
+    it('advertises Home acceptance of the Connected Account operation capability leaf', () => {
+        expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.machines)
+            .toMatchObject({ connectedAccountAuthentication: { protocolVersions: [1] } });
+    });
+
+
     it('assigns every server-represented catalog feature to exactly one registry or fixed-policy resolver', () => {
         const featureProducers = [
             () => resolveSetupSurfacePolicyFeature(),

@@ -203,6 +203,9 @@ export const PluginConnectedAccountSetupGuideV2Schema = lazyZodSchema(() => z.st
   shapeHint: z.optional(PluginLocalizedStringV2Schema),
 }));
 
+/** Only measured browser-unreachable modes change placement; omission preserves execution. */
+const browserReachabilitySchema = z.literal('unreachable');
+
 export const PluginConnectedAccountAuthenticationModeV2Schema =
   lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({
@@ -246,6 +249,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthAuthorizationCode'),
+      browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       callbackUrl: z.optional(z.url().check(z.maxLength(2_048))),
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
@@ -277,6 +281,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthDeviceCode'),
+      browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,

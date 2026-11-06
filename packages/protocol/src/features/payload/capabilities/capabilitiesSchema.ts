@@ -1,4 +1,4 @@
-import { MachineSessionSpawnProtocolCapabilityV1Schema } from '../../../machines/operationProtocolCapabilitiesV1.js';
+import { MachineOperationProtocolCapabilityV1Schema, MachineSessionSpawnProtocolCapabilityV1Schema } from '../../../machines/operationProtocolCapabilitiesV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { AccountStoredContentCompatibilityServerRequirementsV1Schema } from '../../../clientCompatibility/accountStoredContentCompatibilityV1.js';
@@ -103,6 +103,7 @@ export const CapabilitiesSchema = lazyZodSchema(() => z.object({
   serverRelease: z.optional(ServerReleaseCapabilitiesSchema),
   machines: z._default(z.optional(z
     .object({
+      connectedAccountAuthentication: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       sessionSpawn: z.catch(z.optional(MachineSessionSpawnProtocolCapabilityV1Schema), undefined),
       transfer: z._default(z.optional(MachineTransferCapabilitiesSchema), DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
       tunnel: z._default(z.optional(MachineTunnelCapabilitiesSchema), DEFAULT_MACHINE_TUNNEL_CAPABILITIES),

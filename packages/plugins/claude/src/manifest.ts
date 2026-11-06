@@ -238,6 +238,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           }, {
             id: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId,
             kind: 'oauthAuthorizationCode',
+            browserReachability: 'unreachable',
             callbackUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
             scopes: [...CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES],
             pkce: 'required',

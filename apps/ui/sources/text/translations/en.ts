@@ -4802,6 +4802,10 @@ const enConnectedServices = {
     accountSharedMachineUnavailable: "Connecting an account on a shared Machine isn't available. Connect on your own Machine, or choose an Account sign-in method that doesn't need a Machine if this service offers one.",
     accountMachineUnavailable:
       'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+    browserSignInMachineUnavailable: 'This sign-in needs one of your Machines online in a browser. Bring a Machine online, or sign in using the Happier phone or desktop app.',
+    browserSignInMachineUpdateRequired: "Update Happier on the Machine you want to use for this sign-in, or sign in using the Happier phone or desktop app.",
+    browserSignInMachineCustodianRequired: "Only the Machine's owner can sign in on it",
+    accountAuthenticationUnavailable: "The sign-in service is temporarily unavailable. Try again in a moment.",
     accountServiceUnavailable:
       'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
     accountOperationUnsupported:

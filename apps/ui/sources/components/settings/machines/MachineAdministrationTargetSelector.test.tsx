@@ -53,6 +53,48 @@ function createSelection(availability: MachineAdministrationCandidateV1['availab
 afterEach(clearActiveUnsavedChangesGuard);
 
 describe('MachineAdministrationTargetSelector', () => {
+    it.each(['section', 'chip'] as const)('retains shared Machines in an ordinary %s picker', (presentation) => withPopoverWebGlobals(async () => {
+        const { selection } = createSelection();
+        const sharedSelection: MachineAdministrationTargetSelectionV1 = {
+            ...selection,
+            pickerRows: selection.pickerRows.map(row => ({ ...row, machine: { ...row.machine, isShared: true,
+                access: { custodian: { accountId: 'other-custodian', displayName: 'Other custodian' },
+                    role: 'use', resourceMode: 'plain', accessState: 'ready' } } })),
+        };
+        const screen = await renderScreen(<DraftMachineTargetSelector selection={sharedSelection} presentation={presentation} testIDPrefix="shared.target" />);
+        try {
+            await screen.pressByTestIdAsync(`shared.target.${presentation === 'chip' ? 'chip' : 'current'}`);
+            if (presentation === 'chip') {
+                await act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
+                expect(screen.getTextContent()).toContain('machines.destinations.shared');
+            }
+            expect(screen.findHostByTestId('shared.target.picker-option:machine-b')).not.toBeNull();
+        } finally { await screen.unmount(); }
+    }));
+
+    it.each(['section', 'chip'] as const)('omits a domain-hidden Machine from the %s picker while retaining its selected reason', (presentation) => withPopoverWebGlobals(async () => {
+        const { selection } = createSelection();
+        const ownCandidate: MachineAdministrationCandidateV1 = { ...selection.candidates[0]!,
+            target: { serverIdentityId: 'portable-server-b', machineId: 'machine-own' }, displayName: 'Own Machine' };
+        const pickerSelection: MachineAdministrationTargetSelectionV1 = {
+            ...selection,
+            candidates: [...selection.candidates, ownCandidate],
+            pickerRows: [...selection.pickerRows, { candidate: ownCandidate, serverId: 'local-profile-b', serverName: 'Server B',
+                machine: { ...selection.pickerRows[0]!.machine, id: 'machine-own', metadata: { displayName: 'Own Machine' } } }],
+        };
+        const screen = await renderScreen(<DraftMachineTargetSelector selection={pickerSelection} presentation={presentation}
+            testIDPrefix="hidden.target" resolveCandidateAvailability={candidate => candidate.target.machineId === 'machine-b'
+                ? { hidden: true, selectable: false, detail: 'domain-owned selected reason' } : undefined} />);
+        try {
+            const trigger = `hidden.target.${presentation === 'chip' ? 'chip' : 'current'}`;
+            expect(screen.findHostByTestId(trigger)?.props.accessibilityLabel).toContain('domain-owned selected reason');
+            await screen.pressByTestIdAsync(trigger);
+            if (presentation === 'chip') await act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
+            expect(screen.findHostByTestId('hidden.target.picker-option:machine-b')).toBeNull();
+            expect(screen.findHostByTestId('hidden.target.picker-option:machine-own')).not.toBeNull();
+        } finally { await screen.unmount(); }
+    }));
+
     it('does not label an unselected compact scope as an unavailable machine', async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const { selection } = createSelection();

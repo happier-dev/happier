@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
 import type { MachineDisplayRenderable } from './machineDisplayRenderable';
 import {
     areMachineDisplayRenderablesEqual,
@@ -26,6 +27,20 @@ function makeMachineDisplay(partial: Partial<MachineDisplayRenderable> & Pick<Ma
 }
 
 describe('machine display renderables', () => {
+    it('publishes sign-in support changes and withdrawal through the Machine display projection', () => {
+        const machine = createMachineFixture({ metadata: null });
+        const unavailable = buildMachineDisplayRenderableFromMachine(machine);
+        const capable = buildMachineDisplayRenderableFromMachine({ ...machine,
+            operationProtocolCapabilities: { connectedAccountAuthentication: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 });
+        expect(readConnectedAccountBrowserSignInMachineSupport(unavailable)).toBe('cli_update_required');
+        expect(readConnectedAccountBrowserSignInMachineSupport(capable)).toBe('supported');
+        expect(areMachineDisplaySemanticsEqual(unavailable, capable)).toBe(false);
+        const withdrawn = buildMachineDisplayRenderableFromMachine({ ...machine,
+            operationProtocolCapabilitiesRevision: 2 });
+        expect(readConnectedAccountBrowserSignInMachineSupport(withdrawn)).toBe('cli_update_required');
+        expect(areMachineDisplaySemanticsEqual(capable, withdrawn)).toBe(false);
+    });
     it('captures heartbeat input scalars separately from a display retained and updated by the store', () => {
         const machine = createMachineFixture({ activeAt: 10, updatedAt: 10 });
         const first = buildMachineDisplayRenderableFromMachine(machine);

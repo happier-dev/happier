@@ -7,6 +7,7 @@ type ErrorLike = Readonly<{
     status?: unknown;
     generation?: unknown;
     resetAtMs?: unknown;
+    diagnostic?: unknown;
     requestId?: unknown;
 }>;
 
@@ -17,6 +18,16 @@ function asErrorLike(error: unknown): ErrorLike {
 export function readConnectedServiceSettingsErrorRequestId(error: unknown): string | undefined {
     const requestId = asErrorLike(error).requestId;
     return typeof requestId === 'string' ? requestId : undefined;
+}
+
+export function readConnectedServiceSettingsErrorDetailsCode(error: unknown): string | null {
+    const errorLike = asErrorLike(error);
+    if (errorLike.diagnostic !== null && typeof errorLike.diagnostic === 'object'
+        && 'code' in errorLike.diagnostic && typeof errorLike.diagnostic.code === 'string'
+        && errorLike.diagnostic.code.trim().length > 0) {
+        return errorLike.diagnostic.code;
+    }
+    return readConnectedServiceSettingsErrorCode(error);
 }
 
 export function readConnectedServiceSettingsErrorCode(error: unknown): string | null {
@@ -71,6 +82,10 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
     switch (code) {
         case RPC_ERROR_CODES.FORBIDDEN:
             return t('connectedServices.errors.accountSharedMachineUnavailable');
+        case 'connected_account_browser_sign_in_machine_unavailable':
+            return t('connectedServices.errors.browserSignInMachineUnavailable');
+        case 'cli_update_required':
+            return t('connectedServices.errors.browserSignInMachineUpdateRequired');
         case 'plugin_account_execution_unavailable':
         case 'plugin_ui_declaration_pending':
         case 'plugin_ui_declaration_invalid':
@@ -137,6 +152,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_configuration_revision_unavailable':
             return t('connectedServices.errors.accountConfigurationChanged');
         case 'connected_account_authentication_outcome_unknown':
+        case 'claude_subscription_oauth_outcome_unknown':
         case 'connected_account_settlement_outcome_unknown':
         case 'connected_account_configuration_settings_outcome_unknown':
         case 'connected_account_revoke_outcome_unknown':
@@ -183,8 +199,15 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_oauth_completion_invalid':
         case 'connected_account_provider_result_invalid':
         case 'connected_account_identity_unavailable':
+        case 'claude_subscription_oauth_rejected':
             return t('connectedServices.errors.accountAuthenticationRejected');
+        case 'claude_subscription_oauth_response_invalid':
+        case 'claude_subscription_oauth_unavailable':
+        case 'claude_subscription_profile_context_unavailable':
+            return t('connectedServices.errors.accountAuthenticationUnavailable');
         case 'connect_reconnect_provider_identity_mismatch':
+        case 'claude_subscription_oauth_identity_mismatch':
+        case 'claude_subscription_profile_identity_mismatch':
         case 'connected_account_reconnect_identity_mismatch':
         case 'connected_account_reconnect_provider_identity_mismatch':
         case 'connected_account_settlement_identity_mismatch':

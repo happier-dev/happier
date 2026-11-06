@@ -4,6 +4,14 @@ import { z } from 'zod/mini';
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 
 describe('CapabilitiesSchema (server capabilities)', () => {
+  it('reads Home Connected Account publication support without dropping sibling capabilities', () => {
+    const machines = { connectedAccountAuthentication: { protocolVersions: [1] }, transfer: { serverRouted: { maxBytes: 42 } } };
+    expect(CapabilitiesSchema.parse({ machines }).machines).toMatchObject(machines);
+    expect(Reflect.get(CapabilitiesSchema.parse({}).machines, 'connectedAccountAuthentication')).toBeUndefined();
+    const parsed = CapabilitiesSchema.parse({ machines: { ...machines, connectedAccountAuthentication: { protocolVersions: [2] } } });
+    expect(Reflect.get(parsed.machines, 'connectedAccountAuthentication')).toBeUndefined();
+    expect(parsed.machines.transfer.serverRouted.maxBytes).toBe(42);
+  });
   it('keeps Collection deployment limits in one optional closed top-level capability family', () => {
     const limits = {
       maxRowEncodedBytes: 262_144,

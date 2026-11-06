@@ -4444,18 +4444,22 @@ export class ApiMachineClient {
             ? { status: 'ready' as const, features: currentServerFeatures }
             : await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.();
         let capabilities = this.currentMachineOperationProtocolCapabilities(includeSessionCapabilities);
-        if (!capabilities) return null;
 
-        if (capabilities.sessionMessageReply && !await this.sessionMessageReplyRecovery?.isCurrent?.()) {
+        if (capabilities?.sessionMessageReply && !await this.sessionMessageReplyRecovery?.isCurrent?.()) {
             const { sessionMessageReply: _retiredReply, ...currentCapabilities } = capabilities;
             capabilities = Object.keys(currentCapabilities).length > 0 ? currentCapabilities : null;
         }
-        if (!capabilities) return null;
 
         // The Home's resolved server feature bit is both product enablement and
         // proof that its strict Machine projection accepts this new leaf. Older,
         // malformed, disabled, or dependency-disabled Homes therefore keep the
         // handler installed locally but receive no incompatible advertisement.
+        if (this.connectedAccountDaemonRuntime
+            && snapshot?.status === 'ready'
+            && snapshot.features.capabilities.machines.connectedAccountAuthentication?.protocolVersions.includes(1) === true) {
+            capabilities = { ...capabilities, connectedAccountAuthentication: { protocolVersions: [1] } };
+        }
+        if (!capabilities) return null;
         const personalBroker = this.providerBrokerAccountConnectionIngressLive
             && snapshot?.status === 'ready'
             && readServerEnabledBit(snapshot.features, 'providers') === true
