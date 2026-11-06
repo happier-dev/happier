@@ -12,10 +12,15 @@ import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
 
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+
 type DomainAction = DeploymentDomainChildActionIdV1;
-const failure = (reason: string, details?: unknown) => {
+const failure = (reason: string, details?: unknown, failureCause?: unknown) => {
     const errorCode = reason === 'mode_none' ? 'machine_admin_access_required' : reason;
-    return { ok: false as const, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) };
+    const parsedCause = ActionFailureCauseV1Schema.safeParse(failureCause);
+    return { ok: false as const, errorCode, error: errorCode, ...(details === undefined ? {} : { details }),
+        ...(parsedCause.success ? { failureCause: parsedCause.data } : {}) };
 };
 
 /** Review the Account role before admission; native topology supplies its concrete origin later. */
@@ -235,8 +240,12 @@ export function createOwnServerDomainActions(host: Readonly<{
             const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
             return settled.success ? settled.data : failure('outcome_unknown');
         } catch (error) {
-            return failure(issued ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable');
+            const diagnostic = projectDeploymentFailure(issued ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled'
+                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
+                error, 'deployment.domain.native_execution');
+            return { ...failure(diagnostic.errorCode, !issued ? diagnostic.details
+                ?? (error instanceof Error && 'details' in error ? error.details : undefined) : undefined,
+                diagnostic.failureCause), error: diagnostic.error };
         }
     };
 }
