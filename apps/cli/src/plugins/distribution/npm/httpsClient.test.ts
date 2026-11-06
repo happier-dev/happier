@@ -10,35 +10,9 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createNpmRegistryHttpsClient, NpmRegistryHttpError } from './httpsClient';
+import { npmHttpResponse as response, npmHttpRequestBoundary as requestBoundary } from '../testkit/npmHttp';
 import { downloadResolvedNpmArtifact } from './download';
 import { resolveAndDownloadNpmArtifact } from './adapter';
-
-function response(body: string, overrides: Partial<IncomingMessage> = {}): IncomingMessage {
-  const stream = Readable.from([body]);
-  Object.assign(stream, { statusCode: 200, headers: { 'content-type': 'application/json' }, ...overrides });
-  // System-boundary fixture: a readable with the IncomingMessage fields consumed by this adapter.
-  return stream as unknown as IncomingMessage;
-}
-
-function requestBoundary(params: Readonly<{
-  responses: IncomingMessage[];
-  seen: RequestOptions[];
-}>): typeof import('node:https').request {
-  const implementation = ((options: RequestOptions, callback: (message: IncomingMessage) => void) => {
-    params.seen.push(options);
-    const emitter = new EventEmitter() as EventEmitter & {
-      setTimeout: () => void;
-      end: () => void;
-      destroy: (error?: Error) => void;
-    };
-    emitter.setTimeout = () => undefined;
-    emitter.destroy = (error?: Error) => { if (error) emitter.emit('error', error); };
-    emitter.end = () => queueMicrotask(() => callback(params.responses.shift()!));
-    // System-boundary fixture: only ClientRequest methods exercised by the adapter are implemented.
-    return emitter as unknown as ClientRequest;
-  });
-  return implementation as typeof import('node:https').request;
-}
 
 describe('createNpmRegistryHttpsClient', () => {
   afterEach(() => vi.useRealTimers());

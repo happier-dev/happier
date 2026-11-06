@@ -10,7 +10,7 @@ import { NpmArtifactCompatibilityError, resolveAndDownloadNpmArtifact } from '@/
 import { projectPluginAttributedCompatibilityFailure } from '@/plugins/manifest/diagnostics';
 import {
   createNpmRegistryHttpsClient,
-  type NpmRegistryHttpsClient,
+  type NpmRegistryArtifactClient,
 } from '@/plugins/distribution/npm/httpsClient';
 import {
   normalizeNpmPackageName,
@@ -87,7 +87,7 @@ type CreateNpmRegistryClient = (options: Readonly<{
   registryOrigin: string;
   authorizationHeader?: string;
   allowPrivateNetwork?: boolean;
-}>) => NpmRegistryHttpsClient;
+}>) => NpmRegistryArtifactClient;
 
 export type DaemonNpmPluginChangePreparationContext = Readonly<{
   installedUpdate: Readonly<{

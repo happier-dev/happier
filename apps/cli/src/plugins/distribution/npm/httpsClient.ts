@@ -14,8 +14,9 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export class NpmRegistryHttpError extends Error {
   readonly code: 'authentication_failed' | 'not_found' | 'rate_limited' | 'server_error' | 'request_failed';
   readonly statusCode: number;
+  readonly publicationReason?: 'otp_required' | 'version_conflict';
 
-  constructor(statusCode: number) {
+  constructor(statusCode: number, publicationReason?: 'otp_required' | 'version_conflict') {
     const code = statusCode === 401 || statusCode === 403
       ? 'authentication_failed'
       : statusCode === 404
@@ -29,12 +30,32 @@ export class NpmRegistryHttpError extends Error {
     this.name = 'NpmRegistryHttpError';
     this.code = code;
     this.statusCode = statusCode;
+    this.publicationReason = publicationReason;
   }
 }
 
 export type NpmDnsLookup = (hostname: string) => Promise<readonly Readonly<{ address: string; family: 4 | 6 }>[] >;
 
-export type NpmRegistryHttpsClient = NpmRegistryJsonClient & NpmArtifactBodyClient;
+export type NpmRegistryArtifactClient = NpmRegistryJsonClient & NpmArtifactBodyClient;
+
+export type NpmRegistryPublicationClient = NpmRegistryJsonClient & Readonly<{
+  requestJson(input: Readonly<{
+    url: string;
+    method: 'PUT' | 'POST';
+    body: unknown;
+    headers: Readonly<Record<string, string>>;
+    signal?: AbortSignal;
+    ignoreBody?: boolean;
+    onRequestSent?: () => void;
+  }>): Promise<unknown>;
+}>;
+
+export type NpmRegistryHttpsClient = NpmRegistryPublicationClient & NpmArtifactBodyClient & Readonly<{
+  requestJsonResponse(input: Readonly<{
+    url: string; method: 'GET' | 'POST'; body?: unknown;
+    headers: Readonly<Record<string, string>>; signal?: AbortSignal;
+  }>): Promise<Readonly<{ statusCode: number; headers: IncomingHttpHeaders; body: unknown }>>;
+}>;
 
 function contentLength(headers: IncomingHttpHeaders): number | undefined {
   const raw = headers['content-length'];
@@ -57,6 +78,9 @@ async function openPinnedHttpsResponse(params: Readonly<{
   request: typeof httpsRequest;
   requiredOrigin: string;
   allowPrivateNetwork: boolean;
+  method?: 'GET' | 'PUT' | 'POST';
+  body?: string;
+  onRequestSent?: () => void;
 }>): Promise<IncomingMessage> {
   let current = assertSafeNpmHttpsUrl(params.url);
   if (current.origin !== params.requiredOrigin) throw new Error('Npm registry request origin mismatch');
@@ -78,7 +102,7 @@ async function openPinnedHttpsResponse(params: Readonly<{
     const selected = addresses[0]!;
     const options: RequestOptions = {
       protocol: 'https:', hostname, port: current.port || undefined,
-      path: `${current.pathname}${current.search}`, method: 'GET', headers: params.headers,
+      path: `${current.pathname}${current.search}`, method: params.method ?? 'GET', headers: params.headers,
       ...(servername === undefined ? {} : { servername }),
       lookup: (_hostname, lookupOptions, callback) => {
         if (typeof lookupOptions === 'object' && lookupOptions.all) {
@@ -99,16 +123,19 @@ async function openPinnedHttpsResponse(params: Readonly<{
       params.signal?.addEventListener('abort', abort, { once: true });
       request.once('error', (error) => { clear(); reject(error); });
       if (params.signal?.aborted) { abort(); return; }
-      request.end();
+      params.onRequestSent?.();
+      request.end(params.body);
     });
     const status = response.statusCode ?? 0;
     if (!REDIRECT_STATUSES.has(status)) {
-      if (status < 200 || status >= 300) {
+      if (!params.method && (status < 200 || status >= 300)) {
         response.destroy();
         throw new NpmRegistryHttpError(status);
       }
       return response;
     }
+    // An external write is never replayed, even when a registry redirects it.
+    if (params.method && params.method !== 'GET') { response.destroy(); throw new Error('Npm registry publication redirected'); }
     const location = response.headers.location;
     response.destroy();
     if (!location) throw new Error('Npm registry redirect omitted location');
@@ -136,7 +163,7 @@ export function createNpmRegistryHttpsClient(options: Readonly<{
   const request = options.request ?? httpsRequest;
   const baseHeaders: Readonly<Record<string, string>> = options.authorizationHeader ? { authorization: options.authorizationHeader } : {};
 
-  async function open(input: Readonly<{ url: string; maxBytes?: number | null; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number; signal?: AbortSignal }>): Promise<IncomingMessage> {
+  async function open(input: Readonly<{ url: string; maxBytes?: number | null; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number; signal?: AbortSignal; method?: 'GET' | 'PUT' | 'POST'; body?: string; onRequestSent?: () => void }>): Promise<IncomingMessage> {
     if (input.maxBytes != null && (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1)) throw new Error('Invalid npm registry response size limit');
     const lifetime = createPluginAcquisitionLifetime({
       signal: input.signal && options.signal ? AbortSignal.any([input.signal, options.signal]) : input.signal ?? options.signal,
@@ -149,6 +176,7 @@ export function createNpmRegistryHttpsClient(options: Readonly<{
         url: input.url, requiredOrigin, signal: lifetime.signal, lookup, request,
         allowPrivateNetwork: options.allowPrivateNetwork === true,
         headers: { ...input.headers, ...baseHeaders },
+        method: input.method, body: input.body, onRequestSent: input.onRequestSent,
       });
       const abort = () => response.destroy(pluginAcquisitionAbortError(lifetime.signal!));
       const clear = () => {
@@ -178,7 +206,39 @@ export function createNpmRegistryHttpsClient(options: Readonly<{
     }
   }
 
+  async function requestJsonResponse(input: Readonly<{
+    url: string; method: 'GET' | 'POST' | 'PUT'; body?: unknown; headers: Readonly<Record<string, string>>;
+    signal?: AbortSignal; ignoreBody?: boolean; onRequestSent?: () => void;
+  }>): Promise<Readonly<{ statusCode: number; headers: IncomingHttpHeaders; body: unknown }>> {
+      const body = input.method === 'GET' ? undefined : JSON.stringify(input.body);
+      if (body === undefined && input.method !== 'GET') throw new Error('Invalid npm registry request body');
+      const response = await open({ ...input, body, headers: {
+        ...input.headers, ...(body === undefined ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) }),
+      } });
+      const status = response.statusCode ?? 0;
+      if (input.ignoreBody && status >= 200 && status < 300) {
+        response.resume();
+        return { statusCode: status, headers: response.headers, body: undefined };
+      }
+      const chunks: Buffer[] = [];
+      for await (const value of response) chunks.push(Buffer.from(value));
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (status < 200 || status >= 300) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { /* Only classified facts leave this private boundary. */ }
+        const error = parsed && typeof parsed === 'object' && 'error' in parsed ? parsed.error : undefined;
+        const otp = status === 401 && (String(response.headers['www-authenticate'] ?? '').split(/,\s*/).some((value) => value.toLowerCase() === 'otp') || /one-time pass/.test(raw));
+        const conflict = status === 409 || error === 'EPUBLISHCONFLICT'
+          || (status === 403 && typeof error === 'string' && /cannot publish over (?:the )?previously published/i.test(error));
+        throw new NpmRegistryHttpError(status, otp ? 'otp_required' : conflict ? 'version_conflict' : undefined);
+      }
+      try { return { statusCode: status, headers: response.headers, body: JSON.parse(raw) as unknown }; }
+      catch { throw new Error('Invalid npm registry JSON response'); }
+  }
+
   return {
+    requestJsonResponse,
+    async requestJson(input) { return (await requestJsonResponse(input)).body; },
     async getJson(input) {
       const response = await open(input);
       const contentType = response.headers['content-type'];

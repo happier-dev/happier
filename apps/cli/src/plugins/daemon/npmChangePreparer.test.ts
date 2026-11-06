@@ -11,7 +11,7 @@ import {
   type MarketplaceIndexSourceSnapshotV1,
 } from '@happier-dev/protocol';
 
-import { NpmRegistryHttpError, type NpmRegistryHttpsClient } from '@/plugins/distribution/npm/httpsClient';
+import { NpmRegistryHttpError, type NpmRegistryArtifactClient } from '@/plugins/distribution/npm/httpsClient';
 import { createTestNpmTarball, sriSha512 } from '@/plugins/distribution/testkit/npmTarball';
 import {
   createPluginRegistryStateStore,
@@ -99,7 +99,7 @@ async function createNpmPackageFixture(params: Readonly<{
     'dist-tags': Readonly<{ latest: string }>;
     versions: Readonly<Record<string, unknown>>;
   }>;
-  client: NpmRegistryHttpsClient;
+  client: NpmRegistryArtifactClient;
 }>> {
   const packageName = params.packageName ?? '@acme/npm-candidate';
   const pluginId = params.pluginId ?? 'acme.npm-candidate';
@@ -174,7 +174,7 @@ async function createNpmPackageFixture(params: Readonly<{
       },
     },
   };
-  const client: NpmRegistryHttpsClient = {
+  const client: NpmRegistryArtifactClient = {
     getJson: async () => metadata,
     getBody: async () => ({ body: Readable.from([archive]), contentLength: archive.byteLength }),
   };
@@ -912,7 +912,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       }),
     });
     const bodyRequests: string[] = [];
-    const client: NpmRegistryHttpsClient = {
+    const client: NpmRegistryArtifactClient = {
       getJson: async () => ({
         name: compatibleFixture.packageName,
         'dist-tags': { latest: incompatibleFixture.version },
@@ -999,7 +999,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       }),
     });
     const bodyRequests: string[] = [];
-    const client: NpmRegistryHttpsClient = {
+    const client: NpmRegistryArtifactClient = {
       getJson: async () => ({
         name: compatibleFixture.packageName,
         'dist-tags': { latest: incompatibleFixture.version },
@@ -1086,7 +1086,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       }),
     });
     const bodyRequests: string[] = [];
-    const client: NpmRegistryHttpsClient = {
+    const client: NpmRegistryArtifactClient = {
       getJson: async () => ({
         name: compatibleFixture.packageName,
         'dist-tags': { latest: incompatibleFixture.version },
@@ -1191,7 +1191,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       }),
     });
     const bodyRequests: string[] = [];
-    const client: NpmRegistryHttpsClient = {
+    const client: NpmRegistryArtifactClient = {
       getJson: async () => ({
         name: compatibleFixture.packageName,
         'dist-tags': { latest: incompatibleFixture.version },
@@ -1389,7 +1389,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     });
 
     const getBody = vi.fn(updateFixture.client.getBody);
-    const updateClient: NpmRegistryHttpsClient = {
+    const updateClient: NpmRegistryArtifactClient = {
       ...updateFixture.client,
       getBody,
     };
@@ -2344,7 +2344,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-anonymous-refused-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
-    const refusing: NpmRegistryHttpsClient = {
+    const refusing: NpmRegistryArtifactClient = {
       ...fixture.client,
       getJson: async () => { throw new NpmRegistryHttpError(401); },
       getBody: async () => { throw new NpmRegistryHttpError(401); },
