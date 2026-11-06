@@ -122,6 +122,17 @@ code-trust action.
 [Install and trust](/plugins/packaging/install-trust) owns the detailed trust,
 update, rollback, enable/disable, inspection, and uninstall contracts.
 
+### Publish a Bot template
+
+For an authored plugin package, declare a keyed `botTemplates` record in
+`definePlugin(...)` and include each referenced release JSON file in the packed
+package. This unreleased 0.3 development contract supports several templates in
+one package and needs no runtime registration. Follow the
+[cold-template contribution contract](/plugins/manifest/contributions#bot-templates-03-development-source)
+and its public example, then use the ordinary check, pack and publication
+workflow on this page. Each JSON file is a portable `BotTemplateReleaseV1`,
+not a private draft or a reference to its author's Session.
+
 ## Reload a development source
 
 ```bash

@@ -24,6 +24,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
 | `workflows` | Reusable, read-only Workflow definitions shown under From plugins | `workflows.<id>`: `title`, optional `description`, and `definition` |
+| `botTemplates` | Packaged cold Bot template releases (0.3 development source) | `botTemplates.<id>`: `path`; no runtime registration. See [Bot templates](#bot-templates-03-development-source). |
 | `registrySources` | Data-only catalogs shown alongside built-in and personal sources | `registrySources.<id>`: `title`, `format`, `kinds`, `url`, optional `path` and `ref` |
 | `languageServers` | Machine-side language-server declarations | `languageServers.<id>`: static language mapping, declared executable and initialization/configuration data |
 | `skills` | Packaged, read-only skills in the Skills library | `skills.<id>`: `directory` |
@@ -49,6 +50,44 @@ Do not infer availability from this shape catalog. Consult the generated matrix
 for each family's source availability, optional maintained consumer evidence,
 unblock condition, loaded-platform evidence, and release availability. This keeps
 mutable support status in one generated owner rather than duplicating it here.
+
+## Bot templates (0.3 development source)
+
+Package reusable Bots as JSON releases. In `definePlugin(...)`, `botTemplates`
+is a keyed record: each key supplies the contribution's local `id`, and its
+`path` points to a JSON file relative to the plugin package root. A package can
+contribute several templates:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const templates = definePlugin({
+  id: 'com.example.bot-templates',
+  version: '1.0.0',
+  displayName: 'Research and review Bots',
+  botTemplates: {
+    researcher: { path: 'templates/researcher.json' },
+    reviewer: { path: './templates/reviewer.json' },
+  },
+});
+```
+
+The projected manifest uses `contributes.botTemplates`, an array of `{ id, path }`
+descriptors. Paths use portable forward slashes; an optional leading `./` is
+accepted, while absolute paths, parent traversal and backslashes are rejected.
+Include the referenced JSON files in the package's packed files.
+
+Each file contains a `BotTemplateReleaseV1` value: `v: 1`, a deliberate `version`,
+`releasedAtMs`, `changelog`, and portable `content`. Content includes identity,
+instructions, selected reusable memory rules, packaged skills, and software,
+connected-account and MCP needs. The public
+[authoring example](https://github.com/happier-dev/happier/tree/dev/packages/plugin-sdk/examples/public-authoring)
+contains `botTemplates.ts` and two complete release files under `templates/`.
+Use those files as the starting point; private drafts, source Session addresses
+and credentials do not belong in the release.
+
+These are cold descriptors: discovering or previewing a template does not
+activate plugin code, and there is no `botTemplates` runtime registration.
 
 ## Language servers in development
 
