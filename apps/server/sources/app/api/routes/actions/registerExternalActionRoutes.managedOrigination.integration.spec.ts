@@ -1533,7 +1533,8 @@ describe('ordinary Account managed Action origination', () => {
                 creationRequestId: selected.requestId, expectedIntentRevision: 0,
                 controller: selected.controller, acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest });
             const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1('session.spawn_new');
-            const verifyBody = { v: 1 };
+            const verifyBody = { v: 1 as const,
+                ...(child.binding.admittedMachineRole ? { admittedMachineRole: child.binding.admittedMachineRole } : {}) };
             const verifyChild = () => instance.inject({ method: 'POST', url: verifyPath, payload: verifyBody,
                 headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'session.spawn_new',
