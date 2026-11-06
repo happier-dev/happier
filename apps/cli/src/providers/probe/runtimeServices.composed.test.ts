@@ -831,7 +831,6 @@ describe('runtime provider services', () => {
           catalog: { source: 'manual', manualModelPolicy: 'allowed' },
         },
         savedSecretId: null,
-        actionNonce: 'draft-action-0001',
       })).resolves.toMatchObject({
         status: 'error', error: { code: 'provider_feature_disabled' },
       });
@@ -948,7 +947,6 @@ describe('runtime provider services', () => {
         },
       },
       savedSecretId: null,
-      actionNonce: 'draft-action-coalesce-0001',
     };
 
     const firstController = new AbortController();

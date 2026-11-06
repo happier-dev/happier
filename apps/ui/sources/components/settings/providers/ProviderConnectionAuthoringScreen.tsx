@@ -594,7 +594,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 draftConnectionId: connectionId,
                 template,
                 savedSecretId: draftRequiresApiKey ? effectiveSecretId : null,
-                actionNonce: `probe_${randomUUID()}`,
             }, { signal: controller.signal });
             if (!accountStillCurrent() || probeGenerationRef.current !== generation) return;
             if (result.status === 'error') {

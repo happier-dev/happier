@@ -173,7 +173,6 @@ export async function probeProviderDraft(input: Readonly<{
     draftConnectionId: string;
     template: CustomProviderTemplateV1;
     savedSecretId: string | null;
-    actionNonce: string;
 }>): Promise<DaemonProviderProbeResponseV1> {
     return await probeProvider(input.serverId, {
         kind: 'draft',
@@ -181,7 +180,6 @@ export async function probeProviderDraft(input: Readonly<{
         draftConnectionId: input.draftConnectionId,
         template: input.template,
         savedSecretId: input.savedSecretId,
-        actionNonce: input.actionNonce,
     });
 }
 

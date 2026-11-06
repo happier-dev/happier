@@ -3,7 +3,6 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '../ids.js';
-import { ProviderProbeRequestFingerprintV1Schema } from '../fingerprints.js';
 
 const FingerprintSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 
@@ -24,24 +23,6 @@ export const ProviderAccountGrantV1Schema = lazyZodSchema(() => z.strictObject({
   confirmedAt: z.number().check(z.nonnegative()),
 }));
 export type ProviderAccountGrantV1 = z.infer<typeof ProviderAccountGrantV1Schema>;
-
-export const ProviderProbeAuthorizationV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1),
-  id: z.string().check(z.trim(), z.minLength(16), z.maxLength(256)),
-  machineId: ProviderMachineIdSchema,
-  endpointSetFingerprint: FingerprintSchema,
-  credentialDestinationFingerprint: FingerprintSchema,
-  probeRequestFingerprint: ProviderProbeRequestFingerprintV1Schema,
-  selectedSecretBindingId: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-  selectedSecretRecordFingerprint: z.nullable(FingerprintSchema),
-  use: z.literal('probe'),
-  expiresAt: z.number().check(z.nonnegative()),
-}).check(z.superRefine((value, ctx) => {
-  if ((value.selectedSecretBindingId === null) !== (value.selectedSecretRecordFingerprint === null)) {
-    ctx.addIssue({ code: 'custom', path: ['selectedSecretRecordFingerprint'], message: 'Secret id and record fingerprint must be present together' });
-  }
-})));
-export type ProviderProbeAuthorizationV1 = z.infer<typeof ProviderProbeAuthorizationV1Schema>;
 
 export const ProviderBindingAuthorizationTicketV1Schema = lazyZodSchema(() => z.strictObject({
   connectionId: ProviderConnectionIdSchema,

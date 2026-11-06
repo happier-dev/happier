@@ -1,16 +1,36 @@
-import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
+  FeaturesResponseSchema,
   createProviderProbeRequestFingerprintV1,
   encryptSecretStringV1,
   sealSavedSecretResourceStoredContentV1,
   splitProviderSettingsV1,
 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
-import { createProviderProbeHttpClient } from './client';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createProviderProbeHttpClient, ProviderProbeCancelledError } from './client';
 import { createProviderDraftProbeService } from './draft';
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+
+// Stored daemon credentials are an OS file boundary; the Saved Secret owner stays real.
+const persistenceMocks = vi.hoisted(() => ({ readStoredCredentials: vi.fn(async () => null as unknown) }));
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: persistenceMocks.readStoredCredentials,
+}));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  persistenceMocks.readStoredCredentials.mockReset();
+  persistenceMocks.readStoredCredentials.mockResolvedValue(null);
+  resetActiveAccountSettingsSnapshotForTests();
+  resetServerFeaturesClientForTests();
+});
 
 const key = new Uint8Array(32).fill(7);
 
@@ -105,14 +125,13 @@ function sharedSecretSnapshot() {
   };
 }
 
-function request(actionNonce = 'draft-action-0001', withCredential = false) {
+function request(withCredential = false) {
   return {
     kind: 'draft' as const,
     draftConnectionId: 'pc_draft_1',
     machineId: 'machine-a',
     template: template(withCredential),
     savedSecretId: withCredential ? 'saved-secret-a' : null,
-    actionNonce,
   };
 }
 
@@ -141,9 +160,8 @@ describe('draft provider probe service', () => {
     },
   );
 
-  it('rejects the exact private dispatch address set before transport when it differs from the set revalidated by the draft owner', async () => {
-    const privateRequest = request('draft-action-private-address');
-    privateRequest.template.endpointTemplates[0]!.baseUrl = 'http://gateway.internal:1234/';
+  it('refuses a public hostname resolving private at dispatch before disclosing its SavedSecret', async () => {
+    const privateRequest = request(true);
     const transport = vi.fn(async () => ({
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -151,13 +169,12 @@ describe('draft provider probe service', () => {
     }));
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
-      resolveAddresses: async () => ['10.0.0.1'],
+      getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['10.0.0.2'],
         transport,
       }),
-      createAuthorizationId: () => 'authorization-private-address',
       now: () => 1_000,
     });
 
@@ -168,7 +185,8 @@ describe('draft provider probe service', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it('mints and consumes a daemon-only authorization for one exact explicit Test request', async () => {
+  it('admits one exact explicit Test request with one endpoint resolution', async () => {
+    const resolveAddresses = vi.fn(async () => ['1.1.1.1']);
     const transport = vi.fn(async () => ({
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -176,10 +194,9 @@ describe('draft provider probe service', () => {
     }));
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
-      resolveAddresses: async () => ['1.1.1.1'],
+      getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses,
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-0001',
       now: () => 1_000,
     });
 
@@ -192,10 +209,10 @@ describe('draft provider probe service', () => {
       }),
     });
     expect(transport).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(transport.mock.calls)).not.toContain('authorization-0001');
+    expect(resolveAddresses).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects replay and concurrent double-submit before a second provider request', async () => {
+  it('allows repeated and concurrent authorized reads of the same unsaved draft', async () => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => { release = resolve; });
     const transport = vi.fn(async () => {
@@ -204,49 +221,49 @@ describe('draft provider probe service', () => {
     });
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
+      getAccountSettingsSnapshot: snapshotReader(),
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-0001',
       now: () => 1_000,
     });
 
     const first = service.probe(request());
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
-    await expect(service.probe(request())).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_probe_authorization_invalid' },
-    });
+    const second = service.probe(request());
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
     release();
-    await expect(first).resolves.toMatchObject({ status: 'success' });
-    await expect(service.probe(request())).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_probe_authorization_invalid' },
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: 'success' }),
+      expect.objectContaining({ status: 'success' }),
+    ]);
+    await expect(service.probe(request())).resolves.toMatchObject({ status: 'success' });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps an admitted SavedSecret Test active beyond the former default wall cutoff', async () => {
+    let now = Date.now();
+    const transport = vi.fn(async (input: Readonly<{ headers: Readonly<Record<string, string>> }>) => ({
+      status: input.headers.authorization === 'Bearer secret-a' ? 200 : 401,
+      headers: {}, body: Buffer.from(JSON.stringify({ data: [{ id: 'delayed-model' }] }), 'utf8'),
+    }));
+    const service = createProviderDraftProbeService({
+      machineId: 'machine-a',
+      getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => { now = Date.now() + 30_001; return ['1.1.1.1']; },
+        transport,
+        now: () => now,
+      }),
+      now: () => now,
+    });
+    await expect(service.probe(request(true))).resolves.toMatchObject({
+      status: 'success', models: [{ id: 'delayed-model' }],
     });
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds live replay-cache entries and refuses overflow before provider dispatch', async () => {
-    const transport = vi.fn(async () => ({
-      status: 200, headers: {}, body: Buffer.from(JSON.stringify({ data: [] }), 'utf8'),
-    }));
-    let authorizationId = 0;
-    const service = createProviderDraftProbeService({
-      machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
-      resolveAddresses: async () => ['1.1.1.1'],
-      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => `authorization-${String(++authorizationId).padStart(4, '0')}`,
-      now: () => 1_000,
-      maxReplayEntries: 2,
-    });
-    await expect(service.probe(request('draft-action-0010'))).resolves.toMatchObject({ status: 'success' });
-    await expect(service.probe(request('draft-action-0011'))).resolves.toMatchObject({ status: 'success' });
-    await expect(service.probe(request('draft-action-0012'))).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_probe_authorization_invalid' },
-    });
-    expect(transport).toHaveBeenCalledTimes(2);
-  });
-
-  it('mints one exact authorization per declared fallback probe and returns the successful request fingerprint', async () => {
+  it('uses declared fallback probes and returns the successful request fingerprint', async () => {
     let call = 0;
     const transport = vi.fn(async () => {
       call += 1;
@@ -254,16 +271,14 @@ describe('draft provider probe service', () => {
         ? { status: 503, headers: {}, body: Buffer.alloc(0) }
         : { status: 200, headers: {}, body: Buffer.from(JSON.stringify({ data: [{ id: 'fallback-model' }] }), 'utf8') };
     });
-    let authorizationId = 0;
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
+      getAccountSettingsSnapshot: snapshotReader(),
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => `authorization-${String(++authorizationId).padStart(4, '0')}`,
       now: () => 1_000,
     });
-    const fallbackRequest = request('draft-action-0013');
+    const fallbackRequest = request();
     fallbackRequest.template.catalog.probes.push({
       endpointTemplateId: 'openai', path: '/v2/models', parser: 'openai-models',
     });
@@ -279,37 +294,30 @@ describe('draft provider probe service', () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses wrong-machine, missing-secret, and expired authorization before provider HTTP dispatch', async () => {
-    let now = 1_000;
+  it('refuses wrong-machine and missing-secret requests before provider HTTP dispatch', async () => {
     const transport = vi.fn();
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
+      getAccountSettingsSnapshot: snapshotReader(),
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-0001',
-      now: () => now,
-      authorizationTtlMs: 10,
-      beforeAuthorizationConsume: () => { now = 1_011; },
+      now: () => 1_000,
     });
     await expect(service.probe({ ...request(), machineId: 'machine-b' })).resolves.toMatchObject({
       status: 'error', error: { code: 'provider_not_enabled_on_machine' },
     });
-    await expect(service.probe(request('draft-action-0002', true))).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_probe_authorization_invalid' },
-    });
     expect(transport).not.toHaveBeenCalled();
 
     const missingSecretDns = vi.fn(async () => ['1.1.1.1']);
+    const missingSecretSnapshot = snapshotWithoutSecrets();
     const missingSecretService = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: snapshotWithoutSecrets,
+      getAccountSettingsSnapshot: () => missingSecretSnapshot,
       resolveAddresses: missingSecretDns,
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-0002',
       now: () => 2_000,
     });
-    await expect(missingSecretService.probe(request('draft-action-0004', true))).resolves.toMatchObject({
+    await expect(missingSecretService.probe(request(true))).resolves.toMatchObject({
       status: 'error', error: { code: 'provider_secret_missing' },
     });
     expect(missingSecretDns).toHaveBeenCalledTimes(1);
@@ -332,17 +340,19 @@ describe('draft provider probe service', () => {
     const transport = vi.fn();
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => ({ ...base, settings }),
+      getAccountSettingsSnapshot: (() => {
+        const current = { ...base, settings };
+        return () => current;
+      })(),
       resolveAddresses: async () => ['169.254.169.254'],
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['169.254.169.254'],
         transport,
       }),
-      createAuthorizationId: () => 'authorization-unsafe-endpoint',
       now: () => 2_000,
     });
 
-    await expect(service.probe(request('draft-action-unsafe-endpoint', true))).resolves.toMatchObject({
+    await expect(service.probe(request(true))).resolves.toMatchObject({
       status: 'error',
       error: { code: 'provider_probe_authorization_invalid' },
     });
@@ -350,7 +360,7 @@ describe('draft provider probe service', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it('invalidates an older in-flight draft after an edited path/parser action for the same draft id', async () => {
+  it('keeps concurrent edited drafts independent and identifies each exact request', async () => {
     let releaseFirst!: () => void;
     const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let transportCall = 0;
@@ -359,18 +369,16 @@ describe('draft provider probe service', () => {
       if (transportCall === 1) await firstPending;
       return { status: 200, headers: {}, body: Buffer.from(JSON.stringify({ data: [{ id: `model-${transportCall}` }] }), 'utf8') };
     });
-    let authorizationId = 0;
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
-      getAccountSettingsSnapshot: () => snapshot(),
+      getAccountSettingsSnapshot: snapshotReader(),
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => `authorization-${String(++authorizationId).padStart(4, '0')}`,
       now: () => 1_000,
     });
-    const first = service.probe(request('draft-action-0005'));
+    const first = service.probe(request());
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
-    const edited = request('draft-action-0006');
+    const edited = request();
     edited.template.catalog.probes[0]!.path = '/v2/models';
     const second = service.probe(edited);
     await expect(second).resolves.toMatchObject({
@@ -382,12 +390,16 @@ describe('draft provider probe service', () => {
     });
     releaseFirst();
     await expect(first).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_probe_authorization_invalid' },
+      status: 'success',
+      requestFingerprint: createProviderProbeRequestFingerprintV1({
+        method: 'GET', endpointUrl: 'https://gateway.example/v1', path: '/models',
+        parser: 'openai-models', publicHeaders: {},
+      }),
     });
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('discards an in-flight response after the selected SavedSecret record rotates', async () => {
+  it('finishes an admitted read when the selected SavedSecret rotates during dispatch', async () => {
     let currentSnapshot = snapshot('secret-a');
     const transport = vi.fn(async () => {
       currentSnapshot = snapshot('secret-b');
@@ -398,12 +410,11 @@ describe('draft provider probe service', () => {
       getAccountSettingsSnapshot: () => currentSnapshot,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-0001',
       now: () => 1_000,
     });
 
-    await expect(service.probe(request('draft-action-0003', true))).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_authorization_changed' },
+    await expect(service.probe(request(true))).resolves.toMatchObject({
+      status: 'success', models: [{ id: 'stale' }],
     });
     expect(transport).toHaveBeenCalledTimes(1);
   });
@@ -420,48 +431,147 @@ describe('draft provider probe service', () => {
       getAccountSettingsSnapshot: () => currentSnapshot,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-shared-secret',
       now: () => 1_000,
     });
 
     await expect(service.probe({
-      ...request('draft-action-shared-secret', true),
+      ...request(true),
       savedSecretId: 'happier:shared-secret:v1:resource-draft-probe',
     })).resolves.toMatchObject({ status: 'success', models: [{ id: 'shared-model' }] });
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('admits a draft probe against Home-current shared material, not the hydrated row', async () => {
-    const transport = vi.fn(async () => ({
-      status: 200,
+  it.each([
+    // Owner reason `reference_unavailable`: the hydrated row still reads ready, but the Home has not finished this material.
+    ['Home preparing_encrypted_access', { status: 200, materialStatus: 'preparing_encrypted_access' }, 'provider_secret_unavailable', 'reference_unavailable'],
+    // Untyped catalog failure: nothing about the secret is known, so it is unavailable, not missing.
+    ['Home catalog HTTP 500', { status: 500 }, 'provider_secret_unavailable', 'reference_unavailable'],
+    // Typed non-ready reasons keep the owner projection's code and carry the owner's reason unchanged.
+    ['Home access_removed', { status: 200, materialStatus: 'access_removed' }, 'provider_secret_missing', 'reference_forbidden'],
+    ['Home deleted', { status: 200, materialStatus: 'deleted' }, 'provider_secret_missing', 'reference_deleted'],
+    ['Home update_required', { status: 200, materialStatus: 'update_required' }, 'provider_secret_missing', 'reference_repair_required'],
+    ['Home recipient_mode_unsupported', { status: 200, materialStatus: 'recipient_mode_unsupported' }, 'provider_secret_missing', 'reference_mode_incompatible'],
+    // A corrupt Home row carries no ref, so the owner resolves the requested ref as not authorized.
+    ['Home resource_corrupt', { status: 200, materialStatus: 'resource_corrupt' }, 'provider_secret_missing', 'reference_forbidden'],
+    // Ready Home-current material is admitted and dispatched once.
+    ['Home ready', { status: 200, materialStatus: 'ready' }, null, null],
+  ] as const)('admits a draft probe against Home-current shared material (%s)', async (_label, home, code, savedSecretReason) => {
+    const transport = vi.fn(async (request: Readonly<{ headers: Readonly<Record<string, string>> }>) => ({
+      status: request.headers.authorization === 'Bearer shared-draft-value' ? 200 : 401,
       headers: {},
       body: Buffer.from(JSON.stringify({ data: [{ id: 'shared-model' }] }), 'utf8'),
     }));
-    const admitted: string[] = [];
-    // The hydrated row still reads ready because the revocation's
-    // AccountChange hint was never delivered.
-    const currentSnapshot = { ...sharedSecretSnapshot(), scopeKey: 'account-scope' };
+    const ref = 'happier:shared-secret:v1:resource-draft-probe';
+    const currentSnapshot = { ...sharedSecretSnapshot(), scopeKey: resolveAccountSettingsScopeKeyForToken('draft-token') };
+    setActiveAccountSettingsSnapshot(currentSnapshot);
+    persistenceMocks.readStoredCredentials.mockResolvedValue({ token: 'draft-token', encryption: null });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(
+      FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} }),
+    ), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const homeReads = vi.spyOn(axios, 'get').mockResolvedValue(home.status !== 200 ? { status: home.status, data: {} }
+      : home.materialStatus === 'resource_corrupt' ? { status: 200, data: { resources: [{
+        entry: { materialStatus: 'resource_corrupt', relationship: 'recipient', repair: null } }] } } : {
+      status: 200,
+      data: { resources: [{ resourceId: 'resource-draft-probe', encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: home.materialStatus === 'ready' ? sealSavedSecretResourceStoredContentV1({
+          resourceId: 'resource-draft-probe', mode: 'plain',
+          content: { v: 1, name: 'Shared draft probe key', kind: 'apiKey', value: 'shared-draft-value' },
+        }) : null,
+        entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Shared draft probe key', kind: 'apiKey',
+          ownerAccountId: 'owner-account', revision: 1, materialStatus: home.materialStatus,
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } } }] },
+    });
     const service = createProviderDraftProbeService({
       machineId: 'machine-a',
       getAccountSettingsSnapshot: () => currentSnapshot,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      createAuthorizationId: () => 'authorization-revoked-shared-secret',
       now: () => 1_000,
-      refreshSavedSecretCatalogForOperation: async (refreshInput) => {
-        for (const reference of refreshInput.references ?? []) admitted.push(reference.ref);
-        throw new SavedSecretOperationAdmissionError({
-          reason: 'reference_unavailable',
-          reference: refreshInput.references?.[0]?.ref ?? '',
-        });
-      },
     });
 
-    await expect(service.probe({
-      ...request('draft-action-revoked-shared-secret', true),
-      savedSecretId: 'happier:shared-secret:v1:resource-draft-probe',
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing' } });
-    expect(admitted).toEqual(['happier:shared-secret:v1:resource-draft-probe']);
+    const result = await service.probe({ ...request(true), savedSecretId: ref });
+
+    expect(homeReads).toHaveBeenCalledTimes(1);
+    if (code === null) {
+      expect(result).toMatchObject({ status: 'success', models: [{ id: 'shared-model' }] });
+      expect(transport).toHaveBeenCalledTimes(1);
+      return;
+    }
+    expect(result).toEqual({ status: 'error',
+      error: { ...createProviderErrorV1(code, { connectionId: 'pc_draft_1', machineId: 'machine-a' }), savedSecretReason } });
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicitly tested private Machine endpoint despite ordinary private DNS drift', async () => {
+    const privateRequest = request(true);
+    privateRequest.template.endpointTemplates[0]!.baseUrl = 'http://gateway.internal:1234/';
+    const transport = vi.fn(async (input: Readonly<{ headers: Readonly<Record<string, string>> }>) => ({
+      status: input.headers.authorization === 'Bearer secret-a' ? 200 : 401,
+      headers: {}, body: Buffer.from(JSON.stringify({ data: [{ id: 'private-model' }] }), 'utf8'),
+    }));
+    const service = createProviderDraftProbeService({
+      machineId: 'machine-a', getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses: async () => ['10.0.0.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['10.0.0.2'], transport }),
+    });
+    await expect(service.probe(privateRequest)).resolves.toMatchObject({
+      status: 'success', models: [{ id: 'private-model' }],
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a different Account scope before dispatch', async () => {
+    let currentSnapshot = { ...snapshot(), scopeKey: 'home-a-account-a' };
+    const transport = vi.fn();
+    const service = createProviderDraftProbeService({
+      machineId: 'machine-a', getAccountSettingsSnapshot: () => currentSnapshot,
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => {
+          currentSnapshot = { ...currentSnapshot, scopeKey: 'home-b-account-b' };
+          return ['1.1.1.1'];
+        }, transport,
+      }),
+    });
+    await expect(service.probe(request())).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_authorization_changed' },
+    });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-origin redirect without disclosing the selected secret to its destination', async () => {
+    const transport = vi.fn(async () => ({
+      status: 302, headers: { location: 'https://other.example/models' }, body: Buffer.alloc(0),
+    }));
+    const service = createProviderDraftProbeService({
+      machineId: 'machine-a', getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+    });
+    await expect(service.probe(request(true))).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_authorization_changed' },
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the admitted draft HTTP read when its local caller aborts', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const transport = vi.fn(async () => {
+      await pending;
+      return { status: 200, headers: {}, body: Buffer.from(JSON.stringify({ data: [] }), 'utf8') };
+    });
+    const service = createProviderDraftProbeService({
+      machineId: 'machine-a', getAccountSettingsSnapshot: snapshotReader(),
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+    });
+    const controller = new AbortController();
+    const result = service.probe(request(), { signal: controller.signal, wallDeadlineAtMs: Infinity });
+    const settled = expect(result).rejects.toBeInstanceOf(ProviderProbeCancelledError);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
+    controller.abort();
+    release();
+    await settled;
   });
 });

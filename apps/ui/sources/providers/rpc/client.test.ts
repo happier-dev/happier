@@ -366,7 +366,7 @@ describe('provider settings RPC client', () => {
         }));
     });
 
-    it('probes a draft using only a SavedSecret identity and action nonce', async () => {
+    it('probes a draft using only its configuration and SavedSecret identity', async () => {
         machineRpcWithServerScope.mockResolvedValueOnce({ status: 'not_supported' });
         const template = buildCustomProviderTemplate({
             ...createCustomProviderDraft('openai-chat'),
@@ -375,11 +375,11 @@ describe('provider settings RPC client', () => {
         });
         await probeProviderDraft({
             machineId: 'machine-a', serverId: 'server-a', draftConnectionId: 'pc_draft',
-            template, savedSecretId: 'secret-id', actionNonce: 'nonce_1234567890123456',
+            template, savedSecretId: 'secret-id',
         });
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
             method: 'daemon.providers.probe',
-            payload: expect.objectContaining({ savedSecretId: 'secret-id', actionNonce: 'nonce_1234567890123456' }),
+            payload: { kind: 'draft', machineId: 'machine-a', draftConnectionId: 'pc_draft', template, savedSecretId: 'secret-id' },
         }));
     });
 

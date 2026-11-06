@@ -190,7 +190,7 @@ describe('Provider mutation deferred approval', () => {
                         ? client.probeProviderDraft({ serverId, machineId: 'machine-a', draftConnectionId: 'pc_draft',
                             template: buildCustomProviderTemplate({ ...createCustomProviderDraft('openai-responses'),
                                 name: 'Draft approval source', baseUrl: 'https://models.example.test/v1', requiresApiKey: false }),
-                            savedSecretId: null, actionNonce: 'probe-approval-nonce' })
+                            savedSecretId: null })
                         : client.probeProviderConnection({ serverId, machineId: 'machine-a', connectionId: 'pc_a' });
                 execution = pending.then(() => { throw new Error('Rejected Provider action executed'); }, caught => { failure = caught; });
             });

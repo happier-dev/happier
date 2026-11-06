@@ -81,7 +81,6 @@ export const DaemonProviderDraftProbeRequestV1Schema = lazyZodSchema(() => z.str
   machineId: ProviderMachineIdSchema,
   template: CustomProviderTemplateV1Schema,
   savedSecretId: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-  actionNonce: z.string().check(z.trim(), z.minLength(16), z.maxLength(256)),
 }).check(z.superRefine((value, ctx) => {
   if ((value.template.credential === undefined && value.savedSecretId !== null)
     || (value.template.credential?.required === true && value.savedSecretId === null)) {

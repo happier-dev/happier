@@ -1,31 +1,32 @@
 import { randomUUID } from 'node:crypto';
 
 import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
-import { ProviderProbeAuthorizationV1Schema } from '@happier-dev/protocol/providers/grants/v1';
 import { createEmptyProviderRuntimeStateFileV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
-import { createProviderCredentialDestinationFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderObservationAuthorizationFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createProviderFingerprintV1 } from '@happier-dev/protocol/providers/fingerprints';
-import type { ProviderErrorV1, ProviderProbeAuthorizationV1, ProviderRuntimeStateFileV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { DaemonProviderDraftProbeRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import { readProviderSettingsForCli } from '../settings/read';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
+import type { ResolvedProviderConnectionEndpoint } from '../registry/types';
+import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import {
   createProviderOperationLifetime,
-  ProviderOperationAbandonedError,
   type ProviderOperationLifetime,
 } from '../operationLifetime';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import type { ProviderProbeHostCredentialReference } from '../spawn/credentials';
-import { resolveRuntimeProviderCredential } from '../spawn/runtimeCredential';
+import { providerSavedSecretAdmissionError, resolveRuntimeProviderCredential } from '../spawn/runtimeCredential';
 import type {
   ProviderProbeAuthorizationPort,
   ProviderProbeAuthorizationRequest,
@@ -33,29 +34,6 @@ import type {
 } from './authorization';
 import { createProviderCatalogService, type ProviderCatalogRefreshResult, type ProviderProbeEndpoint } from './catalog';
 import type { createProviderProbeHttpClient } from './client';
-
-const DEFAULT_AUTHORIZATION_TTL_MS = 30_000;
-const MAX_REPLAY_ENTRIES = 256;
-
-type DraftAuthorizationTicket = Readonly<{
-  authorization: ProviderProbeAuthorizationV1;
-  draftConnectionId: string;
-}>;
-
-type DraftAuthorizationRecord = {
-  ticket: DraftAuthorizationTicket;
-  input: DaemonProviderDraftProbeRequestV1;
-  endpointTemplateId: string;
-  endpointUrl: string;
-  endpointScope: 'account' | 'machine';
-  protocol: ProviderProbeAuthorizationRequest['protocol'];
-  path: string;
-  parser: ProviderProbeAuthorizationRequest['parser'];
-  publicHeaders: Readonly<Record<string, string>>;
-  credentialRef: ProviderProbeHostCredentialReference | null;
-  observationAuthorizationFingerprint: ReturnType<typeof createProviderObservationAuthorizationFingerprintV1>;
-  consumed: boolean;
-};
 
 export function createProviderDraftProbeSchedulerKey(raw: unknown): string {
   const request = DaemonProviderDraftProbeRequestV1Schema.parse(raw);
@@ -118,7 +96,6 @@ async function resolveDraftFacts(input: Readonly<{
   request: DaemonProviderDraftProbeRequestV1;
   snapshot: ActiveAccountSettingsSnapshot;
   resolveAddresses: (hostname: string) => Promise<readonly string[]>;
-  exactDestination?: Readonly<{ endpointUrl: string; resolvedAddresses: readonly string[] }>;
   lifetime: ProviderOperationLifetime;
 }>) {
   if (input.snapshot.providerConnectionsCatalog?.status !== 'ready') {
@@ -135,32 +112,14 @@ async function resolveDraftFacts(input: Readonly<{
     connections: [connection],
   });
   const registry = { providersByContributionKey: new Map() };
-  let dnsEvidenceByEndpointUrl;
-  try {
-    dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId: input.request.draftConnectionId,
-      machineId: input.request.machineId,
-      providerSettings,
-      registry,
-      resolveAddresses: input.resolveAddresses,
-      lifetime: input.lifetime,
-    });
-  } catch (abandoned) {
-    // A draft probe resolves DNS inside an admitted scheduler slot, so an
-    // unresponsive resolver would hold host capacity, not just this caller.
-    if (abandoned instanceof ProviderOperationAbandonedError) {
-      return { ok: false as const, error: error(input.request, 'provider_endpoint_unavailable') };
-    }
-    throw abandoned;
-  }
-  if (input.exactDestination) {
-    const exactEvidenceByEndpointUrl = new Map(dnsEvidenceByEndpointUrl);
-    exactEvidenceByEndpointUrl.set(
-      input.exactDestination.endpointUrl,
-      input.exactDestination.resolvedAddresses,
-    );
-    dnsEvidenceByEndpointUrl = exactEvidenceByEndpointUrl;
-  }
+  const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+    connectionId: input.request.draftConnectionId,
+    machineId: input.request.machineId,
+    providerSettings,
+    registry,
+    resolveAddresses: input.resolveAddresses,
+    lifetime: input.lifetime,
+  });
   const resolution = resolveProviderConnectionForMachine({
     connectionId: input.request.draftConnectionId,
     machineId: input.request.machineId,
@@ -179,166 +138,14 @@ async function resolveDraftFacts(input: Readonly<{
 
 export function createProviderDraftProbeService(input: Readonly<{
   machineId: string;
+  secretSources?: TargetSecretSourcesV1;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   resolveAddresses: (hostname: string) => Promise<readonly string[]>;
   client: ReturnType<typeof createProviderProbeHttpClient>;
   now?: () => number;
-  createAuthorizationId?: () => string;
-  authorizationTtlMs?: number;
-  maxReplayEntries?: number;
-  beforeAuthorizationConsume?: () => void | Promise<void>;
   openTeamDirect?: Parameters<typeof resolveRuntimeProviderCredential>[0]['openTeamDirect'];
-  /** The canonical operation-admission refresh; injectable for tests only. */
-  refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
 }>) {
   const now = input.now ?? Date.now;
-  const refreshForOperation = input.refreshSavedSecretCatalogForOperation
-    ?? refreshSavedSecretCatalogForOperation;
-  const createAuthorizationId = input.createAuthorizationId ?? randomUUID;
-  const authorizationTtlMs = Math.min(
-    DEFAULT_AUTHORIZATION_TTL_MS,
-    Math.max(1, input.authorizationTtlMs ?? DEFAULT_AUTHORIZATION_TTL_MS),
-  );
-  const maxReplayEntries = Math.min(MAX_REPLAY_ENTRIES, Math.max(1, input.maxReplayEntries ?? MAX_REPLAY_ENTRIES));
-  const recordsById = new Map<string, DraftAuthorizationRecord>();
-  const replayExpiryByKey = new Map<string, number>();
-
-  function pruneExpired(at: number): void {
-    for (const [key, expiresAt] of replayExpiryByKey) {
-      if (expiresAt <= at) replayExpiryByKey.delete(key);
-    }
-    for (const [id, record] of recordsById) {
-      if (record.ticket.authorization.expiresAt <= at) recordsById.delete(id);
-    }
-  }
-
-  function reserveAction(request: DaemonProviderDraftProbeRequestV1): boolean {
-    const at = now();
-    pruneExpired(at);
-    const key = JSON.stringify([request.machineId, request.draftConnectionId, request.actionNonce]);
-    if (replayExpiryByKey.has(key) || replayExpiryByKey.size >= maxReplayEntries) return false;
-    replayExpiryByKey.set(key, at + authorizationTtlMs);
-    for (const [id, record] of recordsById) {
-      if (record.ticket.draftConnectionId === request.draftConnectionId) recordsById.delete(id);
-    }
-    return true;
-  }
-
-  async function currentRecordState(
-    record: DraftAuthorizationRecord,
-    scope: ProviderProbeOperationScope,
-    exactDestination?: Readonly<{ endpointUrl: string; resolvedAddresses: readonly string[] }>,
-  ) {
-    const at = now();
-    if (record.ticket.authorization.expiresAt <= at) {
-      return { ok: false as const, error: error(record.input, 'provider_probe_authorization_invalid') };
-    }
-    const snapshot = input.getAccountSettingsSnapshot();
-    if (!snapshot) return { ok: false as const, error: error(record.input, 'provider_authorization_changed') };
-    const facts = await resolveDraftFacts({
-      request: record.input,
-      snapshot,
-      resolveAddresses: input.resolveAddresses,
-      ...(exactDestination ? { exactDestination } : {}),
-      lifetime: scope.lifetime,
-    });
-    if (!facts.ok) return facts;
-    const endpoint = facts.record.endpoints.find((candidate) =>
-      candidate.endpointTemplateId === record.endpointTemplateId
-      && candidate.protocol === record.protocol
-      && candidate.normalizedUrl === record.endpointUrl);
-    if (!endpoint || facts.record.endpointSetFingerprint !== record.ticket.authorization.endpointSetFingerprint) {
-      return { ok: false as const, error: error(record.input, 'provider_authorization_changed') };
-    }
-    const secret = selectedSecretReference(record.input, snapshot);
-    if (secret && 'code' in secret) return { ok: false as const, error: secret };
-    const secretId = secret?.secretId ?? null;
-    const secretFingerprint = secret?.secretRecordFingerprint ?? null;
-    if (secretId !== record.ticket.authorization.selectedSecretBindingId
-      || secretFingerprint !== record.ticket.authorization.selectedSecretRecordFingerprint) {
-      return { ok: false as const, error: error(record.input, 'provider_authorization_changed') };
-    }
-    return { ok: true as const, endpoint };
-  }
-
-  function requestMatches(record: DraftAuthorizationRecord, request: ProviderProbeAuthorizationRequest): boolean {
-    if (request.deployment === 'managedLocal') return false;
-    return request.connectionId === record.ticket.draftConnectionId
-      && request.machineId === record.input.machineId
-      && request.endpointTemplateId === record.endpointTemplateId
-      && request.endpointUrl === record.endpointUrl
-      && request.protocol === record.protocol
-      && request.path === record.path
-      && request.parser === record.parser
-      && request.probeRequestFingerprint === record.ticket.authorization.probeRequestFingerprint;
-  }
-
-  const authorization: ProviderProbeAuthorizationPort<DraftAuthorizationTicket, ProviderProbeHostCredentialReference> = {
-    authorize: async (request, scope) => {
-      const record = [...recordsById.values()].find((candidate) =>
-        !candidate.consumed && requestMatches(candidate, request));
-      if (!record) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_probe_authorization_invalid', {
-            connectionId: request.connectionId,
-            machineId: request.machineId,
-          }),
-        };
-      }
-      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
-      record.consumed = true;
-      const current = await currentRecordState(record, scope);
-      if (!current.ok) return current;
-      return {
-        ok: true,
-        ticket: record.ticket,
-        observationAuthorizationFingerprint: record.observationAuthorizationFingerprint,
-        credentialRef: record.credentialRef,
-      };
-    },
-    revalidate: async (ticket, request, scope) => {
-      const record = recordsById.get(ticket.authorization.id);
-      if (!record || !record.consumed || !requestMatches(record, request)) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_probe_authorization_invalid', {
-            connectionId: request.connectionId,
-            machineId: request.machineId,
-          }),
-        };
-      }
-      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
-      const current = await currentRecordState(record, scope);
-      return current.ok ? { ok: true } : current;
-    },
-    authorizeDestination: async (ticket, request, destination, scope) => {
-      const record = recordsById.get(ticket.authorization.id);
-      if (!record || !record.consumed || !requestMatches(record, request)) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_probe_authorization_invalid', {
-            connectionId: request.connectionId,
-            machineId: request.machineId,
-          }),
-        };
-      }
-      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
-      if (destination.origin !== new URL(record.endpointUrl).origin || destination.scope !== record.endpointScope) {
-        return { ok: false, error: error(record.input, 'provider_authorization_changed') };
-      }
-      const current = await currentRecordState(record, scope, {
-        endpointUrl: record.endpointUrl,
-        resolvedAddresses: destination.resolvedAddresses,
-      });
-      return current.ok ? { ok: true } : current;
-    },
-    resolveCredential: (reference) => resolveRuntimeProviderCredential({
-      credentialRef: reference,
-      getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
-      ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
-    }),
-  };
 
   /**
    * Admits this draft probe against Home-current shared material.
@@ -354,21 +161,25 @@ export function createProviderDraftProbeService(input: Readonly<{
   async function admitProbeOperation(
     request: DaemonProviderDraftProbeRequestV1,
     lifetime: ProviderOperationLifetime,
+    snapshot: ActiveAccountSettingsSnapshot,
   ) {
     if (request.savedSecretId === null) return { ok: true as const };
-    const expectedScopeKey = input.getAccountSettingsSnapshot()?.scopeKey;
+    const expectedScopeKey = snapshot.scopeKey;
     if (expectedScopeKey === undefined || expectedScopeKey.length === 0) {
       return { ok: true as const };
     }
     try {
-      await refreshForOperation({
+      await refreshSavedSecretCatalogForOperation({
         expectedScopeKey,
         references: [{ ref: request.savedSecretId }],
         ...(lifetime.signal ? { signal: lifetime.signal } : {}),
       });
       return { ok: true as const };
-    } catch {
-      return { ok: false as const, error: error(request, 'provider_secret_missing') };
+    } catch (caught) {
+      return { ok: false as const, error: providerSavedSecretAdmissionError(caught, {
+        connectionId: request.draftConnectionId,
+        machineId: request.machineId,
+      }) };
     }
   }
 
@@ -376,13 +187,13 @@ export function createProviderDraftProbeService(input: Readonly<{
     request: DaemonProviderDraftProbeRequestV1,
     lifetime: ProviderOperationLifetime,
   ) {
-    if (!reserveAction(request)) {
-      return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
-    }
-    const admitted = await admitProbeOperation(request, lifetime);
+    const getAccountSettingsSnapshot = createAccountBoundProviderSnapshotReader(input.getAccountSettingsSnapshot);
+    const initialSnapshot = getAccountSettingsSnapshot();
+    if (!initialSnapshot) return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
+    const admitted = await admitProbeOperation(request, lifetime, initialSnapshot);
     if (!admitted.ok) return admitted;
-    const snapshot = input.getAccountSettingsSnapshot();
-    if (!snapshot) return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
+    const snapshot = getAccountSettingsSnapshot();
+    if (!snapshot) return { ok: false as const, error: error(request, 'provider_authorization_changed') };
     const facts = await resolveDraftFacts({
       request,
       snapshot,
@@ -392,9 +203,7 @@ export function createProviderDraftProbeService(input: Readonly<{
     if (!facts.ok) return facts;
     const selectedSecret = selectedSecretReference(request, snapshot);
     if (selectedSecret && 'code' in selectedSecret) return { ok: false as const, error: selectedSecret };
-    if (request.template.catalog.source !== 'probe') {
-      return { ok: true as const, endpoints: [] as ProviderProbeEndpoint[], probes: [] as const };
-    }
+    if (request.template.catalog.source !== 'probe') return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
     const endpoints: ProviderProbeEndpoint[] = facts.record.endpoints.map((endpoint) => ({
       endpointTemplateId: endpoint.endpointTemplateId,
       protocol: endpoint.protocol,
@@ -404,7 +213,14 @@ export function createProviderDraftProbeService(input: Readonly<{
         ? 'none'
         : request.template.credential.required ? 'required' : 'optional',
     }));
-    const expiresAt = now() + authorizationTtlMs;
+    const preparedProbes: Array<Readonly<{
+      endpoint: ResolvedProviderConnectionEndpoint;
+      path: string;
+      parser: ProviderProbeAuthorizationRequest['parser'];
+      requestFingerprint: ReturnType<typeof createProviderProbeRequestFingerprintV1>;
+      credentialRef: ProviderProbeHostCredentialReference | null;
+      observationAuthorizationFingerprint: ReturnType<typeof createProviderObservationAuthorizationFingerprintV1>;
+    }>> = [];
     for (const probe of request.template.catalog.probes) {
       const endpoint = facts.record.endpoints.find((candidate) => candidate.endpointTemplateId === probe.endpointTemplateId);
       if (!endpoint) return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
@@ -418,35 +234,11 @@ export function createProviderDraftProbeService(input: Readonly<{
         method: 'GET', endpointUrl: endpoint.normalizedUrl, path: probe.path,
         parser: probe.parser, publicHeaders: endpoint.publicHeaders,
       });
-      const authorizationId = createAuthorizationId();
-      if (recordsById.has(authorizationId)) {
-        return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
-      }
-      const authorizationValue = ProviderProbeAuthorizationV1Schema.parse({
-        v: 1,
-        id: authorizationId,
-        machineId: request.machineId,
-        endpointSetFingerprint: facts.record.endpointSetFingerprint,
-        credentialDestinationFingerprint: createProviderCredentialDestinationFingerprintV1(
-          selectedTransport?.destination ?? null,
-        ),
-        probeRequestFingerprint: requestFingerprint,
-        selectedSecretBindingId: selectedSecret?.secretId ?? null,
-        selectedSecretRecordFingerprint: selectedSecret?.secretRecordFingerprint ?? null,
-        use: 'probe',
-        expiresAt,
-      });
-      const ticket = { authorization: authorizationValue, draftConnectionId: request.draftConnectionId };
-      recordsById.set(authorizationId, {
-        ticket,
-        input: request,
-        endpointTemplateId: endpoint.endpointTemplateId,
-        endpointUrl: endpoint.normalizedUrl,
-        endpointScope: endpoint.endpointScope,
-        protocol: endpoint.protocol,
+      preparedProbes.push({
+        endpoint,
         path: probe.path,
         parser: probe.parser,
-        publicHeaders: endpoint.publicHeaders,
+        requestFingerprint,
         credentialRef: selectedSecret && selectedTransport
           ? {
               connectionId: request.draftConnectionId,
@@ -454,6 +246,7 @@ export function createProviderDraftProbeService(input: Readonly<{
               reference: { kind: 'apiKey', ...selectedSecret },
               transport: selectedTransport,
               protocol: endpoint.protocol,
+              admittedSnapshot: snapshot,
             }
           : null,
         observationAuthorizationFingerprint: createProviderObservationAuthorizationFingerprintV1({
@@ -463,10 +256,52 @@ export function createProviderDraftProbeService(input: Readonly<{
             ? { transport: selectedTransport, selectedProtocol: endpoint.protocol, selectedUse: 'probe' }
             : null,
         }),
-        consumed: false,
       });
     }
-    return { ok: true as const, endpoints, probes: request.template.catalog.probes };
+    let materializer: ReturnType<typeof acquireSavedSecretMaterializerForOperation> | undefined;
+    const resolveSavedSecretMaterializer = () => materializer ??= acquireSavedSecretMaterializerForOperation({
+      snapshot,
+      references: request.savedSecretId ? [{ ref: request.savedSecretId }] : [],
+      secretSources: input.secretSources,
+      signal: lifetime.signal,
+      isCurrent: () => getAccountSettingsSnapshot()?.scopeKey === snapshot.scopeKey && !lifetime.signal?.aborted,
+    });
+    const authorization: ProviderProbeAuthorizationPort<ResolvedProviderConnectionEndpoint, ProviderProbeHostCredentialReference> = {
+      authorize: async (probeRequest) => {
+        const prepared = probeRequest.deployment === 'managedLocal' ? undefined : preparedProbes.find((candidate) =>
+          probeRequest.connectionId === request.draftConnectionId
+          && probeRequest.machineId === request.machineId
+          && probeRequest.endpointTemplateId === candidate.endpoint.endpointTemplateId
+          && probeRequest.endpointUrl === candidate.endpoint.normalizedUrl
+          && probeRequest.protocol === candidate.endpoint.protocol
+          && probeRequest.path === candidate.path
+          && probeRequest.parser === candidate.parser
+          && probeRequest.probeRequestFingerprint === candidate.requestFingerprint);
+        return prepared ? {
+          ok: true,
+          ticket: prepared.endpoint,
+          credentialRef: prepared.credentialRef,
+          observationAuthorizationFingerprint: prepared.observationAuthorizationFingerprint,
+        } : { ok: false, error: error(request, 'provider_probe_authorization_invalid') };
+      },
+      // This finite read is already admitted; the generic catalog port also
+      // serves persisted observations, while this store is request-local.
+      revalidate: async () => ({ ok: true }),
+      authorizeDestination: async (endpoint, _probeRequest, destination) =>
+        getAccountSettingsSnapshot()
+          && destination.origin === new URL(endpoint.normalizedUrl).origin
+          && destination.scope === endpoint.endpointScope
+          ? { ok: true }
+          : { ok: false, error: error(request, 'provider_authorization_changed') },
+      resolveCredential: async (reference) => resolveRuntimeProviderCredential({
+        credentialRef: reference,
+        getAccountSettingsSnapshot,
+        resolveSavedSecretMaterializer,
+        signal: lifetime.signal,
+        ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
+      }),
+    };
+    return { ok: true as const, endpoints, probes: request.template.catalog.probes, authorization };
   }
 
   return Object.freeze({
@@ -479,17 +314,14 @@ export function createProviderDraftProbeService(input: Readonly<{
         return { status: 'error', error: error(request, 'provider_not_enabled_on_machine') };
       }
       if (request.template.catalog.source !== 'probe') return { status: 'not_supported' };
-      const operationLifetime = lifetime ?? createProviderOperationLifetime({
-        wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-      });
+      const operationLifetime = lifetime ?? createProviderOperationLifetime({});
       const operationScope: ProviderProbeOperationScope = { lifetime: operationLifetime };
       const prepared = await prepare(request, operationLifetime);
       if (!prepared.ok) return { status: 'error', error: prepared.error };
       if (prepared.probes.length === 0) return { status: 'not_supported' };
-      await input.beforeAuthorizationConsume?.();
       const service = createProviderCatalogService({
         client: input.client,
-        authorization,
+        authorization: prepared.authorization,
         runtimeStore: createEphemeralRuntimeStore(input.machineId),
         now,
         createObservationId: randomUUID,
@@ -499,6 +331,7 @@ export function createProviderDraftProbeService(input: Readonly<{
         machineId: request.machineId,
         endpoints: prepared.endpoints,
         probes: prepared.probes,
+        ...(operationLifetime.signal ? { signal: operationLifetime.signal } : {}),
         wallDeadlineAtMs: operationLifetime.wallDeadlineAtMs,
         operationScope,
       });

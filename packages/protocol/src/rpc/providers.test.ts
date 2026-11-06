@@ -1324,7 +1324,6 @@ describe('provider machine RPC contracts', () => {
         },
       },
       savedSecretId: null,
-      actionNonce: 'draft-action-0001',
     } as const;
 
     expect(DaemonProviderProbeRequestV1Schema.parse(request)).toEqual(request);
