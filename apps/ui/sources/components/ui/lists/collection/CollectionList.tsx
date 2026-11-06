@@ -211,9 +211,23 @@ export const COLLECTION_LIST_SEARCH_THRESHOLD = 8;
 export const CollectionList = React.memo(function CollectionList(props: Omit<HappierCollectionListProps, 'host'> & Readonly<{
     surface?: 'page' | 'plane';
 }>) {
-    const { surface, ...listProps } = props;
-    return <HappierCollectionList host={surface === 'plane' ? collectionListPlaneHost : collectionListHost} {...listProps} />;
+    const { surface, toolsInsetPx, ...listProps } = props;
+    const pageToolsInsetPx = React.useContext(CollectionPageToolsInsetContext);
+    const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;
+    return (
+        <HappierCollectionList
+            host={surface === 'plane' ? collectionListPlaneHost : collectionListHost}
+            {...(resolvedToolsInsetPx === undefined ? {} : { toolsInsetPx: resolvedToolsInsetPx })}
+            {...listProps}
+        />
+    );
 });
+
+/**
+ * A page that lists under its own title (a phone's settings collection) provides its gutter here, so every
+ * list inside starts its search field and filters on that edge instead of the column's.
+ */
+export const CollectionPageToolsInsetContext = React.createContext<number | undefined>(undefined);
 
 /**
  * A group heading inside a collection list: what the rows share, and how many there are. A navigation

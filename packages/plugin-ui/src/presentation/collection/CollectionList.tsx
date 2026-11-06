@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { Platform, View, type ViewStyle } from 'react-native';
 
 import { useHappierPageSection } from '../layout/PageSection.js';
@@ -128,6 +128,12 @@ export type HappierCollectionListProps = Readonly<{
   /** Present only when the list is long enough to need it. */
   search?: HappierCollectionListSearch | null;
   filters?: HappierCollectionListFilters | null;
+  /**
+   * Where the search field and the filters start, from the list's edge. A column keeps the rows' gutter
+   * ({@link HAPPIER_COLLECTION_LIST_METRICS.rowInset}); a page that lists under its own title sets the page's
+   * gutter, so its tools stand on the same edge as the cards above them (lab `sf-ph390 .top`).
+   */
+  toolsInsetPx?: number;
   children?: ReactNode;
   /**
    * Rows that own their scrolling (a virtualized list, the host's virtualizer adapter). Replaces the
@@ -371,6 +377,16 @@ const subtitleStyle: ViewStyle = {
 const searchStyle: HappierPortableStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
 const untitledSearchStyle: HappierPortableStyle = { ...searchStyle, marginTop: M.headerPaddingTop };
 const filtersStyle: ViewStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
+/** The tools' margins: the column's shared constants, or a page's own gutter (stable while it holds). */
+function useToolsStyles(insetPx: number | undefined) {
+  return useMemo(() => insetPx === undefined
+    ? { search: searchStyle, untitledSearch: untitledSearchStyle, filters: filtersStyle }
+    : {
+      search: { ...searchStyle, marginHorizontal: insetPx },
+      untitledSearch: { ...untitledSearchStyle, marginHorizontal: insetPx },
+      filters: { ...filtersStyle, marginHorizontal: insetPx },
+    }, [insetPx]);
+}
 // The strip starts on the title's text edge (its first tab under the title's first letter), like Sessions.
 const stripStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, marginBottom: M.headerGap };
 const stripWithAccessoryStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: TITLE_ACCESSORY_GAP };
@@ -430,6 +446,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   const { host } = props;
   const { Text, Scroller, SearchField } = host;
   const showFilters = props.filters != null && props.filters.targetCount > 0;
+  const tools = useToolsStyles(props.toolsInsetPx);
   const showHeader = props.title !== undefined || props.titleControl != null || props.count != null || props.headerAction != null;
   const hasAccessory = props.titleAccessory != null;
   // The title keeps its floor; the control beside it yields to the band below when the row cannot hold both.
@@ -502,14 +519,14 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           value={props.search.value}
           onChangeText={props.search.onChangeText}
           placeholder={props.search.placeholder}
-          style={showHeader ? searchStyle : untitledSearchStyle}
+          style={showHeader ? tools.search : tools.untitledSearch}
           {...(props.search.trailing == null ? {} : { trailing: props.search.trailing })}
           {...(props.search.anchorRef === undefined ? {} : { anchorRef: props.search.anchorRef })}
           {...(props.search.testID === undefined ? {} : { testID: props.search.testID })}
           {...(searchCollapses && searchOpened ? { autoFocus: true } : {})}
         />
       ) : null}
-      {showFilters ? <View style={filtersStyle}>{props.filters!.content}</View> : null}
+      {showFilters ? <View style={tools.filters}>{props.filters!.content}</View> : null}
       {props.scrollContent !== undefined ? props.scrollContent : (
         <Scroller style={[scrollerStyle, host.surfaceStyle]}>
           {props.children}

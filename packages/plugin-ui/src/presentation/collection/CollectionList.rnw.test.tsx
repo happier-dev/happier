@@ -97,6 +97,33 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it("sets the search field and the filters on the page's gutter when a page lists under its own title", () => {
+    const leftMargin = (el: Element | null) => (el ? getComputedStyle(el).marginLeft : null);
+    // This host draws the field's frame from the style the list hands it, as the app's field does.
+    const styledHost: HappierCollectionListHost = {
+      ...host,
+      SearchField: (props) => <TextInput testID={props.testID ?? 'search'} style={props.style as never} value={props.value} />,
+    };
+    const tools = (toolsInsetPx?: number) => (
+      <HappierCollectionList
+        host={styledHost}
+        testID="list"
+        {...(toolsInsetPx === undefined ? {} : { toolsInsetPx })}
+        search={{ testID: 'search', value: '', onChangeText: () => {}, placeholder: 'Search' }}
+        filters={{ targetCount: 2, content: <Text testID="switch">All</Text> }}
+      />
+    );
+    const column = mountThroughReactNativeWeb(tools());
+    expect(leftMargin(column.container.querySelector('[data-testid="search"]'))).toBe('10px');
+    const columnFilters = column.container.querySelector('[data-testid="switch"]')?.parentElement ?? null;
+    expect(leftMargin(columnFilters)).toBe('10px');
+    column.unmount();
+    const page = mountThroughReactNativeWeb(tools(16));
+    expect(leftMargin(page.container.querySelector('[data-testid="switch"]')?.parentElement ?? null)).toBe('16px');
+    expect(leftMargin(page.container.querySelector('[data-testid="search"]'))).toBe('16px');
+    page.unmount();
+  });
+
   it('keeps a collapsible search behind its magnifier until opened, and closing it clears the query', async () => {
     let query = '';
     const searchHost: HappierCollectionListHost = {
