@@ -6,8 +6,9 @@ import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cl
 
 import * as tar from 'tar';
 
-import { createMarketplaceNpmDiscoveryProjectionV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import { createMarketplaceNpmDiscoveryProjectionV1, deriveMarketplaceNpmDiscoveryKeywordsV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import { createPluginCompatibilityProjectionV1 } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
 
@@ -15,6 +16,7 @@ import {
   type ResolvedLocalPathPluginSourceSuccess,
 } from '@/plugins/discovery/sources/localPath';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
@@ -43,6 +45,7 @@ import {
   normalizePluginSdkRegistryOrigin,
   preparePluginAuthorDependencies,
   runPluginUiArtifactBuild,
+  runPreparedPluginAuthorTests,
 } from '../authoring/toolchain';
 import {
   cleanupPluginDaemonOutputManifest,
@@ -50,6 +53,27 @@ import {
 } from '../authoring/daemonOutputManifest';
 import { generatePluginActionContracts } from '../authoring/actionContracts';
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../runtime/activationSources';
+
+export type PackPluginPublicationMetadata = Readonly<{
+  packageName?: string;
+  title?: string;
+  description?: string;
+  version?: string;
+  keywords?: readonly string[];
+  readme?: string;
+  changelog?: string;
+  icon?: NonNullable<CanonicalPluginManifest['brand']>;
+  iconSource?: Readonly<{ dataBase64: string; contentType: 'image/png' }>;
+}>;
+
+export type PackPluginPublicationChecks = Readonly<{
+  /** Effective manifest and packed candidate passed the existing admission path. */
+  validation: Readonly<{ status: 'passed' }>;
+  /** Code-defined runtime bundling completed; descriptor packages have no build. */
+  build: Readonly<{ status: 'passed' | 'not_configured' }>;
+  tests: Readonly<{ status: 'passed' | 'not_configured' }>;
+  sdkVersion: string | null;
+}>;
 
 export type PackLocalPluginResult =
   | Readonly<{
@@ -70,6 +94,7 @@ export type PackLocalPluginResult =
       archiveIntegrity: string;
       digestPath: string;
       archiveSizeBytes: number;
+      publicationChecks?: PackPluginPublicationChecks;
     }>
   | Readonly<{
       ok: false;
@@ -582,13 +607,17 @@ async function writeStagedPackageFiles(params: Readonly<{
     manifest: params.manifest,
     uiArtifacts: generatedUiArtifacts,
   });
+  const marketplaceDiscovery = createMarketplaceNpmDiscoveryProjectionV1({
+    compatibility: compatibilityProjection,
+    manifestDigest: canonicalManifestDigest(params.manifest),
+  });
+  const authoredKeywords: readonly string[] = Array.isArray(packageJson.keywords)
+    ? packageJson.keywords.filter((keyword: unknown): keyword is string => typeof keyword === 'string') : [];
+  packageJson.keywords = [...new Set([...authoredKeywords, ...deriveMarketplaceNpmDiscoveryKeywordsV1(marketplaceDiscovery)])];
   packageJson.happier = {
     ...packageJson.happier,
     compatibilityProjection,
-    marketplaceDiscovery: createMarketplaceNpmDiscoveryProjectionV1({
-      compatibility: compatibilityProjection,
-      manifestDigest: canonicalManifestDigest(params.manifest),
-    }),
+    marketplaceDiscovery,
   };
   await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
 }
@@ -674,6 +703,7 @@ async function resolvePackSource(locator: string): Promise<
 async function preparePackOperationAuthoringSource(
   operation: PackOperationSource,
   sdkRegistryOrigin: string | null,
+  signal?: AbortSignal,
 ): Promise<readonly PluginCompatibilityDiagnostic[] | null> {
   // Package-root author projects prepare only the operation copy. That keeps
   // dependency resolution, author evaluation, declared UI output, runtime
@@ -701,6 +731,7 @@ async function preparePackOperationAuthoringSource(
   const preparation = await preparePluginAuthorDependencies({
     projectRoot: operation.operationRootPath,
     ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
+    ...(signal ? { signal } : {}),
   });
   if (!preparation.ok) return [createDiagnostic(preparation.diagnostic.message)];
 
@@ -713,17 +744,77 @@ async function preparePackOperationAuthoringSource(
   return null;
 }
 
-function readManifestDisplayName(manifest: CanonicalPluginManifest): string {
-  return typeof manifest.displayName === 'string'
-    ? manifest.displayName
-    : manifest.displayName.fallback;
+async function applyReviewedPublicationMetadata(params: Readonly<{
+  source: ResolvedPackSource;
+  publication: PackPluginPublicationMetadata;
+}>): Promise<ResolvedPackSource> {
+  const { source, publication } = params;
+  const title = publication.title ?? resolvePluginLocalizedStringV2Text(source.manifest.displayName);
+  const description = publication.description ?? (source.manifest.description === undefined
+    ? undefined
+    : resolvePluginLocalizedStringV2Text(source.manifest.description));
+  const addedFiles: string[] = [];
+  let uploadedIcon: Readonly<{ iconResourceId: string; resourcePath: string }> | undefined;
+  if (publication.iconSource) {
+    const iconBytes = Buffer.from(publication.iconSource.dataBase64, 'base64');
+    const { decodePortablePluginBrandPng } = await import('../runtime/invocation/services/resources');
+    if (!await decodePortablePluginBrandPng(iconBytes)) {
+      throw new Error('Publication icon must be a supported square PNG brand image');
+    }
+    const digest = createHash('sha256').update(iconBytes).digest('hex');
+    const iconResourceId = `publication-icon-${digest}`;
+    const resourcePath = `.happier-plugin/${iconResourceId}.png`;
+    await mkdir(dirname(join(source.pluginRootPath, resourcePath)), { recursive: true });
+    await writeFile(join(source.pluginRootPath, resourcePath), iconBytes);
+    addedFiles.push(resourcePath);
+    uploadedIcon = { iconResourceId, resourcePath };
+  }
+  const manifest = normalizePluginManifestV2({
+    ...source.manifest,
+    displayName: title,
+    ...(description !== undefined ? { description } : {}),
+    ...(publication.version !== undefined ? { version: publication.version } : {}),
+    ...(uploadedIcon ? {
+      brand: { iconResourceId: uploadedIcon.iconResourceId },
+      contributes: {
+        ...source.manifest.contributes,
+        resources: [
+          ...source.manifest.contributes.resources.filter((resource) => resource.id !== uploadedIcon.iconResourceId),
+          { id: uploadedIcon.iconResourceId, kind: 'asset', path: uploadedIcon.resourcePath, contentType: 'image/png' },
+        ],
+      },
+    } : publication.icon !== undefined ? { brand: publication.icon } : {}),
+  });
+  const packageJsonPath = join(source.pluginRootPath, 'package.json');
+  const packageJsonValue: unknown = JSON.parse(await readFile(packageJsonPath, 'utf8'));
+  if (!isRecord(packageJsonValue)) throw new Error('Plugin package.json must contain an object');
+  const packageJson: Record<string, unknown> = packageJsonValue;
+  if (publication.packageName !== undefined) packageJson.name = normalizeNpmPackageName(publication.packageName);
+  if (publication.version !== undefined) packageJson.version = manifest.version;
+  if (description !== undefined) packageJson.description = description;
+  if (publication.keywords !== undefined) {
+    packageJson.keywords = [...new Set([...publication.keywords, 'happier-plugin'])];
+  }
+  for (const [fileName, content] of [['README.md', publication.readme], ['CHANGELOG.md', publication.changelog]] as const) {
+    if (content === undefined) continue;
+    await writeFile(join(source.pluginRootPath, fileName), content, 'utf8');
+    addedFiles.push(fileName);
+  }
+  if (addedFiles.length > 0) {
+    packageJson.files = [...new Set([...readPortableNpmPackageFiles(packageJson.files), ...addedFiles])];
+  }
+  await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+  return { ...source, manifest };
 }
 
 export async function packLocalPlugin(params: Readonly<{
   locator: string;
   outPath?: string | null;
   sdkRegistryOrigin?: string | null;
+  publication?: PackPluginPublicationMetadata;
+  signal?: AbortSignal;
 }>): Promise<PackLocalPluginResult> {
+  params.signal?.throwIfAborted();
   let sdkRegistryOrigin: string | null;
   try {
     sdkRegistryOrigin = normalizePluginSdkRegistryOrigin(params.sdkRegistryOrigin);
@@ -741,13 +832,21 @@ export async function packLocalPlugin(params: Readonly<{
     // Evaluation, canonical projection, generated runtime/UI work, selected-file
     // traversal, and archive assembly all begin from this one operation-local
     // copy. No later phase rereads the mutable author tree.
-    const authoringPreparationDiagnostics = await preparePackOperationAuthoringSource(operation, sdkRegistryOrigin);
+    const authoringPreparationDiagnostics = await preparePackOperationAuthoringSource(operation, sdkRegistryOrigin, params.signal);
     if (authoringPreparationDiagnostics) {
       return { ok: false, diagnostics: authoringPreparationDiagnostics };
     }
     const sourceResolution = await resolvePackSource(operation.locator);
     if (!sourceResolution.ok) return sourceResolution;
-    const resolvedSource = sourceResolution.source;
+    params.signal?.throwIfAborted();
+    let resolvedSource = sourceResolution.source;
+    if (params.publication) {
+      try {
+        resolvedSource = await applyReviewedPublicationMetadata({ source: resolvedSource, publication: params.publication });
+      } catch (error) {
+        return { ok: false, diagnostics: [createDiagnostic(error instanceof Error ? error.message : 'Publication metadata is invalid')] };
+      }
+    }
     // Manifest-only/UI-only sources do not run the executable author build, so
     // remove reserved outputs from the isolated pack copy before selected-file
     // traversal. The author tree itself remains untouched.
@@ -769,6 +868,7 @@ export async function packLocalPlugin(params: Readonly<{
       });
       const uiBuild = await runPluginUiArtifactBuild({
         projectRoot: operation.operationRootPath,
+        ...(params.signal ? { signal: params.signal } : {}),
       });
       if (!uiBuild.ok) {
         return {
@@ -829,6 +929,7 @@ export async function packLocalPlugin(params: Readonly<{
     await mkdir(outputDir, { recursive: true });
     const stagingDir = await mkdtemp(join(outputDir, '.happier-plugin-pack-'));
     const stagedRoot = join(stagingDir, 'package');
+    let publicationChecks: Pick<PackPluginPublicationChecks, 'tests' | 'sdkVersion'> | undefined;
     try {
       if (resolvedSource.authorEntryPath !== null) {
         // Pack reruns the same canonical projection against the already
@@ -884,6 +985,7 @@ export async function packLocalPlugin(params: Readonly<{
           stagedRootPath: stagedRoot,
           daemonEntrypoint,
           sessionRunnerFactories: resolvedSource.sessionRunnerFactories,
+          ...(params.publication ? { effectiveManifest: resolvedSource.manifest } : {}),
         });
         generatedRuntimeSelectors = stagedRuntime.outputRelativePaths;
       }
@@ -894,14 +996,44 @@ export async function packLocalPlugin(params: Readonly<{
         ...(generatedRuntimeSelectors ? { generatedRuntimeSelectors } : {}),
         ...(filteredPackFiles.filtered ? { rewriteSelectedFiles: true } : {}),
       });
+      if (params.publication) {
+        let testStatus: PackPluginPublicationChecks['tests']['status'] = 'not_configured';
+        if (await pathExists(join(resolvedSource.pluginRootPath, 'test', 'index.test.mjs'))) {
+          // Keep non-published tests and prepared dependencies in the operation
+          // copy, replacing its public files with the finalized candidate bytes.
+          // Running tests here cannot add test fixtures/output to the archive.
+          await cp(stagedRoot, resolvedSource.pluginRootPath, { recursive: true, force: true });
+          const tests = await runPreparedPluginAuthorTests({
+            projectRoot: resolvedSource.pluginRootPath,
+            ...(params.signal ? { signal: params.signal } : {}),
+          });
+          if (!tests.ok) {
+            return { ok: false, diagnostics: tests.diagnostics.map((diagnostic) => createDiagnostic(diagnostic.message)) };
+          }
+          testStatus = 'passed';
+        }
+        let sdkVersion: string | null = null;
+        try {
+          const sdkPackage: unknown = JSON.parse(await readFile(join(resolvedSource.pluginRootPath, 'node_modules', PLUGIN_SDK_PACKAGE_NAME, 'package.json'), 'utf8'));
+          if (isRecord(sdkPackage) && typeof sdkPackage.version === 'string') sdkVersion = sdkPackage.version;
+        } catch {
+          // Descriptor-only packages need no SDK runtime dependency.
+        }
+        publicationChecks = { tests: { status: testStatus }, sdkVersion };
+      }
       const archiveEntries = await collectStagedArchiveEntries(stagingDir);
+      params.signal?.throwIfAborted();
       await tar.c({
         gzip: true,
         file: resolvedArchivePath,
         cwd: stagingDir,
         portable: true,
         noDirRecurse: true,
+        // Publication prepares the reviewed input again at the point of effect.
+        // Filesystem timestamps must not change that candidate's integrity.
+        ...(params.publication ? { mtime: new Date(0) } : {}),
       }, [...archiveEntries]);
+      params.signal?.throwIfAborted();
 
       const archiveBytes = await readFile(resolvedArchivePath);
       const validationParentPath = join(stagingDir, 'validation');
@@ -951,7 +1083,7 @@ export async function packLocalPlugin(params: Readonly<{
     return {
       ok: true,
       pluginId: resolvedSource.manifest.id,
-      title: readManifestDisplayName(resolvedSource.manifest),
+      title: resolvePluginLocalizedStringV2Text(resolvedSource.manifest.displayName),
       version: resolvedSource.manifest.version,
       packageRootPath: operation.originalRootPath,
       manifestPath,
@@ -961,6 +1093,11 @@ export async function packLocalPlugin(params: Readonly<{
       archiveIntegrity: archiveSha256IntegrityFromDigest(archiveDigest),
       digestPath,
       archiveSizeBytes: archiveBytes.byteLength,
+      ...(publicationChecks ? { publicationChecks: {
+        ...publicationChecks,
+        validation: { status: 'passed' as const },
+        build: { status: resolvedSource.authorEntryPath !== null ? 'passed' as const : 'not_configured' as const },
+      } } : {}),
     };
   } finally {
     await operation.cleanup().catch(() => undefined);

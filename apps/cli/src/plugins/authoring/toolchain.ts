@@ -1053,13 +1053,30 @@ export async function runPluginUiArtifactBuild(
   }, (result) => result.ok);
 }
 
+type PluginAuthorToolchainInput = Readonly<{
+  operation: PluginAuthorToolchainOperation;
+  projectRoot: string;
+  sdkRegistryOrigin?: string | null;
+  signal?: AbortSignal;
+}>;
+
 export async function runPluginAuthorToolchain(
-  params: Readonly<{
-    operation: PluginAuthorToolchainOperation;
-    projectRoot: string;
-    sdkRegistryOrigin?: string | null;
-    signal?: AbortSignal;
-  }>,
+  params: PluginAuthorToolchainInput,
+  deps: PluginAuthorToolchainDeps = defaultDeps,
+): Promise<PluginAuthorToolchainResult> {
+  return await runPluginAuthorToolchainImplementation(params, deps);
+}
+
+/** Run the ordinary author tests after the caller has prepared the candidate. */
+export async function runPreparedPluginAuthorTests(
+  params: Readonly<{ projectRoot: string; signal?: AbortSignal }>,
+  deps: PluginAuthorToolchainDeps = defaultDeps,
+): Promise<PluginAuthorToolchainResult> {
+  return await runPluginAuthorToolchainImplementation({ ...params, operation: 'test', preparedTest: true }, deps);
+}
+
+async function runPluginAuthorToolchainImplementation(
+  params: PluginAuthorToolchainInput & Readonly<{ preparedTest?: boolean }>,
   deps: PluginAuthorToolchainDeps = defaultDeps,
 ): Promise<PluginAuthorToolchainResult> {
   let projectRoot: string;
@@ -1081,7 +1098,7 @@ export async function runPluginAuthorToolchain(
     let daemonBuildClassification: PluginAuthorDaemonBuildClassification | undefined;
     let runtimeCommand: string | undefined;
     if (params.operation !== 'install') {
-      if (params.operation === 'build' || params.operation === 'test') {
+      if (!params.preparedTest && (params.operation === 'build' || params.operation === 'test')) {
         // Reject an author shape that cannot be built before mutating its
         // dependency tree. This validates the command boundary; it is not a
         // compiler or candidate-materialization step.
@@ -1119,9 +1136,9 @@ export async function runPluginAuthorToolchain(
     // build, or test adds no compiler evidence; dependency refresh stays the
     // explicit `plugins dev install` operation. An explicit registry selection
     // is itself a request to rematerialize from that source.
-    const shouldPrepareDependencies = params.operation === 'install'
+    const shouldPrepareDependencies = !params.preparedTest && (params.operation === 'install'
       || typeof params.sdkRegistryOrigin === 'string'
-      || !(await isPluginAuthorRootMaterialized(projectRoot));
+      || !(await isPluginAuthorRootMaterialized(projectRoot)));
     if (shouldPrepareDependencies) {
       const dependencyPreparation = await preparePluginAuthorDependencies({
         projectRoot,
@@ -1167,50 +1184,52 @@ export async function runPluginAuthorToolchain(
 
     {
       if (params.operation === 'test') {
-        const compilerPath = deps.resolveNativeTypeScriptBin(projectRoot);
-        await rm(join(projectRoot, PLUGIN_AUTHOR_TEST_OUTPUT_PATH), { recursive: true, force: true });
-        await rm(join(projectRoot, PLUGIN_AUTHOR_TEST_BUILD_INFO_PATH), { force: true });
-        const compileResult = await deps.spawn({
-          command: runtimeCommand,
-          args: [
-            compilerPath,
-            '--noEmit',
-            'false',
-            '--outDir',
-            PLUGIN_AUTHOR_TEST_OUTPUT_PATH,
-            '--tsBuildInfoFile',
-            PLUGIN_AUTHOR_TEST_BUILD_INFO_PATH,
-            '-p',
-            'tsconfig.json',
-          ],
-          cwd: projectRoot,
-          env: deps.processEnv,
-          ...(params.signal ? { signal: params.signal } : {}),
-        });
-        if (compileResult.exitCode !== 0 || compileResult.signal !== null) {
-          return failedResult({
-            operation: params.operation,
-            projectRoot,
-            diagnostic: processFailureDiagnostic({
+        if (!params.preparedTest) {
+          const compilerPath = deps.resolveNativeTypeScriptBin(projectRoot);
+          await rm(join(projectRoot, PLUGIN_AUTHOR_TEST_OUTPUT_PATH), { recursive: true, force: true });
+          await rm(join(projectRoot, PLUGIN_AUTHOR_TEST_BUILD_INFO_PATH), { force: true });
+          const compileResult = await deps.spawn({
+            command: runtimeCommand,
+            args: [
+              compilerPath,
+              '--noEmit',
+              'false',
+              '--outDir',
+              PLUGIN_AUTHOR_TEST_OUTPUT_PATH,
+              '--tsBuildInfoFile',
+              PLUGIN_AUTHOR_TEST_BUILD_INFO_PATH,
+              '-p',
+              'tsconfig.json',
+            ],
+            cwd: projectRoot,
+            env: deps.processEnv,
+            ...(params.signal ? { signal: params.signal } : {}),
+          });
+          if (compileResult.exitCode !== 0 || compileResult.signal !== null) {
+            return failedResult({
               operation: params.operation,
               projectRoot,
-              code: 'plugin_author_tool_failed',
-              result: compileResult,
-            }),
-          });
-        }
-        await bundlePluginDaemonRuntimeIfRequired(projectRoot, deps, daemonBuildClassification);
-        const uiBuildResult = await runPluginUiArtifactBuild({
-          projectRoot,
-          ...(params.signal ? { signal: params.signal } : {}),
-        }, deps);
-        if (!uiBuildResult.ok) {
-          return {
-            ok: false,
-            operation: params.operation,
+              diagnostic: processFailureDiagnostic({
+                operation: params.operation,
+                projectRoot,
+                code: 'plugin_author_tool_failed',
+                result: compileResult,
+              }),
+            });
+          }
+          await bundlePluginDaemonRuntimeIfRequired(projectRoot, deps, daemonBuildClassification);
+          const uiBuildResult = await runPluginUiArtifactBuild({
             projectRoot,
-            diagnostics: uiBuildResult.diagnostics,
-          };
+            ...(params.signal ? { signal: params.signal } : {}),
+          }, deps);
+          if (!uiBuildResult.ok) {
+            return {
+              ok: false,
+              operation: params.operation,
+              projectRoot,
+              diagnostics: uiBuildResult.diagnostics,
+            };
+          }
         }
         invocation = {
           command: runtimeCommand,

@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import * as tar from 'tar';
 import { describe, expect, it } from 'vitest';
@@ -55,6 +56,26 @@ async function writeSdkRegistryPackFixture(
     '});',
     '',
   ].join('\n'), 'utf8');
+}
+
+async function writeDescriptorPackFixture(
+  root: string,
+  manifest: ReturnType<typeof createPluginManifestV2Fixture>,
+  authoredBytes = JSON.stringify(manifest),
+): Promise<string> {
+  if (typeof manifest.id !== 'string') throw new Error('Pack fixture requires a plugin id');
+  const manifestPath = join(root, '.happier-plugin', 'plugin.json');
+  await mkdir(join(root, '.happier-plugin'), { recursive: true });
+  await writeFile(join(root, 'daemon.mjs'), 'export function activate() {}\n', 'utf8');
+  await writeFile(manifestPath, authoredBytes, 'utf8');
+  await writeFile(join(root, 'package.json'), JSON.stringify({
+    name: `happier-plugin-${manifest.id.replace(/\./gu, '-')}`,
+    version: manifest.version,
+    keywords: ['happier-plugin'],
+    happier: { manifest: '.happier-plugin/plugin.json' },
+    files: ['.happier-plugin', 'daemon.mjs'],
+  }), 'utf8');
+  return manifestPath;
 }
 
 async function createCandidateChannelsProtocolTarball(): Promise<Buffer> {
@@ -200,6 +221,133 @@ async function writeBundledFirstPartyDescriptorPackFixture(repoRoot: string): Pr
 }
 
 describe('packLocalPlugin', () => {
+  it('stops an already canceled publication before creating an archive', async () => {
+    await expect(packLocalPlugin({
+      locator: '/unused/canceled-publication', publication: {}, signal: AbortSignal.abort(),
+    })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it.each(['descriptor', 'code'] as const)('packs reviewed publication metadata consistently for a %s plugin without editing source', async (kind) => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-publication-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'publication.tgz');
+    const registry = kind === 'code'
+      ? await startCandidateSdkRegistry({ sdkTarball: await createTestPluginSdkTarball() })
+      : null;
+    try {
+      if (kind === 'code') {
+        await writeSdkRegistryPackFixture(root);
+        await mkdir(join(root, 'test'));
+        await writeFile(join(root, 'test/index.test.mjs'), [
+          "import assert from 'node:assert/strict';",
+          "import { manifest } from '../dist/index.js';",
+          "assert.equal(manifest.version, '2.3.4');",
+          "assert.equal(manifest.displayName, 'Reviewed plugin');",
+        ].join('\n'), 'utf8');
+      } else {
+        await writeDescriptorPackFixture(root, createPluginManifestV2Fixture());
+      }
+      const sourcePath = join(root, kind === 'code' ? 'index.ts' : '.happier-plugin/plugin.json');
+      const sourceBefore = await readFile(sourcePath, 'utf8');
+      const packageBefore = await readFile(join(root, 'package.json'), 'utf8');
+      const sharp = (await import('sharp')).default;
+      const iconBytes = await sharp({ create: {
+        width: 64, height: 64, channels: 4, background: { r: 74, g: 49, b: 132, alpha: 1 },
+      } }).png().toBuffer();
+      const publication = {
+        packageName: '@acme/reviewed-plugin', title: 'Reviewed plugin', description: 'Reviewed description',
+        version: '2.3.4', keywords: ['reviewed'], readme: '# Reviewed readme\n', changelog: '## 2.3.4\nReviewed notes\n',
+        icon: { iconResourceId: 'absent-old-icon' },
+        iconSource: { dataBase64: iconBytes.toString('base64'), contentType: 'image/png' as const },
+      };
+
+      const result = await packLocalPlugin({
+        locator: root, outPath: archivePath, publication,
+        ...(registry ? { sdkRegistryOrigin: registry.origin } : {}),
+      });
+
+      expect(result, result.ok ? '' : JSON.stringify(result.diagnostics)).toMatchObject({
+        ok: true, title: publication.title, version: publication.version,
+        manifest: { displayName: publication.title, description: publication.description, version: publication.version },
+      });
+      if (!result.ok) return;
+      expect(result).toMatchObject({ publicationChecks: {
+        validation: { status: 'passed' },
+        build: { status: kind === 'code' ? 'passed' : 'not_configured' },
+        tests: { status: kind === 'code' ? 'passed' : 'not_configured' },
+        sdkVersion: kind === 'code' ? '0.0.0' : null,
+      } });
+      const extracted = join(parent, 'extracted');
+      await mkdir(extracted);
+      await tar.x({ file: archivePath, cwd: extracted });
+      const packedRoot = join(extracted, 'package');
+      const manifest = JSON.parse(await readFile(join(packedRoot, '.happier-plugin/plugin.json'), 'utf8'));
+      const packageJson = JSON.parse(await readFile(join(packedRoot, 'package.json'), 'utf8'));
+      expect(manifest).toEqual(result.manifest);
+      const iconResource = result.manifest.contributes.resources.find((resource) => resource.id === result.manifest.brand?.iconResourceId);
+      expect(iconResource).toMatchObject({ kind: 'asset', contentType: 'image/png' });
+      if (!iconResource || !('path' in iconResource) || typeof iconResource.path !== 'string') throw new Error('Expected packaged publication icon');
+      await expect(readFile(join(packedRoot, iconResource.path))).resolves.toEqual(iconBytes);
+      await expect(readFile(join(root, iconResource.path))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(packageJson).toMatchObject({
+        name: publication.packageName, version: manifest.version, description: manifest.description,
+        keywords: expect.arrayContaining(['reviewed', 'happier-plugin', 'happier-plugin-contribution-resources']),
+        happier: { marketplaceDiscovery: { display: { title: manifest.displayName, description: manifest.description } } },
+      });
+      await expect(readFile(join(packedRoot, 'README.md'), 'utf8')).resolves.toBe(publication.readme);
+      await expect(readFile(join(packedRoot, 'CHANGELOG.md'), 'utf8')).resolves.toBe(publication.changelog);
+      await expect(readFile(join(packedRoot, 'test/index.test.mjs'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      if (kind === 'code') {
+        const runtime = await import(pathToFileURL(join(packedRoot, 'dist/index.js')).href);
+        expect(runtime.manifest).toEqual(manifest);
+        expect(runtime.activate).toBeTypeOf('function');
+      }
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceBefore);
+      await expect(readFile(join(root, 'package.json'), 'utf8')).resolves.toBe(packageBefore);
+      await expect(readFile(join(root, 'README.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      const repeated = await packLocalPlugin({
+        locator: root, outPath: join(parent, 'repeated.tgz'), publication,
+        ...(registry ? { sdkRegistryOrigin: registry.origin } : {}),
+      });
+      expect(repeated).toMatchObject({ ok: true, archiveIntegrity: result.archiveIntegrity });
+    } finally {
+      await registry?.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects undecodable publication PNG bytes without creating an archive', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-publication-icon-invalid-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'publication.tgz');
+    try {
+      await writeDescriptorPackFixture(root, createPluginManifestV2Fixture());
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath, publication: {
+        iconSource: { dataBase64: Buffer.from('not a PNG').toString('base64'), contentType: 'image/png' },
+      } });
+      expect(result).toMatchObject({ ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })] });
+      await expect(readFile(archivePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects publication when the configured prepared-candidate tests fail', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-publication-test-failed-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'publication.tgz');
+    try {
+      await writeDescriptorPackFixture(root, createPluginManifestV2Fixture());
+      await mkdir(join(root, 'test'));
+      await writeFile(join(root, 'test/index.test.mjs'), "throw new Error('candidate-contract-failed');\n", 'utf8');
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath, publication: { title: 'Reviewed plugin' } });
+      expect(result).toMatchObject({ ok: false, diagnostics: [expect.objectContaining({ message: expect.stringContaining('test') })] });
+      await expect(readFile(archivePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it('keeps explicit manifest locators cold when a package also contains author source', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-explicit-manifest-pack-'));
     const root = join(parent, 'plugin');

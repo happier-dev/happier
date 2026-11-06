@@ -13,6 +13,8 @@ import {
 } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { resolvePortablePluginRelativePath } from '@/plugins/manifest/portableRelativePath';
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '@/plugins/runtime/activationSources';
+import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import { isCanonicalAbsolutePathInsideRoot as isPathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { writePluginDaemonOutputManifest } from './daemonOutputManifest';
 import { realpathNearestExistingAncestor } from '@/utils/path/physicalAncestorPath';
@@ -727,6 +729,8 @@ export async function stagePluginDaemonRuntime(
     sourceEntryPath: string;
     stagedRootPath: string;
     daemonEntrypoint: string;
+    /** Already projected by the pack owner from reviewed publication fields. */
+    effectiveManifest?: CanonicalPluginManifest;
     sessionRunnerFactories?: readonly ValidatedAgentSessionRunnerFactoryFactV1[];
     /**
      * First-party packaged runtimes resolve workspace imports from the host's
@@ -890,8 +894,28 @@ export async function stagePluginDaemonRuntime(
   const logicalSourcePath = canonicalWorkspaceImportResolver
     ? join(logicalSourceRoot, relative(sourceRoot, sourceRealPath))
     : sourceRealPath;
+  const publicationEntry = 'happier-publication-entry';
+  const effectiveManifest = params.effectiveManifest;
+  const publicationEntryPlugin: EsbuildPlugin = {
+    name: 'happier-plugin-publication-entry',
+    setup(pluginBuild) {
+      pluginBuild.onResolve({ filter: /^happier-publication-entry$/ }, () => ({
+        path: publicationEntry,
+        namespace: publicationEntry,
+      }));
+      if (!effectiveManifest) return;
+      pluginBuild.onLoad({ filter: /.*/, namespace: publicationEntry }, () => ({
+        contents: [
+          `export * from ${JSON.stringify(logicalSourcePath)};`,
+          `export const manifest = JSON.parse(${JSON.stringify(serializeCanonicalPluginManifest(effectiveManifest))});`,
+        ].join('\n'),
+        loader: 'js',
+        resolveDir: sourceRoot,
+      }));
+    },
+  };
   const entryPoints = Object.fromEntries([
-    [daemonRelativePath.slice(0, -daemonExtension.length), logicalSourcePath],
+    [daemonRelativePath.slice(0, -daemonExtension.length), params.effectiveManifest ? publicationEntry : logicalSourcePath],
     ...[...sessionRunnerEntries].map(([packedPath, sourcePath]) => [
       packedPath.slice(0, -extname(packedPath).length),
       canonicalWorkspaceImportResolver
@@ -929,6 +953,7 @@ export async function stagePluginDaemonRuntime(
       inject: [BUNDLED_PLUGIN_DAEMON_REQUIRE_INJECTION],
       plugins: [
         inputNamespacesPlugin,
+        ...(params.effectiveManifest ? [publicationEntryPlugin] : []),
         createZodMiniEnglishLocaleCompilerPlugin(),
         bundledPluginDaemonRequirePlugin,
         ...(canonicalWorkspaceImportResolver ? [canonicalWorkspaceImportResolver.plugin] : []),

@@ -656,7 +656,7 @@ function brandAssetFallbackForAdmissionError(error: unknown): PluginProjectionBr
     return brandAssetFallback('invalid');
 }
 
-async function decodePortablePluginBrandPng(
+export async function decodePortablePluginBrandPng(
     bytes: Uint8Array,
 ): Promise<Readonly<{ width: number; height: number }> | null> {
     if (bytes.byteLength > MAX_PLUGIN_BRAND_ICON_BYTES) return null;
