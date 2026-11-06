@@ -202,6 +202,8 @@ _.env.pipeline.production.local
 /packages/plugin-sdk/tsconfig.facade-inference-current.json
 /packages/plugin-sdk/src/**/*.d.ts
 /packages/plugin-sdk/src/**/*.d.ts.map
+# Authored types for the untyped Babel block-scoping plugin are source, not output.
+!/packages/plugin-sdk/src/ui/build/babelPluginTransformBlockScoping.d.ts
 # TypeScript declarations emitted into the protocol source tree are build output.
 /packages/protocol/src/**/*.d.ts
 # Authored types for the JavaScript-only IDNA dependency are source, not output.
