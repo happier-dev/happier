@@ -756,17 +756,6 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 ? t('workflows.editor.historyRestoreRequiresSetup') : formatWorkflowProblemMessage(error)); }
         },
     };
-    const triggerSetMachineId = triggers.set?.project?.machineId ?? null;
-    const triggersRunOn = React.useMemo(() => {
-        const project = triggers.set?.project;
-        if (!project) return null;
-        const machine = machines.find((candidate) => candidate.id === triggerSetMachineId) ?? null;
-        return formatWorkflowWhereSummary({
-            target: project,
-            machineName: getMachineDisplayName(machine) ?? t('machine.unnamedMachine'),
-            machineHomeDir: machine?.metadata?.homeDir ?? null,
-        });
-    }, [machines, triggerSetMachineId, triggers.set?.project]);
 
     // The controlled editor resolves no catalog of its own, so the Agent options
     // and every step prompt's reference scope come from this one host adapter —
@@ -1939,7 +1928,6 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         }}
                         status={triggers.status}
                         onRetry={triggers.retry}
-                        runsOn={triggersRunOn}
                         whereTarget={projectTarget}
                         whereSummary={formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir })}
                         inputs={draft?.inputs ?? []}

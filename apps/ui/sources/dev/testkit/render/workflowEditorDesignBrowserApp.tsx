@@ -78,7 +78,7 @@ function Habit() {
         description="One manual occurrence into the fresh session." onChangeDescription={() => {}}
         triggersSummary="Every night at 02:00 · 1 more" saveStatus={{ kind: 'saved', savedAtMs: null }}
         triggersSection={<WorkflowTriggerSection testIDPrefix="workflow-editor" set={HABIT_TRIGGERS} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT}
-            onChangeDraft={() => {}} status="ready" onRetry={() => {}} runsOn="NLDW4-5-40-40 · /tmp" stepsUnsaved={false}
+            onChangeDraft={() => {}} status="ready" onRetry={() => {}} stepsUnsaved={false}
             whereTarget={{ machineId: HABIT_MACHINE.id, directory: '/tmp' }} whereSummary="NLDW4-5-40-40 / /tmp" inputs={[]} />}
         menuActions={[{ id: 'export', title: 'Export JSON', onSelect: () => {} }, { id: 'delete', title: 'Delete workflow', destructive: true, onSelect: () => {} }]}
         onEditWithAgent={() => {}} onTestRun={() => {}} onRunNow={() => {}} onSave={() => {}} />;

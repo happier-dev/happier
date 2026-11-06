@@ -42,8 +42,6 @@ export type WorkflowTriggerSectionProps = Readonly<{
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
     status: 'loading' | 'ready' | 'failed';
     onRetry: () => void;
-    /** "{machine} · {folder}" of the set's one machine, stated once (07 S4, L8); `null` without a trigger. */
-    runsOn: string | null;
     /** The steps have unsaved changes, so the description adds "Save to include your changes." */
     stepsUnsaved: boolean;
     /** The editor's Where: it seeds the set's Runs on, and a different Runs on says Run now uses it. */
@@ -104,9 +102,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const [open, setOpen] = React.useState<Readonly<{ row: WorkflowTriggerRowModel | null; anchor: React.RefObject<View | null> }> | null>(null);
     const addAnchorRef = React.useRef<View>(null);
     const description = [
-        props.runsOn !== null && rows.length > 0
-            ? t('workflows.triggers.editor.runsByOn', { where: props.runsOn })
-            : t('workflows.triggers.editor.runsBy'),
+        t('workflows.triggers.editor.runsBy'),
         props.stepsUnsaved ? t('workflows.triggers.editor.saveToInclude') : t('workflows.triggers.editor.savedWorkflow'),
     ].join(' ');
 

@@ -3564,7 +3564,7 @@ const ja: typeof en = {
     keepGoing: {
         title: '完了まで続ける',
         nativeDescription: ({ agent }) => `${agent} は自分で目標に向けて作業を続けます。`,
-        description: ({ rounds }) => `あなたのターンが終わるたびにエージェントが目標を確認し、達成、予算切れ、進捗なしのいずれかになるまで、最大 ${rounds} ラウンド続けます。`,
+        description: 'あなたのターンが終わるたびにエージェントが目標を確認し、達成、予算切れ、進捗なしのいずれかになるまで続けます。',
         roundsPrefix: '停止するまで',
         roundsSuffix: 'ラウンド',
         roundsLabel: '停止までのラウンド数',

@@ -3559,7 +3559,7 @@ const zhHans: typeof en = {
     keepGoing: {
         title: '持续推进直到完成',
         nativeDescription: ({ agent }) => `${agent} 会自行朝目标继续工作。`,
-        description: ({ rounds }) => `在你的每个回合结束后，一个代理会检查目标并继续推进，直到完成、预算用尽或不再有进展，最多 ${rounds} 轮。`,
+        description: '在你的每个回合结束后，一个代理会检查目标并继续推进，直到完成、预算用尽或不再有进展。',
         roundsPrefix: '在',
         roundsSuffix: '轮后停止',
         roundsLabel: '停止前的轮数',

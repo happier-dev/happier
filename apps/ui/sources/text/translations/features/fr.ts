@@ -3564,7 +3564,7 @@ const fr: typeof en = {
     keepGoing: {
         title: 'Continuer jusqu’au bout',
         nativeDescription: ({ agent }) => `${agent} poursuit l’objectif de façon autonome.`,
-        description: ({ rounds }) => `Après chacun de tes tours, un agent vérifie l’objectif et continue jusqu’à ce qu’il soit atteint, que le budget soit épuisé ou qu’il ne progresse plus, pendant ${rounds} ${rounds === 1 ? 'tour' : 'tours'} au maximum.`,
+        description: 'Après chacun de tes tours, un agent vérifie l’objectif et continue jusqu’à ce qu’il soit atteint, que le budget soit épuisé ou qu’il ne progresse plus.',
         roundsPrefix: 'Arrêter après',
         roundsSuffix: 'tours',
         roundsLabel: 'Tours avant l’arrêt',

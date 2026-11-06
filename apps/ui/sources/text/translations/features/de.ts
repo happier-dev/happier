@@ -3558,7 +3558,7 @@ const de: typeof en = {
     keepGoing: {
         title: 'Weitermachen bis fertig',
         nativeDescription: ({ agent }) => `${agent} arbeitet selbstständig weiter am Ziel.`,
-        description: ({ rounds }) => `Nach jedem deiner Züge prüft ein Agent das Ziel und macht weiter, bis es erreicht ist, das Budget aufgebraucht ist oder kein Fortschritt mehr kommt – höchstens ${rounds} ${rounds === 1 ? 'Runde' : 'Runden'}.`,
+        description: 'Nach jedem deiner Züge prüft ein Agent das Ziel und macht weiter, bis es erreicht ist, das Budget aufgebraucht ist oder kein Fortschritt mehr kommt.',
         roundsPrefix: 'Stoppen nach',
         roundsSuffix: 'Runden',
         roundsLabel: 'Runden bis zum Stopp',

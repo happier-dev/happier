@@ -172,7 +172,7 @@ describe('Run a workflow trigger inputs', () => {
         const change = vi.fn();
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="event-workflow" set={set}
             draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
-            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row');
         expect(screen.findByTestId('event-workflow-trigger-popover-configure-event')).toBeTruthy();
         await act(async () => { screen.findByTestId('event-workflow-trigger:saved:event-row-switch')!.props.onValueChange(false); });
@@ -188,7 +188,7 @@ describe('Run a workflow trigger inputs', () => {
         const change = vi.fn();
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="event-workflow" set={null}
             draft={{ adds: [{ clientId: 'event-draft', trigger }], updates: {}, removes: [] }} onChangeDraft={change}
-            status="ready" onRetry={vi.fn()} runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+            status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         await screen.pressByTestIdAsync('event-workflow-trigger:new:event-draft');
         expect(screen.findByTestId('event-workflow-trigger-popover-toggle')).toBeNull();
         await act(async () => { screen.findByTestId('event-workflow-trigger:new:event-draft-switch')!.props.onValueChange(false); });

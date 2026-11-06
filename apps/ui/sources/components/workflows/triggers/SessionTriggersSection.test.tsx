@@ -123,7 +123,7 @@ describe('SessionTriggersSectionView', () => {
         const screen = await renderScreen(<WorkflowTriggerSection
             testIDPrefix="failed-editor" set={null} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={vi.fn()}
             status="failed" onRetry={retry}
-            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]}
         />);
         expect(screen.findByTestId('failed-editor-triggers-manual')).toBeNull();
         const action = screen.findAll((node) => node.props.testID === 'failed-editor-triggers-read-retry' && typeof node.props.onPress === 'function')[0];
@@ -140,7 +140,7 @@ describe('SessionTriggersSectionView', () => {
         const screen = await renderScreen(<WorkflowTriggerSection
             testIDPrefix="legacy-editor" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={vi.fn()}
             status="ready" onRetry={vi.fn()}
-            runsOn="m1 · /repo" stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]}
         />);
         expect(screen.getTextContent()).toContain('Review release');
         expect(screen.getTextContent()).toContain('workflows.triggers.row.legacyCreated');

@@ -3577,7 +3577,7 @@ const pl: typeof en = {
     keepGoing: {
         title: 'Kontynuuj do końca',
         nativeDescription: ({ agent }) => `${agent} sam kontynuuje pracę nad celem.`,
-        description: ({ rounds }) => `Po każdej Twojej turze agent sprawdza cel i kontynuuje, aż cel zostanie osiągnięty, budżet się wyczerpie lub zabraknie postępów, maksymalnie przez ${rounds} ${rounds === 1 ? 'rundę' : 'rund'}.`,
+        description: 'Po każdej Twojej turze agent sprawdza cel i kontynuuje, aż cel zostanie osiągnięty, budżet się wyczerpie lub zabraknie postępów.',
         roundsPrefix: 'Zatrzymaj po',
         roundsSuffix: 'rundach',
         roundsLabel: 'Rundy przed zatrzymaniem',

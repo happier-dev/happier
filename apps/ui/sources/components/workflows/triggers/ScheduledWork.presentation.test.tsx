@@ -286,7 +286,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
                 </ModalCardFrame> : <webHosts.View style={{ width: '100%', maxWidth: 420 }}>{eventStep}</webHosts.View>}</section>
             <section><h2>Workflow settings · same next occurrence</h2><WorkflowTriggerSection testIDPrefix="capture-workflow"
                 set={set} draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={noop} status="ready" onRetry={noop}
-                runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} /></section>
+                stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} /></section>
             <section><h2>Test run · pending composer (placement requires reload)</h2>
                 <WorkflowRunComposer workflowName="Daily digest" inputs={[]} values={{}} pending
                     notice={t('workflows.testRun.savedNotice')}

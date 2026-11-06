@@ -3566,7 +3566,7 @@ const pt: typeof en = {
     keepGoing: {
         title: 'Continuar até terminar',
         nativeDescription: ({ agent }) => `${agent} continua a trabalhar para a meta por conta própria.`,
-        description: ({ rounds }) => `Depois de cada um dos seus turnos, um agente verifica a meta e continua até ela ser cumprida, o orçamento acabar ou deixar de haver progresso, no máximo ${rounds} ${rounds === 1 ? 'rodada' : 'rodadas'}.`,
+        description: 'Depois de cada um dos seus turnos, um agente verifica a meta e continua até ela ser cumprida, o orçamento acabar ou deixar de haver progresso.',
         roundsPrefix: 'Parar após',
         roundsSuffix: 'rodadas',
         roundsLabel: 'Rodadas antes de parar',

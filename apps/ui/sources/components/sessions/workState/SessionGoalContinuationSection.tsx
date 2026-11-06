@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { KEEP_GOING_DEFAULT_INPUTS, resolveSessionGoalContinuationOwner } from './sessionGoalContinuation';
+import { resolveSessionGoalContinuationOwner } from './sessionGoalContinuation';
 import type { SessionKeepGoingTrigger } from './useSessionKeepGoingTrigger';
 
 /**
@@ -77,7 +77,6 @@ export function SessionGoalContinuationSection(props: Readonly<{
         );
     }
 
-    const rounds = keepGoing.inputs.maxRounds ?? KEEP_GOING_DEFAULT_INPUTS.maxRounds;
     const loaded = keepGoing.phase === 'loaded';
     return (
         <View style={styles.root}>
@@ -85,7 +84,7 @@ export function SessionGoalContinuationSection(props: Readonly<{
                 <View style={styles.rowText}>
                     <Text style={[styles.title, titleColor]}>{t('goalControl.keepGoing.title')}</Text>
                     <Text style={[styles.description, descriptionColor]}>
-                        {t('goalControl.keepGoing.description', { rounds })}
+                        {t('goalControl.keepGoing.description')}
                     </Text>
                 </View>
                 <Switch

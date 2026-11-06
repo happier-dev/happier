@@ -3566,7 +3566,7 @@ const ca: typeof en = {
     keepGoing: {
         title: 'Continua fins acabar',
         nativeDescription: ({ agent }) => `${agent} continua treballant cap a l’objectiu pel seu compte.`,
-        description: ({ rounds }) => `Després de cadascun dels teus torns, un agent revisa l’objectiu i continua fins que s’acaba, s’esgota el pressupost o deixa d’avançar, com a màxim ${rounds} ${rounds === 1 ? 'ronda' : 'rondes'}.`,
+        description: 'Després de cadascun dels teus torns, un agent revisa l’objectiu i continua fins que s’acaba, s’esgota el pressupost o deixa d’avançar.',
         roundsPrefix: 'Atura després de',
         roundsSuffix: 'rondes',
         roundsLabel: 'Rondes abans d’aturar-se',

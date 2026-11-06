@@ -7,7 +7,7 @@ export const en = {
     keepGoing: {
         title: 'Keep going until done',
         nativeDescription: ({ agent }: { agent: string }) => `${agent} keeps working toward the goal on its own.`,
-        description: ({ rounds }: { rounds: number }) => `After each of your turns, an agent checks the goal and continues until it's done, out of budget or making no progress, for at most ${rounds} ${rounds === 1 ? 'round' : 'rounds'}.`,
+        description: 'After each of your turns, an agent checks the goal and continues until it\'s done, out of budget or making no progress.',
         roundsPrefix: 'Stop after',
         roundsSuffix: 'rounds',
         roundsLabel: 'Rounds before stopping',
