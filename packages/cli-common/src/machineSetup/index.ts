@@ -49,6 +49,11 @@ export type MachineSetupStagedFirewallV1 = Readonly<{
     planIndex: number; planDigest: string; recovery: MachineSetupFirewallRecoveryV1; verifyNative(): Promise<boolean>;
 }>;
 
+function isUnconfirmedNativeProcessStop(error: unknown): boolean {
+    return error !== null && typeof error === 'object' && 'code' in error
+        && error.code === 'plugin_exec_termination_incomplete';
+}
+
 export interface MachineSetupBackend {
     observe(step: MachineRecipeStepV1 | MachineRecipeCheckV1): Promise<MachineSetupStepObservationV1>;
     /** Only the native useradd owner can report that this invocation created an account. */
@@ -282,8 +287,13 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     const undoStages = async () => {
         const recovery = stages[0]?.recovery;
         let failed = false;
-        for (const stage of [...stages].reverse()) { try { await stage.undo(); } catch { failed = true; } }
+        let unconfirmedStop: unknown;
+        for (const stage of [...stages].reverse()) {
+            try { await stage.undo(); }
+            catch (error) { failed = true; if (isUnconfirmedNativeProcessStop(error)) unconfirmedStop = error; }
+        }
         stages.length = 0;
+        if (unconfirmedStop) throw unconfirmedStop;
         if (!failed && recovery) restoration = { status: 'verified', recovery };
         return !failed;
     };
@@ -392,6 +402,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                     }
                 } catch (error) {
                     const restored = await undoStages();
+                    if (isUnconfirmedNativeProcessStop(error)) throw error;
                     return result(restored ? input.signal?.aborted ? 'cancelled' : 'failed' : 'outcome_unknown', step.id,
                         error instanceof MachineSetupEffectError ? error.reasonCode : 'required_fact_unavailable');
                 }
@@ -410,7 +421,10 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 // in this same program (for example a user manager's groups).
                 try { observed = planIndex === 0 && completedStepIds.length === 0 && !awaitingSource.has(step.id)
                     ? nativeFacts[index]! : await input.backend.observe(step); }
-                catch { return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable'); }
+                catch (error) {
+                    if (isUnconfirmedNativeProcessStop(error)) throw error;
+                    return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable');
+                }
                 if (observed.status === 'unsupported' || observed.status === 'unavailable') return result(observed.status, step.id, observed.reason);
                 if (observed.status === 'satisfied' && !establishesAdministrator) continue;
                 // chpasswd establishes the verifier before the full locked:false user
@@ -431,6 +445,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                         await input.backend.establishAdministrator!({ step: administratorStep, password: establishment.password });
                     }
                 } catch (error) {
+                    if (isUnconfirmedNativeProcessStop(error)) throw error;
                     if (input.signal?.aborted) return result('outcome_unknown', step.id, 'cancelled');
                     if (step.kind === 'reboot') return result('outcome_unknown', step.id, 'native_effect_failed');
                     if (error instanceof MachineSetupEffectError) return result('failed', step.id, error.reasonCode, error.failure?.requiredFact, error.failure);
@@ -453,7 +468,8 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 let verified: MachineSetupStepObservationV1;
                 try {
                     verified = await input.backend.observe(step);
-                } catch {
+                } catch (error) {
+                    if (isUnconfirmedNativeProcessStop(error)) throw error;
                     // The effect already completed; lost verification (including an
                     // abort at native close) cannot prove rollback or authorize replay.
                     return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable');

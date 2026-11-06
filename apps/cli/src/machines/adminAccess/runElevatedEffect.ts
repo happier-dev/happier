@@ -411,6 +411,10 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                 const parsed = MachineEffectInternalRecordSchema.safeParse(value);
                 if (!parsed.success || terminal) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                 const record = parsed.data;
+                // Cancellation can precede the root owner's stop refusal.
+                // Retain that physical uncertainty even while draining stopped IO.
+                if (requestSent && record.type === 'result' && record.result.status === 'outcome_unknown'
+                    && record.result.reason === 'plugin_exec_termination_incomplete') { terminal = record; continue; }
                 if (record.type === 'ready') {
                     if (ask && !submitted) { await stop('denied'); continue; }
                     if (requestSent || stopReason) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
@@ -585,6 +589,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         await stageTask;
         if (readers.some(reader => reader.status === 'rejected')) protocolFailed = true;
         await termination;
+        if (terminal?.result.status === 'outcome_unknown' && terminal.result.reason === 'plugin_exec_termination_incomplete') {
+            throw Object.assign(new Error('Native process termination could not be verified'), { code: terminal.result.reason });
+        }
         if (protocolFailed || !terminal) {
             if (!stopReason && ask && !requestSent && !protocolFailed) return refused('denied');
             if (!stopReason) rememberNativeFailure('native_protocol_invalid');
@@ -629,7 +636,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         }
         return nativeRefused(rememberNativeFailure(result.reason === 'invalid_request' ? 'native_protocol_invalid' : 'native_effect_failed',
             result.reason, requiredFact, undefined, failureContext));
-    } catch {
+    } catch (error) {
+        if (error !== null && typeof error === 'object' && 'code' in error
+            && error.code === 'plugin_exec_termination_incomplete') throw error;
         await stop(rememberNativeFailure('native_protocol_invalid'));
         return planSent ? { outcome: 'outcome_unknown', failure: nativeFailure } : nativeRefused(stopReason ?? 'native_protocol_invalid');
     }

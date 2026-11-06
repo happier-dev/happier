@@ -95,6 +95,9 @@ function isUnconfirmedNativeOutcome(actionId: string, result: ActionExecuteResul
 }
 
 function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult): boolean {
+  // These native owners explicitly could not verify physical process exit.
+  if (!result.ok && (result.errorCode === 'plugin_exec_termination_incomplete'
+    || result.errorCode === 'native_toolchain_termination_incomplete')) return true;
   if (actionId === 'machines.reboot') return !result.ok && result.errorCode === 'action_outcome_unknown';
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'

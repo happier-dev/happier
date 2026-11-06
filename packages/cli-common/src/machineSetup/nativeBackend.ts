@@ -2,7 +2,7 @@ import { chmod, chown, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { MachineAdministratorUsernameV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
-import { execFileWithDeadline } from '../process/execFileWithDeadline.js';
+import { execFileWithDeadline, ExecFileTerminationError, type ExecFileWithDeadlineOptions } from '../process/execFileWithDeadline.js';
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1 } from './index.js';
 import { createNativeSystemBackend, mutateApt, readLocalAccount } from './nativeSystemBackend.js';
 import { createWorkspaceAccessBackend } from './workspaceAccess.js';
@@ -70,14 +70,18 @@ function desiredBytes(step: FileStep, state: FileState): string {
     return JSON.stringify(mergeJson(existing, step.content.value), null, 2) + '\n';
 }
 
-export async function runMachineSetupNativeCommand(command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> {
+export async function runMachineSetupNativeCommand(command: MachineSetupNativeCommand,
+    options: Pick<ExecFileWithDeadlineOptions, 'terminateOnAbort'> = {}): Promise<MachineSetupNativeCommandResult> {
     try {
-        const result = await execFileWithDeadline(command.executable, command.args, { encoding: 'utf8',
+        const result = await execFileWithDeadline(command.executable, command.args, { ...options, encoding: 'utf8',
             ...(command.discardOutput ? { outputTailMaxBytes: 0 } : {}),
             ...(command.inputBytes ? { inputBytes: command.inputBytes } : {}),
             ...(command.env ? { env: { ...process.env, ...command.env } } : {}), ...(command.signal ? { signal: command.signal } : {}) });
         return { code: 0, stdout: String(result.stdout), stderr: String(result.stderr) };
     } catch (error) {
+        // Retain the containing process owner's uncertain-stop error so its
+        // admission cannot mistake a failed tree stop for settled cancellation.
+        if (error instanceof ExecFileTerminationError) throw error.cause;
         if (command.signal?.aborted) throw error;
         if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'number') {
             return { code: error.code, stdout: 'stdout' in error ? String(error.stdout) : '', stderr: 'stderr' in error ? String(error.stderr) : '' };

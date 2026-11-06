@@ -11,6 +11,7 @@ import {
 import { createMachineSetupDaemonUserRunner } from './effectInternalDaemonUser';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isMachineSetupBootstrapBasisV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 
 type ProcessIo = Readonly<{
     stdin?: Readable;
@@ -170,18 +171,20 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             : 'plans' in request ? request.plans.map(entry => entry.plan) : request.mode === 'check' ? [request] : [request.intent];
         const needsDaemonContext = nativePrograms.some(program => [...(('checks' in program ? program.checks : undefined) ?? []), ...program.steps]
             .some(step => machineSetup.readMachineSetupStepExecutionUserV1(step) === 'daemon'));
+        const runNative = io.runNative ?? ((command: machineSetup.MachineSetupNativeCommand) =>
+            machineSetup.runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree }));
         const runAsDaemonUser = needsDaemonContext ? await createMachineSetupDaemonUserRunner({
             username: 'daemonUsername' in request ? request.daemonUsername : undefined,
             context: 'daemonExecutionContext' in request ? request.daemonExecutionContext : undefined,
             platform: io.platform ?? process.platform,
             sudoUsername: process.env.SUDO_USER, sudoUid: process.env.SUDO_UID,
-            signal: controller.signal, runNative: io.runNative ?? machineSetup.runMachineSetupNativeCommand,
+            signal: controller.signal, runNative,
         }) : undefined;
         const backend = machineSetup.createMachineSetupNativeBackend({ signal: controller.signal,
             ...(io.platform ? { platform: io.platform } : {}),
             ...(io.readNativeInit ? { readNativeInit: io.readNativeInit } : {}),
             ...('machineId' in request ? { daemonUsername: 'daemonUsername' in request ? request.daemonUsername ?? null : null } : {}),
-            ...(io.runNative ? { run: io.runNative } : {}),
+            run: runNative,
             ...(runAsDaemonUser ? { runAsDaemonUser } : {}),
             ...(connectorMaterializer ? { materializeSecretGrant: connectorMaterializer.materialize } : {}) });
         if (request.mode === 'check') {
@@ -253,9 +256,11 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             },
         });
         return finish(result);
-    } catch {
+    } catch (error) {
         // Native stderr, parse diagnostics and thrown payloads are never part
         // of the retained operation channel.
+        if (error !== null && typeof error === 'object' && 'code' in error
+            && error.code === 'plugin_exec_termination_incomplete') return refused('outcome_unknown', error.code);
         return refused(mutationStarted ? 'outcome_unknown' : controller.signal.aborted ? 'cancelled' : 'unavailable',
             controller.signal.aborted ? 'cancelled' : 'native_effect_failed');
     } finally {

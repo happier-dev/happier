@@ -24,6 +24,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { logger } from '@/ui/logger';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
@@ -259,7 +260,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
       const result = await applyMachineSetupEffectPlans({ plans, signal,
         backend: createMachineSetupNativeBackend({ signal, run: async command => {
           signal.throwIfAborted();
-          return runMachineSetupNativeCommand(command);
+          return runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree });
         } }),
         onProgress: event => input.emit?.({ type: 'machine.setup.progress', stepId: event.stepId,
           data: { phase: event.phase, status: event.status, planIndex: event.planIndex,
