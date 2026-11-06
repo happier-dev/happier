@@ -60,8 +60,8 @@ function captureHomeReads(onCatalogRead?: () => void, sharedSecret = false) {
 }
 
 describe('Machine Execution Run owner account snapshot', () => {
-    it('keeps the captured Settings version when a reusable active snapshot is older', async () => {
-        captureHomeReads();
+    it('keeps newer captured Settings without extra Home reads when reusable active Settings are older', async () => {
+        const home = captureHomeReads();
         const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'run-machine',
             serverHttpBaseUrl: 'https://run-owner.test', readCredentials: async () => credentials,
             isOwnerCurrent: () => true, onSettings() {} });
@@ -72,10 +72,21 @@ describe('Machine Execution Run owner account snapshot', () => {
                 settingsVersion: 5, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
                 scopeKey: resolveAccountSettingsScopeKey(credentials) });
             const incumbent = getActiveAccountSettingsSnapshot();
-            const refreshed = await resolver();
-            expect(refreshed.settingsVersion).toBe(7);
-            expect(refreshed.settings.preferredLanguage).toBe('fr');
+            if (!incumbent) throw new Error('Expected the older active Settings snapshot');
+            home.mockClear();
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const refreshed = await resolver();
+                expect(refreshed.settingsVersion).toBe(7);
+                expect(refreshed.settings.preferredLanguage).toBe('fr');
+            }
+            expect(home).not.toHaveBeenCalled();
             expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+            home.mockRejectedValue(new Error('Home unavailable'));
+            expect(await resolver()).toBe(initial);
+            setActiveAccountSettingsSnapshot({ ...incumbent, settingsVersion: 8,
+                settings: accountSettingsParse({ preferredLanguage: 'it' }) });
+            expect(await resolver()).toMatchObject({ settingsVersion: 8, settings: { preferredLanguage: 'it' } });
+            expect(home).not.toHaveBeenCalled();
         } finally { await resolver.dispose(); }
     });
     it('keeps an admitted Workflow requester snapshot separate from the Machine custodian and refuses retired custody', async () => {

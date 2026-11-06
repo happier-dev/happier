@@ -75,7 +75,10 @@ describe('Saved Secret catalog hydration', () => {
     source = { ...source, loadedAtMs: 5, profileCatalog: profiles };
     expect(context.readSnapshot()).toMatchObject({ settingsVersion: 2, rawSettings: refreshed.rawSettings,
       settings: { preferredLanguage: 'fr' }, profileCatalog: profiles, promptLibraryCatalog: privateCatalog });
-    expect(await context.replaceAccountSettings(initial)).toBe(false);
+    // FIN F2: an older same-scope observation is ignored, not a refusal.
+    const retained = context.readSnapshot();
+    expect(await context.replaceAccountSettings(initial)).toBe(true);
+    expect(context.readSnapshot()).toBe(retained);
     const unavailable = { status: 'unavailable' as const, reason: 'forbidden' as const };
     source = { ...source, promptLibraryCatalog: unavailable };
     expect(context.readSnapshot()?.promptLibraryCatalog).toBe(unavailable);

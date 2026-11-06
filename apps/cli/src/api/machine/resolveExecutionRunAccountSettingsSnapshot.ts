@@ -33,8 +33,6 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
             && sameStoredCredentials(credentials, await input.readCredentials())
             && !disposed && input.isOwnerCurrent();
         const snapshot = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', publication: 'invocation',
-            minSettingsVersion: operation && sameStoredCredentials(operation.credentials, credentials)
-                ? operation.readSnapshot()?.settingsVersion : undefined,
             honorAccountSettingsModeEnv: false, shouldCommit: () => !disposed && input.isOwnerCurrent() });
         if (!await isCurrent()) throw unavailable();
         if (!operation || operation.readSnapshot() === null || !sameStoredCredentials(operation.credentials, credentials)) {

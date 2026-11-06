@@ -129,8 +129,7 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
     isCurrent,
     replaceAccountSettings: async (next: ActiveAccountSettingsSnapshot) => {
       if (next.scopeKey !== scopeKey || !await isCurrent() || !snapshot) return false;
-      if (next.settingsVersion < snapshot.settingsVersion) return false;
-      if (next.settingsVersion === snapshot.settingsVersion) return true;
+      if (next.settingsVersion <= snapshot.settingsVersion) return true;
       const resources = next.savedSecretResources ?? snapshot.savedSecretResources ?? [];
       const catalog = replaceSavedSecretCatalogInSnapshot(snapshot, {
         resources, state: next.savedSecretCatalogState ?? snapshot.savedSecretCatalogState ?? 'temporarily_unavailable',
