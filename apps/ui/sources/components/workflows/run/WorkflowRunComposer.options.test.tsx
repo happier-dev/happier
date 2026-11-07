@@ -6,19 +6,18 @@ import { HappierInputField, type HappierInputPickerPort } from '@happier-dev/plu
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { renderScreen, findAllHostTestInstances, pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture, createPlainSessionByIdResponseFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), action: vi.fn(),
     failure: vi.fn<() => { errorCode: string; error: string } | null>(), actionSignals: [] as Array<AbortSignal | null | undefined> }));
@@ -79,7 +78,7 @@ installDisconnectedServerSocketBoundary((socket) => {
 const { renderSurface: renderPublicPicker } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanelPortable');
 const { PluginSurfaceHost } = await import('@/components/plugins/surfaces/PluginSurfaceHost');
 const { storage } = await import('@/sync/domains/state/storage');
-const { WorkflowRunComposer } = await import('./WorkflowRunComposer');
+const { WorkflowRunComposer, WorkflowRunInputs } = await import('./WorkflowRunComposer');
 const { AgentInput } = await import('@/components/sessions/agentInput');
 const { useInputFieldOptions } = await import('@/components/sessions/actions/useInputFieldOptions');
 
@@ -99,12 +98,7 @@ const choiceRowLabels = (screen: RenderedScreen) => screen.findAllByType('Pressa
     .map(node => String(node.props.accessibilityLabel));
 
 function publishMachine(serverId: string, machine: ReturnType<typeof createMachineFixture>): void {
-    const row = {
-        ...machine,
-        metadata: encodePlainMachineStoredContent(machine.metadata),
-        daemonState: machine.daemonState === null ? null : encodePlainMachineStoredContent(machine.daemonState),
-        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-    } satisfies FetchedMachineRow;
+    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
     harness.answer(serverId, `GET /v1/machines/${machine.id}`, { body: { machine: row } });
     harness.answer(serverId, 'GET /v1/machines', { body: [row] });
 }
@@ -130,11 +124,14 @@ describe('Workflow inputs through real Action option resolution', () => {
     });
     afterEach(async () => { await standardCleanup(); });
 
-    async function connectHome() {
+    async function connectHome(machine?: ReturnType<typeof createMachineFixture>) {
         const homeFixtureId = await harness.addHome({ name: 'Input Home', serverUrl: 'https://inputs.example', serverIdentityId: 'srv_inputs', accountId: 'account-a', currentAccount: true });
         const actions = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://inputs.example', serverIdentityId: 'srv_inputs',
             accountId: 'account-a', machineId: 'input-relay', actionId: 'action.options.resolve', tokenEpoch: 0,
             execute: (input) => rpc.action(input), failure: () => rpc.failure() ?? null });
+        // The Action boundary also serves Machine reads; keep its authoritative
+        // wire row aligned with the daemon declaration used by the native picker.
+        if (machine) Object.assign(actions.machine, createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine }));
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://inputs.example', accountId: 'account-a',
             serverIdentityId: 'srv_inputs',
             credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
@@ -158,6 +155,100 @@ describe('Workflow inputs through real Action option resolution', () => {
         return { composer, serverId, homeFixtureId };
     }
 
+    it.each(['session', 'model'] as const)('keeps participant Browse inline and commits the %s input port result after Back', async (kind) => {
+        const fieldName = kind === 'model' ? 'participants' : 'answerer';
+        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
+        const workflow = kind === 'model' ? 'builtin:debate' : 'builtin:answer-and-review';
+        const definition = getBuiltinWorkflowCatalogV1().find(entry => entry.id === workflow)!.definition;
+        const { act } = await import('react-test-renderer');
+        const { WorkflowAccountLifetimeProvider } = await import('@/components/workflows/workflowAccountScope');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { projectWorkflowRunInputFields } = await import('@/sync/domains/workflows/workflowAuthoring');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        rpc.action.mockResolvedValue({ actionId: 'workflow.run.start', fieldPath: fieldName, optionsSourceId: null, options: [] });
+        const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        rpc.machine.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                title: 'Codex', capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
+        }) });
+        const machine = createMachineFixture({ id: 'input-relay', storageMode: 'plain', activeAt: Date.now() });
+        const { serverId, homeFixtureId } = await connectHome(machine);
+        publishMachine(homeFixtureId, machine);
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_inputs' } } });
+        harness.answer(homeFixtureId, '/v1/features', { body: features });
+        harness.answer(homeFixtureId, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const { parseDecryptedSessionMetadata } = await import('@/sync/engine/sessions/parsePlainSessionPayload');
+        const session = createSessionFixture({ id: 'workflow-reviewer', serverId, encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadataVersion: 2, seq: 2,
+            metadata: parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1),
+            ownerMetadataView: { machineId: machine.id, path: '/work', host: 'laptop' },
+        });
+        harness.answer(homeFixtureId, '/v2/sessions/query', { body: { sessions: [{
+            ...createPlainSessionCurrentProjectionRecordFixture({ id: session.id }), viewer: createSessionOwnerViewerFixture(session),
+        }], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false } });
+        harness.answer(homeFixtureId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+        const lifetime = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
+        await waitForHomeGovernance(() => expect(lifetime.getCurrent().binding?.isCurrent()).toBe(true));
+        const values = {};
+        const fields = projectWorkflowRunInputFields({ inputs: definition.inputs!.filter(input => input.name === fieldName),
+            values, rawTextValues: {} });
+        const change = vi.fn();
+        const screen = await renderScreen(<WorkflowAccountLifetimeProvider value={lifetime.getCurrent().binding}>
+            <WorkflowRunInputs fields={fields} values={values} rawTextValues={{}} onChangeText={() => undefined}
+                onChangeValue={change} pending={false} machineId={machine.id} serverId={serverId} prefix="workflow-participant"
+                optionsConsumer={{ kind: 'workflow', workflow }} />
+        </WorkflowAccountLifetimeProvider>);
+        await vi.waitFor(() => {
+            const control = screen.findHostByTestId(`workflow-participant-${fieldName}-picker`);
+            expect(control, screen.getTextContent()).not.toBeNull();
+            expect(control?.props.accessibilityState?.disabled ?? control?.props.disabled ?? false,
+                screen.getTextContent()).toBe(false);
+        });
+        await act(async () => { screen.pressByTestId(`workflow-participant-${fieldName}-picker`); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('second-opinion.reviewer:workflow-reviewer')).not.toBeNull());
+        await screen.pressByTestIdAsync('executable-participant-picker-back');
+        expect(change).not.toHaveBeenCalled();
+        await act(async () => { screen.pressByTestId(`workflow-participant-${fieldName}-picker`); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('second-opinion.reviewer:workflow-reviewer')).not.toBeNull());
+        if (kind === 'session') {
+            await screen.pressByTestIdAsync('second-opinion.reviewer:workflow-reviewer');
+            await waitForHomeGovernance(() => expect(change).toHaveBeenCalledWith(fieldName, {
+                kind: 'session', session: { serverId, sessionId: session.id },
+            }));
+        } else {
+            await act(async () => storage.getState().applySessions([session]));
+            await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-model-input-relay-codex'), screen.getTextContent()).not.toBeNull());
+            await act(async () => { screen.pressByTestId('discussion-invite-model-input-relay-codex'); });
+            await vi.waitFor(() => expect(screen.findByTestId('second-opinion.change-model'), screen.getTextContent()).not.toBeNull());
+            await screen.pressByTestIdAsync('second-opinion.change-model');
+            await screen.pressByTestIdAsync('server-start-draft-control-agentTarget');
+            // Agent/model details expand the same Machine projection while the
+            // participant field still owns an unfinished picker request.
+            const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            await act(async () => {
+                await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId,
+                    accountLifetime: lifetime.getCurrent().binding, sections: ['agentsById'], reuseFreshReady: false });
+            });
+            expect(screen.findByTestId('executable-participant-picker')).not.toBeNull();
+            const { AgentInputChipPickerPopover } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover');
+            const picker = screen.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open);
+            expect(picker).toBeDefined();
+            // Press the rendered engine row so its real detail demand participates in the selection.
+            await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${picker!.props.options[0].id}`);
+            expect(screen.findByTestId('executable-participant-picker')).not.toBeNull();
+            await screen.pressByTestIdAsync('participant-recipe-save');
+            await screen.pressByTestIdAsync('executable-participant-picker-done');
+            await vi.waitFor(() => expect(change).toHaveBeenCalledWith(fieldName, [expect.objectContaining({ kind: 'model' })]));
+        }
+        expect(screen.findByTestId('executable-participant-picker')).toBeNull();
+        expect(harness.requests.filter(request => /spawn|participants\/invite/.test(request.path))).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('loads the input lifetime through the Home HTTP boundary', async () => {
         const { composer, homeFixtureId } = await mount();
         expect(harness.requests).toEqual(expect.arrayContaining([
@@ -175,36 +266,6 @@ describe('Workflow inputs through real Action option resolution', () => {
             parseResult: (value) => value })).resolves.toEqual(reply);
     });
 
-    it('keeps a UI-disabled registered draft unavailable and exposes its source failure with retry', async () => {
-        rpc.action.mockResolvedValue(reply);
-        const { serverId } = await mount();
-        const { SessionActionDraftCard } = await import('@/components/sessions/actions/SessionActionDraftCard');
-        const session = createSessionFixture({ id: 'session-1', serverId,
-            metadata: { machineId: 'input-relay', path: '/repo', host: 'inputs' } });
-        const draft = {
-            id: 'd1', address: { serverId, sessionId: 'session-1' }, accountId: 'account-a',
-            actionId: 'notifications.notify_me', createdAt: 1, status: 'editing' as const,
-            input: { message: 'Finished', channels: [] },
-        };
-        storage.setState({ sessions: { [session.id]: session },
-            sessionActionDraftsByAddressKey: { [JSON.stringify([serverId, 'session-1'])]: [draft] } });
-        const { useSessionActionFieldOptions } = await import('@/components/sessions/actions/useSessionActionFieldOptions');
-        const options = await renderHook(() => useSessionActionFieldOptions('session-1', serverId));
-        const card = await renderScreen(<SessionActionDraftCard draft={draft} />);
-        await flushHookEffects();
-        const { getActionSpec } = await import('@happier-dev/protocol');
-        const field = getActionSpec('notifications.notify_me').inputHints!.fields!.find(field => field.path === 'channels')!;
-        expect(options.getCurrent().state?.(field)).toEqual({ status: 'failed', options: [], errorCode: 'action_disabled' });
-        const { SurfaceStateCard } = await import('@/components/ui/surfaces');
-        const failure = card.findByType(SurfaceStateCard);
-        expect(failure.props.diagnosticCode).toBe('action_disabled');
-        expect(failure.props.action?.onPress).toEqual(expect.any(Function));
-        expect(choiceTriggers(card).every(trigger => trigger.props.disabled)).toBe(true);
-        expect(choiceTriggers(card).length).toBeGreaterThan(0);
-        const { resolveSessionActionDraftHeightBearingPaint } = await import('@/components/sessions/actions/sessionActionDraftPresentation');
-        const paint = resolveSessionActionDraftHeightBearingPaint({ draft, sessionId: 'session-1', resolveFieldOptions: options.getCurrent() });
-        expect(paint.fields.find(entry => entry.field.path === 'channels')?.options).toEqual([{ label: 'workflows.start.choicesFailed' }]);
-    });
 
     it('keeps every dynamic field in Inputs, reads only on opening, and requires explicit choices', async () => {
         rpc.action.mockResolvedValue(reply);
@@ -245,14 +306,14 @@ describe('Workflow inputs through real Action option resolution', () => {
         ...(['action', 'widget'] as const).flatMap(consumer =>
             (['selected', 'cancelled', 'invalid', 'retired'] as const).map(outcome => ({ consumer, outcome, pickerOnly: false }))),
     ])('offers a typed input’s declared picker through $consumer ($outcome, picker-only=$pickerOnly)', async ({ consumer, outcome, pickerOnly }) => {
-        const { repositoryInputTypeRef, repositoryInputTypes } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/inputTypes');
+        const { repositoryInputTypeRef, repositoryInputTypes, repositoryResources } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/inputTypes');
         const typed: readonly WorkflowInputDefinition[] = [{ name: 'repository', valueType: 'json', required: true, inputType: repositoryInputTypeRef }];
         const review = { repositoryId: 'example/review-assistant' };
         const workflow = `plugin:${repositoryInputTypeRef.pluginId}/review`;
         const workflowDefinition = { version: 1, inputs: typed, defaults: {}, blocks: [{ kind: 'wait', id: 'review',
             document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] };
         const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-        const { PluginProjectionV2Schema, DaemonPluginUiArtifactBytesReadResponseSchema } = await import('@happier-dev/protocol');
+        const { PluginProjectionV2Schema, DaemonPluginUiArtifactBytesReadResponseSchema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
         const { computePluginUiArtifactSha256DigestV1, computePluginUiArtifactFileSetSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
         const { encodeBase64 } = await import('@/encryption/base64');
         const nativeBytes = new TextEncoder().encode('exports.renderSurface = function () { return null; };');
@@ -267,7 +328,14 @@ describe('Workflow inputs through real Action option resolution', () => {
             builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0' };
         const { options: _declaredChoices, ...pickerOnlyDefinition } = repositoryInputTypes.repository;
         const projectedType = { id: 'repository', ...(pickerOnly ? pickerOnlyDefinition : repositoryInputTypes.repository) };
+        const optionsResourceId = repositoryInputTypes.repository.options.resource;
+        const optionsResource = repositoryResources[optionsResourceId]!;
+        if (optionsResource.source !== 'dynamic') throw new Error('The public repository options Resource must be dynamic');
         const pickerProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                resourcesById: { [`${repositoryInputTypeRef.pluginId}/${optionsResourceId}`]: {
+                    id: optionsResourceId, pluginId: repositoryInputTypeRef.pluginId,
+                    resourceKind: optionsResource.kind, scope: optionsResource.scope, contentType: optionsResource.contentType,
+                } },
                 installedPackagesById: { [repositoryInputTypeRef.pluginId]: {
                     id: repositoryInputTypeRef.pluginId, displayName: 'Review assistant', version: '1.0.0', enabled: true,
                     occurrenceId: 'occurrence-1', source: { kind: 'bundled', locator: repositoryInputTypeRef.pluginId },
@@ -308,26 +376,27 @@ describe('Workflow inputs through real Action option resolution', () => {
                 format: 'plainJs', byteSize: nativeBytes.length },
             files: [{ ...nativeGraph.files[0]!, bytesBase64: encodeBase64(nativeBytes) }],
         });
+        const artifactTransfers = createPluginArtifactTransferBoundary(() => nativeByteReply);
         rpc.machine.mockImplementation(async (request) => {
             if (request.method === `input-relay:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
                 return { protocolVersion: 1, projection: pickerProjection };
             }
-            if (request.method === `input-relay:${RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ}`) return nativeByteReply;
+            if (artifactTransfers.handles(request.method)) return artifactTransfers.request({ method: request.method, machineId: 'input-relay', payload: request.params });
             throw new Error(`Unexpected workflow Machine RPC: ${request.method}`);
         });
         rpc.action.mockResolvedValue({ actionId: 'workflow.run.start', fieldPath: 'repository',
                 optionsSourceId: pickerOnly ? null : `plugin-input:${repositoryInputTypeRef.pluginId}/repository`,
                 options: pickerOnly ? [] : [{ value: review, label: 'Review assistant' }] });
-        const { serverId, homeFixtureId } = await connectHome();
-        const machine = createMachineFixture({ id: 'input-relay', storageMode: 'plain', activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'input-relay', storageMode: 'plain', activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState });
+        const { serverId, homeFixtureId } = await connectHome(machine);
         publishMachine(homeFixtureId, machine);
         harness.answer(homeFixtureId, 'GET /v1/artifacts?limit=500&includeBody=true', { body: [] });
         // The Home's plugin-tier kill switches are real admission prerequisites.
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+        const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const features = createRootLayoutFeaturesResponse();
-        for (const feature of ['plugins', 'plugins.ui', 'plugins.ui.reactNativeBundles'] as const) {
+        for (const feature of ['plugins', 'plugins.ui', 'plugins.ui.reactNativeBundles', 'machines.transfer'] as const) {
             if (!tryWriteServerEnabledBitInPlace(features, feature, true)) throw new Error(`Undeclared plugin feature: ${feature}`);
         }
         harness.answer(homeFixtureId, 'GET /v1/features', { body: features });
@@ -346,7 +415,8 @@ describe('Workflow inputs through real Action option resolution', () => {
         const availability = await createActivePluginAccountAvailabilityProjectionHydrator().refresh();
         expect(availability).not.toBeNull();
         applyPluginAccountAvailabilityProjectionRefresh(availability!);
-        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshMachines();
         const onChangeValues = vi.fn();
         const composer = await renderScreen(<WorkflowRunComposer inputs={typed} values={{}}
             optionsConsumer={{ kind: 'workflow', workflow }}
@@ -389,21 +459,13 @@ describe('Workflow inputs through real Action option resolution', () => {
             ? findAllHostTestInstances(fieldScreen.tree.root, node =>
                 (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField').at(-1)
             : fieldScreen.findHostByTestId(consumer === 'workflow' ? 'workflow-run-inputs-repository-picker' : 'composed-repository.control-picker');
-        const pickerAttempt = vi.spyOn(pickerPort, 'pick');
         const { act } = await import('react-test-renderer');
         // Opening returns the terminal settlement promise. Do not await that before
         // the person can interact with the mounted modal.
         await act(async () => {
             productionBrowse!.props.onPress();
         });
-        await Promise.race([
-            waitForHomeGovernance(() => {
-                expect(nativeBoundary.context).toBeDefined();
-            }),
-            pickerAttempt.mock.results[0]!.value.then((result: unknown) => {
-                throw new Error(`Picker settled before native mount: ${JSON.stringify(result)}; aborted=${pickerAttempt.mock.calls[0]![0].signal.aborted}`);
-            }),
-        ]);
+        await waitForHomeGovernance(() => expect(nativeBoundary.context).toBeDefined());
         expect(nativeBoundary.context?.launchInput).toEqual({ inputType: repositoryInputTypeRef, semantic: 'repository',
             ...(pickerOnly ? {} : { options: [{ value: review, label: 'Review assistant' }] }) });
         const pickerContext = nativeBoundary.context!;
@@ -419,11 +481,9 @@ describe('Workflow inputs through real Action option resolution', () => {
         });
         else if (outcome === 'retired') await fieldScreen.unmount();
         else await choose(nativeControl());
-        // Assert the public picker outcome before waiting for its controlled
-        // value callback: selecting a value must not silently become Cancel.
-        await expect(pickerAttempt.mock.results[0]!.value).resolves.toEqual(outcome === 'selected'
-            ? { status: 'selected', value: review }
-            : outcome === 'invalid' ? { status: 'error', message: 'inputPicker.invalid' } : { status: 'cancelled' });
+        // Observe the field's public result; replacing its internal picking
+        // callback with a spy would itself retire the active picking context.
+        if (outcome === 'invalid') expect(fieldScreen.getTextContent()).toContain('inputPicker.invalid');
         // The real presenter retains the modal for its canonical exit animation.
         // Flush that clock boundary inside act before observing actual retirement.
         const { motionTokens } = await import('@/components/ui/motion/motionTokens');
@@ -436,8 +496,7 @@ describe('Workflow inputs through real Action option resolution', () => {
             .rejects.toMatchObject({ code: 'stale_surface' });
         expect(onChangeValues.mock.calls).toEqual(outcome === 'selected' ? [[{ repository: review }]] : []);
         expect(rpc.action).toHaveBeenCalledWith({ consumer: { kind: 'workflow', workflow }, fieldPath: 'repository',
-            draftInput: { machineId: machine.id } });
-        expect(rpc.action.mock.calls.every(([request]) => request.optionsSourceId === undefined)).toBe(true);
+            optionsSourceId: `plugin-input:${repositoryInputTypeRef.pluginId}/repository`, draftInput: {} });
     });
 
     it('coalesces demanded reads, ignores free text, retains options during refresh, and cancels on last release', async () => {

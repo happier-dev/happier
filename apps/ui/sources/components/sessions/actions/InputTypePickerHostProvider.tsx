@@ -245,7 +245,11 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                 });
             },
         });
-    }, [accountLifetime, machineId, serverId, props.contextKey, props.isCurrent, state.phase, state.inputs]);
+    }, [accountLifetime, machineId, serverId, props.contextKey, props.isCurrent]);
+    const inheritedPick = inherited?.pick;
+    const pick = React.useCallback<HappierInputPickerPort['pick']>(request =>
+        request.field.inputType && 'hostType' in request.field.inputType && inheritedPick
+            ? inheritedPick(request) : port.pick(request), [inheritedPick, port]);
     const composed = React.useMemo<HappierInputPickerPort | null>(() => {
         if (!inherited) return props.enabled ? port : null;
         if (props.pluginUiProjection === undefined && props.fieldTargets === undefined) return inherited;
@@ -254,10 +258,13 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
         return {
             resolveSemantic: port.resolveSemantic,
             describe: field => field.inputType && 'hostType' in field.inputType ? inherited.describe(field) : port.describe(field),
-            pick: request => request.field.inputType && 'hostType' in request.field.inputType ? inherited.pick(request) : port.pick(request),
+            pick,
         };
-    }, [inherited, port, props.enabled, props.pluginUiProjection, props.fieldTargets]);
+    }, [inherited, port, pick, props.enabled, props.pluginUiProjection, props.fieldTargets]);
+    // Refresh affordances from the latest projection without retiring a request
+    // whose Account, target and semantic input context are still the same.
+    const presented = React.useMemo(() => composed && { ...composed }, [composed, state.phase, state.inputs]);
     return <InputTypeProjectionDemandContext.Provider value={composed === inherited ? inheritedDemand : acquireProjectionDemand}>
-        <HappierInputPickerProvider port={composed}>{props.children}</HappierInputPickerProvider>
+        <HappierInputPickerProvider port={presented}>{props.children}</HappierInputPickerProvider>
     </InputTypeProjectionDemandContext.Provider>;
 }

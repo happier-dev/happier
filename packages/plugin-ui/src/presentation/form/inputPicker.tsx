@@ -24,7 +24,7 @@ import { HappierText } from '../text/Text.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 
 /** The declared field, input type and choice constraints needed by its picker. */
-export type HappierInputPickerField = Pick<HappierActionInputField, 'inputType' | 'options' | 'optionsSourceId' | 'connectedAccountOptions'>
+export type HappierInputPickerField = Pick<HappierActionInputField, 'inputType' | 'options' | 'optionsSourceId' | 'connectedAccountOptions' | 'allowCustomValue'>
   & Partial<Pick<HappierActionInputField, 'widget'>> & Readonly<{
   path: string;
   title: string;
@@ -76,6 +76,7 @@ export type HappierInputPickerAffordance = Readonly<{
  */
 export type HappierInputPickerPort = Readonly<{
   describe: (field: HappierInputPickerField) => HappierInputPickerAffordance | null;
+  /** Keep stable while the picking context is current; replacement cancels its open request. */
   pick: (request: HappierInputPickerRequest) => Promise<HappierInputPickerResult>;
 }>;
 
@@ -128,7 +129,7 @@ export function useHappierInputPicker(input: Readonly<{
       ? ['host', input.field.inputType.hostType, input.field.inputType.hostType === 'usageQuery' ? input.field.inputType.field : undefined]
       : ['plugin', input.field.inputType.pluginId, input.field.inputType.localId]),
     currentValue === undefined ? null : actionInputOptionValueKey(currentValue),
-    input.field.options, input.field.optionsSourceId, input.field.connectedAccountOptions,
+    input.field.options, input.field.optionsSourceId, input.field.connectedAccountOptions, input.field.allowCustomValue,
     input.options?.flatMap(option => {
       const value = readActionInputOptionValue(option.value);
       return value === undefined ? [] : [[actionInputOptionValueKey(value), option.label, option.description, option.disabled === true]];
@@ -141,10 +142,13 @@ export function useHappierInputPicker(input: Readonly<{
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+  // Presentation can refresh while the same host still owns the request.
+  // Replacing its picking callback retires that context; changing copy does not.
+  const pick = port?.pick;
   useEffect(() => () => {
     attempt.current?.abort();
     attempt.current = null;
-  }, [port, contextKey]);
+  }, [pick, contextKey]);
   const controlRef = useCallback((instance: HappierFocusable | null) => {
     // The pressable releases its handle while busy; keep the last live one for the return.
     if (instance !== null) controlNode.current = instance;

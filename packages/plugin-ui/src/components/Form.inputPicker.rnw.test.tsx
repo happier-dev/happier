@@ -220,7 +220,7 @@ describe('public Form custom pickers', () => {
     expect(onChange).not.toHaveBeenCalled();
     mount.unmount();
   });
-  it('cancels a retired consumer context without changing its saved value and returns focus', async () => {
+  it('retains an open picker through presentation refresh and cancels a replaced picking context', async () => {
     let settle: ((answer: HappierInputPickerResult) => void) | undefined;
     let signal: AbortSignal | undefined;
     // The public host presentation port is this package's genuine boundary.
@@ -233,13 +233,23 @@ describe('public Form custom pickers', () => {
     };
     const { mount, browse, onChange } = mountForm(port, { note: 'Release', repository: 'happier' });
     await choose(browse());
+    const context = createSurfaceContext();
+    await mount.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <HappierInputPickerProvider port={{ ...port }}>
+        <Form hints={hints} value={{ note: 'Release', repository: 'happier' }} onChange={onChange} onSubmit={() => undefined} />
+      </HappierInputPickerProvider>
+    </PluginUiProvider>);
+    expect(signal?.aborted).toBe(false);
+    await act(async () => { settle?.({ status: 'selected', value: 'website' }); });
+    expect(onChange).toHaveBeenCalledWith({ note: 'Release', repository: 'website' });
+    onChange.mockClear();
+    await choose(browse());
     const pickerField = document.createElement('input');
     document.body.appendChild(pickerField);
     pickerField.focus();
     pickerField.remove();
-    const context = createSurfaceContext();
     await mount.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
-      <HappierInputPickerProvider port={{ ...port }}>
+      <HappierInputPickerProvider port={{ ...port, pick: request => port.pick(request) }}>
         <Form hints={hints} value={{ note: 'Release', repository: 'happier' }} onChange={onChange} onSubmit={() => undefined} />
       </HappierInputPickerProvider>
     </PluginUiProvider>);
