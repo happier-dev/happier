@@ -417,6 +417,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET, 'Daemon-local session-runner runtime status read with no server persistence or cross-device fanout.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET, 'Daemon-local additive session-runner status read carrying only exact process-currentness evidence beside the unchanged V1 aggregate.', 'use'),
   directEphemeral(RPC_METHODS.SCM_BACKEND_DESCRIBE, 'Daemon-local source-control backend capability describe read.', 'use', undefined, true),
+  directEphemeral(RPC_METHODS.SCM_WORKSPACE_WATCH, 'Daemon-local native workspace change observation; returns revision or unavailable facts and retains no repository content or server state.', 'use', undefined, true),
   directEphemeral(RPC_METHODS.CAPABILITIES_DESCRIBE, 'Daemon-local capability descriptor read.', 'use'),
 ] satisfies readonly MachineRpcRoutePolicyV1[]);
 
@@ -1003,7 +1004,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', 'custodian_only'),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_LEGACY_INSPECT
-  ], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', 'custodian_only', undefined, undefined, true),
+  ], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', 'manage'),
   ...[...serverRequiredRows([RPC_METHODS.DAEMON_MEMORY_SEARCH, RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, RPC_METHODS.DAEMON_PROVIDERS_PROBE, RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH, RPC_METHODS.DAEMON_PROVIDERS_MODELS, RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD, RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', "custodian_only"),
   ...serverRequiredRows([RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', "use"),
   ...serverRequiredRows([RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_REQUEST_POLICY_SUPPORT, RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_RESOURCE_TEST_CANDIDATE, RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', "custodian_only"),

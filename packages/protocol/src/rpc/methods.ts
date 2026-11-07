@@ -518,6 +518,7 @@ export const RPC_METHODS = {
   TRANSCRIPT_SEARCH: 'transcript.search',
   SCM_BACKEND_DESCRIBE: 'scm.backend.describe',
   SCM_STATUS_SNAPSHOT: 'scm.status.snapshot',
+  SCM_WORKSPACE_WATCH: 'scm.workspace.watch.v1',
   SCM_WORKTREES_ENRICHMENT: 'scm.worktrees.enrichment',
   SCM_DIFF_FILE: 'scm.diff.file',
   SCM_BLAME_FILE: 'scm.blame.file',

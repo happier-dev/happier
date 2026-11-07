@@ -2621,6 +2621,22 @@ exports[`preserves every declared method and complete effective policy through d
   },
   {
     "commandReceiptRequired": false,
+    "method": "scm.workspace.watch.v1",
+    "ownerPacket": "PMS-5",
+    "rationale": "Daemon-local native workspace change observation; returns revision or unavailable facts and retains no repository content or server state.",
+    "readOnly": true,
+    "requesterExecutionIsolationRequired": true,
+    "routeClass": "direct_ephemeral",
+    "rpcClassification": "internal_only",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": false,
+    },
+    "sharedMachineAccess": "use",
+  },
+  {
+    "commandReceiptRequired": false,
     "method": "capabilities.describe",
     "ownerPacket": "PMS-5",
     "rationale": "Daemon-local capability descriptor read.",
@@ -8625,7 +8641,6 @@ exports[`preserves every declared method and complete effective policy through d
     "method": "daemon.workspaceSync.legacy.inspect.v1",
     "ownerPacket": "PMS-5",
     "rationale": "Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.",
-    "requesterExecutionIsolationRequired": true,
     "routeClass": "server_required",
     "rpcClassification": "advisory_unclassified",
     "scope": {
@@ -8634,7 +8649,7 @@ exports[`preserves every declared method and complete effective policy through d
       "serverRequired": true,
     },
     "serverRequiredReason": "ambiguous",
-    "sharedMachineAccess": "custodian_only",
+    "sharedMachineAccess": "manage",
   },
   {
     "commandReceiptRequired": false,
