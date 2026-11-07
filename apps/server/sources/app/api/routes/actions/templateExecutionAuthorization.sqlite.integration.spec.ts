@@ -1,38 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import { Server } from 'socket.io';
 import { encodeBase64 } from 'privacy-kit';
-import { encodeBase64 as encodeCanonicalBase64 } from '@happier-dev/protocol/crypto/base64';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
-    bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionDaemonDispatchRequestSchema,
-    createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { verifyExternalActionMachineRpcExecution, readAdmittedTemplateExecutionPrincipal,
-    projectExternalActionBoundPrincipal, verifyTemplateRequesterExecutionAuthorization,
-    verifyTemplateRequesterHttpExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
-import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
+    bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { db } from '@/storage/db';
-import { inTx } from '@/storage/inTx';
-import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture as signedFixture } from './discussionExecutionAuthorization.testkit';
-import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
-import { registerSessionPatchRoute } from '../session/registerSessionPatchRoute';
-import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
-import { VerifiedEphemeralSessionRunnerPrincipalSchema } from '@happier-dev/protocol/ephemeralRunner/principal';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 
 const content = { v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'Help.' },
     memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };
@@ -50,360 +35,162 @@ describe('signed template parent HTTP purposes', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    it.each([
-        { scope: 'restricted', allowedAction: 'template.instantiate', ownStatus: 403 },
-        { scope: 'unrestricted', allowedAction: undefined, ownStatus: 200 },
-    ] as const)('keeps $scope PAT template authorship within its admitted HTTP purposes', async ({ allowedAction, ownStatus }) => {
-        const f = await signedFixture(allowedAction, [], true);
-        try {
-            // Source existence is deliberately irrelevant to the PAT scope boundary.
-            const input = { source: { kind: 'artifact', artifactId: randomUUID() } };
-            const root = await f.mint('template.instantiate', input);
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
-                requestId: root.binding.requestId, target: root.binding.target, input });
-            const bearer = { authorization: `Bearer ${f.pat.token}` };
-            const userPath = `/v1/user/${encodeURIComponent(f.account.id)}`;
-            expect((await f.app.inject({ method: 'GET', url: userPath, headers: bearer })).statusCode).toBe(403);
-            for (const requesterAuthorship of ['other', 'requester'] as const) {
-                const enriched = await f.app.inject({ method: 'POST',
-                    url: bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate'), headers: bearer,
-                    payload: { v: 1, machineId: f.machine.id, envelope,
-                        templateRequesterSetupEnrichment: { authorization: root, requesterAuthorship } } });
-                expect(enriched.statusCode).toBe(200);
-                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(enriched.json());
-                const headers = { ...bearer,
-                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'template.instantiate',
-                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target) };
-                const expectedStatus = requesterAuthorship === 'requester' ? ownStatus : 403;
-                expect((await f.app.inject({ method: 'GET', url: userPath, headers })).statusCode).toBe(expectedStatus);
-                expect(await f.verify(authorization, { method: 'GET', path: userPath,
-                    routeInput: { id: f.account.id } }) !== null).toBe(expectedStatus === 200);
-                expect((await f.app.inject({ method: 'GET', url: '/v1/account/encryption', headers })).statusCode).toBe(200);
-                await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption' })).resolves.not.toBeNull();
-            }
-        } finally { await f.app.close(); }
-    });
-
-    it('lets a signed requester author use ordinary Account access while another author stays template-confined', async () => {
+    it('uses ordinary bearer Account access for the template author', async () => {
         const f = await signedFixture('template.instantiate', [], true);
         try {
-            const input = { source: { kind: 'artifact', artifactId: randomUUID() } };
-            const original = await f.mint('template.instantiate', input, true);
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: original.binding.requestId,
-                target: original.binding.target, input });
-            const path = bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate');
-            const enrich = async (requesterAuthorship: 'requester' | 'other', authorization = original) => f.app.inject({
-                method: 'POST', url: path, headers: { authorization: `Bearer ${f.presentUserToken}` },
-                payload: { v: 1, machineId: f.machine.id, envelope,
-                    templateRequesterSetupEnrichment: { authorization, requesterAuthorship } },
-            });
-            const authorResponse = await enrich('requester');
-            expect(authorResponse.statusCode, authorResponse.body).toBe(200);
-            const author = ExternalActionExecutionAuthorizationV1Schema.parse(authorResponse.json());
-            expect(author.binding).toMatchObject({ templateRequesterAuthorship: 'requester' });
-            const otherResponse = await enrich('other');
-            expect(otherResponse.statusCode, otherResponse.body).toBe(200);
-            const other = ExternalActionExecutionAuthorizationV1Schema.parse(otherResponse.json());
+            const path = `/v1/user/${encodeURIComponent(f.account.id)}`;
+            const bearer = { authorization: `Bearer ${f.presentUserToken}` };
+            expect((await f.app.inject({ method: 'GET', url: path, headers: bearer })).statusCode).toBe(200);
+            const root = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } }, true);
+            expect((await f.app.inject({ method: 'GET', url: path, headers: {
+                ...bearer, [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'template.instantiate',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+            } })).statusCode).toBe(403);
+            await expect(f.verify(root, { method: 'GET', path })).resolves.toBeNull();
+        } finally { await f.app.close(); }
+    });
+
+    it('confines a restricted template PAT to its signed purpose', async () => {
+        const f = await signedFixture('template.instantiate', [], true);
+        try {
+            const root = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } });
             const userPath = `/v1/user/${encodeURIComponent(f.account.id)}`;
-            const headers = (authorization: typeof author, effectActionId = 'template.instantiate') => ({
-                authorization: `Bearer ${f.presentUserToken}`,
-                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
-                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
-            });
-            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id } })).resolves.not.toBeNull();
-            await expect(f.verify(other, { method: 'GET', path: userPath, routeInput: { id: f.account.id } })).resolves.toBeNull();
-            await expect(verifyTemplateRequesterHttpExecutionRequest({ authorizationToken: author.token,
-                encodedTarget: encodeExternalActionResolvedTargetV1(author.binding.target), effectActionId: 'template.instantiate',
-                method: 'GET', path: userPath, body: undefined, machineSignature: '' },
-                { accountId: f.account.id, authority: 'present_user', tokenEpoch: f.account.tokenEpoch })).resolves.not.toBeNull();
-            const ordinaryGet = await f.app.inject({ method: 'GET', url: userPath,
-                headers: { authorization: `Bearer ${f.presentUserToken}` } });
-            expect(ordinaryGet.statusCode, ordinaryGet.body).toBe(200);
-            const authorGet = await f.app.inject({ method: 'GET', url: userPath, headers: headers(author) });
-            expect(authorGet.statusCode, authorGet.body).toBe(200);
-            expect((await f.app.inject({ method: 'GET', url: userPath, headers: headers(other) })).statusCode).toBe(403);
-            const reviewedChild = { actionId: 'memory.remember', role: 'memory:reviewed', inputDigest: 'a'.repeat(43) };
-            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id }, reviewedChild },
-                'memory.remember')).resolves.not.toBeNull();
-            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id },
-                reviewedChild: { ...reviewedChild, role: 'invalid' } }, 'memory.remember')).resolves.toBeNull();
-            expect((await enrich('other', author)).statusCode).toBe(403);
-            const authentication = createPresentUserSessionAccessAuthentication();
-            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
-                originalActionEnvelope: envelope, accountId: f.account.id, authentication })).resolves.not.toBeNull();
-            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
-                originalActionEnvelope: envelope, accountId: randomUUID(), authentication })).resolves.toBeNull();
-            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
-                originalActionEnvelope: { ...envelope, requestId: randomUUID() },
-                accountId: f.account.id, authentication })).resolves.toBeNull();
-            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: { ...author,
-                binding: { ...author.binding, templateRequesterAuthorship: 'other' } },
-                originalActionEnvelope: envelope, accountId: f.account.id, authentication })).resolves.toBeNull();
-            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
-                originalActionEnvelope: envelope, accountId: f.account.id,
-                authentication: { ...authentication, sessionRuntimePrincipal: VerifiedEphemeralSessionRunnerPrincipalSchema.parse({
-                    kind: 'ephemeral_session_runner', authority: 'session_runtime', accountId: f.account.id,
-                    activationId: randomUUID(), sessionId: randomUUID(), machineId: f.machine.id,
-                    installationId: f.machine.installationId, installationPublicKey: encodeCanonicalBase64(f.keyPair.publicKey, 'base64url'), creatorTokenEpoch: 0,
-                }) } })).resolves.toBeNull();
+            expect((await f.app.inject({ method: 'GET', url: userPath,
+                headers: { authorization: `Bearer ${f.pat.token}` } })).statusCode).toBe(403);
+            await expect(f.verify(root, { method: 'GET', path: '/v1/account/encryption' })).resolves.not.toBeNull();
+            await expect(f.verify(root, { method: 'GET', path: userPath,
+                routeInput: { id: f.account.id } })).resolves.toBeNull();
+        } finally { await f.app.close(); }
+    });
 
-            const sessionId = randomUUID();
-            const sessionRouteTarget = { kind: 'session' as const, sessionId };
-            const ownerPatch = SessionMetadataTuplePatchV1Schema.parse({ mode: 'owner', metadataLayoutVersion: 1,
-                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } }, ownerMetadata: { t: 'plain', v: { v: 1 } },
-                sharedMetadata: { ciphertext: '{}', expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 } });
-            const child = (actionId: 'prompt_doc.create' | 'session.instructions.set' | 'memory.remember'
-                | 'skills.create' | 'mcp.servers.create' | 'session.bot.face.set', role: string) => ({
-                actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, {}),
-            });
-            const contentWrite = { method: 'POST', path: '/v1/artifacts?extra=1', body: createBody(randomUUID()) };
-            for (const [actionId, role, request] of [
-                ['prompt_doc.create', 'create_instructions', contentWrite],
-                ['session.instructions.set', 'attach_instructions', { method: 'PATCH',
-                    path: `/v2/sessions/${sessionId}?extra=1`, body: ownerPatch, sessionRouteTarget }],
-                ['memory.remember', 'memory:guide', contentWrite],
-                ['skills.create', 'skill:guide', contentWrite],
-                ['mcp.servers.create', 'create_template_mcp', { method: 'POST',
-                    path: `${MCP_SERVER_CATALOG_ROWS_ROUTE_V1}?extra=1`, body: McpServerCatalogRowMutationV1Schema.parse({
-                        expectedRevision: 1, content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } },
-                    }) }],
-            ] as const) {
-                const proof = { ...request, reviewedChild: child(actionId, role) };
-                await expect(f.verify(author, proof, actionId), actionId).resolves.not.toBeNull();
-                await expect(f.verify(other, proof, actionId), actionId).resolves.toBeNull();
-            }
-
-            const updateInput = { sessionRef: { serverId: 'home', sessionId },
-                expectedVersion: '1.1.0', expectedMetadataRevision: 1 };
-            const updateRoot = await f.mint('template.updates.apply', updateInput, true);
-            const updateEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: updateRoot.binding.requestId,
-                target: updateRoot.binding.target, input: updateInput });
-            const updateResponse = await f.app.inject({ method: 'POST',
-                url: bindExternalActionExecutionAuthorizationHttpPathV1('template.updates.apply'),
-                headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: { v: 1, machineId: f.machine.id,
-                    envelope: updateEnvelope, templateRequesterSetupEnrichment: { authorization: updateRoot,
-                        requesterAuthorship: 'requester' } } });
-            expect(updateResponse.statusCode, updateResponse.body).toBe(200);
-            const updateAuthor = ExternalActionExecutionAuthorizationV1Schema.parse(updateResponse.json());
-            await expect(f.verify(updateAuthor, { method: 'PATCH', path: `/v2/sessions/${sessionId}?extra=1`,
-                body: ownerPatch, sessionRouteTarget,
-                reviewedChild: child('session.bot.face.set', 'update_face') }, 'session.bot.face.set'))
-                .resolves.not.toBeNull();
+    it('serves an ordinary Artifact read through a full PAT signed template root', async () => {
+        const f = await signedFixture(undefined, [], false, undefined, { artifactReads: true });
+        try {
             const artifactId = randomUUID();
-            const report = { artifactId, copyId: sessionId, acceptedVersion: '1.1.0' };
-            await expect(f.verify(updateAuthor, { method: 'PUT',
-                path: `/v1/artifacts/${artifactId}/access/accepted-version?extra=1`, body: report,
-                routeInput: { id: artifactId, ...report } })).resolves.not.toBeNull();
+            const authorization = await f.mint('template.preview', {
+                source: { kind: 'artifact', serverId: 'home', artifactId },
+            });
+            const path = `/v1/artifacts/${artifactId}`;
+            const headers = {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'template.preview',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: 'template.preview',
+                    target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    requestId: authorization.binding.requestId, method: 'GET', path, privateKey: f.keyPair.secretKey,
+                }),
+            };
+            // The Artifact is absent. A 404 proves the signed request reached its ordinary resource owner.
+            expect((await f.app.inject({ method: 'GET', url: path, headers })).statusCode).toBe(404);
         } finally { await f.app.close(); }
     });
 
-    it('keeps template metadata batch reads equivalent to their admitted detail reads', async () => {
-        const f = await signedFixture();
+    it('serves ordinary Artifact reads under a full PAT Prompt create root while a scoped PAT cannot', async () => {
+        const artifactId = randomUUID();
+        const path = `/v1/artifacts/${artifactId}`;
+        const full = await signedFixture(undefined, [], false, undefined, { artifactReads: true });
         try {
-            const sessionId = randomUUID();
-            const body = { sessionIds: [sessionId], accessProjectionVersion: 1, includeSnapshot: true,
-                includeTurns: false, includeMessages: false };
-            for (const root of ['template.draft', 'template.instantiate', 'template.updates.diff',
-                'template.updates.apply', 'template.updates.skip', 'template.follow.stop'] as const) {
-                const authorization = await f.mint(root, {}, true);
-                await expect(f.verify(authorization, { method: 'GET', path: `/v2/sessions/${sessionId}?accessProjectionVersion=1`,
-                    sessionRouteTarget: { kind: 'session', sessionId } })).resolves.not.toBeNull();
-                expect(await f.verify(authorization, { method: 'POST', path: '/v2/sessions/read-batch', body,
-                    routeInput: body }), root).not.toBeNull();
-            }
-            for (const root of ['template.release', 'template.preview', 'template.export_file'] as const) {
-                const authorization = await f.mint(root, {}, true);
-                await expect(f.verify(authorization, { method: 'POST', path: '/v2/sessions/read-batch', body })).resolves.toBeNull();
-            }
+            const root = await full.mint('prompt_doc.create', { title: 'Saved', markdown: 'Text' });
+            const headers = createExternalActionAuthorizedRequestHeaders({ authorization: root,
+                effectActionId: root.binding.actionId, target: root.binding.target,
+                installationId: full.machine.installationId!, privateKey: full.keyPair.secretKey,
+                method: 'GET', path });
+            expect((await full.app.inject({ method: 'GET', url: path, headers })).statusCode).toBe(404);
+        } finally { await full.app.close(); }
+        const scoped = await signedFixture('prompt_doc.create', [], false, undefined, { artifactReads: true });
+        try {
+            const root = await scoped.mint('prompt_doc.create', { title: 'Saved', markdown: 'Text' });
+            await expect(scoped.verify(root, { method: 'GET', path })).resolves.toBeNull();
+        } finally { await scoped.app.close(); }
+    });
+
+    it('does not accept a Release child role for signed-in link creation', async () => {
+        const f = await signedFixture('template.release', [], false, undefined, { signedInLinks: true });
+        try {
+            const input = { draftArtifactId: randomUUID(),
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
+                share: { recipients: [{ kind: 'account', accountId: f.account.id }] } };
+            const root = await f.mint('template.release', input, true);
+            const child = { actionId: 'artifact.public_link.create', role: 'signed_in_link', inputDigest: 'a'.repeat(43) };
+            await expect(f.verify(root, { method: 'POST', path: '/v1/artifact-signed-in-links',
+                body: { artifactId: randomUUID(), lookupId: randomUUID() }, reviewedChild: child },
+            'artifact.public_link.create')).resolves.toBeNull();
+            const patRoot = await f.mint('template.release', input);
+            const path = '/v1/artifact-signed-in-links';
+            const artifactId = randomUUID();
+            await db.artifact.create({ data: { id: artifactId, accountId: f.account.id,
+                kind: deriveArtifactStoredKindV1({ kind: 'bot_template.v1' }),
+                header: new Uint8Array([1]), body: new Uint8Array([2]),
+                dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            const body = { artifactId, lookupId: randomUUID() };
+            const headers = createExternalActionAuthorizedRequestHeaders({ authorization: patRoot,
+                effectActionId: 'template.release', target: patRoot.binding.target,
+                installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey,
+                method: 'POST', path, body });
+            expect(headers).not.toHaveProperty('authorization');
+            const create = await f.app.inject({ method: 'POST', url: path, headers, payload: body });
+            expect(create.statusCode, create.body).toBe(400);
+            expect(create.json()).not.toEqual({ error: 'invalid_token' });
         } finally { await f.app.close(); }
     });
 
-    it('derives only the reviewed update Plan root from its retained Manage admission', async () => {
-        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const f = await signedFixture('template.updates.apply', [], false, custodian.id);
+    it.each([
+        { grants: ['template.instantiate'], plan: false, apply: false },
+        { grants: ['template.instantiate', 'machines.setup.plan'], plan: true, apply: false },
+        { grants: ['template.instantiate', 'machines.setup.plan', 'machines.setup.apply'], plan: true, apply: true },
+    ] as const)('admits ordinary Machine setup only under its own scoped PAT grants ($grants)', async ({ grants, plan, apply }) => {
+        const f = await signedFixture('template.instantiate', [], false, undefined, { allowedActionIds: grants });
         try {
-            const rootEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: randomUUID(),
-                target: { kind: 'machine', machineId: f.machine.id }, input: { sessionRef: { serverId: 'home', sessionId: randomUUID() } } });
-            const rootPath = bindExternalActionExecutionAuthorizationHttpPathV1('template.updates.apply');
-            const rootResponse = await f.app.inject({ method: 'POST', url: rootPath, headers: { authorization: `Bearer ${f.pat.token}` },
-                payload: { v: 1, machineId: f.machine.id, envelope: rootEnvelope, templateRequesterSetupAdmission: { kind: 'software' } } });
-            expect(rootResponse.statusCode).toBe(200);
-            const root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
-            const plan = { homeId: root.binding.serverIdentityId, machineId: f.machine.id, mode: 'effects' as const };
-            const planInputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', plan);
-            const enrichedResponse = await f.app.inject({ method: 'POST', url: rootPath, headers: { authorization: `Bearer ${f.pat.token}` },
-                payload: { v: 1, machineId: f.machine.id, envelope: rootEnvelope,
-                    templateRequesterSetupEnrichment: { authorization: root, planInputDigest } } });
-            expect(enrichedResponse.statusCode).toBe(200);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(enrichedResponse.json());
-            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
-            expect((await f.app.inject({ method: 'POST', url: rootPath, headers: { authorization: `Bearer ${f.pat.token}` },
-                payload: { v: 1, machineId: f.machine.id, envelope: { ...rootEnvelope, requestId: randomUUID() },
-                    templateRequesterSetupAdmission: { kind: 'software' } } })).statusCode).not.toBe(200);
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: rootEnvelope.requestId,
-                target: rootEnvelope.target, input: plan });
-            const derive = (candidate = envelope, original = rootEnvelope, parent = authorization) => f.app.inject({ method: 'POST',
-                url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.plan'),
-                headers: { authorization: `Bearer ${f.pat.token}` }, payload: { v: 1, machineId: f.machine.id, envelope: candidate,
-                    templateRequesterSetupPlanContinuation: { authorization: parent, originalActionEnvelope: original } } });
-            const response = await derive();
-            expect(response.statusCode).toBe(200);
-            const native = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
-            expect(native.binding).toMatchObject({
-                actionId: 'machines.setup.plan', admittedMachineRole: 'manage', accountId: root.binding.accountId,
-                templateRequesterSetupPlanAdmission: { parentActionId: 'template.updates.apply',
-                    parentRequestEnvelopeDigest: root.binding.requestEnvelopeDigest, planInputDigest } });
-            expect((await derive({ ...envelope, input: { ...plan, mode: 'check' } })).statusCode).not.toBe(200);
-            expect((await derive(envelope, { ...rootEnvelope, requestId: randomUUID() })).statusCode).not.toBe(200);
-            expect((await derive(envelope, rootEnvelope, root)).statusCode).not.toBe(200);
-            await expect(f.verify(native, { method: 'GET', path: '/v1/account/encryption/currentness' })).resolves.not.toBeNull();
-            const method = `${f.machine.id}:${RPC_METHODS.MACHINE_SETUP_PLAN}`;
-            const requestId = randomUUID();
-            const signPlan = (params: unknown, proof = native) => ({ v: 1 as const, authorization: proof, effectActionId: 'machines.setup.plan',
-                target: proof.binding.target, installationId: proof.binding.installationId,
-                machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: proof.token,
-                    effectActionId: 'machines.setup.plan', target: proof.binding.target, installationId: proof.binding.installationId,
-                    method, requestId, params, privateKey: f.keyPair.secretKey }) });
-            await expect(verifyExternalActionMachineRpcExecution(signPlan(plan, authorization), { method, requestId, params: plan,
-                originalActionEnvelope: rootEnvelope })).resolves.toBeNull();
-            await expect(verifyExternalActionMachineRpcExecution(signPlan(plan), { method, requestId, params: plan })).resolves.not.toBeNull();
-            const changed = { ...plan, mode: 'check' };
-            await expect(verifyExternalActionMachineRpcExecution(signPlan(changed), { method, requestId, params: changed })).resolves.toBeNull();
-            await db.machine.update({ where: { id: f.machine.id }, data: { active: true,
-                operationProtocolCapabilitiesRevision: 1,
-                operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
-            const accepted = readAdmittedTemplateExecutionPrincipal(native.binding);
-            const principal = accepted && projectExternalActionBoundPrincipal(native.binding, accepted);
-            if (!principal) throw new Error('Derived Plan lost its captured requester');
-            const dispatch = createExternalActionDaemonDispatcher({ io: new Server(),
-                // Replace only the daemon RPC network; issuer, placement and retained admission stay real.
-                forwardRpc: async ({ callParams }) => {
-                    const packet = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
-                    return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
-                        v: 1, actionId: packet.actionId, requestId: packet.envelope.requestId,
-                        execution: { ok: true, result: { planned: true } } })) };
-                } });
-            const dispatched = await dispatch({ actionId: 'machines.setup.plan', envelope, principal, executionAuthorization: native });
-            expect(dispatched.kind).toBe('response');
-            if (dispatched.kind !== 'response') throw new Error('The retained Plan did not reach its daemon');
-            expect(JSON.parse(dispatched.prepared.body)).toMatchObject({ execution: { ok: true, result: { planned: true } } });
+            const root = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } });
+            const homeId = root.binding.serverIdentityId;
+            const planInput = MachineSetupPlanInputV1Schema.parse({ homeId, machineId: f.machine.id });
+            const applyInput = MachineSetupApplyInputV1Schema.parse({ homeId, machineId: f.machine.id,
+                targets: [{ homeId, machineId: f.machine.id, sources: [{ kind: 'direct', setup: {} }],
+                    desiredRevision: 0, recipePlans: [] }] });
+            const mint = (actionId: 'machines.setup.plan' | 'machines.setup.apply', input: unknown) => f.app.inject({
+                method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${f.pat.token}` },
+                payload: { v: 1, machineId: f.machine.id, envelope: ExternalActionRequestEnvelopeV1Schema.parse({
+                    v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: f.machine.id }, input,
+                }) },
+            });
+            const planned = await mint('machines.setup.plan', planInput);
+            expect(planned.statusCode, planned.body).toBe(plan ? 200 : 403);
+            if (plan) expect(ExternalActionExecutionAuthorizationV1Schema.parse(planned.json()).binding)
+                .toMatchObject({ actionId: 'machines.setup.plan', machineId: f.machine.id, admittedMachineRole: 'manage' });
+            else expect(planned.json()).toEqual({ error: 'credential_scope_denied' });
+            const applied = await mint('machines.setup.apply', applyInput);
+            expect(applied.statusCode, applied.body).toBe(apply ? 200 : 403);
+            if (apply) expect(ExternalActionExecutionAuthorizationV1Schema.parse(applied.json()).binding)
+                .toMatchObject({ actionId: 'machines.setup.apply', machineId: f.machine.id, admittedMachineRole: 'manage' });
+            else expect(applied.json()).toEqual({ error: 'credential_scope_denied' });
         } finally { await f.app.close(); }
     });
 
-    it('prepares requester custody only from the selected Machine publication', async () => {
-        const f = await signedFixture('template.instantiate');
-        try {
-            const authorization = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } });
-            await expect(f.verify(authorization, { method: 'GET', path: `/v1/machines/${encodeURIComponent(f.machine.id)}`,
-                routeInput: { id: f.machine.id } })).resolves.not.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: `/v1/machines/${randomUUID()}` })).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: '/v1/machines' })).resolves.toBeNull();
-        } finally { await f.app.close(); }
-    });
-
-    it('retains admitted template content after Machine role withdrawal while refusing a new root', async () => {
-        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const f = await signedFixture('template.instantiate', [], false, custodian.id);
-        try {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: randomUUID(),
-                target: { kind: 'machine', machineId: f.machine.id }, input: { source: { kind: 'artifact', artifactId: randomUUID() } } });
-            const mint = (requestId: string) => f.app.inject({ method: 'POST',
-                url: bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate'),
-                headers: { authorization: `Bearer ${f.pat.token}` }, payload: { v: 1, machineId: f.machine.id,
-                    envelope: { ...envelope, requestId }, templateRequesterSetupAdmission: { kind: 'software' } } });
-            const admitted = await mint(envelope.requestId!);
-            expect(admitted.statusCode).toBe(200);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json());
-            expect(authorization.binding.admittedMachineRole).toBe('manage');
-            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
-            expect((await mint(randomUUID())).statusCode).not.toBe(200);
-            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifacts', body: createBody(randomUUID()),
-                reviewedChild: { actionId: 'skills.create', role: 'skill:reviewed', inputDigest: 'a'.repeat(43) } }, 'skills.create'))
-                .resolves.not.toBeNull();
-        } finally { await f.app.close(); }
-    });
-
-    it('seals prepared setup on the original Manage admission and verifies its exact installed Plan child', async () => {
-        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const f = await signedFixture('template.instantiate', [], false, custodian.id);
-        try {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: randomUUID(),
-                target: { kind: 'machine', machineId: f.machine.id }, input: { source: { kind: 'artifact', artifactId: randomUUID() } } });
-            const path = bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate');
-            const rootResponse = await f.app.inject({ method: 'POST', url: path,
-                headers: { authorization: `Bearer ${f.pat.token}` }, payload: { v: 1, machineId: f.machine.id, envelope,
-                    templateRequesterSetupAdmission: { kind: 'software' } } });
-            expect(rootResponse.statusCode).toBe(200);
-            const root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
-            expect(root.binding.admittedMachineRole).toBe('manage');
-            const plan = { homeId: root.binding.serverIdentityId, machineId: f.machine.id, mode: 'effects' as const };
-            const inputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', plan);
-            const enrichedResponse = await f.app.inject({ method: 'POST', url: path,
-                headers: { authorization: `Bearer ${f.pat.token}` }, payload: { v: 1, machineId: f.machine.id, envelope,
-                    templateRequesterSetupEnrichment: { authorization: root, planInputDigest: inputDigest } } });
-            expect(enrichedResponse.statusCode).toBe(200);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(enrichedResponse.json());
-            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
-            const method = `${f.machine.id}:${RPC_METHODS.MACHINE_SETUP_PLAN}`;
-            const requestId = randomUUID();
-            const reviewedChild = { actionId: 'machines.setup.plan', role: 'template_setup_plan', inputDigest };
-            const signed = { authorizationToken: authorization.token, effectActionId: 'machines.setup.plan',
-                target: authorization.binding.target, installationId: authorization.binding.installationId, method, requestId,
-                params: plan, reviewedChild };
-            const execution = { v: 1 as const, authorization, effectActionId: signed.effectActionId, target: signed.target,
-                installationId: signed.installationId, reviewedChild,
-                machineSignature: signExternalActionMachineRpcRequestV1({ ...signed, privateKey: f.keyPair.secretKey }) };
-            await expect(verifyExternalActionMachineRpcExecution(execution, { method, requestId, params: plan,
-                originalActionEnvelope: envelope })).resolves.not.toBeNull();
-            await expect(verifyExternalActionMachineRpcExecution(execution, { method, requestId, params: { ...plan, mode: 'check' },
-                originalActionEnvelope: envelope })).resolves.toBeNull();
-            await expect(verifyExternalActionMachineRpcExecution({ ...execution, reviewedChild: { ...reviewedChild, role: 'other' } },
-                { method, requestId, params: plan, originalActionEnvelope: envelope })).resolves.toBeNull();
-            await expect(verifyExternalActionMachineRpcExecution(execution, { method, requestId, params: plan,
-                originalActionEnvelope: { ...envelope, requestId: randomUUID() } })).resolves.toBeNull();
-        } finally { await f.app.close(); }
-    });
-
-    it('authenticates the template requester without a selected Machine signature and confines the root purpose', async () => {
-        const f = await signedFixture('template.instantiate');
-        try {
-            const authorization = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } });
-            const headers = { authorization: `Bearer ${f.presentUserToken}`,
-                'x-happier-action-execution-authorization': authorization.token,
-                'x-happier-action-effect': 'template.instantiate',
-                'x-happier-action-target': encodeExternalActionResolvedTargetV1(authorization.binding.target) };
-            const accepted = await f.app.inject({ method: 'GET', url: '/v1/features/authenticated', headers });
-            expect(accepted.statusCode).toBe(200);
-            const accountMode = await f.app.inject({ method: 'GET', url: '/v1/account/encryption', headers });
-            expect(accountMode.statusCode, accountMode.body).toBe(200);
-            expect(accountMode.json()).toMatchObject({ mode: 'plain' });
-            expect((await f.app.inject({ method: 'GET', url: '/v1/account/encryption?extra=1', headers })).statusCode).toBe(403);
-            await expect(f.verify(authorization, { method: 'GET', path: '/v2/account/settings' },
-                'template.instantiate')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'PATCH', path: '/v1/account/encryption',
-                body: { mode: 'e2ee' } }, 'template.instantiate')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption',
-                routeInput: {}, reviewedChild: { actionId: 'prompt_doc.create', role: 'create_instructions',
-                    inputDigest: 'a'.repeat(43) } }, 'prompt_doc.create')).resolves.not.toBeNull();
-            expect((await f.app.inject({ method: 'GET', url: '/v1/features/authenticated',
-                headers: { ...headers, 'x-happier-action-effect': 'machines.setup.apply' } })).statusCode).toBe(403);
-            expect((await f.app.inject({ method: 'GET', url: '/v1/features/authenticated',
-                headers: { ...headers, authorization: 'Bearer invalid' } })).statusCode).toBe(401);
-            const other = await signedFixture('template.instantiate');
+    it.each([
+        { actionId: 'machines.setup.plan', grants: ['template.instantiate', 'machines.setup.plan'], admitted: true },
+        { actionId: 'machines.setup.plan', grants: ['template.instantiate'], admitted: false },
+        { actionId: 'machines.setup.apply', grants: ['template.instantiate', 'machines.setup.apply'], admitted: true },
+        { actionId: 'machines.setup.apply', grants: ['template.instantiate'], admitted: false },
+    ] as const)('spends a reviewed $actionId HTTP child only with its own scoped PAT grant ($admitted)',
+        async ({ actionId, grants, admitted }) => {
+            const f = await signedFixture('template.instantiate', [], false, undefined, { allowedActionIds: grants });
             try {
-                expect((await f.app.inject({ method: 'GET', url: '/v1/features/authenticated', headers: {
-                    ...headers, authorization: `Bearer ${other.presentUserToken}` } })).statusCode).toBe(403);
-            } finally { await other.app.close(); }
-            const unrelated = await f.mint('template.preview', { source: { kind: 'artifact', artifactId: randomUUID() } }, true);
-            expect((await f.app.inject({ method: 'GET', url: '/v1/features/authenticated', headers: { ...headers,
-                'x-happier-action-execution-authorization': unrelated.token, 'x-happier-action-effect': 'template.preview' } })).statusCode).toBe(403);
-        } finally { await f.app.close(); }
-    });
+                const root = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } });
+                const path = '/v1/account/encryption/currentness';
+                const headers = createExternalActionAuthorizedRequestHeaders({ authorization: root,
+                    effectActionId: actionId, target: root.binding.target,
+                    installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey,
+                    reviewedChild: { actionId, role: 'setup.target', inputDigest: 'a'.repeat(43) },
+                    method: 'GET', path });
+                expect(headers).not.toHaveProperty('authorization');
+                const response = await f.app.inject({ method: 'GET', url: path, headers });
+                expect(response.statusCode, response.body).toBe(admitted ? 200 : 401);
+                if (!admitted) expect(response.json()).toMatchObject({ error: 'invalid_token' });
+            } finally { await f.app.close(); }
+        });
 
     it.each(['artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke'] as const)(
         '%s spends only its signed-in link management phase', async actionId => {
@@ -479,43 +266,6 @@ describe('signed template parent HTTP purposes', () => {
         } finally { await f.app.close(); }
     });
 
-    it('release spends its reviewed signed-in link child without anonymous, list, revoke or join authority', async () => {
-        const f = await signedFixture('template.release');
-        try {
-            const artifactId = randomUUID();
-            const authorization = await f.mint('template.release', { draftArtifactId: randomUUID(),
-                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
-                share: { recipients: [], signedInLink: true } });
-            const childInput = { artifactId, audience: 'signed_in', preserveExisting: true };
-            const reviewedChild = { actionId: 'artifact.public_link.create', role: 'signed_in_link',
-                inputDigest: computeActionInputApprovalDigestV1('artifact.public_link.create', childInput) };
-            const body = { artifactId, lookupId: randomUUID(), preserveExisting: true };
-            const path = '/v1/artifact-signed-in-links';
-            await expect(f.verify(authorization, { method: 'POST', path, body, reviewedChild }, 'artifact.public_link.create')).resolves.not.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: `/v1/artifacts/${artifactId}`, reviewedChild },
-                'artifact.public_link.create')).resolves.not.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness', reviewedChild },
-                'artifact.public_link.create')).resolves.not.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path, body }, 'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path, body, reviewedChild: { ...reviewedChild, role: 'unrelated' } },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: '/v1/public-shares', body: {
-                subject: { kind: 'artifact', id: artifactId }, lookupId: body.lookupId, keyDerivation: 'fragment_v1' }, reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'GET', path: `${path}?artifactId=${artifactId}`, reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'DELETE', path: `${path}/${artifactId}`, reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: `${path}/${body.lookupId}/join`, body: {}, reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifacts', body: createBody(randomUUID()), reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'PUT', path: `/v1/artifacts/${artifactId}/access/grants`,
-                body: { artifactId, principal: { kind: 'team', teamId: 'cmvtemplate-team' }, accessLevel: 'view' }, reviewedChild },
-                'artifact.public_link.create')).resolves.toBeNull();
-        } finally { await f.app.close(); }
-    });
-
     it.each(['template.preview', 'template.export_file'] as const)('%s retains only its exact Artifact codec purposes on a restricted PAT', async actionId => {
         const f = await signedFixture(actionId);
         try {
@@ -540,56 +290,6 @@ describe('signed template parent HTTP purposes', () => {
             await expect(f.verify(authorization, { method: 'GET', path }, 'artifact.get')).resolves.toBeNull();
             await expect(f.verify(authorization, { method: 'GET', path }, 'template.draft')).resolves.toBeNull();
         } finally { await f.app.close(); }
-    });
-
-    it('authenticates signed draft owner tuples but refuses legacy metadata and mixed bearer credentials', async () => {
-        const f = await signedFixture('template.draft');
-        const app = createAuthenticatedTestApp({ authentication: 'real' });
-        registerSessionPatchRoute(app);
-        try {
-            const ownerMetadata = { t: 'plain' as const, v: { v: 1 as const } };
-            const sharedMetadata = JSON.stringify(projectSessionSharedMetadataV1({ metadata: {}, agentState: null }));
-            for (const mode of ['owner', 'owner_migration'] as const) {
-                const session = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(),
-                    encryptionMode: 'plain', metadataLayoutVersion: mode === 'owner' ? 1 : 0,
-                    metadata: mode === 'owner' ? sharedMetadata : '{}', metadataVersion: 0,
-                    ownerMetadata: mode === 'owner' ? JSON.stringify(ownerMetadata) : null,
-                    agentState: null, agentStateVersion: 0 } });
-                const authorization = await f.mint('template.draft', { sourceSessionRef: { serverId: 'home', sessionId: session.id }, content }, true);
-                const path = `/v2/sessions/${session.id}`;
-                const body = SessionMetadataTuplePatchV1Schema.parse(mode === 'owner' ? {
-                    mode, metadataLayoutVersion: 1, expectedOwnerMetadata: ownerMetadata, ownerMetadata,
-                    sharedMetadata: { ciphertext: sharedMetadata, expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 },
-                } : {
-                    mode, expectedAccountEncryptionMode: 'plain', expectedAccountContentPublicKeyFingerprint: null,
-                    source: { metadataLayoutVersion: 0, metadata: { version: 0, ciphertext: '{}' }, ownerMetadata: null,
-                        agentState: { version: 0, ciphertext: null } },
-                    target: { metadataLayoutVersion: 1, sharedMetadata: { ciphertext: sharedMetadata }, ownerMetadata, agentState: { ciphertext: null } },
-                });
-                const headers = (payload: unknown) => ({
-                    'x-happier-account-stored-content-protocol': '2',
-                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'template.draft',
-                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
-                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: 'template.draft', target: authorization.binding.target,
-                        installationId: f.machine.installationId!, requestId: authorization.binding.requestId,
-                        method: 'PATCH', path, body: payload, privateKey: f.keyPair.secretKey }),
-                });
-                const mixed = await app.inject({ method: 'PATCH', url: path, headers: { ...headers(body), authorization: `Bearer ${f.presentUserToken}` }, payload: body });
-                expect(mixed.statusCode, mixed.body).toBe(403);
-                expect(mixed.json()).toEqual({ error: 'credential_scope_denied' });
-                const legacy = { metadata: { ciphertext: '{}', expectedVersion: 0 } };
-                const denied = await app.inject({ method: 'PATCH', url: path, headers: headers(legacy), payload: legacy });
-                expect(denied.statusCode, denied.body).toBe(401);
-                expect(denied.json()).toEqual({ error: 'invalid_token' });
-                const accepted = await app.inject({ method: 'PATCH', url: path, headers: headers(body), payload: body });
-                expect(accepted.statusCode, `${mode}: ${accepted.body}`).toBe(200);
-                expect(accepted.json()).toMatchObject({ success: true, metadataLayoutVersion: 1 });
-                expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
-                    .toMatchObject({ metadataLayoutVersion: 1, metadataVersion: 1, ownerMetadata: JSON.stringify(ownerMetadata) });
-            }
-        } finally { await app.close(); await f.app.close(); }
     });
 
     it('draft retains Artifact publication and owner metadata CAS, with no grant or Session lifecycle effect', async () => {
@@ -633,7 +333,7 @@ describe('signed template parent HTTP purposes', () => {
         } finally { await f.app.close(); }
     });
 
-    it('instantiate retains source reads, private accepted-base creation and recipient owner metadata only', async () => {
+    it('instantiate retains content writes, source reads, private accepted-base creation and recipient owner metadata only', async () => {
         const sessionId = 'cmvtemplate-recipient';
         const f = await signedFixture('template.instantiate', [sessionId]);
         try {
@@ -656,43 +356,8 @@ describe('signed template parent HTTP purposes', () => {
                 expectedOwnerMetadata: { t: 'plain', v: { v: 1 } }, ownerMetadata: { t: 'plain', v: { v: 1 } },
                 sharedMetadata: { ciphertext: '{}', expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 } });
             await expect(f.verify(authorization, { method: 'PATCH', path: sessionPath, body: ownerPatch, sessionRouteTarget })).resolves.not.toBeNull();
-            const birthChild = { actionId: 'session.spawn_new', role: 'create_bot',
-                inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', {}) };
-            await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness', reviewedChild: birthChild },
-                'session.spawn_new'), 'birth reads requester encryption currentness').resolves.not.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifacts', body: createBody(randomUUID()), reviewedChild: birthChild },
-                'session.spawn_new')).resolves.toBeNull();
-            for (const [actionId, role] of [
-                ['prompt_doc.create', 'create_instructions'], ['session.instructions.set', 'attach_instructions'],
-                ['memory.remember', 'memory:guide'], ['skills.create', 'skill:guide'],
-            ] as const) {
-                const reviewedChild = { actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, {}) };
-                const request = actionId === 'session.instructions.set'
-                    ? { method: 'PATCH', path: sessionPath, body: ownerPatch, sessionRouteTarget }
-                    : { method: 'POST', path: '/v1/artifacts', body: { ...createBody(randomUUID()), kind: deriveArtifactStoredKindV1({
-                        kind: actionId === 'memory.remember' ? 'memory_doc.v1' : actionId === 'skills.create' ? 'prompt_bundle.v2' : 'prompt_doc.v2',
-                    }) } };
-                await expect(f.verify(authorization, { ...request, reviewedChild }, actionId), actionId).resolves.not.toBeNull();
-                await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness', reviewedChild }, actionId),
-                    `${actionId} metadata codec currentness`).resolves.not.toBeNull();
-                if (actionId !== 'session.instructions.set') {
-                    await expect(f.verify(authorization, { method: 'GET', path: PROMPT_LIBRARY_ROWS_ROUTE_V1, reviewedChild }, actionId)).resolves.not.toBeNull();
-                    await expect(f.verify(authorization, { method: 'GET', path: `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/coding`, reviewedChild }, actionId)).resolves.not.toBeNull();
-                    const update = f.verify(authorization, { method: 'POST', path, body: updateBody, reviewedChild }, actionId);
-                    if (actionId === 'memory.remember') await expect(update).resolves.not.toBeNull();
-                    else await expect(update).resolves.toBeNull();
-                }
-                if (actionId === 'memory.remember' || actionId === 'skills.create') {
-                    await expect(f.verify(authorization, { method: 'PATCH', path: sessionPath, body: ownerPatch, sessionRouteTarget,
-                        reviewedChild }, actionId)).resolves.not.toBeNull();
-                }
-                await expect(f.verify(authorization, request, actionId), `${actionId} without admitted child`).resolves.toBeNull();
-                await expect(f.verify(authorization, { ...request, reviewedChild: { ...reviewedChild, role: 'unrelated' } }, actionId)).resolves.toBeNull();
-                await expect(f.verify(authorization, { method: 'POST', path: `${sessionPath}/archive`, body: {}, sessionRouteTarget,
-                    reviewedChild }, actionId)).resolves.toBeNull();
-            }
             await expect(f.verify(authorization, { method: 'GET', path: '/v1/artifacts' })).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path, body: updateBody })).resolves.toBeNull();
+            await expect(f.verify(authorization, { method: 'POST', path, body: updateBody })).resolves.not.toBeNull();
             await expect(f.verify(authorization, { method: 'PUT', path: `${path}/access/grants`, body: {
                 artifactId: id, principal: { kind: 'account', accountId: f.account.id }, accessLevel: 'view' } })).resolves.toBeNull();
             await expect(f.verify(authorization, { method: 'PATCH', path: sessionPath, body: { mode: 'shared_editor', metadataLayoutVersion: 1,
@@ -708,7 +373,7 @@ describe('signed template parent HTTP purposes', () => {
         const f = await signedFixture(actionId, [sessionId]);
         try {
             const authorization = await f.mint(actionId, { sessionRef: { serverId: 'home', sessionId },
-                ...(actionId === 'template.updates.apply' ? { expectedVersion: '1.1.0', expectedMetadataRevision: 1 } : {}),
+                ...(actionId === 'template.updates.apply' ? { expectedVersion: '1.1.0' } : {}),
                 ...(actionId === 'template.updates.skip' ? { version: '1.1.0' } : {}) });
             const path = `/v2/sessions/${sessionId}`;
             const sessionRouteTarget = { kind: 'session' as const, sessionId };
@@ -726,55 +391,17 @@ describe('signed template parent HTTP purposes', () => {
             const create = f.verify(authorization, { method: 'POST', path: '/v1/artifacts', body: createBody(randomUUID()) });
             if (actionId === 'template.updates.apply') await expect(create).resolves.not.toBeNull();
             else await expect(create).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: `/v1/artifacts/${artifactId}`, body: updateBody })).resolves.toBeNull();
+            const update = f.verify(authorization, { method: 'POST', path: `/v1/artifacts/${artifactId}`, body: updateBody });
+            if (actionId === 'template.updates.apply') await expect(update).resolves.not.toBeNull();
+            else await expect(update).resolves.toBeNull();
+            const catalogWrite = f.verify(authorization, { method: 'POST', path: MCP_SERVER_CATALOG_ROWS_ROUTE_V1,
+                body: { expectedRevision: 1, content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } } } });
+            if (actionId === 'template.updates.apply') await expect(catalogWrite).resolves.not.toBeNull();
+            else await expect(catalogWrite).resolves.toBeNull();
             const cleanup = f.verify(authorization, { method: 'DELETE', path: `/v1/artifacts/${artifactId}`, routeInput: { id: artifactId } });
             if (actionId === 'template.updates.apply') await expect(cleanup).resolves.not.toBeNull();
             else await expect(cleanup).resolves.toBeNull();
             await expect(f.verify(authorization, { method: 'POST', path: `${path}/archive`, body: {}, sessionRouteTarget })).resolves.toBeNull();
-            if (actionId === 'template.updates.apply') {
-                for (const [childId, role] of [['prompt_doc.update', 'update_instructions'], ['skills.updates.apply', 'skill:guide']] as const) {
-                    const reviewedChild = { actionId: childId, role, inputDigest: computeActionInputApprovalDigestV1(childId, {}) };
-                    const request = { method: 'POST', path: `/v1/artifacts/${artifactId}`, body: updateBody };
-                    await expect(f.verify(authorization, { ...request, reviewedChild }, childId)).resolves.not.toBeNull();
-                    await expect(f.verify(authorization, request, childId)).resolves.toBeNull();
-                    await expect(f.verify(authorization, { ...request, reviewedChild: { ...reviewedChild, role: 'unrelated' } }, childId)).resolves.toBeNull();
-                }
-            }
-        } finally { await f.app.close(); }
-    });
-
-    it('reviewed MCP children spend only catalog and Session capability effects', async () => {
-        const sessionId = 'cmvtemplate-mcp-recipient';
-        const f = await signedFixture('template.instantiate', [sessionId]);
-        try {
-            const authorization = await f.mint('template.instantiate', {
-                source: { kind: 'artifact', serverId: 'home', artifactId: randomUUID() }, expectedVersion: '1.0.0',
-                expectedRevision: { headerVersion: 1, bodyVersion: 1 },
-                creation: { creationKey: randomUUID(), executionTarget: { serverId: 'home', machineId: f.machine.id },
-                    directory: { kind: 'path', path: '/work' },
-                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
-            });
-            const child = (actionId: 'mcp.servers.list' | 'mcp.servers.create' | 'session.capabilities.set', role: string) => ({
-                actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, {}),
-            });
-            const read = { method: 'GET', path: MCP_SERVER_CATALOG_ROWS_ROUTE_V1 };
-            await expect(f.verify(authorization, { ...read, reviewedChild: child('mcp.servers.list', 'template_mcp_catalog') }, 'mcp.servers.list')).resolves.not.toBeNull();
-            await expect(f.verify(authorization, read, 'mcp.servers.list')).resolves.toBeNull();
-            const body = McpServerCatalogRowMutationV1Schema.parse({ expectedRevision: 1,
-                content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } } });
-            const write = { method: 'POST', path: MCP_SERVER_CATALOG_ROWS_ROUTE_V1, body };
-            await expect(f.verify(authorization, { ...write, reviewedChild: child('mcp.servers.create', 'create_template_mcp') }, 'mcp.servers.create')).resolves.not.toBeNull();
-            await expect(f.verify(authorization, { ...write, reviewedChild: child('mcp.servers.list', 'template_mcp_catalog') }, 'mcp.servers.list')).resolves.toBeNull();
-            await expect(f.verify(authorization, { ...write, body: { ...body, unexpected: true },
-                reviewedChild: child('mcp.servers.create', 'create_template_mcp') }, 'mcp.servers.create')).resolves.toBeNull();
-            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifacts', body: createBody(randomUUID()),
-                reviewedChild: child('mcp.servers.create', 'create_template_mcp') }, 'mcp.servers.create')).resolves.toBeNull();
-            const ownerPatch = SessionMetadataTuplePatchV1Schema.parse({ mode: 'owner', metadataLayoutVersion: 1,
-                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } }, ownerMetadata: { t: 'plain', v: { v: 1 } },
-                sharedMetadata: { ciphertext: '{}', expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 } });
-            await expect(f.verify(authorization, { method: 'PATCH', path: `/v2/sessions/${sessionId}`, body: ownerPatch,
-                sessionRouteTarget: { kind: 'session', sessionId }, reviewedChild: child('session.capabilities.set', 'template_mcp:github') },
-                'session.capabilities.set')).resolves.not.toBeNull();
         } finally { await f.app.close(); }
     });
 
@@ -785,7 +412,7 @@ describe('signed template parent HTTP purposes', () => {
         try {
             const source = { kind: 'artifact', serverId: 'home', artifactId: randomUUID() };
             const authorization = await f.mint(actionId, actionId === 'template.updates.apply'
-                ? { sessionRef: { serverId: 'home', sessionId }, expectedVersion: '1.1.0', expectedMetadataRevision: 1 }
+                ? { sessionRef: { serverId: 'home', sessionId }, expectedVersion: '1.1.0' }
                 : actionId === 'template.preview' ? { source }
                 : { source, expectedVersion: '1.0.0', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
                     creation: { creationKey: randomUUID(), executionTarget: { serverId: 'home', machineId: f.machine.id },
@@ -809,6 +436,10 @@ describe('signed template parent HTTP purposes', () => {
         const f = await signedFixture('template.release');
         try {
             const id = randomUUID();
+            await db.artifact.create({ data: { id, accountId: f.account.id,
+                kind: deriveArtifactStoredKindV1({ kind: 'bot_template.v1' }),
+                header: new Uint8Array([1]), body: new Uint8Array([2]),
+                dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
             const authorization = await f.mint('template.release', { draftArtifactId: randomUUID(),
                 expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
                 share: { recipients: [{ kind: 'account', accountId: f.account.id }, { kind: 'team', teamId: 'cmvtemplate-team' },
@@ -839,6 +470,46 @@ describe('signed template parent HTTP purposes', () => {
             await expect(f.verify(authorization, { method: 'DELETE', path: `${path}/access/grants`, body: grant })).resolves.toBeNull();
             await expect(f.verify(authorization, { method: 'POST', path: '/v1/public-shares', body: { subjectKind: 'artifact', subjectId: id } })).resolves.toBeNull();
             await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifacts/content/binary', body: createBody(id) })).resolves.toBeNull();
+        } finally { await f.app.close(); }
+    });
+
+    it('refuses a restricted Release token sharing an owned non-template Artifact', async () => {
+        const f = await signedFixture('template.release');
+        try {
+            const artifactId = randomUUID();
+            await db.artifact.create({ data: { id: artifactId, accountId: f.account.id,
+                kind: deriveArtifactStoredKindV1({ kind: 'prompt_doc.v2' }),
+                header: new Uint8Array([1]), body: new Uint8Array([2]), dataEncryptionKey: new Uint8Array([3]) } });
+            const authorization = await f.mint('template.release', { draftArtifactId: randomUUID(),
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
+                share: { recipients: [{ kind: 'account', accountId: f.account.id }] } });
+            const grant = { artifactId, principal: { kind: 'account', accountId: f.account.id }, accessLevel: 'view' };
+            await expect(f.verify(authorization, { method: 'PUT',
+                path: `/v1/artifacts/${artifactId}/access/grants`, body: grant,
+                routeInput: { id: artifactId, ...grant } })).resolves.toBeNull();
+            const link = { artifactId, lookupId: randomUUID() };
+            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifact-signed-in-links',
+                body: link, routeInput: link })).resolves.toBeNull();
+        } finally { await f.app.close(); }
+    });
+
+    it('leaves a full PAT Release root at the ordinary Artifact owner for a non-template Artifact', async () => {
+        const f = await signedFixture();
+        try {
+            const artifactId = randomUUID();
+            await db.artifact.create({ data: { id: artifactId, accountId: f.account.id,
+                kind: deriveArtifactStoredKindV1({ kind: 'prompt_doc.v2' }),
+                header: new Uint8Array([1]), body: new Uint8Array([2]), dataEncryptionKey: new Uint8Array([3]) } });
+            const authorization = await f.mint('template.release', { draftArtifactId: randomUUID(),
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
+                share: { recipients: [{ kind: 'account', accountId: f.account.id }] } });
+            const grant = { artifactId, principal: { kind: 'account', accountId: f.account.id }, accessLevel: 'view' };
+            await expect(f.verify(authorization, { method: 'PUT',
+                path: `/v1/artifacts/${artifactId}/access/grants`, body: grant,
+                routeInput: { id: artifactId, ...grant } })).resolves.not.toBeNull();
+            const link = { artifactId, lookupId: randomUUID() };
+            await expect(f.verify(authorization, { method: 'POST', path: '/v1/artifact-signed-in-links',
+                body: link, routeInput: link })).resolves.not.toBeNull();
         } finally { await f.app.close(); }
     });
 });

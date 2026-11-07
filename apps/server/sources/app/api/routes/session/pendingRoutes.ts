@@ -1,7 +1,3 @@
-import { SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
-import { enqueuePendingTemplateOnboarding } from '@/app/session/pending/pendingMessageService';
-import { SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
-import { verifyTemplateRequesterExecutionAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
 import { z } from "zod/mini";
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { SessionMessageReplyAdmissionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -15,6 +11,7 @@ import {
     dismissPendingDelivery,
     discardPendingMessage,
     enqueuePendingMessage,
+    enqueuePendingTemplateOnboarding,
     listPendingMessages,
     listPendingResetStartsForSource,
     blockPendingDelivery,
@@ -54,8 +51,11 @@ import {
 import { controlAutonomousExchange, readAutonomousExchangeControl } from '@/app/session/pending/autonomousExchangeControl';
 import { AccountRouteAuthenticationForbiddenResponseSchema } from '@/app/api/utils/enableAuthentication';
 import { SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1, SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionPendingEnqueueByMachineResponseV1Schema, SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
+const pendingUsageTimingSchema = z.optional(z.nullable(UsageTimingBoundsV1Schema));
 
 function toPendingJson(row: PendingMessageRow) {
     return {
@@ -162,6 +162,26 @@ async function emitCommittedPendingDeliveryMessage(params: {
 }
 
 export function sessionPendingRoutes(app: Fastify) {
+    app.post('/v2/sessions/:sessionId/pending/template-onboarding', {
+        preHandler: app.authenticate,
+        schema: { params: z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
+            body: SessionPendingTemplateOnboardingRequestV1Schema,
+            response: { 200: SessionPendingEnqueueByMachineResponseV1Schema,
+                403: z.union([z.strictObject({ error: z.string() }), AccountRouteAuthenticationForbiddenResponseSchema]) } },
+        config: { allowApiToken: true, allowScopedApiToken: false,
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.pending') },
+    }, async (request, reply) => {
+        if (request.params.sessionId !== request.body.request.sessionId) {
+            return reply.code(403).send({ error: 'forbidden' });
+        }
+        const result = await enqueuePendingTemplateOnboarding({ accountId: request.userId,
+            authentication: readSessionAccessAuthenticationFromRequest(request),
+            request: request.body.request });
+        if (result.status === 'rejected' && result.code === 'session_input_unauthorized') {
+            return reply.code(403).send({ error: 'forbidden' });
+        }
+        return reply.send({ v: 1 as const, result });
+    });
     const exchangePath = '/v2/sessions/:sessionId/exchanges/:originInputLocalId';
     const exchangeParams = z.strictObject({ sessionId: z.string().check(z.minLength(1)),
         originInputLocalId: PendingLocalIdSchema });
@@ -169,32 +189,6 @@ export function sessionPendingRoutes(app: Fastify) {
     const exchangeResponses = { 200: AutonomousExchangeStatusV1Schema,
         403: z.union([exchangeErrorResponse, AccountRouteAuthenticationForbiddenResponseSchema]),
         404: exchangeErrorResponse, 409: exchangeErrorResponse };
-    app.post('/v2/sessions/:sessionId/pending/template-onboarding', {
-        preHandler: app.authenticate,
-        schema: { params: z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
-            body: SessionPendingTemplateOnboardingRequestV1Schema,
-            response: { 200: SessionPendingEnqueueByMachineResponseV1Schema,
-                403: z.union([z.strictObject({ error: z.string() }), AccountRouteAuthenticationForbiddenResponseSchema]) } },
-        config: { allowApiToken: true, allowScopedApiToken: true,
-            restrictedCredentialBinding: { scope: 'account' },
-            rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.pending') },
-    }, async (request, reply) => {
-        const authentication = readSessionAccessAuthenticationFromRequest(request);
-        const verified = await verifyTemplateRequesterExecutionAuthorization({
-            authorization: request.body.authorization, originalActionEnvelope: request.body.originalActionEnvelope,
-            accountId: request.userId, authentication,
-        });
-        if (!verified || request.params.sessionId !== request.body.request.sessionId) {
-            return reply.code(403).send({ error: 'forbidden' });
-        }
-        const result = await enqueuePendingTemplateOnboarding({ accountId: request.userId,
-            binding: verified.binding, authentication: { ...authentication, authority: verified.effectiveAuthority },
-            request: request.body.request });
-        if (result.status === 'rejected' && result.code === 'session_input_unauthorized') {
-            return reply.code(403).send({ error: 'forbidden' });
-        }
-        return reply.send({ v: 1 as const, result });
-    });
     app.get(exchangePath, {
         preHandler: app.authenticate,
         schema: { params: exchangeParams, response: exchangeResponses },
@@ -301,6 +295,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 body: executionRunTarget ? SessionExecutionRunPendingEnqueueRequestV1Schema : z.union([
                     z.strictObject({
                         ciphertext: z.string().check(z.minLength(1)),
+                        usageTimingV1: pendingUsageTimingSchema,
                         ...SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
                         ...SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1,
                         reply: z.optional(SessionMessageReplyAdmissionV1Schema),
@@ -316,6 +311,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                     }),
                     z.strictObject({
                         content: SessionStoredMessageContentSchema,
+                        usageTimingV1: pendingUsageTimingSchema,
                         ...SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
                         ...SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1,
                         reply: z.optional(SessionMessageReplyAdmissionV1Schema),
@@ -394,6 +390,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             const replyIntent = body && typeof body === 'object' && 'reply' in body ? SessionMessageReplyAdmissionV1Schema.parse(body.reply) : undefined;
             const followAdmission = body && typeof body === 'object' ? {
                 followSourceApp: app,
+                ...('usageTimingV1' in body ? { usageTimingV1: pendingUsageTimingSchema.parse(body.usageTimingV1) } : {}),
                 ...('followSources' in body ? { followSources: SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1.followSources.parse(body.followSources) } : {}),
                 ...('followRelations' in body ? { followRelations: SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1.followRelations.parse(body.followRelations) } : {}),
                 ...('followDeliveryV1' in body ? { followDeliveryV1: SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1.followDeliveryV1.parse(body.followDeliveryV1) } : {}),
@@ -609,12 +606,14 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 body: z.union([
                     mutationBody({
                         ciphertext: z.string().check(z.minLength(1)),
+                        usageTimingV1: pendingUsageTimingSchema,
                         replacementLocalId: z.optional(PendingLocalIdSchema),
                         replacementMutationFingerprint: z.optional(PendingMessageMutationFingerprintV1Schema),
                         messageRole: z.optional(z.unknown()),
                     }),
                     mutationBody({
                         content: executionRunTarget ? StrictSessionStoredMessageContentEnvelopeSchema : SessionStoredMessageContentSchema,
+                        usageTimingV1: pendingUsageTimingSchema,
                         replacementLocalId: z.optional(PendingLocalIdSchema),
                         replacementMutationFingerprint: z.optional(PendingMessageMutationFingerprintV1Schema),
                         messageRole: z.optional(z.unknown()),
@@ -654,10 +653,12 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                     && typeof (body as { replacementMutationFingerprint?: unknown }).replacementMutationFingerprint === "string"
                     ? (body as { replacementMutationFingerprint: string }).replacementMutationFingerprint
                     : undefined;
+            const usageTimingV1 = body && typeof body === 'object' && 'usageTimingV1' in body
+                ? pendingUsageTimingSchema.parse(body.usageTimingV1) : undefined;
 
             const res = await (content
-                ? updatePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, content, replacementLocalId, replacementMutationFingerprint, messageRole })
-                : updatePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, ciphertext: ciphertext ?? "", replacementLocalId, replacementMutationFingerprint, messageRole }));
+                ? updatePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, content, usageTimingV1, replacementLocalId, replacementMutationFingerprint, messageRole })
+                : updatePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, ciphertext: ciphertext ?? "", usageTimingV1, replacementLocalId, replacementMutationFingerprint, messageRole }));
             if (!res.ok) {
                 const authenticationStatus = pendingAuthenticationStatus(res.error);
                 if (authenticationStatus) return reply.code(authenticationStatus).send({ error: res.error });

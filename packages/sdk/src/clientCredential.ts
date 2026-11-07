@@ -1,6 +1,6 @@
 import { AccountApiTokenEncryptionAccessResponseV1Schema, parseAccountApiTokenBearerV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
-import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { HappierClientClosedError, HappierTransportError } from './errors.js';
 import type { ProtectedActionMaterial } from './machines.js';
@@ -97,7 +97,13 @@ export function createClientCredential(token: string) {
   };
   return {
     bearer,
-    encryption: { pins, getMaterial, getMachineMaterial, releaseMachineMaterial },
+    encryption: { pins, getMaterial, getMachineMaterial, releaseMachineMaterial,
+      /** Same-token content access stays inside the encrypted request, never an Authorization value. */
+      apiTokenContentAccess: () => {
+        if (disposed) throw new HappierClientClosedError();
+        return { contentPublicKey: pins.contentPublicKey, wrappingSecret: encodeBase64(wrappingSecret, 'base64url') };
+      },
+    },
     dispose: () => {
       disposed = true;
       wrappingSecret.fill(0);

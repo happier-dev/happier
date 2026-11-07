@@ -38,6 +38,8 @@ export async function prepareApprovalReplayAuthorization(input: Readonly<{
   // Placement chooses the executor, not whether its decoded signed root needs
   // the incumbent ingress owner's private HTTP/requester custody restored.
   return authorization && input.prepare
-    ? await input.prepare({ authorization, ...(input.context.signal ? { signal: input.context.signal } : {}) })
+    ? await input.prepare({ authorization,
+        ...(input.context.originalActionEnvelope ? { originalActionEnvelope: input.context.originalActionEnvelope } : {}),
+        ...(input.context.signal ? { signal: input.context.signal } : {}) })
     : undefined;
 }

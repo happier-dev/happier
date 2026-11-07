@@ -12,6 +12,7 @@ import {
   isApprovalRequiredByActionsSettings,
   type ActionExecutorDeps,
   PublicActionIdSchema,
+  SignedRootActionIdSchema,
   getActionSpec,
   openExternalActionRequestV2,
   prepareExternalActionResponseV2,
@@ -218,8 +219,7 @@ describe('Happier SDK client', () => {
     const target = { serverId: 'home', machineId: 'machine' };
     const workspace = { ...target, workspaceId: 'accepted', rootPath: '/repo' };
     const settings = { v: 1 as const, actions: {}, approvalWaivedSurfaces: {
-      'machines.terminal.open': ['api' as const], 'machines.terminal.write': ['api' as const],
-      'machines.terminal.close': ['api' as const], 'machines.terminal.restart': ['api' as const],
+      'machines.terminal.open': ['api' as const], 'machines.terminal.restart': ['api' as const],
     } };
     const physicalEffects: Array<Readonly<{ actionId: string; input: unknown }>> = [];
     const results = {
@@ -247,25 +247,25 @@ describe('Happier SDK client', () => {
         execution: await executor.execute(PublicActionIdSchema.parse(actionId), request.input, { surface: 'api', serverId: target.serverId }) });
     }));
     const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
-    const open = { ...target, terminalKey: 'member', workspace };
-    const terminal = { ...target, terminalId: 'pty' };
-    const read = { ...terminal, byteOffset: 0 };
-    const write = { ...terminal, event: { t: 'text', text: 'pwd\r' } } as const;
+    const open = { ...target, terminalKey: 'member', workspace,
+      launch: { kind: 'package_script', runTargetId: 'script:test' } } as const;
     try {
       await expect(client.actions.machines.terminal.open(open)).resolves.toEqual(results['machines.terminal.open']);
-      await expect(client.actions.machines.terminal.list(target)).resolves.toEqual(results['machines.terminal.list']);
-      await expect(client.actions.machines.terminal.read(read)).resolves.toEqual(results['machines.terminal.read']);
-      await expect(client.actions.machines.terminal.write(write)).resolves.toEqual(results['machines.terminal.write']);
-      await expect(client.actions.machines.terminal.close(terminal)).resolves.toEqual(results['machines.terminal.close']);
       await expect(client.actions.machines.terminal.restart(open)).resolves.toEqual(results['machines.terminal.restart']);
+      // These ids remain person Actions; a token cannot acquire interactive PTY
+      // custody, even when ordinary Action approval has been waived.
+      for (const verb of ['list', 'read', 'write', 'close']) {
+        const actionId = `machines.terminal.${verb}`;
+        expect(SignedRootActionIdSchema.parse(actionId)).toBe(actionId);
+        expect(PublicActionIdSchema.safeParse(actionId).success).toBe(false);
+        expect(Reflect.has(client.actions.machines.terminal, verb)).toBe(false);
+      }
       await expect(client.actions.machines.terminal.open({ ...open,
         // @ts-expect-error A business Action cannot mint requester custody.
         requesterAccountId: 'forged',
       })).rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
       expect(physicalEffects).toEqual([
-        { actionId: 'machines.terminal.open', input: open }, { actionId: 'machines.terminal.list', input: target },
-        { actionId: 'machines.terminal.read', input: read }, { actionId: 'machines.terminal.write', input: write },
-        { actionId: 'machines.terminal.close', input: terminal }, { actionId: 'machines.terminal.restart', input: open },
+        { actionId: 'machines.terminal.open', input: open }, { actionId: 'machines.terminal.restart', input: open },
       ]);
     } finally { await client.close(); }
   });
@@ -350,6 +350,7 @@ describe('Happier SDK client', () => {
       }]);
       const request = JSON.parse(String(init?.body)) as { v: number; target: unknown };
       expect(request.v).toBe(1);
+      expect(request).not.toHaveProperty('apiTokenContentAccess');
       expect(request.target).toEqual({ kind: 'machine', machineId: 'alice-machine' });
       if (refused) return response({ error: 'invalid_request', code: 'target_unavailable' }, 409);
       return responseForRequest(init, { v: 1, actionId: 'session.list', execution: { ok: true, result } });
@@ -1689,7 +1690,7 @@ describe('Happier SDK client', () => {
       execution: { ok: true, result: {
         type: 'success', disposition: 'created', sessionId: 'session-1',
         executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-        organizationPlacement: { folderId: null, tagIds: [] },
+        organizationPlacement: { sectionId: null, tagIds: [] },
         initialInput: { status: 'notRequested' },
       } },
       requestId: JSON.parse(String(init?.body)).requestId,
@@ -1910,7 +1911,7 @@ describe('Happier SDK client', () => {
             disposition: 'created',
             sessionId: 'session-1',
             executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-            organizationPlacement: { folderId: null, tagIds: [] },
+            organizationPlacement: { sectionId: null, tagIds: [] },
             initialInput: { status: 'alreadyAccepted', localId: 'initial-input-1' },
           },
         },
@@ -2118,7 +2119,7 @@ describe('Happier SDK client', () => {
             disposition: 'created',
             sessionId: 'session-1',
             executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-            organizationPlacement: { folderId: null, tagIds: [] },
+            organizationPlacement: { sectionId: null, tagIds: [] },
             initialInput: { status: 'accepted', localId: 'initial-input-1' },
           },
         },
@@ -2191,7 +2192,7 @@ describe('Happier SDK client', () => {
             disposition: 'created',
             sessionId: 'session-1',
             executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-            organizationPlacement: { folderId: null, tagIds: [] },
+            organizationPlacement: { sectionId: null, tagIds: [] },
             initialInput: { status: 'notRequested' },
           },
         },
@@ -2331,7 +2332,7 @@ describe('Happier SDK client', () => {
                 disposition: 'created',
                 sessionId: 'session-1',
                 executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-                organizationPlacement: { folderId: null, tagIds: [] },
+                organizationPlacement: { sectionId: null, tagIds: [] },
                 initialInput,
               },
             },
@@ -2386,7 +2387,7 @@ describe('Happier SDK client', () => {
       disposition: 'created',
       sessionId: 'session-1',
       executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-      organizationPlacement: { folderId: null, tagIds: [] },
+      organizationPlacement: { sectionId: null, tagIds: [] },
       initialInput: { status: 'rejected', code: 'session_input_target_update_required' },
     } as const;
     vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
@@ -2674,6 +2675,35 @@ describe('Happier SDK client', () => {
       code: 'invalid_token',
       status: 401,
     });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('retains the code-only cause of an uncertain %s Action', async mode => {
+    const diagnostic = { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' };
+    const context = { serverIdentityId: 'srv_sdk', accountId: 'account-1',
+      tokenId: '123e4567-e89b-42d3-a456-426614174000',
+      contentPublicKey: 'B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=' };
+    const wrappingSecret = new Uint8Array(32).fill(7);
+    const encryptionAccess = wrapApiTokenEncryptionAccessV1({ context, wrappingSecret,
+      contentPrivateKey: Uint8Array.from({ length: 32 }, (_, i) => i + 1), randomBytes: length => new Uint8Array(length).fill(3) });
+    const token = mode === 'plain' ? TEST_API_TOKEN : formatAccountApiTokenCredentialV1({
+      bearer: `hap_v1_${context.tokenId}_${encodeBase64(new Uint8Array(32).fill(8), 'base64url')}`,
+      wrappingSecret: encodeBase64(wrappingSecret, 'base64url'), serverIdentityId: context.serverIdentityId,
+      accountId: context.accountId, contentPublicKey: context.contentPublicKey });
+    let mismatched = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo, init?: RequestInit) =>
+      String(url).endsWith('/encryption-access') ? response({ v: 1, accountId: context.accountId,
+        tokenId: context.tokenId, encryptionAccess }) : new URL(String(url)).pathname === '/v1/machines' ? response([]) : response({
+      error: 'invalid_request', code: 'action_outcome_unknown',
+      requestId: mismatched ? 'another-request' : JSON.parse(String(init?.body)).requestId, diagnostic,
+    }, 502)));
+    await expect(connect({ endpoint: 'http://daemon', token }).machine('machine-1')
+      .actions.execute('action.spec.get', { id: 'session.message.send' }))
+      .rejects.toMatchObject({ code: 'action_outcome_unknown', status: 502,
+        details: mode === 'plain' ? { diagnostic } : diagnostic });
+    mismatched = true;
+    await expect(connect({ endpoint: 'http://daemon', token }).machine('machine-1')
+      .actions.execute('action.spec.get', { id: 'session.message.send' }))
+      .rejects.toMatchObject({ code: undefined, status: 502 });
   });
 
   it.each([
@@ -3125,7 +3155,7 @@ describe('Happier SDK client', () => {
               disposition: 'created',
               sessionId: 'session-1',
               executionTarget: { serverId: 'server-1', machineId: 'machine-7' },
-              organizationPlacement: { folderId: null, tagIds: [] },
+              organizationPlacement: { sectionId: null, tagIds: [] },
               initialInput: { status: 'notRequested' },
             },
           },

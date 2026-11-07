@@ -6,8 +6,9 @@ import { projectSessionDisplayV1, addSessionInitialAccessTeamShareStatement,
     SessionInitialAccessEnvelopeHostError, type SessionDisplayProjectionV1,
     type SessionInitialAccessMaterializedV1, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions';
 import { decodeHex } from '@/encryption/hex';
-import { readActionCredentialScopeDeniedHttpFailureV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
-import { decodeTemplateBirthExecutionAuthorizationV1, TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectUsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageTimingV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
@@ -40,12 +41,6 @@ export type SessionCreateOrLoadInput = Readonly<{
     randomBytes(length: number): Uint8Array;
     request(path: string, init: RequestInit): Promise<Response>;
     assertCurrent(): void;
-    /** Private admitted requester proof; absent from public Session authoring input. */
-    templateRequesterAuthorization?: Readonly<{
-        authorization: ExternalActionExecutionAuthorizationV1;
-        originalActionEnvelope: ExternalActionRequestEnvelope;
-    }>;
-    onCreationAuthorization?(authorization: ExternalActionExecutionAuthorizationV1): void;
 }>;
 export type SessionCreateOrLoadResult = Readonly<{
     session: V2SessionByIdResponse['session'];
@@ -90,7 +85,6 @@ export type HostedSystemSessionEnsureResult = Readonly<{
 }>;
 
 type HostedSystemSessionCreateBody = Readonly<{
-    templateRequesterAuthorization?: SessionCreateOrLoadInput['templateRequesterAuthorization'];
     tag: string;
     organizationPlacement?: SessionSpawnNewInputV2['organizationPlacement'];
     initialAccess?: SessionInitialAccessMaterializedV1;
@@ -102,6 +96,7 @@ type HostedSystemSessionCreateBody = Readonly<{
     ownerMetadata: SessionOwnerMetadataEnvelopeV1;
     displayProjectionV1: SessionDisplayProjectionV1;
     agentState: null;
+    usageTimingV1: UsageSessionTimingV1;
     dataEncryptionKey: string | null;
     encryptionMode: 'plain' | 'e2ee';
 }>;
@@ -131,6 +126,8 @@ async function buildCreateBody(
         ...(input.primaryTeamId === undefined ? {} : { primaryTeamId: input.primaryTeamId }),
     };
     const metadata = addSessionInitialAccessTeamShareStatement(input.metadata, accessFields, input.accountMode);
+    // Birth authors no AgentState; null on the storage wire is known empty here.
+    const usageTimingV1 = projectUsageSessionTimingV1({ metadata, agentState: {} });
     const buildAccess = async (sessionDataKey: Uint8Array | null) => ({
         ...(input.organizationPlacement === undefined ? {} : { organizationPlacement: input.organizationPlacement }),
         ...(input.teamCredentialBindings === undefined ? {} : { teamCredentialBindings: input.teamCredentialBindings }),
@@ -199,6 +196,7 @@ async function buildCreateBody(
             ),
             displayProjectionV1: await buildDisplayProjection(),
             agentState: null,
+            usageTimingV1,
             dataEncryptionKey: null,
             encryptionMode: 'plain',
         };
@@ -238,6 +236,7 @@ async function buildCreateBody(
         }),
         displayProjectionV1: await buildDisplayProjection(encryptor),
         agentState: null,
+        usageTimingV1,
         dataEncryptionKey: resourceKey.dataEncryptionKey,
         encryptionMode: 'e2ee',
     };
@@ -251,9 +250,7 @@ export async function createSessionCreateOrLoad(input: SessionCreateOrLoadInput)
     const headers = new Headers({ 'Content-Type': 'application/json' });
     headers.set('Authorization', `Bearer ${input.credentials.token}`);
     const response = await input.request('/v1/sessions', {
-        method: 'POST', headers, body: JSON.stringify({ ...body,
-            ...(input.templateRequesterAuthorization ? { templateRequesterAuthorization: input.templateRequesterAuthorization } : {}),
-        }),
+        method: 'POST', headers, body: JSON.stringify(body),
     });
     const responsePayload: unknown = await response.json().catch(() => null);
     input.assertCurrent();
@@ -270,12 +267,6 @@ export async function createSessionCreateOrLoad(input: SessionCreateOrLoadInput)
     const created = responsePayload !== null && typeof responsePayload === 'object'
         ? Reflect.get(responsePayload, 'created') : undefined;
     if (typeof created !== 'boolean') throw new Error('Invalid Session create/load disposition');
-    const birthAuthorization = response.headers.get(TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1);
-    if (birthAuthorization && input.onCreationAuthorization) {
-        const authorization = decodeTemplateBirthExecutionAuthorizationV1(birthAuthorization);
-        if (!authorization) throw new Error('Invalid Session birth authorization');
-        input.onCreationAuthorization(authorization);
-    }
     // A rejoin returns the actual row's envelope; the candidate key is never a launch result.
     return { session: parsed.data.session, disposition: created ? 'created' as const : 'rejoined' as const };
 }

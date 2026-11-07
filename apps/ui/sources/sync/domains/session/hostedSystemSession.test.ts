@@ -1,19 +1,17 @@
-import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
-import { computeExternalActionRequestEnvelopeDigestV1, encodeTemplateBirthExecutionAuthorizationV1,
-    TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
     createSessionOwnerMetadataV1,
+    projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
     openSessionOwnerDisplayEnvelopeV1,
     openSessionSharedDisplayEnvelopeV1,
-    projectSessionSharedMetadataV1,
     SessionDisplayProjectionV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -105,6 +103,47 @@ function createEncryptionFixture() {
 }
 
 describe('createHostedSystemSessionEnsurer', () => {
+    it.each(['plain', 'e2ee'] as const)('publishes only timing from opened private birth metadata (%s)', async accountMode => {
+        let posted: Record<string, unknown> | undefined;
+        const credentials = accountMode === 'plain' ? { token: 'requester-token' } : createDataKeyCredentials();
+        const encryption = accountMode === 'e2ee' ? await createEncryptionFromAuthCredentials(credentials) : null;
+        await createSessionCreateOrLoad({
+            credentials, accountMode, encryption,
+            tag: 'timing-birth', metadata: { path: '/private-workspace', host: 'private-host',
+                forkV1: { v: 1, parentSessionId: 'private-parent', parentCutoffSeqInclusive: 7,
+                    strategy: 'private-strategy', requestId: 'private-request', createdAtMs: 123 } },
+            randomBytes: length => new Uint8Array(length).fill(4), assertCurrent: () => {},
+            // Home is the boundary; envelope and timing preparation remain real.
+            request: async (_path, init) => {
+                const body = JSON.parse(String(init.body));
+                posted = body;
+                return sessionResponse({ id: 'timing-birth', metadata: body.sharedMetadata.ciphertext,
+                    ownerMetadata: body.ownerMetadata, encryptionMode: accountMode, dataEncryptionKey: body.dataEncryptionKey });
+            },
+        });
+        expect(posted?.usageTimingV1).toEqual({ v: 1,
+            metadata: { v: 1, minMs: 123, maxMs: 123 },
+            agentState: { v: 1, minMs: null, maxMs: null } });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('creates a template Session with the ordinary Account bearer (%s)', async accountMode => {
+        const tag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'browser-template-copy' });
+        let posted: Record<string, unknown> | undefined;
+        const result = await createSessionCreateOrLoad({
+            credentials: accountMode === 'plain' ? { token: 'requester-token' } : createDataKeyCredentials('requester-token'),
+            accountMode, encryption: accountMode === 'e2ee' ? createEncryptionFixture() : null,
+            tag, metadata: { name: 'My copy' }, randomBytes: length => new Uint8Array(length).fill(4), assertCurrent: () => {},
+            request: async (_path, init) => {
+                const body = JSON.parse(String(init.body));
+                posted = body;
+                expect(new Headers(init.headers).get('Authorization')).toBe('Bearer requester-token');
+                return sessionResponse({ id: 'committed-bot', metadata: body.sharedMetadata.ciphertext,
+                    ownerMetadata: body.ownerMetadata, encryptionMode: accountMode, dataEncryptionKey: body.dataEncryptionKey });
+            },
+        });
+        expect(posted).not.toHaveProperty('templateRequesterAuthorization');
+        expect(result).toMatchObject({ disposition: 'created', session: { id: 'committed-bot', encryptionMode: accountMode } });
+    });
     it('returns the server-selected row and refuses stale requester preparation', async () => {
         let current = true;
         const input = {
@@ -212,6 +251,9 @@ describe('createHostedSystemSessionEnsurer', () => {
                     owner: { t: 'plain', v: { v: 1, audience: 'owner', purpose: 'session_owner_display', display: { v: 1, hiddenSystemSession: true } } },
                 },
                 agentState: null,
+                usageTimingV1: { v: 1,
+                    metadata: { v: 1, minMs: null, maxMs: null },
+                    agentState: { v: 1, minMs: null, maxMs: null } },
                 dataEncryptionKey: null,
                 encryptionMode: 'plain',
             });
@@ -643,42 +685,6 @@ describe('createHostedSystemSessionEnsurer', () => {
         expect(hydrate).not.toHaveBeenCalled();
     });
 });
-
-
-it.each(['plain', 'e2ee'] as const)('carries the admitted template root and returns its committed birth authorization (%s)', async accountMode => {
-        const tag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'browser-template-copy' });
-        const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'template-request',
-            target: { kind: 'machine', machineId: 'asleep-machine' }, input: {} });
-        // Home is the genuine boundary: this fixture supplies its typed issuer response.
-        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'issuer-root-token', binding: {
-            accountId: 'requester-account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_template',
-            machineId: 'asleep-machine', custodianAccountId: 'requester-account', installationId: 'machine-installation',
-            actionId: 'template.instantiate', requestId: originalActionEnvelope.requestId,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope), target: originalActionEnvelope.target,
-        } });
-        const bound = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, token: 'issuer-birth-token',
-            binding: { ...authorization.binding, templateRequesterBirth: { sessionId: 'committed-bot', creationTag: tag } } });
-        const delivered: unknown[] = [];
-        let posted: unknown;
-        const result = await createSessionCreateOrLoad({
-            credentials: accountMode === 'plain' ? { token: 'requester-token' } : createDataKeyCredentials('requester-token'),
-            accountMode, encryption: accountMode === 'e2ee' ? createEncryptionFixture() : null,
-            tag, metadata: { name: 'My copy' }, randomBytes: length => new Uint8Array(length).fill(4), assertCurrent: () => {},
-            templateRequesterAuthorization: { authorization, originalActionEnvelope },
-            onCreationAuthorization: value => { delivered.push(value); },
-            request: async (_path, init) => {
-                const body = JSON.parse(String(init.body));
-                posted = body.templateRequesterAuthorization;
-                const response = sessionResponse({ id: 'committed-bot', metadata: body.sharedMetadata.ciphertext,
-                    ownerMetadata: body.ownerMetadata, encryptionMode: accountMode, dataEncryptionKey: body.dataEncryptionKey });
-                response.headers.set(TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1, encodeTemplateBirthExecutionAuthorizationV1(bound));
-                return response;
-            },
-        });
-        expect(posted).toEqual({ authorization, originalActionEnvelope });
-        expect(delivered).toEqual([bound]);
-        expect(result).toMatchObject({ disposition: 'created', session: { id: 'committed-bot', encryptionMode: accountMode } });
-    });
 
 
 it.each([{ accountMode: 'plain', recipientReady: false }, { accountMode: 'e2ee', recipientReady: false },

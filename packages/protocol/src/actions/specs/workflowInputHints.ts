@@ -4,6 +4,8 @@ import type { PreNormalizedActionSpec } from './definition.js';
 type WorkflowInputHints = NonNullable<PreNormalizedActionSpec['inputHints']>;
 type Field = WorkflowInputHints['fields'][number];
 
+export const WORKFLOW_AUTOMATION_REMOVAL_WARNING = 'Removing this Automation also deletes its past Runs when retention cleanup runs, including Runs set to keep forever.';
+
 const runRevision = {
   path: 'expectedRevision', title: 'Observed Run revision', widget: 'number', required: true,
   description: 'Use run.revision from the current workflow.run.get response. A stale revision is refused; reread before deciding again.',
@@ -38,8 +40,8 @@ const administrativeFields: Readonly<Partial<Record<WorkflowActionIdV1, readonly
     { path: 'targetSessionId', title: 'Destination Session', widget: 'text', description: 'Filter Runs that write into this Session; this does not change their execution placement.' },
   ],
   'workflow.run.summaries': [
-    { path: 'sourceArtifactIds', title: 'Saved definition sources', widget: 'json', description: 'Choose saved-definition summaries with recent, or Automation summaries with automationIds. These are separate strict input alternatives.' },
-    { path: 'automationIds', title: 'Automation sources', widget: 'json', description: 'Use this alternative alone for Automation occurrence summaries; do not combine it with sourceArtifactIds or recent.' },
+    { path: 'sourceArtifactIds', title: 'Saved definition sources', widget: 'json', description: 'Choose saved-definition summaries with recent, or triggered Workflow summaries with automationIds. These are separate strict input alternatives.' },
+    { path: 'automationIds', title: 'Triggered Workflow sources', widget: 'json', description: 'Use this alternative alone for triggered Workflow occurrence summaries; do not combine it with sourceArtifactIds or recent.' },
   ],
   'workflow.run.read_state.set': [{ path: 'failedAt', title: 'Observed failure time', widget: 'text', required: true,
     description: 'Retain the exact failure timestamp and Run revision shown by the owner; this acknowledges that failure without clearing a newer one.' }],
@@ -67,18 +69,20 @@ const administrativeFields: Readonly<Partial<Record<WorkflowActionIdV1, readonly
   'workflow.definition.delete': [definitionId],
   'workflow.definition.import': [{ path: 'json', title: 'Workflow document JSON', widget: 'textarea', required: true,
     description: 'Supply the serialized ordinary Workflow document, as returned by workflow.definition.export. Import parses an unsaved definition; it does not save or start work.' }],
-  'workflow.definition.export': [definitionId],
+  'workflow.definition.export': [{ ...definitionId, required: false },
+    { path: 'draft', title: 'Unsaved Workflow definition', widget: 'json',
+      description: 'Supply the current definition from workflow.authoring.draft.get to export without saving. Choose either draft or definitionId.' }],
   'workflow.definition.capture': [
     { path: 'discussion', title: 'Source Discussion address', widget: 'json', required: true, description: 'The qualified Home and Discussion containing the selected authorized messages.' },
     { path: 'messageIds', title: 'Selected message ids', widget: 'json', required: true, description: 'Select exact messages from this Discussion. Capture creates an editable draft with source provenance; it does not save or run.' },
     { path: 'choices', title: 'Reviewed capture choices', widget: 'json', description: 'Resolve needs_review using the existing per-message input, step or exclude choices, dependencies, instructions and fixed/per-run participants.' },
   ],
   'workflow.trigger.remove': [
-    { path: 'automationId', title: 'Saved Automation', widget: 'text', required: true, description: 'Use automationId from workflow.trigger.list; this identifies the saved trigger set, not a Workflow Run.' },
-    { path: 'triggerId', title: 'Child trigger to remove', widget: 'text', description: 'Supply a child trigger id to remove only it. Omit to delete the entire Account trigger set and its saved recipe. Past Runs are kept.' },
+    { path: 'automationId', title: 'Saved Workflow trigger set', widget: 'text', required: true, description: 'Use automationId from workflow.trigger.list; this identifies the saved trigger set, not a Workflow Run.' },
+    { path: 'triggerId', title: 'Child trigger to remove', widget: 'text', description: `Supply a child trigger id to remove only it. Omit to delete the entire Account trigger set and its saved recipe. ${WORKFLOW_AUTOMATION_REMOVAL_WARNING}` },
   ],
   'workflow.trigger.run_now': [
-    { path: 'automationId', title: 'Saved Automation', widget: 'text', required: true, description: 'Use automationId from workflow.trigger.list. Admits a manual occurrence of that retained Automation without editing or converting it.' },
+    { path: 'automationId', title: 'Saved Workflow trigger set', widget: 'text', required: true, description: 'Use automationId from workflow.trigger.list. Admits a manual occurrence of that retained Workflow without editing or converting it.' },
     { path: 'idempotencyKey', title: 'Manual occurrence identity', widget: 'text', description: 'Reuse the same key only to reconcile this same requested occurrence after an uncertain response.' },
   ],
 };
@@ -101,7 +105,7 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
         // shared catalog derivation supplies uncovered structural operands.
         ? [
           { path: 'workflow', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available',
-            description: 'Choose a workflow, an Account scope, or an Automation with Review.',
+            description: 'Choose a workflow, an Account scope, or a retained workflow with Review.',
             requiredWhen: { op: 'and', all: [
               { op: 'not', predicate: { op: 'truthy', path: 'scope' } },
               { op: 'not', predicate: { op: 'eq', path: 'review', value: true } },
@@ -110,8 +114,8 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
             { value: 'account_inline', label: 'Inline workflows' },
             { value: 'account_all', label: 'All workflows' },
           ] },
-          { path: 'review', title: 'Review retained Automation', widget: 'boolean' },
-          { path: 'automationId', title: 'Automation', widget: 'text',
+          { path: 'review', title: 'Review retained Workflow', widget: 'boolean' },
+          { path: 'automationId', title: 'Workflow trigger set', widget: 'text',
             requiredWhen: { op: 'eq', path: 'review', value: true } },
         ]
       : actionId === 'session.trigger.list'
@@ -120,7 +124,7 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
       ? [{ path: 'workflow', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' }]
       : actionId === 'workflow.trigger.update'
         ? [
-          { path: 'automationId', title: 'Automation', widget: 'text', required: true },
+          { path: 'automationId', title: 'Workflow trigger set', widget: 'text', required: true },
           { path: 'expectedRevision', title: 'Reviewed revision', widget: 'number', required: true },
           { path: 'triggerId', title: 'Trigger', widget: 'text' },
           { path: 'patch', title: 'Changes', widget: 'json', required: true,

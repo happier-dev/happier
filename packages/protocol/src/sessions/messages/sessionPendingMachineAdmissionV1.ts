@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionIdSchema } from '../idsV1.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
@@ -12,7 +13,7 @@ import {
 } from './sessionInputAdmission.js';
 import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../../actions/externalActionApi.js';
+import { ExternalActionMachineRpcExecutionV1Schema } from '../../actions/externalActionApi.js';
 import { SessionMessageReplyAdmissionV1Schema } from './sessionMessageReplyV1.js';
 
 export const SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 =
@@ -27,6 +28,7 @@ export const SessionPendingEnqueueByMachineFieldsV1 = {
   targetMachineId: SessionPendingTargetMachineIdV1Schema,
   localId: PendingLocalIdSchema,
   content: SessionStoredMessageContentSchema,
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   requestedAction: PendingRequestedActionV1Schema,
   requestEqualityEvidenceV1: z.optional(SessionInputRequestEqualityEvidenceV1Schema),
   reply: z.optional(SessionMessageReplyAdmissionV1Schema),
@@ -66,21 +68,20 @@ export type SessionPendingEnqueueByMachineRequestV1 = z.infer<
   typeof SessionPendingEnqueueByMachineRequestV1Schema
 >;
 
-/** One requester-owned startup input under the signed, canonical template birth. */
+/** One owner-authored startup input admitted by the Session Pending owner. */
 export const SessionPendingTemplateOnboardingInputV1Schema = lazyZodSchema(() => z.strictObject({
   v: SessionPendingEnqueueByMachineFieldsV1.v,
   sessionId: SessionPendingEnqueueByMachineFieldsV1.sessionId,
   targetMachineId: SessionPendingEnqueueByMachineFieldsV1.targetMachineId,
   localId: SessionPendingEnqueueByMachineFieldsV1.localId,
   content: SessionPendingEnqueueByMachineFieldsV1.content,
+  usageTimingV1: SessionPendingEnqueueByMachineFieldsV1.usageTimingV1,
   requestedAction: SessionPendingEnqueueByMachineFieldsV1.requestedAction,
   requestEqualityEvidenceV1: SessionPendingEnqueueByMachineFieldsV1.requestEqualityEvidenceV1,
 }).check(z.superRefine(refineSessionPendingMachineEqualityEvidenceV1)));
 export type SessionPendingTemplateOnboardingInputV1 = z.infer<typeof SessionPendingTemplateOnboardingInputV1Schema>;
 
 export const SessionPendingTemplateOnboardingRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  authorization: ExternalActionExecutionAuthorizationV1Schema,
-  originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
   request: SessionPendingTemplateOnboardingInputV1Schema,
 }));
 

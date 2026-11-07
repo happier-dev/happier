@@ -1,10 +1,12 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+import type { ActionExecutorContext } from '../executor/types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from 'zod/mini';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, type WorkflowActionIdV1 } from '../../workflows/actionsV1.js';
 import { WORKFLOW_ACTION_IDS_V1 } from '../actionIds.js';
-import { getWorkflowInputHints } from './workflowInputHints.js';
+import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';
 
 
 export const WORKFLOW_DIRECT_MCP_ACTION_IDS = new Set<WorkflowActionIdV1>([
@@ -42,13 +44,13 @@ export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>
   'workflow.definition.edit': 'Edit workflow definition',
   'workflow.definition.delete': 'Delete workflow definition',
   'workflow.definition.import': 'Import workflow document',
-  'workflow.definition.export': 'Export saved workflow document',
+  'workflow.definition.export': 'Export workflow document',
   'workflow.definition.capture': 'Prepare an editable pattern',
   'workflow.trigger.list': 'List workflow triggers',
   'workflow.trigger.add': 'Add workflow trigger',
   'workflow.trigger.update': 'Update workflow trigger',
   'workflow.trigger.remove': 'Remove workflow trigger',
-  'workflow.trigger.run_now': 'Run saved Automation now',
+  'workflow.trigger.run_now': 'Run saved Workflow now',
   'session.trigger.list': 'List session triggers',
   'session.trigger.add': 'Add session trigger',
   'session.trigger.update': 'Update session trigger',
@@ -72,14 +74,15 @@ export const WORKFLOW_TRIGGER_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<Workf
 export const WORKFLOW_ACTION_DESCRIPTIONS: Readonly<Partial<Record<WorkflowActionIdV1, string>>> = {
   'workflow.definition.capture': 'Prepare an editable draft from explicitly selected authorized Discussion messages. Review inferred steps, exact dependencies and per-run question/participant inputs; use choices to resolve unlinked messages. Workflow-backed exchanges reuse their authored definition and source provenance. Capture does not save, share or start work; open the draft in the ordinary editor and save with workflow.definition.create.',
   'workflow.run.start': `Start an ordinary workflow from a built-in/plugin catalog, a saved definition, or an inline definition. A Session caller supplies the origin Session and its Machine/workspace through authenticated Action context. inputs contains only declared workflow input values; machineId and directory inside inputs do not select a run target. executionTarget selects the leaf execution kind, not the Machine/workspace. For an inline definition, put model and effort on defaults.engine or a step execution.engine, for example {agentTarget,modelSelection,effort:"low"}; do not place reasoning_effort in sessionConfigOptionOverrides. Validate the definition with ${'workflow.validate' satisfies WorkflowActionIdV1} before starting. Retain runId when a response is uncertain. Run again uses source.replay.runId to reopen the accepted graph, runtime and participants; Another round adds source.replay.intent="another_round" and the owner reads authorized prior outcomes into its declared previousRoundContext input. Another round retains all accepted inputs and participants; unavailable context or targets requires repair before starting. It uses the ordinary start approval; contained Actions keep their own approval and authority.`,
-  'workflow.trigger.remove': 'Remove one trigger by automationId and triggerId; the last child removal leaves a Manual set. Omit triggerId to delete the whole Account trigger set, including an empty Manual set. Past Runs are kept.',
-  'workflow.definition.list': 'List saved workflows in this Home Account and available plugin workflows. Returns definitions with metadata, content availability and trigger summaries, plus pluginWorkflows when available. Follow nextCursor to read later pages; use workflow.definition.get to read a saved definition.',
+  'workflow.trigger.remove': `Remove one trigger by automationId and triggerId; the last child removal leaves a Manual set. Omit triggerId to delete the whole Account trigger set, including an empty Manual set. ${WORKFLOW_AUTOMATION_REMOVAL_WARNING}`,
+  'workflow.definition.delete': `Delete the saved Workflow definition and its Automation trigger sets. ${WORKFLOW_AUTOMATION_REMOVAL_WARNING}`,
+  'workflow.definition.list': 'List saved workflows in this Home Account and available plugin workflows. Returns summaries: metadata, step count, content availability and trigger summaries, plus pluginWorkflows when available. Summaries do not include the definition body or its destinations. Follow nextCursor to read later pages; use workflow.definition.get to read a saved definition in full.',
   'workflow.definition.get': 'Read one saved workflow definition, its metadata, revision and destinations using a definitionId from workflow.definition.list.',
   'workflow.definition.create': 'Save an authored workflow definition without running it. Supply a UUID definitionId for the new Artifact; reuse that UUID only to rejoin the same create. For named starter templates, first execute workflow.starters.list and workflow.starters.resolve. Block kinds describe workflow syntax; eligible trigger events come from workflow.events.list.',
   'workflow.run.list': 'List started workflow Runs and their progress in this Home Account. Run history can be empty while saved definitions exist; use workflow.definition.list for the workflow library. Use execution.run.list for agent execution runs.',
   'workflow.definition.edit': 'Prefer this typed operation batch for partial workflow changes; workflow.definition.update replaces the whole definition.',
-  'workflow.run.invocations.publish_draft': "Publish a private draft value validated against the invocation's exact frozen result contract. Prose does not publish a result. Publication does not complete or advance the invocation. If publication fails, request a present-user follow-up; an agent must not complete the review.",
-  'workflow.run.invocations.complete_review': 'Present-user only: use the stored or supplied validated result, or request generation on the held invocation, using its exact content revision. Automated callers cannot resolve review.',
+  'workflow.run.invocations.publish_draft': "Publish a private draft value validated against the invocation's exact frozen result contract. Prose does not publish a result. Publication does not complete or advance the invocation. Resolve a held review explicitly through workflow.run.invocations.complete_review and its ordinary Action approval policy.",
+  'workflow.run.invocations.complete_review': 'Use the stored or supplied validated result, or request generation on the held invocation, using its exact content revision. Supplied results retain host-authenticated human or agent attribution.',
 };
 
 export const WorkflowInvocationRetryCliInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(WorkflowActionInputSchemasV1[
@@ -100,7 +103,11 @@ export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set
   'workflow.trigger.list', 'session.trigger.list',
 ]);
 
-export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORKFLOW_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
+function removesWholeTriggerSet(input: unknown): boolean {
+  return typeof readRecord(input).triggerId !== 'string';
+}
+
+export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => WORKFLOW_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   const directMcp = WORKFLOW_DIRECT_MCP_ACTION_IDS.has(actionId);
   // Voice reaches the ordinary Action owner but cannot complete a person's review.
   const voice = actionId !== 'workflow.run.invocations.complete_review';
@@ -114,17 +121,36 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK
   const deletesRetainedContent = actionId === 'workflow.run.delete' || actionId === 'workflow.definition.delete';
   return {
     id: actionId,
+    ...(actionId === 'workflow.run.list' ? {
+      requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).projection !== 'membership',
+    } : actionId === 'workflow.run.resume' ? {
+      requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).mode === 'recover',
+    } : actionId === 'workflow.run.invocations.list' ? {
+      requesterAccountContentDemandForInput: (input: unknown, context: ActionExecutorContext) => readRecord(input).includeContent === true
+        || context.externalActionTarget?.kind === 'machine' && Boolean(context.externalActionTarget.project),
+    } : actionId === 'workflow.run.pause' || actionId === 'workflow.run.cancel' || actionId === 'workflow.run.delete' ? {
+      requesterAccountContentDemandForInput: (_input: unknown, context: ActionExecutorContext) =>
+        context.externalActionTarget?.kind === 'machine' && Boolean(context.externalActionTarget.project),
+    } : actionId === 'workflow.run.start' || actionId === 'workflow.run.get' || actionId === 'workflow.run.wait'
+      || actionId === 'workflow.run.invocations.get' || actionId === 'workflow.run.invocations.retry'
+      || actionId === 'workflow.run.invocations.publish_draft' || actionId === 'workflow.run.invocations.complete_review' ? {
+        requesterAccountContentDemandForInput: () => true,
+      } : {}),
     executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
     approvalPolicy: {
       uiConfirmation: deletesRetainedContent ? 'policy' : 'direct',
       // Removing a child leaves the Habit intact; deleting the whole set loses its saved recipe.
       ...(actionId === 'workflow.trigger.remove' ? {
-        uiConfirmationForInput: (input: unknown) => typeof readRecord(input).triggerId !== 'string',
+        uiConfirmationForInput: removesWholeTriggerSet,
       } : {}),
       ...(actionId === 'session.trigger.remove' ? { scopeAdmissionOwnsConfirmation: true as const } : {}),
     },
     ...(deletesRetainedContent || actionId === 'workflow.trigger.remove'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
+    ...(actionId === 'workflow.definition.delete' || actionId === 'workflow.trigger.remove' ? {
+      approvalPresentation: { summary: (input: unknown) => actionId === 'workflow.trigger.remove'
+        && !removesWholeTriggerSet(input) ? null : WORKFLOW_AUTOMATION_REMOVAL_WARNING },
+    } : {}),
     approval: WORKFLOW_READ_ACTION_IDS.has(actionId) ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
     title: WORKFLOW_ACTION_TITLES[actionId],
     description: WORKFLOW_ACTION_DESCRIPTIONS[actionId]
@@ -155,7 +181,6 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK
       ? { agent: 'direct' as const, mcp: 'direct' as const }
       : { mcp: 'discoverable_only' as const },
     sideEffectClass,
-    ...(actionId === 'workflow.run.invocations.complete_review' ? { requiredAuthority: 'present_user' as const } : {}),
     inputSchema: WorkflowActionInputSchemasV1[actionId],
     outputSchema: WorkflowActionOutputSchemasV1[actionId],
     ...(voiceArgsExample ? { examples: { voice: { argsExample: voiceArgsExample } } } : {}),
@@ -179,4 +204,4 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK
       } : {}),
     },
   };
-});
+}));

@@ -30,6 +30,7 @@ import {
   writeAcpSessionModeIntentToMetadata,
   writeModelIntentToMetadata,
   readModelIntentFromMetadata,
+  readModelIntentUpdatedAtFromMetadata,
   writePermissionModeIntentToMetadata,
 } from './bindings/intent.js';
 import { writeRuntimeDescriptorSessionState } from './bindings/runtimeDescriptor.js';
@@ -211,12 +212,12 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
           return metadata;
         }
       }
-      const current = readModelIntentFromMetadata(metadata);
+      const currentUpdatedAt = readModelIntentUpdatedAtFromMetadata(metadata);
       updatedAt ??= Math.max(
         nowMs(),
-        (current?.updatedAt ?? 0) + 1,
+        currentUpdatedAt + 1,
       );
-      if ((current?.updatedAt ?? 0) >= updatedAt) {
+      if (currentUpdatedAt >= updatedAt) {
         return metadata;
       }
       const next = writeModelIntentToMetadata(metadata, {
@@ -264,12 +265,7 @@ export function createModelIntentV2MetadataCasCandidate(input: Readonly<{
     update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata {
       accepted = false;
       const record = metadata as Record<string, unknown>;
-      const currentV2 = SessionModelSelectionV2Schema.safeParse(record.modelSelectionIntentV2);
-      const currentV1 = SessionModelSelectionIntentV1Schema.safeParse(record.modelSelectionIntentV1);
-      const currentUpdatedAt = Math.max(
-        currentV2.success ? currentV2.data.updatedAt : 0,
-        currentV1.success ? currentV1.data.updatedAt : 0,
-      );
+      const currentUpdatedAt = readModelIntentUpdatedAtFromMetadata(metadata);
       updatedAt ??= Math.max(nowMs(), currentUpdatedAt + 1);
       if (currentUpdatedAt >= updatedAt) return metadata;
 
@@ -369,6 +365,7 @@ export function clearAcpConfigOptionIntentSessionMetadata<TMetadata extends Sess
   return clearSessionStateFieldFromMetadata(metadata, 'intent.acpConfigOption') as TMetadata;
 }
 
+
 type SessionBirthMetadataFieldsV1 = Pick<SessionOwnerMetadataV1, 'work'>
   & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'approvalProfileId'>
   & Pick<NonNullable<SessionOwnerMetadataV1['system']>, 'attestedContext'>;
@@ -449,6 +446,15 @@ export function applySessionConfigOptionOverridesToMetadata<TMetadata extends Se
     return nextMetadata;
 }
 
+export function generateConnectedServiceMaterializationIdentityV1(params: Readonly<{
+    now?: () => number;
+    randomBytes: (length: number) => Uint8Array;
+}>): ConnectedServiceMaterializationIdentityV1 {
+    const now = Math.max(0, Math.trunc(params.now?.() ?? Date.now()));
+    const hex = Array.from(params.randomBytes(8), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { v: 1, id: `csm_${now}_${hex}`, createdAt: now, source: 'first_spawn' };
+}
+
 /** Birth intents an attaching runner preserves instead of taking from its process. */
 export function buildCommittedLaunchMetadata(input: Readonly<{
     options: CommittedLaunchMetadataOptionsV1;
@@ -504,3 +510,4 @@ export function buildCommittedLaunchMetadata(input: Readonly<{
             ? (() => { const parsed = AcpConfigOptionOverridesV1Schema.safeParse(options.sessionConfigOptionOverrides); return parsed.success ? parsed.data : null; })() : null,
     );
 }
+

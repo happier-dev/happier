@@ -1,5 +1,6 @@
 import { randomBytes } from 'tweetnacl';
-import { buildCommittedLaunchMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { buildCommittedLaunchMetadata, generateConnectedServiceMaterializationIdentityV1 } from '@happier-dev/agents/session/state/metadataWriters';
 import { sealSessionStoredContent } from '@happier-dev/sync-client';
 import { buildSessionCreationCorrespondence, buildSessionHostOnboardingInputV1, commitPreparedSessionBirthV1,
     normalizeSessionCreationOrganizationPlacementV1, sessionCreationCorrespondenceMatchesV1,
@@ -11,6 +12,7 @@ import { SessionPendingEnqueueByMachineResponseV1Schema, SessionPendingTemplateO
 import { serializeSessionInputRequestEqualityIntentV1, SESSION_INPUT_REQUEST_META_KEY,
     SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { createSessionCreateOrLoad } from '@/sync/domains/session/hostedSystemSession';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { createEnvelopeTransport } from '@/sync/api/session/sessionDataKeyEnvelopeTransport';
@@ -25,12 +27,9 @@ export async function createUiPreparedSessionBirthV1(
     account: LazyActionAccountContext,
     args: SpawnArgs,
     continuation: SessionCreationHostContinuationV1,
-    onCreationAuthorization?: Parameters<typeof createSessionCreateOrLoad>[0]['onCreationAuthorization'],
 ): Promise<SessionSpawnNewResultV1> {
     const input = args.admittedInput;
-    const authorization = args.context?.externalActionExecutionAuthorization;
-    const originalActionEnvelope = args.context?.originalActionEnvelope;
-    if (!input || !authorization || !originalActionEnvelope || !continuation.hostOnboarding) {
+    if (!input || !continuation.hostOnboarding) {
         return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
     }
     account.assertCurrent();
@@ -47,8 +46,6 @@ export async function createUiPreparedSessionBirthV1(
         capabilitySelection: input.capabilitySelection ?? null, transcriptStorage: input.transcriptStorage ?? null,
         terminal: input.terminal ?? null, allowedTools: input.allowedTools, unlistedTools: input.unlistedTools,
         ...(input.checkoutCreationDraft ? { checkoutCreationDraft: input.checkoutCreationDraft } : {}),
-        ...(continuation.machineSetupPlanInput ? { machineSetupPlanInput: continuation.machineSetupPlanInput,
-            machineSetupExecution: { authorization, originalActionEnvelope } } : {}),
     } });
     const accountSettings = await account.readSettings();
     account.assertCurrent();
@@ -61,8 +58,8 @@ export async function createUiPreparedSessionBirthV1(
         unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites,
         authoringOrigin: input.authoringOrigin, teamCredentialBindings: input.teamCredentialBindings,
     }, ...(input.directory.kind === 'path' ? { directory: input.directory.path } : {}),
-        agentModeId: input.agentModeId, accountSettings });
-    let birthAuthorization = authorization;
+        agentModeId: input.agentModeId, accountSettings,
+        materializationIdentity: generateConnectedServiceMaterializationIdentityV1({ randomBytes }) });
     const result = await commitPreparedSessionBirthV1({
         commit: async () => {
             const created = await createSessionCreateOrLoad({ credentials: account.credentials, accountMode, encryption,
@@ -72,8 +69,6 @@ export async function createUiPreparedSessionBirthV1(
                 manager: input.manager,
                 request: (path, init) => account.request(path, { ...init, signal: args.signal }),
                 assertCurrent: account.assertCurrent,
-                templateRequesterAuthorization: { authorization, originalActionEnvelope },
-                onCreationAuthorization: value => { birthAuthorization = value; onCreationAuthorization?.(value); },
             });
             return { sessionId: created.session.id, disposition: created.disposition,
                 metadataRevision: created.session.metadataVersion, value: created.session };
@@ -85,12 +80,27 @@ export async function createUiPreparedSessionBirthV1(
                 opened.ownerMetadata.system?.sessionCreationCorrespondenceV1, correspondence,
             )) throw Object.assign(new Error('Session creation correspondence conflicts'), { code: 'creation_conflict' });
         },
-        // Home's admitted birth transaction owns the exact Session/Machine tuple.
-        bindMachine: async () => { account.assertCurrent(); },
+        bindMachine: async birth => {
+            account.assertCurrent();
+            const path = `/v1/access-keys/${encodeURIComponent(birth.sessionId)}/${encodeURIComponent(input.executionTarget.machineId)}`;
+            const headers = { Authorization: `Bearer ${account.credentials.token}` };
+            const existing = await account.request(path, { method: 'GET', headers, signal: args.signal });
+            account.assertCurrent();
+            if (!existing.ok) throw new Error(`Session Machine access-key lookup failed (${existing.status})`);
+            const found: unknown = await existing.json();
+            if (found && typeof found === 'object' && Reflect.get(found, 'accessKey')) return;
+            const body = { data: `session-machine-control:${encodeBase64(randomBytes(16), 'base64url')}` };
+            const created = await account.request(path, { method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: args.signal });
+            account.assertCurrent();
+            if (created.status !== 200 && created.status !== 409) {
+                throw new Error(`Session Machine access-key binding failed (${created.status})`);
+            }
+        },
         beforeLaunch: async birth => {
             if (accountMode === 'e2ee' && (input.primaryTeamId
                 || input.initialAccess?.grants.some(grant => grant.subject.kind !== 'account'))) {
-                const capturedEncryptionScope = encryption?.getCurrentEncryptionGenerationScope({ serverId: account.serverId });
+                const capturedEncryptionScope = encryption?.getCurrentEncryptionGenerationScope({ serverId: account.serverId, sessionId: birth.sessionId });
                 const sessionDataKey = await readTransferableSessionDataKey({ session: birth.value, encryption });
                 const prepared = await withActionAccountRequestSignal(account, args.signal, async signal => {
                     // A captured Account lifetime always supplies the merged cancellation signal.
@@ -116,9 +126,11 @@ export async function createUiPreparedSessionBirthV1(
             account.assertCurrent();
             const onboarding = buildSessionHostOnboardingInputV1(continuation.hostOnboarding!);
             const record = StrictJsonValueSchema.parse({ role: 'user', content: { type: 'text', text: onboarding.initialInput.text },
-                meta: { source: 'ui', [SESSION_MESSAGE_PROVENANCE_META_KEY]: onboarding.inputAdmission.provenance,
+                meta: { ...onboarding.meta, source: 'ui', [SESSION_MESSAGE_PROVENANCE_META_KEY]: onboarding.inputAdmission.provenance,
                     [SESSION_INPUT_REQUEST_META_KEY]: onboarding.inputAdmission.request } });
             const localId = buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag: correspondence.sessionCreationTag });
+            const usageTimingV1 = projectUsageSessionMessageTimingV1({ sessionId: birth.sessionId,
+                message: { id: localId, localId, content: record } });
             let sessionEncryption = null;
             if (accountMode === 'e2ee') {
                 if (!encryption) throw new Error('Account encryption unavailable');
@@ -138,9 +150,9 @@ export async function createUiPreparedSessionBirthV1(
                 tag: sessionEncryption.deriveInputEqualityTagV1(serializeSessionInputRequestEqualityIntentV1({
                     requestEnvelope: { v: 1, kind: 'sessionInputRequest', localId, content: { t: 'plain', v: record } }, requestedAction,
                 })) } : undefined;
-            const body = SessionPendingTemplateOnboardingRequestV1Schema.parse({ authorization: birthAuthorization,
-                originalActionEnvelope, request: { v: 1, sessionId: birth.sessionId,
-                    targetMachineId: input.executionTarget.machineId, localId, content: content.content,
+            const body = SessionPendingTemplateOnboardingRequestV1Schema.parse({
+                request: { v: 1, sessionId: birth.sessionId,
+                    targetMachineId: input.executionTarget.machineId, localId, content: content.content, usageTimingV1,
                     requestedAction, ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}) } });
             account.assertCurrent();
             try {

@@ -243,10 +243,460 @@ async function serve(params: Readonly<{
 }
 
 describe('SDK protected invocation lifecycle through real HTTP', () => {
-  it('executes a Lane 10 Team credential Action with its whole request and result protected', async () => {
+  it('carries encryption-only same-token deployment material inside the exact encrypted request', async () => {
+    const server = await serve({ invoke: ({ binding, request }, response) => {
+      expect(binding.actionId).toBe('deployments.deploy');
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).toMatchObject({
+        apiTokenContentAccess: { contentPublicKey: pins.contentPublicKey,
+          wrappingSecret: encodeBase64(wrappingSecret, 'base64url') },
+      });
+      server.send(response, prepareExternalActionResponseV2({ binding, request, material,
+        executedMachineId: 'machine-1', randomBytes: length => new Uint8Array(length).fill(4),
+        execution: { ok: false, errorCode: 'approval_required', error: 'approval_required' },
+      }).response);
+    } });
+    const client = connect({ endpoint: server.endpoint, token });
+    try {
+      await expect(client.machine('machine-1').actions.deployments.deploy({ serverId: pins.serverIdentityId,
+        environmentId: 'environment', targetLinkId: 'runtime', requestKey: 'deploy' })).rejects.toMatchObject({ code: 'approval_required' });
+      expect(server.failures).toEqual([]);
+      expect(JSON.stringify(server.captured)).not.toContain(encodeBase64(wrappingSecret, 'base64url'));
+    } finally { await client.close(); await server.close(); }
+  });
+  it.each([
+    {
+      caseName: 'workflow.run.start',
+      actionId: 'workflow.run.start',
+      input: { runId: '11111111-1111-4111-8111-111111111111',
+        source: { kind: 'inline', definition: { blocks: ['work'] } } },
+      options: { project: { machineId: 'machine-1', directory: '/repo' } },
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'workflow.run.list private projection',
+      actionId: 'workflow.run.list',
+      input: {},
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'workflow.run.list membership projection',
+      actionId: 'workflow.run.list',
+      input: { projection: 'membership', attention: 'required' },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'workflow.run.resume recovery',
+      actionId: 'workflow.run.resume',
+      input: { mode: 'recover', runId: '33333333-3333-4333-8333-333333333333', expectedRevision: 1,
+        invocations: [{ kind: 'reattach', invocation: { recordId: '44444444-4444-4444-8444-444444444444' } }] },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'workflow.run.resume boundary',
+      actionId: 'workflow.run.resume',
+      input: { mode: 'boundary', runId: '33333333-3333-4333-8333-333333333333', expectedRevision: 1 },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'workflow.run.invocations.list with content',
+      actionId: 'workflow.run.invocations.list',
+      input: { runId: '33333333-3333-4333-8333-333333333333', includeContent: true },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'workflow.run.invocations.list metadata only',
+      actionId: 'workflow.run.invocations.list',
+      input: { runId: '33333333-3333-4333-8333-333333333333', includeContent: false },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'workflow.run.invocations.list metadata under a project target',
+      actionId: 'workflow.run.invocations.list',
+      input: { runId: '33333333-3333-4333-8333-333333333333', includeContent: false },
+      options: { project: { machineId: 'machine-1', directory: '/repo' } },
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'workflow.run.pause without a project target',
+      actionId: 'workflow.run.pause',
+      input: { runId: '33333333-3333-4333-8333-333333333333', expectedRevision: 1 },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'workflow.run.pause under a project target',
+      actionId: 'workflow.run.pause',
+      input: { runId: '33333333-3333-4333-8333-333333333333', expectedRevision: 1 },
+      options: { project: { machineId: 'machine-1', directory: '/repo' } },
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'template.preview',
+      actionId: 'template.preview',
+      input: { source: { kind: 'artifact', serverId: pins.serverIdentityId,
+        artifactId: '22222222-2222-4222-8222-222222222222' } },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'template.preview from a plugin',
+      actionId: 'template.preview',
+      input: { source: { kind: 'plugin', registryItem: {
+        sourceId: 'npm', itemId: 'helper', version: '1.0.0' }, contributionId: 'template' } },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'machines.setup.plan',
+      actionId: 'machines.setup.plan',
+      input: { homeId: pins.serverIdentityId, machineId: 'machine-1', mode: 'check' },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.targets.link public intent',
+      actionId: 'deployments.targets.link',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        requestKey: 'link-intent', targetId: 'own-server', role: 'runtime',
+        machines: [{ machineId: 'machine-1', installationId: 'installation-1' }] },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.targets.link already prepared content',
+      actionId: 'deployments.targets.link',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        requestKey: 'link-prepared', targetId: 'own-server', role: 'runtime',
+        machines: [{ machineId: 'machine-1', installationId: 'installation-1' }],
+        contentArtifactId: 'target-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.environments.create',
+      actionId: 'deployments.environments.create',
+      input: { serverId: pins.serverIdentityId, projectSourceId: 'project', requestKey: 'create',
+        protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine-1',
+        contentArtifactId: 'environment-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.environments.update',
+      actionId: 'deployments.environments.update',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        contentArtifactId: 'environment-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.bindings.set',
+      actionId: 'deployments.bindings.set',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        contentArtifactId: 'environment-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
+        referencedSavedSecretRevisions: [] },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.rollback',
+      actionId: 'deployments.rollback',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment', requestKey: 'rollback' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.promote',
+      actionId: 'deployments.promote',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', sourceEnvironmentId: 'source-environment',
+        sourceDeploymentId: 'source-deployment', artifact: 'rebuild', requestKey: 'promote' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.teardown with retained content',
+      actionId: 'deployments.teardown',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        targetLinkId: 'runtime', expectedTargetLinkRevision: 1, requestKey: 'teardown', reason: 'manual',
+        contentArtifactId: 'receipt-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.teardown record-only detach',
+      actionId: 'deployments.teardown',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', expectedRevision: 1,
+        targetLinkId: 'runtime', expectedTargetLinkRevision: 1, requestKey: 'detach', reason: 'manual', detachKeepRunning: true },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.observation.get',
+      actionId: 'deployments.observation.get',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', targetLinkId: 'runtime' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.receipts.observe',
+      actionId: 'deployments.receipts.observe',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.domains.add',
+      actionId: 'deployments.domains.add',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
+        targetLinkId: 'runtime', expectedTargetLinkRevision: 1, requestKey: 'domain-add',
+        contentArtifactId: 'domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.domains.remove',
+      actionId: 'deployments.domains.remove',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
+        expectedDomainRevision: 1, requestKey: 'domain-remove' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.domains.verify',
+      actionId: 'deployments.domains.verify',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
+        expectedDomainRevision: 1, requestKey: 'domain-verify' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.health.read',
+      actionId: 'deployments.health.read',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', machineId: 'machine-1', installationId: 'installation-1',
+        service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.health.current',
+      actionId: 'deployments.health.current',
+      input: { serverId: pins.serverIdentityId, machineId: 'machine-1', environmentId: 'environment', targetLinkId: 'runtime' },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.drift.read',
+      actionId: 'deployments.drift.read',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', machineId: 'machine-1', installationId: 'installation-1', expectedRevision: 1,
+        service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.logs.read build output',
+      actionId: 'deployments.logs.read',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', machineId: 'machine-1', installationId: 'installation-1', kind: 'build' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.logs.read runtime output',
+      actionId: 'deployments.logs.read',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', machineId: 'machine-1', installationId: 'installation-1', kind: 'runtime',
+        service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.restart',
+      actionId: 'deployments.restart',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', deploymentId: 'deployment',
+        targetLinkId: 'runtime', machineId: 'machine-1', installationId: 'installation-1', expectedGeneration: 'generation',
+        service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'deployments.backups.inventory',
+      actionId: 'deployments.backups.inventory',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', machineId: 'machine-1', installationId: 'installation-1',
+        targetLinkId: 'runtime', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.backups.run',
+      actionId: 'deployments.backups.run',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', machineId: 'machine-1', installationId: 'installation-1',
+        targetLinkId: 'runtime', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1 },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.backups.verify',
+      actionId: 'deployments.backups.verify',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', machineId: 'machine-1', installationId: 'installation-1',
+        targetLinkId: 'runtime', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+        backupOperationId: 'backup-operation', snapshotId: 'a'.repeat(64), level: 'manifestReadBack' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.backups.prune',
+      actionId: 'deployments.backups.prune',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', machineId: 'machine-1', installationId: 'installation-1',
+        targetLinkId: 'runtime', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+        retention: { kind: 'keepEverything' } },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.backups.restore',
+      actionId: 'deployments.backups.restore',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment', machineId: 'machine-1', installationId: 'installation-1',
+        targetLinkId: 'runtime', deploymentId: 'deployment', restoreBackupId: 'backup', expectedRevision: 1, mode: 'prepare' },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.templates.instantiate',
+      actionId: 'deployments.templates.instantiate',
+      input: { mode: 'apply', serverId: pins.serverIdentityId, machineId: 'machine-1', projectSourceId: 'project',
+        templateRef: { sourceId: 'apps', itemId: 'app', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+        environment: { kind: 'create', name: 'App', requestKey: 'template', protection: 'nonProduction', purpose: 'standard',
+          deployerMode: 'managers', controllerMachineId: 'machine-1' },
+        target: { kind: 'new', installationId: 'installation-1' }, destination: { kind: 'stored' }, bindings: [] },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.publish.prepare',
+      actionId: 'deployments.publish.prepare',
+      input: { serverId: pins.serverIdentityId, machineId: 'machine-1', installationId: 'installation-1',
+        projectSourceId: 'project', sourceRevision: 1,
+        templateRef: { sourceId: 'apps', itemId: 'app', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'deployments.environments.get metadata',
+      actionId: 'deployments.environments.get',
+      input: { serverId: pins.serverIdentityId, environmentId: 'environment' },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+    {
+      caseName: 'session.spawn_new with software setup',
+      actionId: 'session.spawn_new',
+      input: {
+        directory: { kind: 'path', path: '/workspace/project' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        machineSetupPlanInput: { homeId: pins.serverIdentityId, machineId: 'machine-1' },
+      },
+      options: undefined,
+      expectsContentAccess: true,
+    },
+    {
+      caseName: 'session.spawn_new without software setup',
+      actionId: 'session.spawn_new',
+      input: {
+        directory: { kind: 'path', path: '/workspace/project' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      },
+      options: undefined,
+      expectsContentAccess: false,
+    },
+  ] as const)('projects requester Account content access for $caseName only when its owner consumes content', async ({
+    actionId, input, options, expectsContentAccess,
+  }) => {
+    // Content delegation belongs to the Action declaration, including operand-dependent readers.
+    if (expectsContentAccess) {
+      expect(getActionSpec(actionId).requesterAccountContentDemandForInput).toBeTypeOf('function');
+    }
+    let disclosedContentAccess: boolean | undefined;
+    const server = await serve({ invoke: ({ binding, request }, response) => {
+      expect(binding.actionId).toBe(actionId);
+      disclosedContentAccess = openExternalActionRequestV2({
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: request,
+        binding,
+        material,
+      })?.apiTokenContentAccess !== undefined;
+      server.send(response, prepareExternalActionResponseV2({ binding, request, material,
+        executedMachineId: 'machine-1', randomBytes: length => new Uint8Array(length).fill(4),
+        execution: { ok: false, errorCode: 'approval_required', error: 'approval_required' },
+      }).response);
+    } });
+    const client = connect({ endpoint: server.endpoint, token });
+    try {
+      await expect(client.machine('machine-1').actions.execute(actionId, input, options))
+        .rejects.toMatchObject({ code: 'approval_required' });
+      expect(server.failures).toEqual([]);
+      expect(disclosedContentAccess).toBe(expectsContentAccess);
+    } finally { await client.close(); await server.close(); }
+  });
+  it('does not project requester Account content access for a malformed conditional request', async () => {
+    let disclosedContentAccess = false;
+    const server = await serve({ invoke: ({ binding, request }, response) => {
+      disclosedContentAccess = openExternalActionRequestV2({
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: request,
+        binding,
+        material,
+      })?.apiTokenContentAccess !== undefined;
+      server.send(response, prepareExternalActionResponseV2({ binding, request, material,
+        executedMachineId: 'machine-1', randomBytes: length => new Uint8Array(length).fill(4),
+        execution: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' },
+      }).response);
+    } });
+    const client = connect({ endpoint: server.endpoint, token });
+    try {
+      const actions = client.machine('machine-1').actions;
+      await expect(Reflect.apply(actions.execute, actions, ['workflow.run.resume', { mode: 'recover' }]))
+        .rejects.toMatchObject({ code: expect.any(String) });
+      expect(disclosedContentAccess).toBe(false);
+    } finally { await client.close(); await server.close(); }
+  });
+  it('keeps Account content access out of a protected Session message', async () => {
+    let disclosedContentAccess = false;
+    const server = await serve({ invoke: ({ binding, request }, response) => {
+      expect(binding.actionId).toBe('session.message.send');
+      disclosedContentAccess = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })?.apiTokenContentAccess !== undefined;
+      server.send(response, prepareExternalActionResponseV2({ binding, request, material,
+        executedMachineId: 'machine-1', randomBytes: length => new Uint8Array(length).fill(4),
+        execution: { ok: true, result: { status: 'accepted', localId: 'result-sentinel' } },
+      }).response);
+    } });
+    const client = connect({ endpoint: server.endpoint, token });
+    try {
+      await expect(client.machine('machine-1').sessions.get('session-1').send('private-input-sentinel'))
+        .resolves.toMatchObject({ status: 'accepted', localId: 'result-sentinel' });
+      expect(server.failures).toEqual([]);
+      expect(disclosedContentAccess).toBe(false);
+      expect(JSON.stringify(server.captured)).not.toContain(encodeBase64(wrappingSecret, 'base64url'));
+    } finally { await client.close(); await server.close(); }
+  });
+  it('protects a newly registered Team Action without delegating undeclared Account content access', async () => {
+    expect(getActionSpec('teams.credentials.entitled.list').requesterAccountContentDemandForInput).toBeUndefined();
+    let disclosedContentAccess = false;
     const server = await serve({ invoke: ({ binding, input, request }, response) => {
       expect(binding.actionId).toBe('teams.credentials.entitled.list');
       expect(input).toEqual({ teamId: 'private-team-sentinel' });
+      disclosedContentAccess = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })?.apiTokenContentAccess !== undefined;
       server.send(response, prepareExternalActionResponseV2({ binding, request, material,
         executedMachineId: 'machine-1', randomBytes: (length) => new Uint8Array(length).fill(4),
         execution: { ok: true, result: { resources: [] } },
@@ -258,6 +708,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
         teamId: 'private-team-sentinel',
       })).resolves.toEqual({ resources: [], nextCursor: null });
       expect(server.failures).toEqual([]);
+      expect(disclosedContentAccess).toBe(false);
       expect(server.notificationAuth).toEqual([]);
       const actionCall = server.captured.find((call) => call.path.startsWith('/v1/actions/'));
       expect(actionCall?.path).toBe('/v1/actions/teams.credentials.entitled.list');
@@ -268,11 +719,13 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
   });
 
   it('seals a protected Action for a restricted Runner with that Runner\'s own content key', async () => {
+    let disclosedContentAccess = false;
     const runnerRow = buildRunnerBootstrapRow();
     const server = await serve({ machines: [runnerRow], requestMaterial: runnerMaterial,
       invoke: ({ binding, input, request }, response) => {
         expect(binding.target).toEqual({ kind: 'machine', machineId: RUNNER_MACHINE_ID });
         expect(input).toEqual({ teamId: 'private-team-sentinel' });
+        disclosedContentAccess = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: runnerMaterial })?.apiTokenContentAccess !== undefined;
         server.send(response, prepareExternalActionResponseV2({ binding, request, material: runnerMaterial,
           executedMachineId: RUNNER_MACHINE_ID, randomBytes: (length) => new Uint8Array(length).fill(4),
           execution: { ok: true, result: { resources: [] } },
@@ -284,6 +737,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
         teamId: 'private-team-sentinel',
       })).resolves.toEqual({ resources: [], nextCursor: null });
       expect(server.failures).toEqual([]);
+      expect(disclosedContentAccess).toBe(false);
       // The Account key never sealed this request: the relay bytes do not open
       // with it, and the plaintext never left the SDK.
       const actionCall = server.captured.find((call) => call.path.startsWith('/v1/actions/'));
@@ -478,6 +932,20 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
         '/v1/auth/api-tokens/encryption-access',
         '/v1/actions/session.message.send',
       ]);
+    } finally { await client.close(); await server.close(); }
+  });
+
+  it('preserves the target refusal phase without retrying a protected Action', async () => {
+    const server = await serve({ invoke: (invocation, response) => server.send(response, {
+      error: 'invalid_request', code: 'target_not_local',
+      requestId: invocation.binding.requestId, phase: 'target_installation',
+    }, 409) });
+    const client = connect({ endpoint: server.endpoint, token });
+    try {
+      await expect(client.machine('machine-1').sessions.get('session-1').send('private-input-sentinel'))
+        .rejects.toMatchObject({ code: 'target_not_local', status: 409,
+          details: { phase: 'target_installation' } });
+      expect(server.captured.filter((call) => call.path === '/v1/actions/session.message.send')).toHaveLength(1);
     } finally { await client.close(); await server.close(); }
   });
 

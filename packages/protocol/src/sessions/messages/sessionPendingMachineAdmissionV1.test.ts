@@ -12,10 +12,21 @@ import {
 import {
   SessionPendingEnqueueByMachineRequestV1Schema,
   SessionPendingEnqueueByMachineResponseV1Schema,
+  SessionPendingTemplateOnboardingRequestV1Schema,
 } from './sessionPendingMachineAdmissionV1.js';
 import { SessionPendingAdmissionSettlementResponseV1Schema } from './sessionPendingAdmissionSettlementV1.js';
 
 describe('Session Pending machine admission V1', () => {
+  it('admits owner onboarding without an Action root while keeping its input narrower than general Pending', () => {
+    const body = { request: { v: 1, sessionId: 'session-1', targetMachineId: 'machine-1', localId: 'initial-input',
+        content: { t: 'encrypted', c: 'input-cipher' }, requestedAction: { v: 1, kind: 'send_now' },
+        requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: 'A'.repeat(43) } } };
+    expect(SessionPendingTemplateOnboardingRequestV1Schema.safeParse(body).success).toBe(true);
+    expect(SessionPendingTemplateOnboardingRequestV1Schema.safeParse({ ...body, authorization: { token: 'root' } }).success).toBe(false);
+    for (const field of ['reply', 'followSources', 'followRelations', 'followDeliveryV1', 'nextTurnNote', 'externalAction']) {
+      expect(SessionPendingTemplateOnboardingRequestV1Schema.safeParse({ ...body, request: { ...body.request, [field]: {} } }).success).toBe(false);
+    }
+  });
   it('admits only the existing signed execution proof, never caller-authored constraint claims', () => {
     const request = { v: 1, sessionId: 'session-1', targetMachineId: 'machine-1', localId: 'input-1',
       content: { t: 'encrypted', c: 'cipher' }, requestedAction: { v: 1, kind: 'enqueue' } };

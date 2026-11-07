@@ -1,9 +1,9 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
-import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2, ExternalActionHttpErrorSchema, ExternalActionHttpErrorV1Schema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, parseExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2, ExternalActionHttpErrorSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, parseExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { parseSessionListQueryActionResultV1, SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE } from '@happier-dev/protocol/sessions/awareness/action';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { readCompleteActionSpecV1, supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
@@ -12,8 +12,10 @@ import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happ
 import { SessionListActionInputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenChildCreateRequestV1Schema, AccountApiTokenChildRevokeRequestV1Schema, AccountApiTokenSelfV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensServerErrorV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountApiTokenChildCreateRequestV1, AccountApiTokenSelfV1, AccountApiTokensCreateActionOutputV1, AccountApiTokensRevokeActionOutputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { createHttpExchange } from '#http';
@@ -184,30 +186,36 @@ async function readExternalActionResponseJson(
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-function transportErrorCode(
+function projectTransportError(
   body: unknown,
   mode: 'ordinary' | 'credential_bootstrap' | 'protected_action',
   expectedRequestId?: string,
-): string | undefined {
-  if (mode === 'protected_action') {
-    const externalActionError = ExternalActionHttpErrorSchema.safeParse(body);
-    if (!externalActionError.success) return undefined;
-    if ('requestId' in externalActionError.data
-      && externalActionError.data.requestId !== undefined
-      && externalActionError.data.requestId !== expectedRequestId) return undefined;
-    return 'code' in externalActionError.data
-      ? externalActionError.data.code
-      : externalActionError.data.error;
-  }
+): Readonly<{ code?: string; details?: unknown }> {
   if (mode === 'credential_bootstrap') {
     const apiTokenError = AccountApiTokensServerErrorV1Schema.safeParse(body);
-    return apiTokenError.success ? apiTokenError.data.error : undefined;
+    return apiTokenError.success ? { code: apiTokenError.data.error } : {};
   }
-  const externalActionError = ExternalActionHttpErrorV1Schema.safeParse(body);
-  if (externalActionError.success) return externalActionError.data.code;
-  if (body === null || typeof body !== 'object') return undefined;
+  const externalActionError = ExternalActionHttpErrorSchema.safeParse(body);
+  if (externalActionError.success) {
+    if ('requestId' in externalActionError.data
+      && externalActionError.data.requestId !== undefined
+      && externalActionError.data.requestId !== expectedRequestId) return {};
+    const code = 'code' in externalActionError.data
+      ? externalActionError.data.code
+      : externalActionError.data.error;
+    return {
+      code,
+      ...('phase' in externalActionError.data && externalActionError.data.phase !== undefined
+        ? { details: { phase: externalActionError.data.phase } }
+        : 'diagnostic' in externalActionError.data
+        && externalActionError.data.diagnostic !== undefined
+        ? { details: externalActionError.data.diagnostic }
+        : {}),
+    };
+  }
+  if (mode !== 'ordinary' || body === null || typeof body !== 'object') return {};
   const candidate = body as Readonly<{ error?: unknown }>;
-  return typeof candidate.error === 'string' ? candidate.error : undefined;
+  return typeof candidate.error === 'string' ? { code: candidate.error } : {};
 }
 
 function responseHeader(
@@ -586,7 +594,7 @@ function createClient(
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // Protected clients expose only the Protocol's bounded error vocabulary,
       // never arbitrary server strings or response details containing content.
-      const code = transportErrorCode(
+      const transportError = projectTransportError(
         body,
         params.protectedResponse || (params.protectedResponse === false && credential.encryption)
           ? 'protected_action'
@@ -595,11 +603,14 @@ function createClient(
             : 'ordinary',
         params.requestId,
       );
+      const code = transportError.code;
       throw new HappierTransportError(
         `The Happier API returned HTTP ${response.statusCode}${code ? ` (${code})` : ''}.`, {
         code,
         status: response.statusCode,
-        ...(credential.encryption ? {} : { details: body }),
+        ...(credential.encryption
+          ? transportError.details === undefined ? {} : { details: transportError.details }
+          : { details: body }),
         requestId: params.requestId,
       });
     }
@@ -669,9 +680,9 @@ function createClient(
       ? (credential.encryption || MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined)
       : requireExternalActionRequestId(options.requestId);
     const requiresReplySupport = requestInput !== null && typeof requestInput === 'object'
-      && 'reply' in requestInput && 'reply' in requestInput && 'reply' in requestInput && requestInput.reply !== undefined && requestInput.reply !== 'none';
+      && 'reply' in requestInput && requestInput.reply !== undefined && requestInput.reply !== 'none';
     const requiresStructuredInputSupport = requestInput !== null && typeof requestInput === 'object'
-      && 'structuredInput' in requestInput && 'structuredInput' in requestInput && 'structuredInput' in requestInput && requestInput.structuredInput !== undefined;
+      && 'structuredInput' in requestInput && requestInput.structuredInput !== undefined;
     if (actionId === 'session.message.send' && (requiresReplySupport || requiresStructuredInputSupport)) {
       const parsed = PUBLIC_ACTION_INPUT_SCHEMAS['session.message.send'].safeParse(requestInput);
       if (!parsed.success) throw new HappierActionError('invalid_parameters', 'Invalid Session message input.', undefined, requestId);
@@ -784,7 +795,17 @@ function createClient(
             accountId: encryption.pins.accountId, credentialId: encryption.pins.tokenId,
             actionId, requestId: requestId!, target: target.data };
           try {
+            const sessionSpawnAdmission = actionId === 'session.spawn_new' && target.data.kind === 'machine'
+              ? projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
+                  SessionSpawnNewActionInputV2Schema.parse({ ...requestInput, executionTarget: {
+                    serverId: encryption.pins.serverIdentityId, machineId: target.data.machineId,
+                  } }),
+                ))
+              : undefined;
             protectedInvocation = { material, binding, request: sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: requestInput, material,
+              ...(doesExternalActionConsumeRequesterAccountContentV1({ actionId, input: requestInput, target: target.data })
+                ? { apiTokenContentAccess: encryption.apiTokenContentAccess() } : {}),
+              ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
               randomBytes: (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)) }) };
           } catch {
             throw new HappierTransportError('The encrypted Action request could not be prepared.', {
