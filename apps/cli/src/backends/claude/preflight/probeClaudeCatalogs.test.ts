@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -71,6 +71,33 @@ describe('Claude pre-session native catalogs', () => {
       expect(events.some((event) => event.type === 'control_request')).toBe(true);
       expect(events.some((event) => event.type === 'user')).toBe(false);
       expect(events.some((event) => event.type === 'closed')).toBe(true);
+    });
+  });
+
+  it('protects a shared native transcript store even when probing without session persistence', async () => {
+    await withTempDir('happier-claude-catalog-retention-', async (cwd) => {
+      const nativeHome = join(cwd, 'native');
+      const activeHome = join(cwd, 'active');
+      await mkdir(join(nativeHome, 'projects'), { recursive: true });
+      await mkdir(activeHome);
+      await symlink(join(nativeHome, 'projects'), join(activeHome, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
+      await writeFile(join(nativeHome, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+      const executable = join(cwd, 'claude.js');
+      const logPath = join(cwd, 'transport.jsonl');
+      await writeFile(executable, claudeCatalogProcessFixture);
+      await claudePreflightModelsProbeAdapter.probeCatalogsRaw!({
+        cwd, timeoutMs: 5_000,
+        processEnv: { ...process.env, HAPPIER_CLAUDE_PATH: executable, CLAUDE_CONFIG_DIR: activeHome,
+          HAPPIER_CLAUDE_NATIVE_CONFIG_DIR: nativeHome,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath, HAPPIER_E2E_CATALOG_COMMANDS: '[]' },
+      });
+      const events = await waitForClosed(logPath);
+      const args = events[0]?.argv as string[];
+      const settingsArgs = args.flatMap((arg, index) => arg === '--settings'
+        ? [args[index + 1]]
+        : arg.startsWith('--settings=') ? [arg.slice('--settings='.length)] : []);
+      expect(settingsArgs).toHaveLength(1);
+      expect(JSON.parse(settingsArgs[0]!)).toMatchObject({ cleanupPeriodDays: 365 });
     });
   });
 

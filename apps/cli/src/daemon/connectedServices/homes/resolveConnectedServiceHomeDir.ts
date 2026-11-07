@@ -65,13 +65,19 @@ export function resolveConnectedServiceGroupHomeDir(params: Readonly<{
 }>): string {
   const pathJoin = params.pathJoin ?? join;
   const base = pathJoin(
-    resolveConnectedServiceHomesDir(params),
-    params.serviceId,
-    CONNECTED_SERVICE_GROUPS_HOME_SEGMENT,
+    resolveConnectedServiceGroupsHomesDir(params),
     params.groupId,
     params.agentId,
   );
   const providerScopedKey = typeof params.providerScopedKey === 'string' ? params.providerScopedKey.trim() : '';
   if (!providerScopedKey) return base;
   return pathJoin(base, normalizeMaterializationKeyForPath(providerScopedKey));
+}
+
+export function resolveConnectedServiceGroupsHomesDir(params: Readonly<{
+  activeServerDir: string;
+  serviceId: ConnectedServiceId;
+  pathJoin?: JoinPath;
+}>): string {
+  return (params.pathJoin ?? join)(resolveConnectedServiceHomesDir(params), params.serviceId, CONNECTED_SERVICE_GROUPS_HOME_SEGMENT);
 }

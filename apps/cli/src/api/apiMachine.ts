@@ -678,6 +678,7 @@ export class ApiMachineClient {
                 throw new Error('Machine socket is not connected');
             }
             const updated = handler(this.machine.daemonState);
+            if (updated === this.machine.daemonState) return;
 
             const answer = await emitSocketWithAck<any>({
                 socket: this.socket as any,

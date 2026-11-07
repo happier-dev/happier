@@ -391,7 +391,25 @@ export async function claudeLocal(opts: {
             const permissionMode = trailingPermissionFlagArgs[0] === '--permission-mode'
                 ? trailingPermissionFlagArgs[1]
                 : undefined;
+            // Prepare environment variables
+            // Note: Local mode uses global Claude installation with --session-id flag
+            // Launcher only intercepts fetch for thinking state tracking
+            const env = withCurrentHappierSessionId(
+                prepareClaudeSubprocessEnv({
+                    baseEnv: processEnv,
+                    envOverlay: {
+                        // Keep behavior consistent with our wrapper script.
+                        DISABLE_AUTOUPDATER: '1',
+                        ...resolveClaudeConfigDirEnvOverlay(processEnv),
+                        ...(opts.envOverlay ?? {}),
+                    },
+                }),
+                opts.happierSessionId ?? '',
+            );
             const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+                args: flagArgs,
+                cwd: opts.path,
+                env: { ...processEnv, ...env },
                 settingsPath: opts.hookSettingsPath,
                 launchSettings: buildClaudePermissionModeLaunchSettings(permissionMode),
             });
@@ -422,21 +440,6 @@ export async function claudeLocal(opts: {
                 args.push(...positionalArgs);
             }
 
-            // Prepare environment variables
-            // Note: Local mode uses global Claude installation with --session-id flag
-            // Launcher only intercepts fetch for thinking state tracking
-            const env = withCurrentHappierSessionId(
-                prepareClaudeSubprocessEnv({
-                    baseEnv: processEnv,
-                    envOverlay: {
-                        // Keep behavior consistent with our wrapper script.
-                        DISABLE_AUTOUPDATER: '1',
-                        ...resolveClaudeConfigDirEnvOverlay(processEnv),
-                        ...(opts.envOverlay ?? {}),
-                    },
-                }),
-                opts.happierSessionId ?? '',
-            );
             logClaudeRuntimeAuthEnvDiagnostic({
                 logPrefix: 'ClaudeLocal',
                 sessionId: opts.sessionId,

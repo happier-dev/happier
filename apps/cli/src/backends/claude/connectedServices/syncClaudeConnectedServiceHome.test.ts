@@ -12,6 +12,74 @@ import { verifyResumeReachableClaude } from './verifyResumeReachableClaude';
 const PROJECT_DIR_NAME = '-Users-leeroy-Documents-Development-happier-remote-dev';
 const VENDOR_RESUME_ID = '4b9434a8-b115-4363-851a-f39fff76a94b';
 
+describe('Claude account retention through profile materialization', () => {
+  it.each(['copied', 'isolated'] as const)('preserves the selected period across %s configuration refreshes', async (configMode) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-retention-profile-'));
+    const sourceDir = join(root, 'native');
+    const targetDir = join(root, 'profile');
+    try {
+      await mkdir(sourceDir, { recursive: true });
+      for (const nativeDays of [7, 14]) {
+        await writeFile(join(sourceDir, 'settings.json'), JSON.stringify({ cleanupPeriodDays: nativeDays, model: 'sonnet' }));
+        await syncClaudeConnectedServiceHome({
+          sourceEnv: { HOME: root, CLAUDE_CONFIG_DIR: sourceDir },
+          targetDir,
+          accountSettings: { claudeSessionRetentionV1: { mode: 'days', days: 365 } },
+          sharingPolicyOverride: { configMode, stateMode: 'isolated' },
+        });
+        const settings = JSON.parse(await readFile(join(targetDir, 'settings.json'), 'utf8'));
+        expect(settings.cleanupPeriodDays).toBe(365);
+        if (configMode === 'copied') expect(settings.model).toBe('sonnet');
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('writes through linked settings, resets only retention, and leaves unmanaged settings alone', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-retention-linked-'));
+    const sourceDir = join(root, 'native');
+    const targetDir = join(root, 'profile');
+    const sync = (accountSettings: Readonly<Record<string, unknown>>) => syncClaudeConnectedServiceHome({
+      sourceEnv: { HOME: root, CLAUDE_CONFIG_DIR: sourceDir }, targetDir, accountSettings,
+      sharingPolicyOverride: { configMode: 'linked', stateMode: 'isolated' },
+    });
+    try {
+      await mkdir(sourceDir, { recursive: true });
+      const path = join(sourceDir, 'settings.json');
+      await writeFile(path, JSON.stringify({ cleanupPeriodDays: 7, model: 'sonnet' }));
+      await sync({ claudeSessionRetentionV1: { mode: 'days', days: 36500 } });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ cleanupPeriodDays: 36500, model: 'sonnet' });
+      expect(await realpath(join(targetDir, 'settings.json'))).toBe(await realpath(path));
+      await sync({ claudeSessionRetentionV1: { mode: 'providerDefault' } });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ model: 'sonnet' });
+      await writeFile(path, '{"cleanupPeriodDays":90,"model":"opus"}\n');
+      await sync({});
+      expect(await readFile(path, 'utf8')).toBe('{"cleanupPeriodDays":90,"model":"opus"}\n');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports invalid settings without replacing them when retention is managed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-retention-invalid-'));
+    try {
+      const sourceDir = join(root, 'native');
+      const targetDir = join(root, 'profile');
+      await mkdir(sourceDir, { recursive: true });
+      await writeFile(join(sourceDir, 'settings.json'), '{invalid');
+      await expect(syncClaudeConnectedServiceHome({
+        sourceEnv: { HOME: root, CLAUDE_CONFIG_DIR: sourceDir }, targetDir,
+        accountSettings: { claudeSessionRetentionV1: { mode: 'days', days: 365 } },
+        sharingPolicyOverride: { configMode: 'copied', stateMode: 'isolated' },
+      })).rejects.toThrow('invalid_settings');
+      expect(await readFile(join(targetDir, 'settings.json'), 'utf8')).toBe('{invalid');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('syncClaudeConnectedServiceHome durable account-local projects', () => {
   it('retains sibling private sessions across refresh, then adopts them before linking shared projects', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-durable-projects-'));

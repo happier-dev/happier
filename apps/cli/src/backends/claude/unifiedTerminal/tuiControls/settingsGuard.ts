@@ -12,9 +12,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
-import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
-
-import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
 
 /**
  * Settings isolation guard for `/model` and `/effort` controls (B12, Settings Isolation Rules).
@@ -22,7 +20,7 @@ import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveC
  * `/model` and `/effort` persist defaults into the active Claude config root. The guard resolves the
  * exact config root from the SPAWNED process env, snapshots the precise files those controls can
  * touch (`settings.json`, `settings.local.json`, `.claude.json`) — following symlinks so linked
- * connected-service homes are write-through restored — acquires a per-config-root lock so concurrent
+ * connected-service homes are write-through restored — acquires a lock at the resolved settings root so concurrent
  * sessions cannot race snapshot/restore, and verifies byte equality after restore. If restore cannot
  * be guaranteed it returns `{ ok: false }` and the controller must not let a dependent prompt proceed.
  */
@@ -37,9 +35,18 @@ export function resolveClaudeConfigRootFromEnv(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const override = resolveClaudeConfigDirOverride(env);
-  if (override) return override;
-  return join(resolveHomeDirFromEnvironment(env, platform), '.claude');
+  return resolveConfiguredClaudeConfigDir({ env, platform });
+}
+
+/** Resolve the write-through target; unavailable links must never be replaced by a settings write. */
+export async function resolveClaudeSettingsFilePath(configDir: string): Promise<string> {
+  const settingsPath = join(configDir, 'settings.json');
+  try {
+    return await realpath(settingsPath);
+  } catch (error) {
+    if ((await lstatOrNull(settingsPath))?.isSymbolicLink()) throw error;
+    return settingsPath;
+  }
 }
 
 export type SettingsGuardSnapshotFile = Readonly<{
@@ -67,7 +74,7 @@ export interface SettingsGuard {
   acquire(): Promise<SettingsGuardSession>;
 }
 
-// In-process serialization keyed by the (best-effort resolved) config root path. Guarantees same-process
+// In-process serialization keyed by the resolved settings root path. Guarantees same-process
 // snapshot/restore ordering before the cross-process advisory lock dir is even attempted.
 const IN_PROCESS_LOCKS = new Map<string, Promise<void>>();
 
@@ -307,59 +314,61 @@ export function createClaudeSettingsGuard(params: Readonly<{
 
   return {
     async acquire(): Promise<SettingsGuardSession> {
-      const lockKey = (await pathExists(configDir)) ? await realpath(configDir).catch(() => configDir) : configDir;
-      const releaseInProcess = await acquireInProcessLock(lockKey);
+      await mkdir(configDir, { recursive: true });
+      const configRoot = await realpath(configDir);
+      const lockRoot = await resolveClaudeSettingsFilePath(configDir)
+        .then((settingsPath) => realpath(dirname(settingsPath)))
+        .catch(() => configRoot);
+      const releaseInProcess = await acquireInProcessLock(lockRoot);
 
-      const lockDir = join(configDir, LOCK_DIR_NAME);
+      const lockDir = join(lockRoot, LOCK_DIR_NAME);
+      // CLI 0.2.20 journals used the profile root. Recover that known legacy location only after
+      // taking the shared target lock, and retain its lock until release. This cannot coordinate
+      // a native writer with an already-running older guard in an unknown linked profile.
+      const lockDirs = configRoot === lockRoot ? [lockDir] : [lockDir, join(configRoot, LOCK_DIR_NAME)];
+      const heldLockDirs: string[] = [];
       const startedAt = nowMs();
-      let lockHeld = false;
-      try {
-        await mkdir(configDir, { recursive: true });
-        for (;;) {
-          try {
-            await mkdir(lockDir, { mode: 0o700 });
-            await chmodIfSupported(lockDir, 0o700);
-            lockHeld = true;
-            break;
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-            const lockInfo = await lstatOrNull(lockDir);
-            if (lockInfo && nowMs() - Number(lockInfo.mtimeMs) > lockStaleMs) {
-              const staleRestore = await restoreJournalIfPresent(lockDir);
-              if (!staleRestore.ok) {
-                throw new Error(`failed to restore stale Claude settings journal for ${configDir}: ${staleRestore.reason}`);
-              }
-              await rm(lockDir, { recursive: true, force: true });
-              continue;
-            }
-            if (nowMs() - startedAt > lockTimeoutMs) {
-              throw new Error(`timed out acquiring Claude settings lock for ${configDir}`);
-            }
-            await wait(25);
-          }
-        }
-      } catch (error) {
-        releaseInProcess();
-        throw error;
-      }
-
-      let snapshot: readonly SettingsGuardSnapshotFile[];
-      try {
-        snapshot = await Promise.all(trackedFiles.map((relPath) => snapshotFile(configDir, relPath)));
-        await writeJournal(lockDir, snapshot);
-      } catch (error) {
-        if (lockHeld) await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
-        releaseInProcess();
-        throw error;
-      }
-
       let released = false;
       const release = async (): Promise<void> => {
         if (released) return;
         released = true;
-        if (lockHeld) await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+        await Promise.all(heldLockDirs.map((heldDir) => rm(heldDir, { recursive: true, force: true }).catch(() => undefined)));
         releaseInProcess();
       };
+
+      let snapshot: readonly SettingsGuardSnapshotFile[];
+      try {
+        for (const currentLockDir of lockDirs) {
+          for (;;) {
+            try {
+              await mkdir(currentLockDir, { mode: 0o700 });
+              heldLockDirs.push(currentLockDir);
+              await chmodIfSupported(currentLockDir, 0o700);
+              break;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+              const lockInfo = await lstatOrNull(currentLockDir);
+              if (lockInfo && nowMs() - Number(lockInfo.mtimeMs) > lockStaleMs) {
+                const staleRestore = await restoreJournalIfPresent(currentLockDir);
+                if (!staleRestore.ok) {
+                  throw new Error(`failed to restore stale Claude settings journal for ${configDir}: ${staleRestore.reason}`);
+                }
+                await rm(currentLockDir, { recursive: true, force: true });
+                continue;
+              }
+              if (nowMs() - startedAt > lockTimeoutMs) {
+                throw new Error(`timed out acquiring Claude settings lock for ${configDir}`);
+              }
+              await wait(25);
+            }
+          }
+        }
+        snapshot = await Promise.all(trackedFiles.map((relPath) => snapshotFile(configDir, relPath)));
+        await writeJournal(lockDir, snapshot);
+      } catch (error) {
+        await release();
+        throw error;
+      }
 
       return {
         configDir,
@@ -376,4 +385,14 @@ export function createClaudeSettingsGuard(params: Readonly<{
       };
     },
   };
+}
+
+/** Serialize an intended persistent write without creating a rollback snapshot for its changes. */
+export async function withClaudeSettingsWriteLock<T>(configDir: string, write: () => Promise<T>): Promise<T> {
+  const session = await createClaudeSettingsGuard({ configDir, trackedFiles: [] }).acquire();
+  try {
+    return await write();
+  } finally {
+    await session.release();
+  }
 }

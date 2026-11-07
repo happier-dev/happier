@@ -12,6 +12,7 @@ import type { ExactTerminalAttachmentInfo } from '@/terminal/attachment/terminal
 import type { DirectSessionsProviderId } from '@happier-dev/protocol';
 import type {
   BackendTargetRefV1,
+  AccountSettings,
   ConnectedServiceBindingsV1,
   ConnectedServiceId,
   ConnectedServiceMaterializationIdentityV1,
@@ -307,6 +308,12 @@ export type AgentCatalogEntry = Readonly<{
    * These are evaluated by the daemon before spawning a child process.
    */
   getDaemonSpawnHooks?: () => Promise<DaemonSpawnHooks>;
+  /** Apply account preferences to provider-owned local configuration and report confirmed facts. */
+  applyAccountSettings?: (params: Readonly<{
+    accountSettings: AccountSettings;
+    processEnv: NodeJS.ProcessEnv;
+    activeServerDir: string;
+  }>) => Promise<Readonly<Record<string, unknown>>>;
   /** Reconcile provider-owned resources during the daemon's serialized heartbeat. */
   reconcileDaemonResources?: () => Promise<void>;
   /**

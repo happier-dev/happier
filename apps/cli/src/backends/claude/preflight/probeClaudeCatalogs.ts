@@ -9,6 +9,7 @@ import type {
 } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { getDefaultClaudeCodePathForAgentSdk, isClaudeAgentSdkJavaScriptEntrypoint } from '@/backends/claude/sdk/utils';
 import { buildClaudeSubprocessEnv } from '@/backends/claude/spawn/buildClaudeSubprocessEnv';
+import { resolveClaudeLaunchSettingsOverlayArg } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay';
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
 import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
@@ -54,6 +55,10 @@ export async function probeClaudeCatalogs(params: PreflightSessionControlsProbeP
       : null;
     if (isJavaScriptEntrypoint && !runtimeExecutable) throw new Error('Claude catalog probe requires a JavaScript runtime');
     remainingCatalogProbeMs(probeLifecycle);
+    const settings = resolveClaudeLaunchSettingsOverlayArg({
+      env: { ...processEnv, ...subprocessEnv }, settingsPath: undefined, launchSettings: {},
+      cwd: params.cwd,
+    });
     const response = query({
       prompt: messages,
       options: {
@@ -63,6 +68,7 @@ export async function probeClaudeCatalogs(params: PreflightSessionControlsProbeP
         executable: 'node',
         abortController,
         persistSession: false,
+        ...(settings ? { extraArgs: { settings } } : {}),
         settingSources: resolveClaudeSettingSources(params.accountSettings ?? {}),
         spawnClaudeCodeProcess: (options) => {
           probeLifecycle.signal.throwIfAborted();

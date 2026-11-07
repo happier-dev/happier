@@ -8,6 +8,8 @@ import {
   createClaudeSettingsGuard,
   getClaudeSettingsGuardInProcessLockCountForTesting,
   resolveClaudeConfigRootFromEnv,
+  resolveClaudeSettingsFilePath,
+  withClaudeSettingsWriteLock,
 } from './settingsGuard';
 
 const tempRoots: string[] = [];
@@ -59,6 +61,22 @@ describe('resolveClaudeConfigRootFromEnv', () => {
 
   it('falls back to ~/.claude in a no-profile real-home session', () => {
     expect(resolveClaudeConfigRootFromEnv({ HOME: '/home/u' }, 'linux')).toBe('/home/u/.claude');
+  });
+
+  it('preserves the explicit platform when resolving a Windows home', () => {
+    expect(resolveClaudeConfigRootFromEnv({ USERPROFILE: '/windows/u', HOME: '/other' }, 'win32'))
+      .toBe('/windows/u/.claude');
+  });
+});
+
+describe('resolveClaudeSettingsFilePath', () => {
+  it('rejects a dangling settings link without replacing it', async () => {
+    const configDir = await makeTempDir('claude-dangling-settings-');
+    const settingsPath = join(configDir, 'settings.json');
+    await symlink(join(configDir, 'missing.json'), settingsPath);
+
+    await expect(resolveClaudeSettingsFilePath(configDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await lstat(settingsPath)).isSymbolicLink()).toBe(true);
   });
 });
 
@@ -226,6 +244,47 @@ describe('createClaudeSettingsGuard — stale durable journal recovery', () => {
 });
 
 describe('createClaudeSettingsGuard — per-config-root locking', () => {
+  it('respects the native filesystem lock when entering through a linked profile', async () => {
+    const nativeDir = await makeTempDir('claude-native-disk-lock-');
+    const profileDir = await makeTempDir('claude-profile-disk-lock-');
+    await writeFile(join(nativeDir, 'settings.json'), '{}', 'utf8');
+    await symlink(join(nativeDir, 'settings.json'), join(profileDir, 'settings.json'));
+    await mkdir(join(nativeDir, lockDirName));
+    let nowMs = 0;
+
+    const guard = createClaudeSettingsGuard({
+      configDir: profileDir,
+      nowMs: () => nowMs,
+      wait: async () => { nowMs += 1; },
+      lockTimeoutMs: 1,
+    });
+
+    await expect(guard.acquire()).rejects.toThrow('timed out acquiring Claude settings lock');
+    await expect(stat(join(profileDir, lockDirName))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('serializes a linked profile with the native settings owner', async () => {
+    const nativeDir = await makeTempDir('claude-native-lock-');
+    const profileDir = await makeTempDir('claude-profile-lock-');
+    await writeFile(join(nativeDir, 'settings.json'), '{}', 'utf8');
+    await symlink(join(nativeDir, 'settings.json'), join(profileDir, 'settings.json'));
+
+    const first = await createClaudeSettingsGuard({ configDir: profileDir }).acquire();
+    let secondAcquired = false;
+    const secondPromise = createClaudeSettingsGuard({ configDir: nativeDir }).acquire().then((session) => {
+      secondAcquired = true;
+      return session;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(secondAcquired).toBe(false);
+    } finally {
+      await first.restore();
+      await first.release();
+      await (await secondPromise).release();
+    }
+  });
+
   it('removes idle in-process lock entries after release', async () => {
     const configDir = await makeTempDir('claude-lock-cleanup-');
     const guard = createClaudeSettingsGuard({ configDir });
@@ -261,5 +320,88 @@ describe('createClaudeSettingsGuard — per-config-root locking', () => {
     const second = await secondPromise;
     expect(secondAcquired).toBe(true);
     await second.release();
+  });
+});
+
+describe('withClaudeSettingsWriteLock', () => {
+  it('writes after linked-profile restoration and retains the update through the next control', async () => {
+    const nativeDir = await makeTempDir('claude-native-write-');
+    const profileDir = await makeTempDir('claude-profile-write-');
+    const settingsPath = join(nativeDir, 'settings.json');
+    await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }), 'utf8');
+    await symlink(settingsPath, join(profileDir, 'settings.json'));
+    const guard = createClaudeSettingsGuard({ configDir: profileDir });
+    const first = await guard.acquire();
+    await writeFile(settingsPath, JSON.stringify({ theme: 'dark', model: 'sonnet' }), 'utf8');
+    let writerStarted = false;
+    const write = withClaudeSettingsWriteLock(nativeDir, async () => {
+      writerStarted = true;
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+      expect(settings).toEqual({ theme: 'dark' });
+      await writeFile(settingsPath, JSON.stringify({ ...settings, cleanupPeriodDays: 365 }), 'utf8');
+      return 'saved';
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(writerStarted).toBe(false);
+    } finally {
+      await first.restore();
+      await first.release();
+    }
+    await expect(write).resolves.toBe('saved');
+
+    const next = await guard.acquire();
+    await writeFile(settingsPath, JSON.stringify({ model: 'opus' }), 'utf8');
+    expect(await next.restore()).toEqual({ ok: true });
+    await next.release();
+
+    expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual({ theme: 'dark', cleanupPeriodDays: 365 });
+  });
+
+  it('releases on writer failure and does not roll its intended write back through stale recovery', async () => {
+    const nativeDir = await makeTempDir('claude-native-write-recovery-');
+    const profileDir = await makeTempDir('claude-profile-write-recovery-');
+    const settingsPath = join(nativeDir, 'settings.json');
+    await writeFile(settingsPath, '{}', 'utf8');
+    await symlink(settingsPath, join(profileDir, 'settings.json'));
+    const lockDir = join(nativeDir, lockDirName);
+    let journal = '';
+
+    await expect(withClaudeSettingsWriteLock(nativeDir, async () => {
+      journal = await readFile(join(lockDir, journalFileName), 'utf8');
+      await writeFile(settingsPath, JSON.stringify({ cleanupPeriodDays: 365 }), 'utf8');
+      throw new Error('writer failed after saving');
+    })).rejects.toThrow('writer failed after saving');
+    await expect(stat(lockDir)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // Replay the writer's actual journal as if its process stopped before releasing the lock.
+    await mkdir(lockDir);
+    await writeFile(join(lockDir, journalFileName), journal, 'utf8');
+    await utimes(lockDir, new Date(0), new Date(0));
+    const recovered = await createClaudeSettingsGuard({
+      configDir: profileDir,
+      nowMs: () => 10_000,
+      lockStaleMs: 1,
+    }).acquire();
+    expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual({ cleanupPeriodDays: 365 });
+    await recovered.restore();
+    await recovered.release();
+    expect((await lstat(join(profileDir, 'settings.json'))).isSymbolicLink()).toBe(true);
+  });
+
+  it('fails closed on an unreadable legacy profile journal and releases the shared target lock', async () => {
+    const nativeDir = await makeTempDir('claude-native-invalid-journal-');
+    const profileDir = await makeTempDir('claude-profile-invalid-journal-');
+    await writeFile(join(nativeDir, 'settings.json'), '{}', 'utf8');
+    await symlink(join(nativeDir, 'settings.json'), join(profileDir, 'settings.json'));
+    const legacyLockDir = join(profileDir, lockDirName);
+    await mkdir(legacyLockDir);
+    await writeFile(join(legacyLockDir, journalFileName), '{invalid', 'utf8');
+    await utimes(legacyLockDir, new Date(0), new Date(0));
+
+    await expect(withClaudeSettingsWriteLock(profileDir, async () => undefined))
+      .rejects.toThrow('failed to parse stale settings journal');
+    await expect(stat(join(nativeDir, lockDirName))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(legacyLockDir, journalFileName), 'utf8')).toBe('{invalid');
   });
 });

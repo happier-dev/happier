@@ -1,3 +1,5 @@
+import * as React from 'react';
+
 import {
     buildClaudeRemoteOutgoingMessageMetaExtras,
     CLAUDE_REMOTE_PROVIDER_FIELDS,
@@ -5,6 +7,15 @@ import {
 } from '@happier-dev/agents';
 
 import type { ProviderSettingEnumOption, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+
+const LazyClaudeSessionRetentionSettings = React.lazy(async () => {
+    const module = await import('./ClaudeSessionRetentionSettings');
+    return { default: module.ClaudeSessionRetentionSettings };
+});
+
+const ClaudeSessionRetentionSections = React.memo(function ClaudeSessionRetentionSections() {
+    return React.createElement(React.Suspense, { fallback: null }, React.createElement(LazyClaudeSessionRetentionSettings));
+});
 
 const responseLocationOptions = [
     {
@@ -29,6 +40,7 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     title: { key: 'settingsProviders.plugins.claude.title' },
     icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'orange' } },
     settings: CLAUDE_REMOTE_PROVIDER_FIELDS,
+    ExtraSectionsComponent: ClaudeSessionRetentionSections,
     subagentSettingsSections: [
         {
             id: 'claudeTeams',

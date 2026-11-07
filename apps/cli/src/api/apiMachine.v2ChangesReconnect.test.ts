@@ -74,6 +74,27 @@ function createMachineSocket(options: {
 }
 
 describe('ApiMachineClient /v2/changes reconnect', () => {
+    it('does not publish a new daemon-state version when the producer preserves current state', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: { status: 'running', providerSettingsV1: { claude: { policy: null, targets: [] } } },
+            daemonStateVersion: 4,
+        };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        const client = new ApiMachineClient('token', machine);
+        client.connect();
+        try {
+            await client.updateDaemonState((state) => state!);
+            expect(machine.daemonStateVersion).toBe(4);
+        } finally {
+            await client.shutdown();
+        }
+    });
 
     it('connect uses an http(s) base URL and explicitly connects the socket', async () => {
         const machine: Machine = {
