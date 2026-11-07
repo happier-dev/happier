@@ -1652,9 +1652,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           const policy = admission && admission.run.ownerAccountId === binding.accountId
             && binding.accountId === readAccountIdFromToken(credentials.token)
             ? await readWorkflowActionPolicyContext({ admission, actionId, input, context }) : null;
-          if (!policy || !admission || !params.workflowAcceptedAuthorizationCurrentness
-            || !await params.workflowAcceptedAuthorizationCurrentness({ authorization: admission.accepted.authorization,
-              ...(context.signal ? { signal: context.signal } : {}) })) return { context,
+          if (!policy || !admission) return { context,
             invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
           // Keep the signed receiving caller; only the accepted Run owns its selected policy.
           context = { ...context, ...policy };

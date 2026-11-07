@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema,
+  type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -18,17 +20,24 @@ import { buildWorkflowActionContext, readWorkflowActionPolicyContext } from './w
 import { createWorkflowRunStorageClient, WORKFLOW_RUN_STORAGE_HTTP_PATH } from './workflowRunStorageClient';
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import type { WorkflowRunStorageOperation } from './workflowRunStorageClient';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createWorkflowAcceptedAuthorizationCurrentness } from './daemonRuntime';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { DeploymentTeardownInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 afterEach(() => vi.restoreAllMocks());
 
-async function pausedWorkflow(encrypted = false, dispatch = false, originalAuthorization?: ExternalActionExecutionAuthorizationV1) {
+async function pausedWorkflow(encrypted = false, dispatch = false, originalAuthorization?: ExternalActionExecutionAuthorizationV1,
+  preparedContent?: Readonly<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>) {
   const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
   const accountId = 'owner';
   const invocationId = 'exact-child';
   const requestId = `${runId}/${invocationId}/0`;
   const actionId = 'deployments.teardown' as const;
   const actionInput = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
-    expectedRevision: 0, expectedTargetLinkRevision: 0, requestKey: 'teardown' };
+    expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'teardown', reason: 'manual' as const, ...preparedContent };
   const definition = { version: 1, inputs: [], defaults: {}, blocks: [
     { kind: 'action', id: 'teardown', actionId, input: {} },
   ] };
@@ -106,6 +115,75 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
 }
 
 describe('accepted Workflow Action approval replay', () => {
+  it('admits a deployment leaf after its original PAT expires, while new admissions refuse it', async () => {
+    const original = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-pat-root', binding: {
+      serverIdentityId: 'identity', accountId: 'owner', principalId: 'owner', credentialId: 'expired-pat',
+      grant: API_TOKEN_FULL_GRANT_V1, custodianAccountId: 'owner', machineId: 'host', installationId: 'installation',
+      actionId: 'deployments.teardown', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'host' },
+    } });
+    const h = await pausedWorkflow(false, true, original, {
+      contentArtifactId: 'prepared-teardown', contentHeaderVersion: 1, contentBodyVersion: 1,
+    });
+    DeploymentTeardownInputV1Schema.parse(h.actionInput);
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0 })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    const isCurrent = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'owner',
+      // This is the Account token inventory transport boundary. The real
+      // evaluator must still refuse this credential for a new admission.
+      listAccountApiTokens: async () => ({ tokens: [{ tokenId: 'expired-pat', label: 'Original',
+        displayPrefix: 'hap_v1_test', expiresAt: '2000-01-01T00:00:00.000Z', createdAt: '1999-01-01T00:00:00.000Z',
+        lastUsedAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
+        parentTokenId: null, activeChildCount: 0, embedConfig: null, grant: API_TOKEN_FULL_GRANT_V1 }] }),
+      resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+      isMediatedSourceCurrent: async () => false });
+    const admission = await h.readAdmission({ runId: h.runId, context: h.context });
+    if (!admission) throw new Error('Expected admitted deployment leaf');
+    expect(await isCurrent({ authorization: admission.accepted.authorization })).toBe(false);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      expect(url).toBe('https://home.example/v1/account/encryption/currentness');
+      return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+    });
+    const deploymentRequest = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const url = new URL(config.url!);
+      expect(url.origin + url.pathname).toBe('https://home.example/v1/deployments/environments/environment');
+      expect(url.searchParams.get('serverId')).toBe('identity');
+      expect(config.method).toBe('GET');
+      expect(config.headers).toMatchObject({
+        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: h.authorization.token,
+        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.environments.get',
+        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: expect.any(String),
+      });
+      return { status: 404, data: { ok: false, error: 'deployment_unavailable' } };
+    });
+    const executor = createCliActionExecutorFromCredentials({ credentials,
+      serverId: 'home', serverIdentityId: 'identity', serverApiUrl: 'https://home.example',
+      externalActionMachineInstallationId: 'installation',
+      externalActionMachineRequestPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).secretKey,
+      pluginActionExecutionOwner: 'current_process', workflowAcceptedAuthorizationCurrentness: isCurrent,
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+        actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'deployments.teardown': ['agent'] } },
+      }) }) });
+    const context = { ...h.context, surface: 'agent' as const, authority: 'account_automation' as const,
+      serverId: 'home', serverIdentityId: 'identity', runtimeAccountId: 'owner',
+      externalActionTarget: h.authorization.binding.target };
+    // The real deployment owner reads the exact environment for approval scope.
+    // Its Home refusal proves the admitted leaf crossed the signed HTTP boundary.
+    expect(await executor.execute(h.actionId, h.actionInput, context))
+      .toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+    expect(deploymentRequest).toHaveBeenCalledTimes(1);
+    expect(await executor.execute(h.actionId, { ...h.actionInput, environmentId: 'another-environment' }, context))
+      .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+    expect(await executor.execute(h.actionId, h.actionInput, { ...context,
+      externalActionExecutionAuthorization: { ...h.authorization, binding: { ...h.authorization.binding, accountId: 'another-account' } },
+    })).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+    await h.storage.execute({ operation: 'transition', runId: h.runId,
+      expectedRevision: h.storage.run().revision, state: 'cancelled', checkpointEnvelope: '{}' });
+    expect(await executor.execute(h.actionId, h.actionInput, context))
+      .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+    expect(deploymentRequest).toHaveBeenCalledTimes(1);
+  });
+
   it.each([false, true])('retains the PAT root and grant through accepted storage and local invocation (encrypted=%s)', async encrypted => {
     const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
       actions: { families: [], ids: ['machines.setup.plan'] } });
