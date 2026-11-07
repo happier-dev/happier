@@ -24,6 +24,61 @@ import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContenti
 import { removeTeamMemberForActorInTx } from '@/app/teams/memberships/memberAdministration';
 import { admitManagedControl, reportManagedAcquire, reportManagedIntent, submitManagedAcquire, submitManagedIntent } from './managedMutations';
 
+async function characterizeUsageContentAdmission(request: Parameters<typeof admitManagedAcquire>[0]) {
+    const supplied = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
+    if (!supplied) throw new Error('Use the disposable PostgreSQL DB-contract harness');
+    const holderClient = await createDbMaintenanceClient('postgres', supplied);
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    let ready!: (pid: number) => void;
+    const holderReady = new Promise<number>(resolve => { ready = resolve; });
+    // The loaded usage writer holds KEY SHARE while reading/updating its own
+    // record. Keep that genuine database boundary open until acquire commits.
+    const holder = holderClient.$transaction(async tx => {
+        const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`
+            SELECT pg_backend_pid() AS pid FROM "Account" WHERE id = ${request.custodianAccountId} FOR KEY SHARE
+        `;
+        ready(pid);
+        await released;
+    }, { timeout: readDatabaseTransactionConfigFromEnv(process.env, 'postgres').timeoutMs });
+    const holderOutcome = Promise.allSettled([holder]);
+    const pending: Array<ReturnType<typeof admitManagedAcquire>> = [];
+    try {
+        const pid = await Promise.race([holderReady, holder.then(() => { throw new Error('Holder missed rendezvous'); })]);
+        let settled = false;
+        pending.push(admitManagedAcquire(request));
+        if (request.input.input.selection.kind === 'preset') {
+            pending.push(admitManagedAcquire({ ...request, input: { ...request.input, requestId: randomUUID() } }));
+        }
+        const outcomes = Promise.allSettled(pending).finally(() => { settled = true; });
+        while (!settled) {
+            const [state] = await holderClient.$queryRaw<Array<{ blocked: boolean }>>`
+                SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                    WHERE datname = current_database() AND ${pid} = ANY(pg_blocking_pids(pid))) AS blocked
+            `;
+            expect(state.blocked, 'usage content admission must not block managed acquire').toBe(false);
+        }
+        const results = await outcomes;
+        const successful = results.filter(result => result.status === 'fulfilled');
+        expect(successful).toHaveLength(1);
+        const result = successful[0].value;
+        expect(result).toMatchObject({ replayed: false, machine: { allocation: 'unsubmitted' } });
+        expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
+            accountId: request.custodianAccountId, kind: 'account', entityId: result.machine.id,
+        } } })).not.toBeNull();
+        if (request.input.input.selection.kind === 'preset') {
+            expect(results.find(result => result.status === 'rejected')?.reason).toMatchObject({ code: 'preset_limit_reached' });
+            expect(await db.managedMachine.count({ where: { presetId: request.input.input.selection.id } })).toBe(1);
+        }
+    } finally {
+        release();
+        const [outcome] = await holderOutcome;
+        await Promise.allSettled(pending);
+        await holderClient.$disconnect();
+        if (outcome.status === 'rejected') throw outcome.reason;
+    }
+}
+
 async function characterizeManagedTransientContention(request: Parameters<typeof admitManagedAcquire>[0]) {
     const supplied = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
     if (!supplied) throw new Error('Use the disposable PostgreSQL DB-contract harness');
@@ -225,6 +280,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', beforeFence: true, retireController: true },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', transientContention: true },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', transientContention: true, zeroRetries: true },
+        { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', usageAdmission: true },
+        { selectionKind: 'preset', publicationAccount: 'custodian', phase: 'admit', usageAdmission: true },
         { selectionKind: 'one-off', publicationAccount: 'viewer', phase: 'admit', hotRecipient: true },
         { selectionKind: 'one-off', publicationAccount: 'viewer', phase: 'cancel', hotRecipient: true },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', admittedReplay: true },
@@ -232,13 +289,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', publicationRegistration: true },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', staleRegistration: 'creation' },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', staleRegistration: 'controller' },
-    ] as const)('$phase $selectionKind survives an unrelated $publicationAccount publication ($beforeFence, transient=$transientContention, zero=$zeroRetries, hot=$hotRecipient, replay=$admittedReplay, registration=$foreignRegistration, publicationRegistration=$publicationRegistration, retired=$staleRegistration, presetMutation=$presetMutation, presetWithdrawal=$presetWithdrawal)', async (scenario) => {
+    ] as const)('$phase $selectionKind survives an unrelated $publicationAccount publication ($beforeFence, transient=$transientContention, zero=$zeroRetries, usage=$usageAdmission, hot=$hotRecipient, replay=$admittedReplay, registration=$foreignRegistration, publicationRegistration=$publicationRegistration, retired=$staleRegistration, presetMutation=$presetMutation, presetWithdrawal=$presetWithdrawal)', async (scenario) => {
         const { selectionKind, publicationAccount, phase } = scenario;
         const beforeFence = 'beforeFence' in scenario && scenario.beforeFence;
         const growAudience = 'growAudience' in scenario && scenario.growAudience;
         const replayAudience = 'replayAudience' in scenario && scenario.replayAudience;
         const retireController = 'retireController' in scenario && scenario.retireController;
         const transientContention = 'transientContention' in scenario && scenario.transientContention;
+        const usageAdmission = 'usageAdmission' in scenario && scenario.usageAdmission;
         const homeId = `srv_${'a'.repeat(32)}`;
         vi.stubEnv('HAPPIER_SERVER_IDENTITY_ID', homeId);
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
@@ -303,7 +361,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         const presetOwner = team ? { kind: 'team' as const, teamId: team.id } : { kind: 'account' as const, accountId: account.id };
         if (selectionKind === 'preset') {
             expect(await createMachinePreset({ accountId: account.id, input: { id: presetId, homeId, name: 'Contended preset',
-                owner: presetOwner, controller, recipe: launchSnapshot,
+                owner: presetOwner, controller, launch: launchSnapshot,
                 simultaneousLimit: { maximum: 1 } } })).toMatchObject({ kind: 'saved' });
         }
         if ('presetWithdrawal' in scenario && team && teamOwner && membership) {
@@ -334,7 +392,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             try {
                 const result = scenario.presetWithdrawal === 'create'
                     ? await createMachinePreset({ accountId: account.id, input: { id: createId, homeId, name: 'Withdrawn create',
-                        owner: presetOwner, controller, recipe: launchSnapshot } })
+                        owner: presetOwner, controller, launch: launchSnapshot } })
                     : scenario.presetWithdrawal === 'update'
                         ? await updateMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0,
                             patch: { name: 'Withdrawn update' } } })
@@ -381,7 +439,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             try {
                 const result = scenario.presetMutation === 'create'
                     ? await createMachinePreset({ accountId: account.id, input: { id: randomUUID(), homeId, name: 'Hot preset',
-                        owner: { kind: 'account', accountId: account.id }, controller, recipe: launchSnapshot } })
+                        owner: { kind: 'account', accountId: account.id }, controller, launch: launchSnapshot } })
                     : scenario.presetMutation === 'update'
                         ? await updateMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0,
                             patch: { name: 'Hot renamed preset' } } })
@@ -406,8 +464,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         const request: Parameters<typeof admitManagedAcquire>[0] = {
             custodianAccountId: account.id, requesterAccountId: account.id, requestEnvelopeDigest: 'contention-test',
             input: { requestId: randomUUID(), continuationPresent: false, input: selectionKind === 'one-off'
-                ? { selection: { kind: 'one-off', homeId, controller, launch: launchSnapshot, retention, wakeOnAcceptedMessage: true } }
-                : { selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller, retention, wakeOnAcceptedMessage: true } },
+                ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller, launch: launchSnapshot, retention, wakeOnAcceptedMessage: true } }
+                : { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller, retention, wakeOnAcceptedMessage: true } },
         };
         const allocated = !hotRecipient && phase !== 'admit' ? await admitManagedAcquire(request) : undefined;
         const correlation = allocated ? { homeId, managedId: allocated.machine.id, controller,
@@ -431,7 +489,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         let writerOutcome: Promise<PromiseSettledResult<unknown>[]> | undefined;
         let interleaved = false;
         // Interleave only at the real Prisma transport; all domain owners and SQL remain real.
-        db.$transaction = hotRecipient || transientContention ? originalTransaction : new Proxy(originalTransaction, {
+        db.$transaction = hotRecipient || transientContention || usageAdmission ? originalTransaction : new Proxy(originalTransaction, {
             apply(target, thisArg, args) {
                 const callback: unknown = args[0];
                 if (typeof callback !== 'function') return Reflect.apply(target, thisArg, args);
@@ -639,6 +697,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             }
             if (transientContention) {
                 await characterizeManagedTransientContention(request);
+                return;
+            }
+            if (usageAdmission) {
+                await characterizeUsageContentAdmission(request);
                 return;
             }
             if (hotRecipient && viewer && (phase === 'admit' || phase === 'cancel')) {

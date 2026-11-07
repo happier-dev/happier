@@ -1,7 +1,3 @@
-import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { encodeBase64 } from 'privacy-kit';
-import { ManagedControllerAccessV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -12,21 +8,29 @@ import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHin
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
-import { SubmittedNativeEffectV1Schema } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import type { MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
 import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { pluginJsonValuesEqual } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
-import { resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAccessInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
+import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
+import { resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAccessInTx } from "@/app/machines/machineAccess";
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { resolveCurrentClaimablePluginMachineMaterializationsTx } from "@/app/plugins/availability/operations";
-import { resolveCurrentPluginDeclarationTx } from "@/app/plugins/availability/currentDeclaration";
+import { currentPluginDeclarationKeyV1, resolveCurrentPluginDeclarationsTx } from "@/app/plugins/availability/currentDeclaration";
 import { afterTx, inTx, TransactionReplayRequiredError, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
 import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { ManagedMachineEnrollmentIdentityV1Schema, SubmittedNativeEffectV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedControllerAccessV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { encodeBase64 } from 'privacy-kit';
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
+import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { serializeManagedMachineRef } from '@/app/machines/machineSerialization';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
@@ -45,7 +49,6 @@ export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredMana
     const role = row.controllerMachineId ? await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: row.controllerMachineId }) : null;
     return resolveManagedMachineRole(row, actorAccountId, role);
 }
-
 
 /** The invoking host admitted this person's descriptor; it is not a server plugin declaration. */
 export function readManagedReviewedDeclaration(facts: unknown): ManagedDeclaration | null {
@@ -74,6 +77,11 @@ export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, n
     return createManagedMachineV1Schema(createPluginJsonSchemaZodValueAdapter(launch), createPluginJsonSchemaZodValueAdapter(native),
         nativeOperation ? createPluginJsonSchemaZodValueAdapter(nativeOperation) : undefined);
 }
+/** Native values use their declared schema without re-admitting the retained launch. */
+export function createManagedMachineRetainedSchema(native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {
+    return createManagedMachineV1Schema(RetainedManagedLaunchSnapshotV1Schema.shape.choices, createPluginJsonSchemaZodValueAdapter(native),
+        nativeOperation ? createPluginJsonSchemaZodValueAdapter(nativeOperation) : undefined);
+}
 export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunchSnapshotV1 {
     return createStoredReadSchema(RetainedManagedLaunchSnapshotV1Schema).parse(value);
 }
@@ -90,14 +98,21 @@ export function readManagedJsonEqualityOperand(value: unknown): Prisma.InputJson
     return parsed.data;
 }
 
-// One private row contains immutable acquisition identity, current intent admission,
-// and the independently outstanding native effect. Request bodies keep their
-// canonical owners; this stored envelope is not another admission parser.
+const StoredManagedComputeInputSchema = z.union([
+    z.extend(z.omit(ManagedAdmissionComputeInputV1Schema.def.options[0], { enrollmentIdentity: true }), {
+        enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
+    }),
+    z.extend(z.omit(ManagedAdmissionComputeInputV1Schema.def.options[1], { enrollmentIdentity: true }), {
+        enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
+    }),
+]);
 const StoredManagedAdmissionSchema = z.strictObject({
+    bootstrapInstalled: z.optional(z.literal(true)),
     enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
-    computeInput: z.optional(ManagedAdmissionComputeInputV1Schema),
+    requestEnvelopeDigest: z.optional(z.string().check(z.minLength(1))),
+    computeInput: z.optional(StoredManagedComputeInputSchema),
     continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) }))),
-    environmentSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
+    machineSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
     currentAdmission: z.optional(z.discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("control"), request: ManagedControlAdmissionInputV1Schema,
             rebuildSettled: z.optional(z.literal(true)) }),
@@ -108,13 +123,20 @@ const StoredManagedAdmissionSchema = z.strictObject({
     replacementEnrollment: z.optional(z.strictObject({ machineId: z.string().check(z.minLength(1)) })),
 });
 const StoredManagedAdmissionReadSchema = createStoredReadSchema(StoredManagedAdmissionSchema);
-/** Server-owned JSON was admitted by the acquire/control/policy/native-result boundary. */
-export function readManagedAdmissionState(value: unknown): z.infer<typeof StoredManagedAdmissionSchema> {
-    return value as z.infer<typeof StoredManagedAdmissionSchema>;
+type StoredManagedAdmission = z.infer<typeof StoredManagedAdmissionSchema>;
+
+/** Server-owned JSON written only after acquire/control/policy or native-result admission.
+ * Carry those admitted types rather than re-admitting every retained request on reads.
+ * Historical acquisitions preserve the absence of enrollment identity.
+ */
+export function readManagedAdmissionState(value: unknown): StoredManagedAdmission {
+    return value as StoredManagedAdmission;
 }
 export function readManagedAcquisitionIdentity(value: unknown) {
+    // Request correlation is a new admission boundary. Normalize retained
+    // additive fields here so they cannot turn a legitimate replay into a conflict.
     const parsed = StoredManagedAdmissionReadSchema.safeParse(value);
-    if (!parsed.success) throw new ManagedMachineError("request_conflict");
+    if (!parsed.success) throw new ManagedMachineError('request_conflict');
     const { computeInput, continuation } = parsed.data;
     return { computeInput, continuation };
 }
@@ -129,10 +151,11 @@ export function readManagedCurrentRequestId(row: Pick<StoredManagedMachine, "adm
 /** Home identity and controller lifecycle are rechecked inside each row mutation. */
 export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
     homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
-}>): Promise<void> {
+}>, projection?: ManagedProjectionFacts): Promise<void> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError("permission_denied");
     if (!input.controller) return;
-    const machine = await tx.machine.findUnique({ where: { id: input.controller.machineId } });
+    const machine = projection ? projection.controllers.get(input.controller.machineId)
+        : await tx.machine.findUnique({ where: { id: input.controller.machineId } });
     if (!machine || machine.accountId !== input.custodianAccountId) throw new ManagedMachineError("permission_denied");
     if (classifyMachineAvailabilityState(machine) !== "available" || machine.installationId !== input.controller.installationId) {
         throw new ManagedMachineError("controller_retired");
@@ -146,24 +169,7 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
     reviewedFacts?: unknown;
 }>): Promise<ManagedDeclaration | null> {
     if (!input.controller) return readManagedReviewedDeclaration(input.reviewedFacts);
-    const occurrences = await resolveCurrentClaimablePluginMachineMaterializationsTx({
-        tx, accountId: input.custodianAccountId, serverIdentityId: input.homeId,
-        machineId: input.controller.machineId, machineInstallationId: input.controller.installationId,
-        pluginId: input.provider.pluginId,
-    });
-    for (const occurrence of occurrences) {
-        const declaration = await resolveCurrentPluginDeclarationTx({ tx, accountId: input.custodianAccountId, pluginId: occurrence.pluginId, version: occurrence.version });
-        const contribution = declaration?.manifest.contributes?.machineProvisioners?.find((entry) => entry.id === input.provider.localId);
-        if (contribution && declaration) {
-            const acquireCredentialRequests = resolvePluginActionConnectedAccountUseRequestsV2(declaration.manifest, contribution.actions.acquire);
-            if (acquireCredentialRequests) {
-                const acquire = declaration.manifest.contributes?.actions?.find(action => action.id === contribution.actions.acquire);
-                return { ...contribution, acquireCredentialRequests, provisioner: contribution,
-                    accountAcquire: acquire?.execution.target === 'account' };
-            }
-        }
-    }
-    return null;
+    return (await readManagedProjectionFactsInTx(tx, [input])).declarationFor(input);
 }
 
 /** Retained Account facts and installed controller declarations share the row's one owner. */
@@ -172,25 +178,107 @@ export function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachi
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts });
 }
 
-/** Stored rows already passed declared admission; normalize only the retained wire envelope. */
+type ManagedProjectionInput = Readonly<{
+    homeId: string; custodianAccountId?: string;
+    controller?: Readonly<{ machineId: string; installationId: string }>;
+    provider: ValidatedLaunchSnapshotV1['provider'];
+}>;
+const MANAGED_PROJECTION_CONTROLLER_SELECT = {
+    id: true, accountId: true, kind: true, installationId: true, installationPublicKey: true, active: true,
+    revokedAt: true, replacedByMachineId: true, account: { select: { status: true } },
+} as const;
+type ManagedProjectionController = Prisma.MachineGetPayload<{ select: typeof MANAGED_PROJECTION_CONTROLLER_SELECT }>;
+export interface ManagedProjectionFacts {
+    controllers: ReadonlyMap<string, ManagedProjectionController>;
+    declarationFor(input: ManagedProjectionInput): ManagedDeclaration | null;
+}
+
+/** Admitted facts live only for this projection; every new request reads current authority. */
+export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly ManagedProjectionInput[]): Promise<ManagedProjectionFacts> {
+    inputs = inputs.filter((input): input is ManagedProjectionInput & { controller: ManagedControllerV1 } => input.controller !== undefined);
+    const controllers = new Map<string, ManagedProjectionController>();
+    // Exact controller IDs plus Prisma's nested Account and pagination bindings.
+    for (const ids of portableQueryChunks({ values: [...new Set(inputs.flatMap(input => input.controller ? [input.controller.machineId] : []))], bindingsPerValue: 1, fixedBindings: 2 })) {
+        for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MANAGED_PROJECTION_CONTROLLER_SELECT })) {
+            controllers.set(controller.id, controller);
+        }
+    }
+    const keyOf = (input: ManagedProjectionInput) => JSON.stringify([input.homeId,
+        input.custodianAccountId ?? controllers.get(input.controller!.machineId)?.accountId,
+        input.controller!.machineId, input.controller!.installationId, input.provider.pluginId, input.provider.localId]);
+    const distinct = [...new Map(inputs.map(input => [keyOf(input), input])).values()];
+    const groups = new Map<string, { accountId: string; homeId: string; inputs: ManagedProjectionInput[] }>();
+    for (const input of distinct) {
+        const accountId = input.custodianAccountId ?? controllers.get(input.controller!.machineId)?.accountId;
+        if (!accountId) continue;
+        const key = JSON.stringify([accountId, input.homeId]);
+        const group = groups.get(key) ?? { accountId, homeId: input.homeId, inputs: [] };
+        group.inputs.push(input);
+        groups.set(key, group);
+    }
+    const declarations = new Map<string, ManagedDeclaration | null>();
+    for (const group of groups.values()) {
+        const occurrences = await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx,
+            accountId: group.accountId, serverIdentityId: group.homeId,
+            targets: group.inputs.map(input => ({ machineId: input.controller!.machineId,
+                machineInstallationId: input.controller!.installationId, pluginId: input.provider.pluginId })),
+        });
+        const current = await resolveCurrentPluginDeclarationsTx({ tx, accountId: group.accountId,
+            refs: [...new Map(occurrences.map(occurrence => [currentPluginDeclarationKeyV1(occurrence.pluginId, occurrence.version),
+                { pluginId: occurrence.pluginId, version: occurrence.version }])).values()] });
+        const byProvider = new Map<string, typeof occurrences[number][]>();
+        for (const occurrence of occurrences) {
+            const key = JSON.stringify([occurrence.machineId, occurrence.pluginId]);
+            const selected = byProvider.get(key) ?? [];
+            selected.push(occurrence);
+            byProvider.set(key, selected);
+        }
+        for (const input of group.inputs) {
+            let admitted: ManagedDeclaration | null = null;
+            for (const occurrence of byProvider.get(JSON.stringify([input.controller!.machineId, input.provider.pluginId])) ?? []) {
+                // A retained old installation must not inherit the current schema.
+                if (controllers.get(input.controller!.machineId)?.installationId !== input.controller!.installationId) continue;
+                const declaration = current.get(currentPluginDeclarationKeyV1(occurrence.pluginId, occurrence.version));
+                const contribution = declaration?.manifest.contributes?.machineProvisioners?.find(entry => entry.id === input.provider.localId);
+                if (!contribution || !declaration) continue;
+                const acquireCredentialRequests = resolvePluginActionConnectedAccountUseRequestsV2(declaration.manifest, contribution.actions.acquire);
+                if (acquireCredentialRequests) {
+                    const acquire = declaration.manifest.contributes?.actions?.find(action => action.id === contribution.actions.acquire);
+                    admitted = { ...contribution, acquireCredentialRequests, provisioner: contribution,
+                        accountAcquire: acquire?.execution.target === 'account' };
+                    break;
+                }
+            }
+            declarations.set(keyOf(input), admitted);
+        }
+    }
+    return { controllers, declarationFor: input => input.controller ? declarations.get(keyOf(input)) ?? null : null };
+}
+
+/** Project admitted storage through the generic stored reader, never today's provider declaration. */
 export function projectManagedMachine(row: StoredManagedMachine): ManagedMachineV1 {
-    const submitted = readManagedAdmissionState(row.admittedInput).submittedEffect;
+    const admission = readManagedAdmissionState(row.admittedInput);
+    const submitted = admission.submittedEffect;
+    const enrollmentIdentity = admission.computeInput?.enrollmentIdentity;
     const resource = row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
     const controller = readManagedController(row);
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
         controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
     const value = {
         id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
+        ...(admission.enrollmentAccountId ? { enrollmentAccountId: admission.enrollmentAccountId } : {}),
         ...(row.presetId && row.presetRevision !== null ? { preset: { id: row.presetId, revision: row.presetRevision } } : {}),
         launch: row.launch, ...(controller ? { controller } : {}),
+        ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
         ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
-        ...(row.environmentSetup !== null ? { environmentSetup: row.environmentSetup } : {}),
+        ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
         allocation: row.allocation, creationState: row.creationState,
         ...(resource ? { resource } : {}),
         ...(devcontainerChild ? { devcontainerChild } : {}),
         ...(row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
         ...(row.recovery !== null ? { recovery: row.recovery } : {}),
         ...(row.bootstrapCredentialRef !== null ? { bootstrapCredentialRef: row.bootstrapCredentialRef } : {}),
+        ...(admission.bootstrapInstalled ? { bootstrapInstalled: admission.bootstrapInstalled } : {}),
         ...(row.enrolledMachineId !== null ? { enrolledMachineId: row.enrolledMachineId } : {}),
         desired: row.desired, desiredWhen: row.desiredWhen,
         ...(row.desiredAfterMs !== null ? { desiredAfterMs: Number(row.desiredAfterMs) } : {}),
@@ -209,7 +297,7 @@ export async function projectManagedMachineInTx(tx: Tx, row: StoredManagedMachin
     return (await projectManagedMachinesInTx(tx, [row]))[0];
 }
 
-/** Projection consumes admitted rows without resolving a new declaration on every read. */
+/** Listing retained allocations needs no provider discovery or declaration admission. */
 export async function projectManagedMachinesInTx(_tx: Tx, rows: readonly StoredManagedMachine[]): Promise<ManagedMachineV1[]> {
     return rows.map(row => projectManagedMachine(row));
 }
@@ -222,7 +310,7 @@ export async function readManagedMachineInTx(tx: Tx, input: Readonly<{ homeId: s
 
 /** Reuse publication's ordered locks; an expanded audience restarts the owning transaction. */
 async function fenceManagedMachinePublicationInTx<T extends Readonly<{ accountIds: readonly string[] }>>(
-    tx: Tx, read: () => Promise<T>, intent: 'content' | 'exclusive' = 'content',
+    tx: Tx, read: () => Promise<T>, intent: AccountAdmissionIntent = 'content',
 ): Promise<T> {
     const captured = await read();
     await acquireAccountChangePublicationLocksInTx(tx, captured.accountIds, { includeSingleAccount: true, intent });
@@ -243,25 +331,27 @@ async function fenceManagedMachinePublicationInTx<T extends Readonly<{ accountId
  * reads; growth replays instead of extending an acquired lock set out of order.
  */
 type ManagedPublicationTarget = Readonly<{ homeId: string; managedId: string; nextControllerMachineId?: string }>
-    | Readonly<{ controllerMachineId: string }>;
+    | Readonly<{ controllerMachineId?: string }>;
 
 /** The same pure census serves managed endpoints and ordinary enrollment before Machine writes. */
 export async function readManagedMachinePublicationAudienceInTx(tx: Tx, target: ManagedPublicationTarget,
     additionalMachineIds: readonly string[] = []): Promise<string[]> {
     let machineIds: string[];
-    if ('controllerMachineId' in target) machineIds = [target.controllerMachineId];
+    let creatorAccountId: string | undefined;
+    if (!('managedId' in target)) machineIds = target.controllerMachineId ? [target.controllerMachineId] : [];
     else {
         const row = await readManagedMachineInTx(tx, target);
+        creatorAccountId = readManagedAdmissionState(row.admittedInput).enrollmentAccountId ?? row.custodianAccountId;
         machineIds = [row.controllerMachineId, row.enrolledMachineId, target.nextControllerMachineId]
             .filter((id): id is string => typeof id === 'string');
     }
     const audiences = await Promise.all([...new Set([...machineIds, ...additionalMachineIds])]
         .map(machineId => resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)));
-    return [...new Set(audiences.flat())];
+    return [...new Set([...audiences.flat(), ...(creatorAccountId ? [creatorAccountId] : [])])];
 }
 
 export async function acquireManagedMachinePublicationAccountsInTx(tx: Tx, target: ManagedPublicationTarget,
-    admission?: Readonly<{ intent?: 'content' | 'exclusive'; additionalAccountIds?: readonly string[]; additionalMachineIds?: readonly string[] }>,
+    admission?: Readonly<{ intent?: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; additionalMachineIds?: readonly string[] }>,
 ): Promise<void> {
     await fenceManagedMachinePublicationInTx(tx, async () => ({ accountIds: [
         ...await readManagedMachinePublicationAudienceInTx(tx, target, admission?.additionalMachineIds),
@@ -272,7 +362,7 @@ export async function acquireManagedMachinePublicationAccountsInTx(tx: Tx, targe
 export async function inManagedMachinePublicationTx<T>(
     target: ManagedPublicationTarget,
     write: (tx: Tx) => Promise<T>,
-    admission?: Readonly<{ intent: 'content' | 'exclusive'; additionalAccountIds?: readonly string[]; transactionClass?: string }>,
+    admission?: Readonly<{ intent: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; transactionClass?: string }>,
 ): Promise<ResolvedTransactionResult<T>> {
     return inTx(async tx => {
         await acquireManagedMachinePublicationAccountsInTx(tx, target, admission);
@@ -314,7 +404,7 @@ async function readCurrentMachineManagedEnrollmentsInTx(tx: Tx, machineIds: read
     }
     for (const row of rows) {
         const machine = row.enrolledMachineId ? byId.get(row.enrolledMachineId) : null;
-        if (row.homeId === homeId && machine && machine.accountId === row.custodianAccountId
+        if (row.homeId === homeId && machine && machine.accountId === readManagedEnrollmentAccountId(row)
             && classifyMachineAvailabilityState(machine) === 'available') result.set(machine.id, row);
     }
     return result;
@@ -323,10 +413,12 @@ async function readCurrentMachineManagedEnrollmentsInTx(tx: Tx, machineIds: read
 /** A current workspace executes on its bind controller, or on the admitted Machine's own storage. */
 export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, input: Readonly<{
     accountServerId: string; machineId: string; rootPath: string;
+    operation: Readonly<{ actorAccountId: string; rpcMethod: string }> & MachineOperationRequesterContext;
 }>): Promise<Readonly<{ custodianAccountId: string; machineId: string; installationId: string }> | null> {
     if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
     const machine = await tx.machine.findUnique({ where: { id: input.machineId } });
-    if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available') return null;
+    if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available'
+        || !isMachineOperationSupportedForRequester({ ...input.operation, machine })) return null;
     const enrollment = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
     if (!enrollment) return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
     // A stale or malformed retained row is not an ordinary-Machine fallback.
@@ -342,6 +434,7 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     const parent = await tx.machine.findUnique({ where: { id: controller.machineId } });
     if (!parent || parent.accountId !== row.custodianAccountId
         || classifyMachineAvailabilityState(parent) !== 'available'
+        || !isMachineOperationSupportedForRequester({ ...input.operation, machine: parent })
         || parent.installationId !== controller.installationId) return null;
     return { custodianAccountId: row.custodianAccountId, machineId: parent.id, installationId: controller.installationId };
 }
@@ -350,24 +443,43 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
 export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, input: Readonly<{
     accountServerId: string; childMachineId: string; childRootPath: string;
     parentMachineId: string; releaseOnly: boolean;
+    operation: Readonly<{ actorAccountId: string; rpcMethod: string }> & MachineOperationRequesterContext;
 }>): Promise<Readonly<{ custodianAccountId: string; parentMachineId: string; parentInstallationId: string }> | null> {
     if (input.releaseOnly) {
         // Past workspace custody belongs to the parent's existing prepared-operation map.
         // Rebuild may clear enrollment or revoke the borrower's grant before release;
-        // this route can only reach commit/abort, never a fresh native/copy operation.
+        // this route can only reach commit/abort/release, never a fresh native/copy operation.
         if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
         const [source, parent] = await Promise.all([
             tx.machine.findUnique({ where: { id: input.childMachineId } }),
             tx.machine.findUnique({ where: { id: input.parentMachineId } }),
         ]);
-        if (!source || !parent || source.accountId !== parent.accountId
+        if (!source || !parent
             || classifyMachineAvailabilityState(source) !== 'available'
+            || !isMachineOperationSupportedForRequester({ ...input.operation, machine: parent })
             || classifyMachineAvailabilityState(parent) !== 'available' || !parent.installationId) return null;
-        return { custodianAccountId: source.accountId, parentMachineId: input.parentMachineId,
+        if (source.accountId !== parent.accountId) {
+            // Foreign physical custody must still be this managed guest's exact
+            // controller. Rebuild already retains the former enrollment until
+            // its replacement retires the old Machine; no workspace history is
+            // needed. The prepared-operation owner checks the original root,
+            // operation and caller authority, not the rebuilt resource's root.
+            const retained = await tx.managedMachine.findMany({ where: {
+                homeId: input.accountServerId, custodianAccountId: parent.accountId,
+                controllerMachineId: parent.id, controllerInstallationId: parent.installationId,
+                OR: [{ enrolledMachineId: source.id },
+                    { admittedInput: jsonPathEquals(['replacementEnrollment', 'machineId'], source.id) }],
+            }, select: { admittedInput: true, custodianAccountId: true, enrolledMachineId: true } });
+            if (!retained.some(row => readManagedEnrollmentAccountId(row) === source.accountId
+                && (row.enrolledMachineId === source.id
+                    || readManagedAdmissionState(row.admittedInput).replacementEnrollment?.machineId === source.id))) return null;
+        }
+        return { custodianAccountId: parent.accountId, parentMachineId: input.parentMachineId,
             parentInstallationId: parent.installationId };
     }
     const endpoint = await readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
-        accountServerId: input.accountServerId, machineId: input.childMachineId, rootPath: input.childRootPath });
+        accountServerId: input.accountServerId, machineId: input.childMachineId, rootPath: input.childRootPath,
+        operation: input.operation });
     if (!endpoint || endpoint.machineId === input.childMachineId || endpoint.machineId !== input.parentMachineId) return null;
     return { custodianAccountId: endpoint.custodianAccountId, parentMachineId: endpoint.machineId,
         parentInstallationId: endpoint.installationId };
