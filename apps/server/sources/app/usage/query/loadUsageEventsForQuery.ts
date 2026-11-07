@@ -5,7 +5,8 @@ import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from '../usageSourceClassifier';
 import { legacyUsageReportCanonicalOrder } from '../legacyUsageReportSchema';
-import type { ScopedUsageEvidenceRow } from './scopedUsageEventRow';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import type { ScopedUsageEventDbRow, ScopedUsageEvidenceDbRow } from './scopedUsageEventRow';
 
 export const usageEventSelect = {
     id: true,
@@ -49,7 +50,47 @@ export const usageEventSelect = {
 } as const satisfies Prisma.UsageEventSelect;
 
 export type UsageQueryEvent = Omit<Prisma.UsageEventGetPayload<{ select: typeof usageEventSelect }>, 'metadata'>
-    & Pick<ScopedUsageEvidenceRow, 'metadata'>;
+    & Pick<ScopedUsageEventDbRow, 'metadata' | 'accountingEvidence'>;
+
+const usageEventEvidenceSelect = {
+    id: true, sessionId: true, observedAt: true, createdAt: true, agentId: true, backendMode: true,
+    modelId: true, projectKey: true, workspaceId: true, machineId: true, source: true, metadata: true,
+    scope: true, isCumulative: true, teamCredentialResourceId: true, teamCredentialActorAccountId: true,
+    teamCredentialExternalApiKeyId: true, teamCredentialSourceCredentialId: true,
+} as const satisfies Record<Exclude<keyof ScopedUsageEvidenceDbRow, 'accountingEvidence'>, true>;
+
+function usageEventWhere(accountId: string, endMs: number | undefined): Prisma.UsageEventWhereInput {
+    return { accountId, observedAt: endMs === undefined ? undefined : { lt: new Date(endMs) },
+        source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } };
+}
+
+function usageEventReadSql(accountId: string, endMs: number | undefined,
+    select: typeof usageEventSelect | typeof usageEventEvidenceSelect, eventIds?: readonly string[]) {
+    const columns = prismaRuntime.join(Object.keys(select).map(key => key === 'metadata'
+        // Root text admits both JSON objects and stored JSON strings through the canonical parser.
+        ? prismaRuntime.raw('"metadata" #>> \'{}\' AS "metadata"') : prismaRuntime.raw(`"${key}"`)));
+    // Timestamp-without-time-zone bounds must not depend on the connection's time zone.
+    const end = endMs === undefined ? prismaRuntime.empty
+        : prismaRuntime.sql`AND "observedAt" < CAST(${new Date(endMs).toISOString()} AS timestamp)`;
+    // One array bind uses the existing primary key without a provider parameter-count ceiling.
+    const ids = eventIds === undefined ? prismaRuntime.empty
+        : prismaRuntime.sql`AND "id" = ANY(CAST(${[...eventIds]} AS text[]))`;
+    return prismaRuntime.sql`SELECT ${columns} FROM "UsageEvent"
+        WHERE "accountId" = ${accountId} ${end} ${ids}
+          AND "source" NOT IN (${prismaRuntime.join([...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES])})
+        ORDER BY "observedAt" ASC`;
+}
+
+/** Historical identity/coverage stays complete while unrelated token and cost bodies stay in storage. */
+export async function loadUsageEventEvidenceForQuery(tx: Tx, accountId: string,
+    request: Pick<UsageAnalyticsQueryRequest, 'dateRange'>): Promise<ScopedUsageEvidenceDbRow[]> {
+    const endMs = request.dateRange?.endMs;
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
+        return await tx.$queryRaw<ScopedUsageEvidenceDbRow[]>(usageEventReadSql(accountId, endMs, usageEventEvidenceSelect));
+    }
+    return await tx.usageEvent.findMany({ where: usageEventWhere(accountId, endMs),
+        orderBy: { observedAt: 'asc' }, select: usageEventEvidenceSelect });
+}
 
 export async function loadRetainedLegacyUsageReports(tx: Tx, accountId: string,
     request: Pick<UsageAnalyticsQueryRequest, 'dateRange' | 'filters'>) {
@@ -63,31 +104,22 @@ export async function loadRetainedLegacyUsageReports(tx: Tx, accountId: string,
 
 /** Keep historical replay evidence while avoiding Prisma's per-row model projection on PostgreSQL. */
 export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
-    request: Pick<UsageAnalyticsQueryRequest, 'dateRange'>): Promise<UsageQueryEvent[]> {
+    request: Pick<UsageAnalyticsQueryRequest, 'dateRange'>, eventIds?: readonly string[]): Promise<UsageQueryEvent[]> {
     // A range start or dimension filter would remove baselines/overlapping
     // producers before the canonical reconciler has compared their evidence.
     const endMs = request.dateRange?.endMs;
+    if (eventIds?.length === 0) return [];
     if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
-        // Both transports consume this one select. Only these constant schema
-        // identifiers enter raw SQL; Account, source and date values stay bound.
-        const columns = prismaRuntime.join(Object.keys(usageEventSelect).map(key => key === 'metadata'
-            // Root text keeps stored JSON strings compatible with the canonical one-pass metadata parser.
-            ? prismaRuntime.raw('"metadata" #>> \'{}\' AS "metadata"') : prismaRuntime.raw(`"${key}"`)));
-        // These columns are timestamp without time zone. A raw Date parameter
-        // is timestamptz and would shift the bound on non-UTC connections.
-        const end = endMs === undefined ? prismaRuntime.empty
-            : prismaRuntime.sql`AND "observedAt" < CAST(${new Date(endMs).toISOString()} AS timestamp)`;
-        return await tx.$queryRaw<UsageQueryEvent[]>(prismaRuntime.sql`
-            SELECT ${columns} FROM "UsageEvent"
-            WHERE "accountId" = ${accountId} ${end}
-              AND "source" NOT IN (${prismaRuntime.join([...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES])})
-            ORDER BY "observedAt" ASC`);
+        return await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds));
     }
-    return await tx.usageEvent.findMany({
-        where: { accountId,
-            observedAt: endMs === undefined ? undefined : { lt: new Date(endMs) },
-            source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } },
-        orderBy: { observedAt: 'asc' },
-        select: usageEventSelect,
-    });
+    const where = usageEventWhere(accountId, endMs);
+    if (eventIds === undefined) return await tx.usageEvent.findMany({ where,
+        orderBy: { observedAt: 'asc' }, select: usageEventSelect });
+    const rows: UsageQueryEvent[] = [];
+    for (const ids of portableQueryChunks({ values: eventIds, bindingsPerValue: 1,
+        fixedBindings: 1 + (endMs === undefined ? 0 : 1) + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length })) {
+        rows.push(...await tx.usageEvent.findMany({ where: { ...where, id: { in: [...ids] } },
+            orderBy: { observedAt: 'asc' }, select: usageEventSelect }));
+    }
+    return rows.sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime());
 }

@@ -1,4 +1,4 @@
-import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { matchesUsageFilters } from './usageQueryFilters';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { LegacyUsageReportDataSchema, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
@@ -71,25 +71,30 @@ export function prepareUsageAnalyticsSnapshot(snapshot: UsageAnalyticsSnapshot, 
     return next.value;
 }
 
-function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
+export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
     shouldYield: () => boolean): Generator<void, UsageAnalyticsSnapshot, void> {
+    const preparedQueryKey = getUsageAnalyticsQueryRequestKey(request);
+    if (snapshot.replayContext && snapshot.preparedQueryKey === preparedQueryKey) return snapshot;
     const end = request.dateRange?.endMs;
     const sessions = request.filters?.sessionIds;
-    const rows = end === undefined ? snapshot.rows : snapshot.rows.filter(row => row.observedAt.getTime() < end);
+    const historicalRows = snapshot.evidenceRows ?? snapshot.rows;
+    const rows = end === undefined ? historicalRows : historicalRows.filter(row => row.observedAt.getTime() < end);
     const legacyReports = snapshot.legacyReports.filter(report => (end === undefined || report.updatedAt.getTime() < end)
         && (!sessions?.length || (report.sessionId !== null && sessions.includes(report.sessionId))));
-    const normalized = [];
+    const normalized: ScopedUsageEvidenceRow[] = [];
     const normalizedEvidenceById = new Map<string, ScopedUsageEvidenceRow>();
     for (const row of rows) {
-        const evidence = toScopedUsageEvidenceRow(row);
+        const evidence: ScopedUsageEvidenceRow = 'totalTokens' in row
+            ? row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence } : toScopedUsageEvidenceRow(row)
+            : row;
         normalized.push(evidence);
         normalizedEvidenceById.set(evidence.id, evidence);
         if (shouldYield()) yield;
     }
     const evidenceRows = normalizeUsageAnalyticsEvidenceRows(normalized, legacyReports);
     const replayContext = prepareScopedUsageReplayContext(evidenceRows, request.dateRange, request.filters);
-    return { ...snapshot, rows: rows.filter(row => replayContext.selectedEventIds.has(row.id)),
-        legacyReports, evidenceRows, normalizedEvidenceById, replayContext };
+    return { ...snapshot, rows: snapshot.rows.filter(row => replayContext.selectedEventIds.has(row.id)),
+        legacyReports, evidenceRows, normalizedEvidenceById, replayContext, preparedQueryKey };
 }
 
 /** Normalize, reconcile and select the committed population, independently of output demand. */

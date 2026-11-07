@@ -3,14 +3,14 @@ import type { Tx } from '@/storage/inTx';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext, type UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
 import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from './loadUsageMessageStatsForQuery';
-import { projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
+import { prepareUsageAnalyticsSnapshotSteps, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
 import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageCost';
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
-import { loadRetainedLegacyUsageReports, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
-import { toScopedUsageEvidenceRow } from './scopedUsageEventRow';
+import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
+import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 
 const usageQuerySliceMs = 20;
 
@@ -54,14 +54,51 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     const endMs = ends.some(end => end === undefined) ? undefined
         : ends.reduce<number>((latest, end) => Math.max(latest, end ?? -Infinity), -Infinity);
     const range = { dateRange: endMs === undefined ? undefined : { endMs } };
-    // Capture raw facts once. Normalization and subject selection cannot sit
-    // between statements while an interactive snapshot holds a connection.
-    const [rows, legacyReports, priceCatalog] = await Promise.all([
-        loadUsageEventsForQuery(tx, accountId, range),
+    const allHistory = queries.some(query => query.dateRange?.startMs === undefined);
+    const [events, legacyReports, priceCatalog] = await Promise.all([
+        allHistory ? loadUsageEventsForQuery(tx, accountId, range).then(rows => ({ rows }))
+            : loadUsageEventEvidenceForQuery(tx, accountId, range).then(evidence => ({ evidence })),
         loadRetainedLegacyUsageReports(tx, accountId, range),
         captureUsageModelPriceCatalogInTx(tx),
     ]);
     if (isReaderClosed?.()) throw new Error('Usage reader closed');
+    let rows: UsageAnalyticsSnapshot['rows'];
+    let evidenceRows: ScopedUsageEvidenceRow[] | undefined;
+    const preparedPopulations = new Map<string, UsageAnalyticsSnapshot>();
+    if ('evidence' in events) {
+        evidenceRows = [];
+        let sliceStartedAt = performance.now();
+        for (const row of events.evidence) {
+            const evidence = toScopedUsageEvidenceRow(row);
+            evidenceRows.push(evidence);
+            if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
+                await setImmediate();
+                sliceStartedAt = performance.now();
+            }
+        }
+        const selectedEventIds = new Set<string>();
+        const populations = new Map(queries.map(query => [getUsageAnalyticsPopulationKey(query), query]));
+        // The existing replay owner discovers in-window subjects and selects their
+        // complete histories, including native competitors without a Session id.
+        for (const query of populations.values()) {
+            const steps = prepareUsageAnalyticsSnapshotSteps({ rows: [], evidenceRows, legacyReports,
+                priceCatalog, messageCountsBySession: undefined }, query,
+            () => performance.now() - sliceStartedAt >= usageQuerySliceMs);
+            sliceStartedAt = performance.now();
+            let next = steps.next();
+            while (!next.done) {
+                await setImmediate();
+                sliceStartedAt = performance.now();
+                next = steps.next();
+            }
+            preparedPopulations.set(getUsageAnalyticsPopulationKey(query), next.value);
+            for (const id of next.value.replayContext!.selectedEventIds) selectedEventIds.add(id);
+        }
+        if (isReaderClosed?.()) throw new Error('Usage reader closed');
+        // Both reads share this snapshot. Identity is already decided; primary-key
+        // hydration needs neither a native JSON predicate nor a new subject index.
+        rows = await loadUsageEventsForQuery(tx, accountId, range, [...selectedEventIds]);
+    } else rows = events.rows;
     // SQL captures counts by Session; the committed accounting population
     // selects which Session counts contribute to each response.
     const ranges = new Map(queries.filter(hasUsageMessageCountDemand)
@@ -69,12 +106,19 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     const counts = new Map<string, NonNullable<UsageAnalyticsSnapshot['messageCountsBySession']>>();
     for (const [rangeKey, query] of ranges) counts.set(rangeKey,
         await loadUsageMessageCountsBySessionInTx(tx, accountId, query));
+    // Output variants of one population share the same body array/admission.
+    for (const prepared of preparedPopulations.values()) {
+        prepared.rows = rows.filter(row => prepared.replayContext!.selectedEventIds.has(row.id));
+    }
     const snapshots = new Map<string, UsageAnalyticsSnapshot>();
     for (const query of queries) {
+        const prepared = preparedPopulations.get(getUsageAnalyticsPopulationKey(query));
         const messageCountsBySession = hasUsageMessageCountDemand(query)
             ? counts.get(JSON.stringify(query.dateRange ?? {})) : undefined;
         snapshots.set(getUsageAnalyticsQueryRequestKey(query), {
-            rows, legacyReports,
+            ...(prepared ?? { evidenceRows, legacyReports }),
+            rows: prepared?.rows ?? rows,
+            preparedQueryKey: prepared ? getUsageAnalyticsQueryRequestKey(query) : undefined,
             priceCatalog, messageCountsBySession });
     }
     return { snapshots, priceCatalog };
@@ -95,8 +139,11 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
     let sliceStartedAt = performance.now();
     for (const [rows, keys] of inputs) {
         const admitted: UsageAnalyticsSnapshot['rows'] = [];
+        const evidenceById = snapshot.snapshots.get(keys[0]!)?.normalizedEvidenceById;
         for (const row of rows) {
-            admitted.push(toScopedUsageEvidenceRow(row));
+            const evidence = evidenceById?.get(row.id);
+            admitted.push(evidence ? { ...row, metadata: evidence.metadata, accountingEvidence: evidence.accountingEvidence }
+                : toScopedUsageEvidenceRow(row));
             if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
                 if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
                 await setImmediate();

@@ -144,7 +144,7 @@ describe("usageQueryService scoped aggregation", () => {
             .toBe(JSON.stringify(projectUsageAnalytics(baseline, allHistory)));
     });
 
-    it('does not consume stored Usage rows until its capture transaction has committed', async () => {
+    it('defers full Usage body normalization until its two-phase capture has committed', async () => {
         const owner = await createUsageOwner('fair-thin-history');
         await db.usageEvent.createMany({ data: [150, 160, 170].map((at, index) => ({
             ...buildUsageEvent({ ...owner, observedAt: new Date(at).toISOString(), scope: 'turn_delta', totalTokens: index + 1 }),
@@ -163,19 +163,19 @@ describe("usageQueryService scoped aggregation", () => {
                     return new Proxy(target.usageEvent, {
                         get(delegate, method, delegateReceiver) {
                             if (method !== 'findMany') return Reflect.get(delegate, method, delegateReceiver);
-                            // Observe first metadata consumption on real storage rows; every parser stays real.
+                            // Option A selects from thin evidence inside the snapshot; body accounting stays after commit.
                             return async (...args: unknown[]) => {
                                 const rows: unknown = await Reflect.apply(Reflect.get(delegate, method), delegate, args);
                                 if (Array.isArray(rows)) for (const row of rows) {
-                                    if (!Object.hasOwn(row, 'metadata')) continue;
-                                    const metadata: unknown = Reflect.get(row, 'metadata');
+                                    if (!Object.hasOwn(row, 'totalTokens')) continue;
+                                    const totalTokens: unknown = Reflect.get(row, 'totalTokens');
                                     const id: unknown = Reflect.get(row, 'id');
-                                    Object.defineProperty(row, 'metadata', { enumerable: true, get() {
+                                    Object.defineProperty(row, 'totalTokens', { enumerable: true, get() {
                                         if (!observed.has(id)) {
                                             observed.add(id);
                                             observedDuringCapture.push(captureOpen);
                                         }
-                                        return metadata;
+                                        return totalTokens;
                                     } });
                                 }
                                 return rows;
@@ -186,7 +186,7 @@ describe("usageQueryService scoped aggregation", () => {
             }), owner.accountId, request);
         }, { readOnly: true });
         captureOpen = false;
-        expect(observedDuringCapture, 'normalization, subject selection and body hydration must wait for commit').toEqual([]);
+        expect(observedDuringCapture, 'full body normalization waits for commit; subject selection uses thin evidence').toEqual([]);
         expect(JSON.stringify(projectUsageAnalytics(captured, request))).toBe(JSON.stringify(projectUsageAnalytics(baseline, request)));
         expect(observedDuringCapture).toEqual([false, false, false]);
         expect(projectUsageAnalytics(captured, request).totals.tokens.total).toBe(6);

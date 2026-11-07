@@ -104,6 +104,8 @@ export interface UsageAnalyticsSnapshot {
     evidenceRows?: readonly ScopedUsageEvidenceRow[];
     normalizedEvidenceById?: ReadonlyMap<string, ScopedUsageEvidenceRow>;
     replayContext?: ScopedUsageReplayContext;
+    /** The canonical replay owner has already prepared this exact captured request. */
+    preparedQueryKey?: string;
     legacyReports: Array<{ id: string; sessionId: string | null; key: string; data: unknown; createdAt: Date; updatedAt: Date }>;
     priceCatalog: CapturedUsageModelPriceCatalog;
     messageCountsBySession: ReadonlyMap<string, number> | undefined;

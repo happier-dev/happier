@@ -16,7 +16,7 @@ import { captureUsageAnalyticsInTx, projectUsageAnalytics } from './usageQuerySe
 import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 
-type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number };
+type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number };
 
 /** Observe the real transaction's database results, leaving the query and projector intact. */
 function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
@@ -40,6 +40,9 @@ function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
                 if (statement.includes('"UsageEvent"')) {
                     count.reads += 1;
                     count.rowCounts?.push(rows.length);
+                    if (count.bodyRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'totalTokens')) {
+                        count.bodyRows += rows.length;
+                    }
                     if (count.metadataRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'metadata')) {
                         count.metadataRows += rows.length;
                     }
@@ -130,7 +133,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const scalarSnapshot = { ...captured, rows: baseline };
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(scalarSnapshot, request, undefined,
             projectUsageAnalyticsPopulation(scalarSnapshot, request)));
-        expect(ordinaryCount).toEqual({ reads: 1, ormRows: 0 });
+        expect(ordinaryCount).toEqual({ reads: 2, ormRows: 0 });
         const emptyCount: EventReadCount = { reads: 0, ormRows: 0 };
         const empty = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, emptyCount),
             account.id, UsageAnalyticsQueryRequestSchema.parse({ dateRange: { endMs: 100 } })),
@@ -141,7 +144,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
             .totals.tokens.total).toBe(0);
     });
 
-    it('captures history in one SQL read and hydrates window subjects after commit', async () => {
+    it('reads full bodies only for demanded histories while retaining thin historical coverage', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.$executeRaw`INSERT INTO "UsageEvent" ("id", "accountId", "observedAt", "agentId", "source", "scope",
             "inputTokens", "totalTokens", "estimatedCostUsd", "updatedAt")
@@ -150,10 +153,12 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const request = UsageAnalyticsQueryRequestSchema.parse({
             dateRange: { startMs: 26397_000, endMs: 33659_000 },
         });
-        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0 };
+        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0 };
         const captured = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, count),
             account.id, request), { readOnly: true, isolationLevel: 'Serializable' });
-        expect(captured.rows).toHaveLength(33_658);
+        // Option A ruling: complete demanded histories, rather than all historical bodies.
+        expect(count.bodyRows).toBe(7_262);
+        expect(captured.rows).toHaveLength(7_262);
         expect(prepareUsageAnalyticsSnapshot(captured, request).rows).toHaveLength(7_262);
         const baselineRows = await inTx(tx => loadUsageEventsForQuery(tx, account.id, request),
             { readOnly: true, isolationLevel: 'Serializable' });
@@ -162,6 +167,6 @@ describe('Usage analytics PostgreSQL event transport', () => {
             rows: baselineRows, legacyReports: captured.legacyReports, priceCatalog: captured.priceCatalog,
             messageCountsBySession: undefined,
         }, request));
-        expect(count).toEqual({ reads: 1, ormRows: 0, rowCounts: [33_658], metadataRows: 33_658 });
+        expect(count).toEqual({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 40_920, bodyRows: 7_262 });
     });
 });
