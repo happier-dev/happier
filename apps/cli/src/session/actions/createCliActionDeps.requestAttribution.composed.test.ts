@@ -1,10 +1,14 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import type { AgentSessionRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import {
   ApprovalRequestV2Schema, SessionInputRequestV1Schema, ActionsSettingsV1Schema, FeaturesResponseSchema,
   buildTrustedHostSessionInputAdmissionV1, settleSessionInputRequestV1, withSessionInputAuthorityV1,
   type ApprovalRequest, type SessionInputAdmissionReceiptV1,
 } from '@happier-dev/protocol';
+import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -14,6 +18,7 @@ import { encryptSessionPayload, openSessionStoredContent, sealSessionStoredConte
 import { createCliActionDeps } from './createCliActionDeps';
 import { UserMessageSchema, SessionMessageContentSchema } from '@/api/types';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from '@/session/services/sessionInputAdmissionIdentity';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { handleSessionNewMessageUpdate } from '@/api/session/sessionNewMessageUpdate';
@@ -21,6 +26,8 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
 
 const accountId = 'cli-sender';
 const serverId = 'request-attribution-home';
@@ -30,6 +37,25 @@ const localId = 'cli-original-input';
 const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
 const secret = new Uint8Array(32).fill(31);
 const persona = { serverId, sessionId };
+const mcpEffect = { actionId: 'mcp.servers.test',
+  input: { t: 'byId', serverId: 'mcp-server', machineId, directory: '/workspace' },
+  output: { ok: true, toolCount: 1, durationMs: 1 } } as const;
+const storageItem = { ref: { itemId: 'own-file', path: '/workspace/own-file',
+  identity: { dev: '1', ino: '2', kind: 'file' }, collectedAt: 1,
+  collectedBy: { accountId, kind: 'person' } }, expect: 'reviewed-file' } as const;
+const processTarget = { ref: 'owned-process', expect: { level: 'proven' } } as const;
+const machineEffects = [
+  { actionId: 'machines.storage.trash.move', input: { machineId, items: [{ ...storageItem, claimedVerdict: 'safe' }] },
+    output: { batchId: 'approved-batch', mode: 'trash', outcomes: [{ itemId: 'own-file', status: 'moved' }], inTrashBytes: 64, freedBytes: 0 } },
+  { actionId: 'machines.storage.deleteNow', input: { machineId, items: [storageItem] },
+    output: { batchId: 'approved-batch', mode: 'delete', outcomes: [{ itemId: 'own-file', status: 'deleted' }], inTrashBytes: 0, freedBytes: 64 } },
+  { actionId: 'machines.processes.stop', input: { machineId, targets: [processTarget] },
+    output: { status: 'ended', outcomes: [{ ref: 'owned-process', outcome: 'ended', freedBytes: 64 }] } },
+  { actionId: 'machines.processes.kill', input: { machineId, targets: [processTarget], tree: false },
+    output: { status: 'ended', outcomes: [{ ref: 'owned-process', outcome: 'ended', freedBytes: 64 }] } },
+  { actionId: 'machines.guard.sessionCeiling.set', input: { machineId, sessionId, bytes: 1073741824 },
+    output: { status: 'applied', appliesAt: 'next_start' } },
+] as const;
 const accountAuthorization = {
   v: 1 as const, token: 'home-issued-input-authorization', binding: {
     accountId, authentication: { kind: 'account' as const, tokenEpoch: 0 },
@@ -46,7 +72,7 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
   const credentials = mode === 'plain' ? { token, encryption: null }
     : { token, encryption: { type: 'legacy' as const, secret } };
   const metadata = { machineId, permissionMode: 'default', permissionModeUpdatedAt: 1 };
-  const rawSession = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: mode,
+  let rawSession = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: mode,
     machineId, metadata: mode === 'plain' ? JSON.stringify(metadata)
       : encryptSessionPayload({ ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, payload: metadata }),
     dataEncryptionKey: null });
@@ -61,61 +87,215 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
     throw new Error(`Unexpected Home read: ${url}`);
   });
   const accepted: ReturnType<typeof UserMessageSchema.parse>[] = [];
-  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({
+  const acceptedLocalIds: string[] = [];
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => String(url).endsWith('/v1/account/profile')
+    ? Response.json({ id: accountId }) : Response.json(FeaturesResponseSchema.parse({
     features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_request_attribution' },
       encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } },
   }))));
-  const accept = (content: Parameters<typeof openSessionStoredContent>[0]['content']) => {
+  const accept = (content: Parameters<typeof openSessionStoredContent>[0]['content'], admittedLocalId: string) => {
+    acceptedLocalIds.push(admittedLocalId);
     accepted.push(UserMessageSchema.parse(mode === 'plain'
       ? openSessionStoredContent({ mode: 'plain', ctx: null, content })
       : openSessionStoredContent({ mode: 'e2ee', ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, content })));
   };
-  vi.spyOn(axios, 'post').mockImplementation(async (_url, body: unknown) => {
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+    if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
     if (!body || typeof body !== 'object') throw new Error('Expected Pending HTTP body');
+    const pendingLocalId: unknown = Reflect.get(body, 'localId');
+    if (typeof pendingLocalId !== 'string') throw new Error('Missing Pending local id');
     accept(SessionMessageContentSchema.parse(Reflect.get(body, 'content')
-      ?? { t: 'encrypted', c: Reflect.get(body, 'ciphertext') }));
+      ?? { t: 'encrypted', c: Reflect.get(body, 'ciphertext') }), pendingLocalId);
     return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
   });
-  return { credentials, reads, accept, accepted };
+  return { credentials, reads, accept, accepted, acceptedLocalIds, spawned: (options: Parameters<typeof buildCommittedLaunchMetadata>[0]['options']) => {
+    const launched = buildCommittedLaunchMetadata({ options, directory: options.directory ?? '/workspace' });
+    rawSession = { ...rawSession, active: true, metadata: mode === 'plain' ? JSON.stringify(launched)
+      : encryptSessionPayload({ ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, payload: launched }) };
+  } };
 }
 
 describe('CLI input requester through protected custody and danger approval', () => {
-  it.each([
+  it.each(['plain', 'e2ee'] as const)('allows a same-turn Doc retry after a failed proposal and an approved invitation (%s)', async mode => {
+    const { credentials, accept, accepted, acceptedLocalIds } = installHomeBoundary(mode);
+    await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
+    const cli = createCliActionDeps({ token, credentials, sessionId, mode: 'plain', ctx: null, serverId,
+      machineAdmissionTransport: async request => {
+        accept(request.content, request.localId);
+        return { status: 'accepted', localId: request.localId };
+      } });
+    const requests = new Map<string, ApprovalRequest>();
+    let postAllowed = false;
+    let publications = 0;
+    const executor = createActionExecutor({ sessionSendMessage: cli.sessionSendMessage,
+      approvalsCreate: async ({ request }) => {
+        const artifactId = `doc-review-${requests.size + 1}`;
+        requests.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { artifactId };
+      },
+      approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => {
+        const previous = requests.get(artifactId);
+        if (!previous) throw new Error('Missing approval');
+        const transition = decideApprovalRequestTransition(previous, request);
+        if (!transition.ok) return transition;
+        requests.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      discussionAction: async ({ actionId, input }) => {
+        if (actionId === 'discussion.invite') {
+          postAllowed = true;
+          return { discussionId: 'doc-thread', ownerAccountId: accountId, access: 'owner', grants: [], changed: true };
+        }
+        if (actionId !== 'discussion.post') throw new Error('Unexpected Discussion operation');
+        if (!postAllowed) return { ok: false, errorCode: 'discussion_post_denied', error: 'discussion_post_denied' };
+        publications++;
+        const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+        return { v: 1, serverId, messageSeq: 1, message: { id: 'proposal-message', discussionId: 'doc-thread',
+          localId: post.localId, seq: 1, authorAccountId: null, accountActor: null, producerV1: null,
+          content: post.content, replyTarget: post.replyTarget, mentionedAccountIds: [], createdAt: 1,
+          messageRef: { kind: 'discussion', discussion: { serverId, discussionId: 'doc-thread' }, messageId: 'proposal-message' } } };
+      },
+    });
+    const original = { requestRef: 'person-request', requester: { serverId, accountId }, persona, origin: null };
+    const provider: AgentSessionRuntime = { async send() { return { status: 'admitted' }; },
+      watch: () => ({ dispose() {} }), dispose() {} };
+    const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined,
+      { context: {} as AgentSessionRuntimeContext, // The external provider never calls SDK services.
+        cwd: '/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
+    onTestFinished(async () => { await native.resetOrDisposeRuntime(); });
+    await native.sendTurnPrompt('Propose the Doc correction', { localId: original.requestRef, turnId: 'doc-turn',
+      actionRequestAttributionV1: original,
+      agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } });
+    const agent = { surface: 'agent' as const, authority: 'account_automation' as const, runtimeAccountId: accountId,
+      serverId, serverIdentityId: 'srv_request_attribution', defaultSessionId: sessionId, defaultSessionMachineId: machineId,
+      actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } };
+    const bridge = createActionToolExecutorBridge({ surface: 'agent',
+      resolveActiveTurnPermissionWitness: () => native.readActiveTurnAdmissionWitness?.(),
+      executor: { execute: (id, input, context) => executor.execute(id, input, { ...agent, ...context }) },
+    });
+    const proposal = { target: { ref: { kind: 'doc', artifactId: 'doc', serverId }, revision: { headerVersion: 1, bodyVersion: 1 },
+      range: { start: 0, end: 4 }, quote: 'Read' }, discussionRef: { serverId, discussionId: 'doc-thread' },
+      baseRevision: { headerVersion: 1, bodyVersion: 1 }, before: 'Read', after: 'Review', reason: 'Clarify', localId: 'first-proposal' };
+    let invocation = 0;
+    const invoke = (actionId: string, input: unknown) => bridge.executeActionByToolName('action_execute', { actionId, input }, sessionId,
+      { actionRequestId: `doc-tool-${++invocation}` });
+    const approve = (artifactId: string) => executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', runtimeAccountId: accountId, serverId,
+        serverIdentityId: 'srv_request_attribution', actionCaller: { kind: 'host' } });
+    const firstProposal = await invoke('doc.edit.propose', proposal);
+    expect(firstProposal, JSON.stringify(firstProposal)).toMatchObject({ ok: true, result: { artifactId: 'doc-review-1' } });
+    expect(await approve('doc-review-1')).toMatchObject({ ok: true,
+      result: { status: 'failed', execution: { ok: false, errorCode: 'discussion_post_denied' } } });
+    expect(await invoke('discussion.invite', { discussionId: 'doc-thread', participant: { kind: 'session', sessionId } }))
+      .toMatchObject({ ok: true, result: { artifactId: 'doc-review-2' } });
+    expect(await approve('doc-review-2')).toMatchObject({ ok: true });
+    expect(await invoke('approval.request.decide', { artifactId: 'doc-review-2', decision: 'approve' }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    // Consume the actual host-authored receipt through the production attribution owner.
+    // This is an admitted approval-result input, not a fabricated replacement actor.
+    const continued = accepted.at(-1);
+    if (!continued) throw new Error('Missing approval-result Session input');
+    const request = SessionInputRequestV1Schema.parse(continued.meta?.happierInputRequestV1);
+    const receipt: SessionInputAdmissionReceiptV1 = mode === 'plain'
+      ? { v: 1, issuer: 'authenticatedAccount', actorAccountId: accountId, sessionRelationship: 'owner' }
+      : { v: 1, issuer: 'authenticatedMachine' };
+    const authority = settleSessionInputRequestV1({ request, currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: receipt });
+    const continuedLocalId = acceptedLocalIds.at(-1);
+    if (!continuedLocalId) throw new Error('Missing continuation identity');
+    const crypto = mode === 'plain' ? { mode, ctx: null }
+      : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } };
+    const delivered: ReturnType<typeof UserMessageSchema.parse>[] = [];
+    handleSessionNewMessageUpdate({ ...crypto, sessionId, serverId,
+      update: { id: 'approval-update', seq: 1, createdAt: 1, body: { t: 'new-message', delivery: 'full', sid: sessionId, message: {
+        id: 'approval-input', seq: 1, localId: continuedLocalId, messageRole: 'user', inputAdmissionReceipt: receipt,
+        content: sealSessionStoredContent({ ...crypto, payload: { ...continued,
+          meta: withSessionInputAuthorityV1(continued.meta, authority) } }), createdAt: 1, updatedAt: 1,
+      } } }, receivedMessageIds: new Set(), lastObservedMessageSeq: 0, lastObservedUserMessageSeq: 0,
+      emit: (event, message) => { if (event === 'user-message') delivered.push(UserMessageSchema.parse(message)); },
+      debug: () => {}, debugLargeJson: () => {},
+    });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.actionRequestAttributionV1).toMatchObject({ requestRef: continuedLocalId,
+      requester: mode === 'plain' ? { serverId, accountId } : null });
+    expect(native.readActiveTurnAdmissionWitness?.()).toMatchObject({ turnId: 'doc-turn', actionRequestAttributionV1: original });
+    const retry = await invoke('doc.edit.propose', { ...proposal, localId: 'retry-proposal' });
+    expect(retry, JSON.stringify(retry)).toMatchObject({ ok: true, result: { artifactId: 'doc-review-3' } });
+    expect(await approve('doc-review-3')).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(publications).toBe(1);
+  });
+  it.each([...([
     { mode: 'e2ee', surface: 'cli', toolSurface: 'agent', senderKind: 'account' },
     { mode: 'plain', surface: 'cli', toolSurface: 'agent', senderKind: 'account' },
     { mode: 'e2ee', surface: 'ui', toolSurface: 'mcp', senderKind: 'account' },
+    { mode: 'plain', surface: 'ui', toolSurface: 'mcp', senderKind: 'account' },
+    { mode: 'e2ee', surface: 'voice', toolSurface: 'agent', senderKind: 'account' },
+    { mode: 'e2ee', surface: 'rpc', toolSurface: 'mcp', senderKind: 'account' },
     { mode: 'e2ee', surface: 'cli', toolSurface: 'agent', senderKind: 'terminal' },
-  ] as const)('retains the $senderKind sender on $surface $mode input through $toolSurface and executes Allow only once', async ({ mode, surface, toolSurface, senderKind }) => {
-    const { credentials, accept, accepted } = installHomeBoundary(mode);
+  ] as const).map(test => ({ ...test, effect: mcpEffect })),
+    ...machineEffects.map(effect => ({ mode: 'e2ee' as const, surface: 'rpc' as const,
+      toolSurface: 'mcp' as const, senderKind: 'account' as const, effect })),
+  ])('retains the $senderKind sender on $surface $mode input through $toolSurface for $effect.actionId and executes Allow only once', async ({ mode, surface, toolSurface, senderKind, effect }) => {
+    const { credentials, accept, accepted, acceptedLocalIds, spawned } = installHomeBoundary(mode);
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
     const deps = createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId,
+      sessionSpawnDirectTargetTransport: { machineId,
+        prepare: async () => ({ ok: true, directory: '/workspace', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+        spawnedSession: {
+          spawn: async options => { spawned(options); return { type: 'success', sessionId,
+            sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
+          resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
+        } },
       machineAdmissionTransport: async request => {
-        accept(request.content);
+        accept(request.content, request.localId);
         return { status: 'accepted', localId: request.localId };
       } });
     // The public Action owner builds the CLI request; only Home HTTP and the
     // authenticated Machine socket are replaced. Encryption/admission stay real.
     const sender = createActionExecutor(deps);
-    const sent = senderKind === 'terminal' ? await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId,
+    const firstInputHandoff = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
+      actionCaller: { kind: 'host' }, callerSurface: surface, callerAuthority: 'present_user', localId,
+    });
+    const firstInput = surface === 'ui' || surface === 'voice' || surface === 'rpc';
+    const sent = surface === 'rpc' ? await sender.execute('session.spawn_new', {
+      creationKey: localId, executionTarget: { serverId, machineId }, directory: { kind: 'path', path: '/workspace' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false, initialInput: { text: 'Review my own fixture' },
+    }, { surface, authority: 'present_user', serverId, runtimeAccountId: accountId, actionCaller: { kind: 'host' } })
+      : firstInput ? await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId,
+      serverId, expectedSessionAddress: persona, message: 'Review my own fixture', wait: false, timeoutMs: 30_000,
+      // The same producer that createSpawnedSession uses for the Ask composer.
+      inputAdmission: firstInputHandoff.inputAdmission,
+      executionAuthority: firstInputHandoff.executionAuthority,
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; },
+    }) : senderKind === 'terminal' ? await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId,
       expectedSessionAddress: persona, message: 'Test the configured MCP server', wait: false, timeoutMs: 30_000,
       inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli'), callerInputAuthorization: {
         ...accountAuthorization, binding: { ...accountAuthorization.binding,
           authentication: { kind: 'terminal', tokenEpoch: 0 } },
       },
-      machineAdmissionTransport: async request => { accept(request.content); return { status: 'accepted', localId: request.localId }; },
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; },
     }) : await sender.execute('session.message.send', { sessionId, localId, message: 'Test the configured MCP server',
       requestedAction: { v: 1, kind: 'enqueue' } }, {
       surface, authority: 'present_user', serverId, runtimeAccountId: accountId,
       actionCaller: { kind: 'host' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'session.message.send': ['cli'] } }),
     });
-    expect(sent, JSON.stringify(sent)).toMatchObject(senderKind === 'terminal'
+    expect(sent, JSON.stringify(sent)).toMatchObject(surface === 'rpc'
+      ? { ok: true, result: { sessionId, initialInput: { status: 'accepted' } } }
+      : senderKind === 'terminal' || firstInput
       ? { ok: true, admissionResult: { status: 'accepted', localId } }
       : { ok: true, result: { status: 'accepted', localId } });
     const acceptedRecord = accepted[0];
     if (!acceptedRecord) throw new Error('Input was not admitted');
+    const admittedLocalId = acceptedLocalIds[0];
+    if (!admittedLocalId) throw new Error('Missing admitted input identity');
     const request = acceptedRecord.meta?.happierInputRequestV1 === undefined ? undefined
       : SessionInputRequestV1Schema.parse(acceptedRecord.meta.happierInputRequestV1);
-    const receipt: SessionInputAdmissionReceiptV1 = mode === 'plain' || surface === 'ui'
+    // Encrypted host input uses Machine admission for UI as well as CLI;
+    // that receipt cannot supply the sending person's Account by itself.
+    const receipt: SessionInputAdmissionReceiptV1 = mode === 'plain'
       ? { v: 1, issuer: 'authenticatedAccount', actorAccountId: accountId, sessionRelationship: 'owner' }
       : { v: 1, issuer: 'authenticatedMachine' };
     const authority = request ? settleSessionInputRequestV1({ request, currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: receipt }) : undefined;
@@ -124,7 +304,7 @@ describe('CLI input requester through protected custody and danger approval', ()
     const delivered: ReturnType<typeof UserMessageSchema.parse>[] = [];
     handleSessionNewMessageUpdate({ ...crypto, sessionId, serverId,
       update: { id: 'new-input', seq: 1, createdAt: 1, body: { t: 'new-message', delivery: 'full' as const, sid: sessionId, message: {
-        id: 'committed-input', seq: 1, localId, messageRole: 'user', inputAdmissionReceipt: receipt,
+        id: 'committed-input', seq: 1, localId: admittedLocalId, messageRole: 'user', inputAdmissionReceipt: receipt,
         content: sealSessionStoredContent({ ...crypto, payload: { ...acceptedRecord,
           ...(authority ? { meta: withSessionInputAuthorityV1(acceptedRecord.meta, authority) } : {}) } }),
         createdAt: 1, updatedAt: 1,
@@ -134,13 +314,37 @@ describe('CLI input requester through protected custody and danger approval', ()
     });
     expect(delivered).toHaveLength(1);
     const attribution = delivered[0]?.actionRequestAttributionV1;
-    expect(attribution).toMatchObject({ requestRef: localId, requester: { serverId, accountId }, persona });
-    if (mode === 'plain') expect(request).not.toHaveProperty('actionRequestAttributionV1');
+    if (mode === 'plain' && request) expect(request).not.toHaveProperty('actionRequestAttributionV1');
 
     let stored: ApprovalRequest | null = null;
     let cardCount = 0;
     let effects = 0;
+    const effectInput = getActionSpec(effect.actionId).inputSchema.parse(effect.input);
+    // Replace only the authenticated Machine network hop, retaining the real
+    // CLI adapters, captured-target admission and strict result consumers.
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+      expect(request.machineId).toBe(machineId);
+      expect(request.method).toBe(getActionSpec(effect.actionId).bindings?.rpcMethod);
+      effects++;
+      return effect.output;
+    });
+    const machineDeps = createCliActionDeps({ token, credentials, sessionId, serverId, mode: 'plain', ctx: null });
+    // The external Agent accepts the prompt; the actual native host owns its
+    // copied admission witness and never exposes attribution to the Agent.
+    const provider: AgentSessionRuntime = { async send() { return { status: 'admitted' }; },
+      watch: () => ({ dispose() {} }), dispose() {} };
+    const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined,
+      { context: {} as AgentSessionRuntimeContext, // This boundary Agent never calls SDK services.
+        cwd: '/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
+    onTestFinished(async () => { await native.resetOrDisposeRuntime(); });
+    await native.sendTurnPrompt(delivered[0]!.content.text, { localId: admittedLocalId, turnId: 'admitted-turn',
+      actionRequestAttributionV1: attribution,
+      agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } });
     const danger = createActionExecutor({
+      machineStorageAction: machineDeps.machineStorageAction,
+      machineProcessesAction: machineDeps.machineProcessesAction,
+      machineGuardAction: machineDeps.machineGuardAction,
       // Artifact persistence and the actual MCP process are system boundaries.
       // Real approval admission, transitions, replay and MCP schemas run here.
       approvalsCreate: async ({ request: proposal }) => { cardCount++; stored = ApprovalRequestV2Schema.parse(proposal); return { artifactId: 'd22-card' }; },
@@ -167,58 +371,68 @@ describe('CLI input requester through protected custody and danger approval', ()
       actionCaller: { kind: 'host' as const } };
     let actionSettings = ActionsSettingsV1Schema.parse({ v: 1 });
     const bridge = createActionToolExecutorBridge({ surface: toolSurface,
-      resolveActiveTurnPermissionWitness: () => ({ turnId: 'admitted-turn', inputId: localId,
-        actionRequestAttributionV1: attribution }),
+      resolveActiveTurnPermissionWitness: () => native.readActiveTurnAdmissionWitness?.(),
       executor: { execute: (id, input, toolContext) => danger.execute(id, input, { ...context, ...toolContext, actionsSettings: actionSettings }) },
     });
-    const call = () => bridge.executeActionByToolName('action_execute', { actionId: 'mcp.servers.test',
-      input: { t: 'byId', serverId: 'mcp-server', machineId, directory: '/workspace' } }, sessionId);
+    const call = () => bridge.executeActionByToolName('action_execute', { actionId: effect.actionId,
+      input: effectInput }, sessionId);
     const proposal = await call();
     expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true,
-      result: { kind: 'approval_request_created', artifactId: 'd22-card', actionId: 'mcp.servers.test' } });
+      result: { kind: 'approval_request_created', artifactId: 'd22-card', actionId: effect.actionId } });
+    expect(attribution).toMatchObject({ requestRef: admittedLocalId, requester: { serverId, accountId }, persona });
     expect(stored).toMatchObject({ executionOriginV1: { actionRequestAttributionV1: { requester: { accountId } } } });
     expect(cardCount).toBe(1);
+    expect(effects).toBe(0);
+    expect(await danger.execute('approval.request.decide', { artifactId: 'd22-card', decision: 'approve' },
+      { surface: 'agent', authority: 'account_automation', runtimeAccountId: accountId, serverId }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(effects).toBe(0);
     const approve = () => danger.execute('approval.request.decide', { artifactId: 'd22-card', decision: 'approve' },
       { surface: 'ui', authority: 'present_user', runtimeAccountId: accountId, serverId });
     const decision = await approve();
     expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true,
-      result: { status: 'executed', execution: { ok: true, result: { ok: true } } } });
-    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true, result: { ok: true } } });
+      result: { status: 'executed', execution: { ok: true, result: effect.output } } });
+    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true, result: effect.output } });
     await approve();
     expect(effects).toBe(1);
     expect(cardCount).toBe(1);
     actionSettings = ActionsSettingsV1Schema.parse({ v: 1,
-      approvalWaivedSurfaces: { 'mcp.servers.test': [toolSurface] } });
-    expect(await call()).toMatchObject({ ok: true, result: { ok: true } });
+      approvalWaivedSurfaces: { [effect.actionId]: [toolSurface] } });
+    expect(await call()).toMatchObject({ ok: true, result: effect.output });
     expect(effects).toBe(2);
     expect(cardCount).toBe(1);
   });
 
-  it.each(['e2ee', 'plain'] as const)('attributes an admitted shared Machine %s send to its authenticated Account rather than the custodian', async mode => {
+  it.each((['e2ee', 'plain'] as const).flatMap(mode => (['cli', 'ui', 'voice'] as const).map(surface => ({ mode, surface }))))('attributes an admitted shared Machine $surface $mode send to its authenticated Account rather than the custodian', async ({ mode, surface }) => {
     const { credentials, accept, accepted } = installHomeBoundary(mode);
     expect(await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId, expectedSessionAddress: persona,
       message: 'A shared Machine is not the sending person', wait: false, timeoutMs: 30_000,
-      inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli'), callerInputAuthorization: {
+      inputAdmission: buildTrustedHostSessionInputAdmissionV1(surface), callerInputAuthorization: {
         ...accountAuthorization, binding: { ...accountAuthorization.binding, accountEncryptionMode: mode },
       },
-      machineAdmissionTransport: async request => { accept(request.content); return { status: 'accepted', localId: request.localId }; },
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; },
     })).toMatchObject({ ok: true });
     expect(accepted[0]).toMatchObject({ meta: { happierInputRequestV1: { actionRequestAttributionV1: {
       requester: { serverId, accountId },
     } } } });
   });
 
-  it('does not promote an API-token root Account into an original human requester', async () => {
+  it.each([
+    ...(['cli', 'ui', 'voice', 'rpc'] as const).map(surface => ({ surface, apiToken: true })),
+    { surface: 'rpc' as const, apiToken: false },
+  ])('does not promote an unattended $surface Account into an original human requester (API token: $apiToken)', async ({ surface, apiToken }) => {
     const { credentials, accept, accepted } = installHomeBoundary('e2ee');
     const { authentication: _authentication, ...binding } = accountAuthorization.binding;
     expect(await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId, expectedSessionAddress: persona,
       message: 'Unattended input', wait: false, timeoutMs: 30_000,
-      inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli'), callerInputAuthorization: {
+      inputAdmission: buildSessionSpawnInitialInputAdmissionForLocalIdV1({ actionCaller: { kind: 'host' },
+        callerSurface: surface, callerAuthority: apiToken ? 'present_user' : 'account_automation', localId }).inputAdmission,
+      executionAuthority: apiToken ? 'present_user' : 'account_automation',
+      ...(apiToken ? { callerInputAuthorization: {
         ...accountAuthorization, binding: { ...binding, principalId: 'api-principal', credentialId: 'api-credential',
           grant: API_TOKEN_FULL_GRANT_V1 },
-      },
-      machineAdmissionTransport: async request => { accept(request.content); return { status: 'accepted', localId: request.localId }; },
+      } } : {}),
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; },
     })).toMatchObject({ ok: true });
     const request = SessionInputRequestV1Schema.parse(accepted[0]?.meta?.happierInputRequestV1);
     expect(request.actionRequestAttributionV1).toBeUndefined();
@@ -237,9 +451,10 @@ describe('CLI input requester through protected custody and danger approval', ()
     expect(cards).toBe(0);
   });
 
-  it.each(['requester', 'request', 'persona', 'credential', 'foreign-machine'] as const)('refuses a mismatched %s before admitting input', async mismatch => {
+  it.each((['requester', 'request', 'persona', 'credential', 'foreign-machine'] as const)
+    .flatMap(mismatch => (['cli', 'ui'] as const).map(surface => ({ mismatch, surface }))))('refuses a mismatched $mismatch on $surface before admitting input', async ({ mismatch, surface }) => {
     const { credentials, accept, accepted } = installHomeBoundary('e2ee');
-    const admission = buildTrustedHostSessionInputAdmissionV1('cli');
+    const admission = buildTrustedHostSessionInputAdmissionV1(surface);
     const cause = { requestRef: mismatch === 'request' ? 'forged-input' : localId,
       requester: { serverId, accountId: mismatch === 'requester' ? 'machine-owner' : accountId },
       persona: mismatch === 'persona' ? { serverId, sessionId: 'foreign-session' } : persona, origin: null };
@@ -249,7 +464,7 @@ describe('CLI input requester through protected custody and danger approval', ()
       ...(mismatch === 'credential' ? { callerInputAuthorization: { ...accountAuthorization,
         binding: { ...accountAuthorization.binding, accountId: 'another-account' } } } : {}),
       ...(mismatch === 'foreign-machine' ? { targetMachineId: 'another-accounts-machine' } : {}),
-      machineAdmissionTransport: async request => { accept(request.content); return { status: 'accepted', localId: request.localId }; },
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; },
     });
     expect(result).toMatchObject({ ok: false, code: 'admission_rejected', admissionResult: {
       status: 'rejected', code: mismatch === 'foreign-machine' ? 'session_input_target_unavailable' : 'session_input_untrusted_assertion',

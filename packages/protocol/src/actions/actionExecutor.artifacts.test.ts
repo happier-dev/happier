@@ -8,7 +8,7 @@ import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { prepareArtifactHeaderForRevisionV1 } from '../artifacts/artifactHeaderRestorationV1.js';
 import { buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1 } from '../boards/workBoardArtifactV1.js';
 import { createWorkBoardV1 } from '../boards/workBoardV1.js';
-import { ArtifactActionInputSchemasV1, type ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
+import { ArtifactActionInputSchemasV1, ArtifactHeaderMetadataV1Schema, type ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 import { z } from 'zod/mini';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
@@ -87,6 +87,25 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
+  it('saves a person’s document edit through the UI without a second approval', async () => {
+    const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'Original passage' };
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
+      actionCaller: { kind: 'host' }, actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        actions: { 'artifact.update': { approvalRequiredSurfaces: ['ui', 'agent'] } } }) };
+    const input = { artifactId: initial.artifactId, expectedRevision: initial.revision,
+      header: initial.header, body: 'Revised passage' };
+
+    expect(await executor.execute('artifact.update', input, context)).toMatchObject({ ok: true,
+      result: { artifactId: initial.artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
+    expect(boundary.read()?.body).toBe('Revised passage');
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.update', spec: getActionSpec('artifact.update'), input,
+      settings: context.actionsSettings, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.update', spec: getActionSpec('artifact.update'), input,
+      settings: context.actionsSettings, context: { ...context,
+        actionCaller: { kind: 'session', sessionId: 'requesting-session', starterDepth: 0, turnDepth: 0 } } }).required).toBe(true);
+  });
   it.each(['draft', 'released'] as const)('deletes an owned template %s through the existing Action on every caller surface', async state => {
     const content = { v: 1, identity: { name: 'Helper', description: 'Reusable helper' }, instructions: { markdown: 'Help with work.' },
       memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };

@@ -5,6 +5,18 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('retains discussion refusal meanings across Action envelopes without assigning generic codes to Discussions', () => {
+        const refused = { ok: false, errorCode: 'discussion_post_denied', error: 'discussion_post_denied' };
+        for (const result of [refused, { ok: true, result: refused }, { ok: true, result: { results: [refused] } }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Fallback'))
+                .toBe(t('session.collaboration.discussion.postDenied'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Fallback'))
+            .toBe(t('session.collaboration.discussion.postDenied'));
+        expect(resolveActionExecutionErrorMessage({ code: 'invalid_parameters' }, 'Fallback')).toBe('Fallback');
+        expect(resolveActionExecutionErrorMessage({ code: 'discussion_unknown_code' }, 'Fallback')).toBe('Fallback');
+    });
+
     it.each([
         ['native_protocol_invalid', 'errors.machineNativeProtocolInvalid'],
         ['native_check_unavailable', 'errors.machineNativeCheckUnavailable'],
@@ -17,6 +29,16 @@ describe('Action failure presentation', () => {
         }
         expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Could not add domain')).toBe(t(key));
     });
+    it('directs a no-posture Domain refusal to Machine Network review through each Action envelope', () => {
+        const refused = { ok: false, errorCode: 'machine_network_review_required', error: 'machine_network_review_required' };
+        for (const result of [refused, { ok: true, result: refused }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Could not add domain'))
+                .toBe(t('errors.machineNetworkReviewRequired'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Could not add domain'))
+            .toBe(t('errors.machineNetworkReviewRequired'));
+    });
+
     it('explains how to recover a Domain add when the managed Happier CLI is unavailable', () => {
         const refused = { ok: false, errorCode: 'managed_cli_unavailable', error: 'managed_cli_unavailable',
             errorDetails: { recovery: { kind: 'install_managed_cli', executablePath: '/private/managed/happier' } } };
@@ -36,6 +58,35 @@ describe('Action failure presentation', () => {
         }
         expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Could not add domain'))
             .toBe(t('errors.machineAdminAccessRequired'));
+    });
+
+    it('keeps dashboard deletion refusals distinct from a generic delete failure', () => {
+        for (const [code, key] of [
+            ['widget_area_layout_default_protected', 'projects.dashboard.defaultProtected'],
+            ['widget_area_layout_owner_required', 'errors.permissionDenied'],
+            ['widget_area_layout_owner_ambiguous', 'widgetAdd.areaScopeRecovery'],
+            ['widget_area_layout_owner_unavailable', 'widgetAdd.areaScopeRecovery'],
+            ['artifact_access_unavailable', 'widgetAdd.refusals.areaUnavailable'],
+            ['invalid_widget_area_record', 'errors.invalidFormat'],
+            ['artifact_kind_internal', 'errors.permissionDenied'],
+            ['project_account_rows_unavailable', 'widgetAdd.refusals.areaUnavailable'],
+            ['version_mismatch', 'artifacts.browser.conflict.title'],
+            ['widget_area_not_found', 'artifacts.notFound'],
+        ] as const) {
+            expect(resolveActionExecutionErrorMessage({ code, error: code }, 'Delete failed')).toBe(t(key));
+            expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Delete failed')).toBe(t(key));
+        }
+    });
+
+    it('retains distinct actionable Settings refusal reasons for returned and thrown adapters', () => {
+        for (const [code, key] of [
+            ['invalid_setting_value', 'settings.writeValueRefused'],
+            ['setting_not_bound', 'settings.writeContextChanged'],
+            ['account_settings_mutation_conflict', 'settings.writeContextChanged'],
+        ] as const) {
+            expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Fallback')).toBe(t(key));
+            expect(resolveActionExecutionErrorMessage({ code }, 'Fallback')).toBe(t(key));
+        }
     });
 
     it.each(['credential_scope_denied', 'action_forbidden'])('uses the existing permission denial for %s refusals', (errorCode) => {

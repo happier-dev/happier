@@ -29,7 +29,8 @@ import { useFailedApprovalDismissal } from './failedApprovalDismissal';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { DiscussionDraftAnswer, readDiscussionDraftApproval } from '@/components/approvals/discussionDraftApproval';
 import { PromptDocApprovalDiff } from '@/components/approvals/PromptDocApprovalDiff';
-import { ComputerActionApprovalCard } from '@/components/approvals/ComputerActionApprovalCard';
+import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
+import { ComputerActionApprovalCard, readComputerActLine } from '@/components/approvals/ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from '@/components/approvals/ComputerApprovalCapture';
 import {
     ProjectCommandApprovalFacts,
@@ -235,6 +236,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const projectCommandDecisions = projectCommand ? describeProjectCommandApprovalDecisions(projectCommand) : null;
     // An Agent's instructions edit reads as its diff against the current document (lab `b-work P`).
     const promptDocUpdate = review.promptDocUpdate;
+    const docEditProposal = review.docEditProposal;
     const capabilityEnable = review.capabilityEnable;
     const sessionId = props.sessionId;
     const computerChoice = useComputerApprovalChoice({
@@ -356,7 +358,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         return <ResourceProposalBody controller={proposal} decisionsAvailable={!decisionDisabled} arrive={false} />;
     }
 
-    const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? actionTitle;
+    // A Computer ask is asked by its one act line ("Click in Safari?"); its card starts at where.
+    const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : actionTitle);
     // A failed approval leads with its outcome; what was approved follows once, as its summary.
     const cardTitle = failureOutcome?.headline ?? requestTitle;
     // A summary that only repeats the title says nothing more: the card reads it once.
@@ -365,7 +368,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const sameWords = (left: string, right: string) => left.replace(/[.\s]+$/, '').toLowerCase() === right.replace(/[.\s]+$/, '').toLowerCase();
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
-        : projectCommand ? null
+        : projectCommand || computerAction ? null
             : !props.approval.summary ? t('approvals.untitled')
                 : sameWords(props.approval.summary.trim(), cardTitle) ? null : props.approval.summary;
     return (
@@ -411,7 +414,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 />
             )}
         >
-            {previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
+            {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
                 && !(failureOutcome && repeatsActionName(previewSummary)) ? (
                 <Text style={styles.previewText}>{previewSummary}</Text>
             ) : null}
@@ -439,6 +442,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {computerAction ? (
                 <ComputerActionApprovalCard
                     presentation={computerAction}
+                    titled
+                    serverId={transcriptSource.serverId ?? approvalHome.serverId}
                     onChooseTarget={!decisionDisabled ? chooseComputerTarget : undefined}
                     media={<ComputerApprovalCapture presentation={computerAction}
                         serverId={transcriptSource.serverId ?? approvalHome.serverId} testID="approval-prompt-computer-action-capture" />}
@@ -451,6 +456,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                     onApproveKeepingUndo={() => { void onDecision('approve', { keepUndo: true }); }} />
             ) : projectCommand ? (
                 <ProjectCommandApprovalFacts presentation={projectCommand} testID="approval-prompt-project-command" />
+            ) : docEditProposal ? (
+                <ArtifactEditProposalReview proposal={docEditProposal} testID="approval-prompt-doc-edit-proposal" />
             ) : promptDocUpdate ? (
                 <PromptDocApprovalDiff request={promptDocUpdate} serverId={transcriptSource.serverId ?? null}
                     testID="approval-prompt-prompt-doc-diff" />
@@ -462,7 +469,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                     collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && phone && props.approval.status === 'open')} />
             ) : null}
             {/* A specialized body keeps the same failure facts when it replaces the generic fields card. */}
-            {failureOutcome?.code && (proposal || projectCommand || promptDocUpdate) ? (
+            {failureOutcome?.code && (proposal || projectCommand || promptDocUpdate || docEditProposal) ? (
                 <ApprovalTechnicalDetails lines={failureOutcome.technicalDetails} />
             ) : null}
             {cannotRun ? (

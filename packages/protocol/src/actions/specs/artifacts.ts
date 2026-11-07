@@ -1,7 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../../activity/accountNoticeArtifactKindsV1.js';
 import { redactPublicShareCapabilityUrl } from '../../crypto/publicShareCapabilityUrl.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
@@ -39,7 +38,7 @@ export function projectPublicLinkCreationObservation(value: unknown): unknown {
 export const ARTIFACT_ACTION_COPY = {
   'artifact.create': ['Create document', 'Save a new document to your account.'],
   'artifact.get': ['Read document', 'Open one document and read what is in it.'],
-  'artifact.export': ['Export document file', 'Save a binary document into the invoking session’s workspace or download it on the answering client. Portable Role and Profile documents save on the answering client. Existing workspace files are preserved unless overwrite is approved.'],
+  'artifact.export': ['Export document file', 'Save a binary document into the invoking session’s workspace, or download a binary or Markdown document on the answering client. Prompt Library documents download as .md files. Portable Role and Profile documents save on the answering client. Existing workspace files are preserved unless overwrite is approved.'],
   'artifact.list': ['List documents', 'See the documents saved in your account.'],
   'artifact.update': ['Update document', 'Save a new version of a document. Earlier versions are kept.'],
   'artifact.delete': ['Delete document', 'Remove a document from your account. People it was shared with lose it too.'],
@@ -88,18 +87,12 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     ...(id === 'artifact.public_link.list' || id === 'artifact.public_link.join' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     // Both create a new private Account document (artifactActionDeps#createDocument).
     // Public-link creation carries its own in-page network choice (owner ruling
-    // 2026-10-16); existing-document edits and revocation stay confirmed.
+    // 2026-10-16); revocation keeps its destructive confirmation.
     ...(id === 'artifact.create' || id === 'artifact.publish_from_file' || id === 'artifact.public_link.create'
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
-    // The present user's own Inbox notice read or dismissal is reversible bookkeeping on a private
-    // notice; the executor admits only those exact notice transitions. Document edits stay confirmed.
-    ...(id === 'artifact.update' ? { approvalPolicy: {
-      uiConfirmation: 'direct' as const,
-      uiConfirmationForInput: (input: unknown) => {
-        const header = readRecord(readRecord(input).header);
-        return header.kind !== USAGE_NOTICE_ARTIFACT_KIND_V1 && header.kind !== ACCOUNT_NOTICE_ARTIFACT_KIND_V1;
-      },
-    } } : {}),
+    // Save is the person's direct UI decision. Automation keeps the danger default;
+    // notice transitions and document access remain enforced by their existing owners.
+    ...(id === 'artifact.update' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     title: ARTIFACT_ACTION_COPY[id][0], description: id === 'artifact.export' ? ARTIFACT_ACTION_COPY[id][1]
       : 'Read, publish and manage ordinary Account Artifacts through their mode-aware store.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read || id === 'artifact.public_link.list' ? 'read' : 'write',
@@ -118,7 +111,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
         description: 'Explicit {machineId, rootPath} source. Overrides an ambient Session; the host must support this Machine workspace or refuse the operation.' },
       { path: 'title', title: 'Document title', widget: 'text' },
     ] : id === 'artifact.export' ? [
-      { path: 'artifactId', title: 'Document', widget: 'text', description: 'Binary document to export.' },
+      { path: 'artifactId', title: 'Document', widget: 'text', description: 'Document to download on the answering client, or binary document to export to a workspace.' },
       { path: 'destination', title: 'Destination', widget: 'text', description: 'Use client to download on the answering client, retaining its platform file chooser.' },
       { path: 'fileName', title: 'Download name', widget: 'text', description: 'Optional answering-client file name; otherwise the current document title is used.' },
       { path: 'reference', title: 'File revision', widget: 'json', description: 'Optional exact binary reference from a document revision. Omit to download the current file.' },

@@ -322,6 +322,22 @@ describe('ApprovalPromptCard', () => {
         />, createApprovalTestSource());
     }
 
+    it('shows the immutable proposed passage and reason before posting a document suggestion', async () => {
+        const revision = { headerVersion: 1, bodyVersion: 1 };
+        const screen = await renderCard({ ...approvalRequest(), actionId: 'doc.edit.propose', actionArgs: {
+            target: { ref: { kind: 'doc', artifactId: 'doc-private', serverId: homeId }, revision,
+                range: { start: 0, end: 8 }, quote: 'Old text' },
+            baseRevision: revision, before: 'Old text', after: 'Revised passage', reason: 'Clarify the opening hours',
+            discussionRef: { serverId: homeId, discussionId: 'thread-private' }, localId: 'suggestion-private',
+        } });
+        expect(screen.findByTestId('approval-prompt-doc-edit-proposal.diff')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Clarify the opening hours');
+        expect(screen.getTextContent()).toContain('Revised passage');
+        expect(screen.getTextContent()).not.toContain('thread-private');
+        expect(screen.getTextContent()).not.toContain('suggestion-private');
+        expect(screen.findByTestId('approval-prompt-reject')).not.toBeNull();
+    });
+
     it('denies decisions when the source withholds actions even if interaction props permit approval', async () => {
         const approval = localUiApprovalRequest();
         await seedApproval(approval);

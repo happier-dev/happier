@@ -1,6 +1,8 @@
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 
 import { t } from '@/text';
+import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -68,6 +70,9 @@ function readFailureMessage(value: unknown): string | null {
     const record = asRecord(value);
     if (!record) return null;
     const code = record.errorCode ?? record.code;
+    const discussionCode = typeof code === 'string' && code.startsWith('discussion')
+        ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
+    if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');

@@ -2949,7 +2949,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required,
     ).toBe(true);
   });
-  it('uses admitted contextual danger for present-user UI approval while preserving surface overrides', () => {
+  it('keeps contextual UI consequences confirmed while a direct press answers Account Ask', () => {
     const actionId = 'artifact.update' as const;
     const context = {
       surface: 'ui' as const,
@@ -2994,11 +2994,11 @@ describe('isApprovalRequiredByActionsSettings', () => {
         defaultSafety: 'safe',
         settings: required,
       }).required,
-    ).toBe(true);
+    ).toBe(false);
     // A direct press does not add a second card from the declaration alone.
     expect(resolveActionApprovalRouting(args).required).toBe(false);
   });
-  it('admits direct notice and document edits while retaining explicit Ask', () => {
+  it('admits direct notice and document edits while retaining automation Ask', () => {
     const actionId = 'artifact.update' as const;
     const spec = getActionSpec(actionId);
     const context = {
@@ -3069,7 +3069,10 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings: required,
         input: { ...base, header: { ...notice, readAt: 1 } },
       }).required,
-    ).toBe(true);
+    ).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: required,
+      context: { surface: 'agent', authority: 'account_automation' },
+      input: { ...base, header: { ...notice, readAt: 1 } } }).required).toBe(true);
   });
   it('returns durable approvals for CLI, Agent and MCP callers', () => {
     for (const actionId of [

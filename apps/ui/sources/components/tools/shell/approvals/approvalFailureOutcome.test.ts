@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { t } from '@/text';
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -34,6 +35,18 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it('retains a document proposal posting refusal as readable cause and typed technical detail', () => {
+        const errorCode = 'discussion_post_denied';
+        const request = ApprovalRequestV1Schema.parse({ ...approval(), status: 'failed', actionId: 'doc.edit.propose',
+            execution: { executedAtMs: 3, ok: false, errorCode, error: errorCode } });
+        const failure = readApprovalExecutionFailure(request);
+        expect(failure).not.toBeNull();
+        const outcome = presentApprovalFailureOutcome(request, failure!);
+        expect(outcome.reason).toBe(t('session.collaboration.discussion.postDenied'));
+        expect(outcome.code).toBe(errorCode);
+        expect(outcome.technicalDetails).toContainEqual(expect.objectContaining({ key: 'failure-code', value: errorCode }));
+    });
+
     it('renders terminal receipt recovery without exposing its receipt coordinates', () => {
         const details = { ok: true, environmentId: 'environment-private', revision: 4,
             deploymentId: 'receipt-private', deploymentRevision: 2, state: 'outcome_unknown',

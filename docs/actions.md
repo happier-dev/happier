@@ -665,6 +665,14 @@ unmounting or changing scope cancels its wait. Each presented Browser host has o
 wait, independent of its number of native views. Older daemons retain one-shot
 discovery and the existing visible retry path; no polling fallback is introduced.
 
+In 0.3 development, Browser extension Actions choose a Machine before a saved
+profile. `browser.profiles.available` resolves those choices through the existing
+`browser.extensions.list` Action, including saved profiles with no extensions.
+Install also accepts a new profile name; update, enable, disable and remove use
+existing profiles. List can omit the profile to include all saved profiles. A
+daemon reply without profile inventory reports unavailable choices rather than
+an empty inventory.
+
 In 0.3 development, `browser.profile.logins.import` uses one closed `kind`-based
 Action for a selected managed profile. Public operands contain Machine, Session,
 view, profile and source selections; public results contain per-record metadata.
@@ -1011,8 +1019,9 @@ transport checks; it does not grant authority or relax their target binding.
 In 0.3 development, a trusted person's direct app UI press is their decision:
 the shared approval owner does not add a second approval card from the Action's
 automation safety default. Designed local reviews and destructive confirmations
-remain declaration-owned. Explicit per-Action/per-surface Ask settings and profile Require
-still win. Agent, CLI and MCP callers retain their declared defaults, and unknown
+remain declaration-owned. Account and profile Ask settings govern automation and
+other-person requests; the person's own UI admission answers those settings too.
+Agent, CLI and MCP callers retain their declared defaults, and unknown
 surfaces fail closed. Present-user UI authority comes from a host-mediated control,
 excluding external credentials and Session RPC authority. Home may relay that
 exact Account UI press to its Machine with the same present-user default. A raw plugin
@@ -1021,9 +1030,10 @@ a plugin click handler starts it; declaring a direct UI policy does not upgrade
 that caller or its nested Actions. Action declarations retain their local confirmation
 metadata on UI as well as their separate automation defaults. Plugin install
 still owns its first Install & Trust trusted-code disclosure. A completed in-flow
-confirmation consumes the default for that exact operation. Explicit per-surface
-Ask and profile Require remain unless the existing review admission proves they
-were answered. A new consequence discovered at preflight
+confirmation consumes the default for that exact operation. Saving an ordinary
+document through `artifact.update` is a direct UI edit: Save writes the revision
+without another approval card, while automation retains its Ask default.
+A new consequence discovered at preflight
 still asks in place through the existing inline approval decision. Internal
 steps of the reviewed operation consume its parent admission, rather than asking
 again; predeclared children's explicit Require is included in the parent review.
@@ -4921,7 +4931,15 @@ path and byte count. It does not expose raw bytes in the transcript or replace A
 access with workspace-path-only filesystem download. These are development-source contracts; Plain/E2EE
 composed live export remains part of the next owner-authorized QA pass.
 
-In the same development source, `artifact.export` also accepts
+In the same development source, `artifact.export` accepts
+`{ artifactId, destination: 'client', fileName? }` for browser download or native
+share/save. Text documents export as UTF-8 Markdown with a `.md` filename and
+`text/markdown` media type. Prompt Library documents use the canonical prompt
+reader to export their Markdown rather than their stored JSON envelope. The
+saved document editor's overflow menu invokes this same Action; unsaved edits
+remain in the editor. Binary documents retain their exact bytes and media type.
+
+`artifact.export` also accepts
 `{ portable: { kind: 'role' | 'launch-profile', document } }`. The document must
 pass its canonical Role or value-free Launch Profile schema. This arm runs on
 the answering client and uses the existing browser download/native share owner
@@ -7261,6 +7279,9 @@ The daemon Computer route consumes the canonical Action policy admission without
 present-user approval floor. Machine/Session isolation and selected-source consent still apply.
 Approval preserves the agent's `account_automation` authority; it does not turn the caller
 into a present user or grant observation consent merely for selecting or handing back.
+When Happier prepares an agent's Computer proposal, its target lookup uses the existing
+Account Action transport with the Session caller and automation authority intact. The
+direct present-user Computer RPC serves only the person's controls.
 User controls relayed through external Actions carry a Session envelope target, which the
 existing locality resolver validates against the executing machine.
 The person's own controls from Happier (choose, look, stop, hand back, privacy pane) reach the
@@ -9829,8 +9850,10 @@ Structured Memory uses its own Actions.
 
 `doc.comment.reply` and `doc.edit.propose` use the existing Discussion writer,
 content codec and retry identity. Passage text stays inside the admitted content
-envelope; routing carries only the qualified Doc and complete revision. Thread
-replies inherit the root's Doc anchor.
+envelope; routing carries only the qualified Doc and complete revision. A new
+passage thread includes the Doc's current owner and accessible people through
+the existing initial Discussion grants, including people with Team or Group
+access. Thread replies inherit the root's Doc anchor.
 
 Proposals retain the exact source passage (UTF-16 Markdown offsets and quote),
 before/after text, reason and full base revision. Posting one changes no Doc text.
