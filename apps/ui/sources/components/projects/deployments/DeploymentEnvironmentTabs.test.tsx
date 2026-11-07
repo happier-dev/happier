@@ -749,6 +749,29 @@ describe('Environment → manager edits', () => {
       await act(async () => picker(settings.screen, 'project-deployments.environment.settings.servers-build.buildsOn')!
         .props.onSelect('machine-b'));
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { buildMachineId: 'machine-b' });
+      // How it deploys (review/howitdeploys): rollout, restore-on-fail and kept-for-rollback save through the same Action.
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+      const { Switch } = await import('@/components/ui/forms/Switch');
+      const rolloutId = 'project-deployments.environment.settings.rollout';
+      const rollout = settings.screen.findAllByType(SegmentedChoiceItem).find((node) => node.props.testID === `${rolloutId}.rollout`);
+      await act(async () => rollout!.props.onChange('startFirst'));
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { ownServer: { rollout: 'startFirst' } });
+      const restore = settings.screen.findAllByType(Switch)[0]!;
+      await act(async () => restore.props.onValueChange(!restore.props.value));
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment,
+        { ownServer: { autoRestorePreviousRelease: !restore.props.value } });
+      const kept = settings.screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${rolloutId}.kept`);
+      await act(async () => { kept!.props.onCommit('3'); });
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { retainPreviousDeployments: 3 });
+      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+      // An agent sends the same patches to the same Action.
+      for (const call of updateEnvironment.mock.calls) {
+        expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: 'srv', environmentId: detail.environment.id,
+          expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
+          contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+          patch: call[1] }).success).toBe(true);
+      }
     } finally {
       await settings.screen.unmount();
       settings.controller.retire();
@@ -957,6 +980,32 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).toContain("Checks can't be set up from here");
       expect(invoked).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('shows the preview template it carries: on, where previews run, their address, data and that forks get none', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const runtimeLinkId = base.environment.runtimeTargetLinkId ?? base.targetLinks[0]!.targetLink.id;
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, previewTemplate: {
+      v: 1, enabled: true, forkPreviews: 'off',
+      repository: { kind: 'github', deployment: 'https://github.example/enterprise', repository: 'owner/app' },
+      runtimeTargetLinkId: runtimeLinkId,
+      domain: { domainId: 'wildcard', templateSlug: 'app', hostnamePattern: 'pr-{number}.preview.happier.dev' },
+      bindingBlueprints: [],
+      data: [{ kind: 'managed', dataTargetLinkId: 'neon-link', ownership: 'providerNative',
+        parentBranchRef: { providerProjectId: 'neon-project', branchId: 'main' } }],
+    } } });
+    const { screen, controller, settle } = await renderTab('settings', detail);
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await settle(`${id}.enabled`)).not.toBeNull();
+      const text = screen.getTextContent();
+      expect(text).toContain('On for new pull requests');
+      expect(text).toContain('pr-{number}.preview.happier.dev');
+      expect(text).toContain('A branch of the database');
+      // The template runs on this Environment's own runtime link: the production-Machine warning shows.
+      expect(text).toContain('Previews share the production Machine');
+      expect(screen.findByTestId(`${id}.forks`)).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
   });
 
   it('uses one data card for a template database and opens the existing Variables and Store flows', async () => {

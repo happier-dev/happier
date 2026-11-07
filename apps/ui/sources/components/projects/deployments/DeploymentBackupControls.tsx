@@ -16,12 +16,7 @@ import { deploymentDataTargetOperands } from './deploymentRestore';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
-import {
-  SCHEMA_FIELD_INPUT_STYLE,
-  SchemaFieldRow,
-  SchemaFieldValueSlot,
-} from '@/components/settings/schemaFields/SchemaFieldRow';
-import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
+import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -202,7 +197,7 @@ function draftFrom(retention: Retention): Record<KeepField, string> {
   return { last: count('last'), daily: count('daily'), weekly: count('weekly'), monthly: count('monthly') };
 }
 
-/** Empty everywhere keeps every backup; any other entry must be a whole number above zero. */
+/** Empty or 0 everywhere keeps every backup; any other entry must be a whole number. */
 export function retentionFromDraft(draft: Readonly<Record<KeepField, string>>): Retention | null {
   const counts: Partial<Record<KeepField, number>> = {};
   for (const field of KEEP_FIELDS) {
@@ -210,8 +205,9 @@ export function retentionFromDraft(draft: Readonly<Record<KeepField, string>>): 
     if (text === '') continue;
     if (!/^\d+$/.test(text)) return null;
     const value = Number(text);
-    if (!Number.isSafeInteger(value) || value < 1) return null;
-    counts[field] = value;
+    if (!Number.isSafeInteger(value)) return null;
+    // 0 means this rule keeps nothing extra, the same as leaving it empty (lab `database/keep`).
+    if (value > 0) counts[field] = value;
   }
   return Object.keys(counts).length === 0 ? { kind: 'keepEverything' } : { kind: 'keep', ...counts };
 }
@@ -278,29 +274,22 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
         )}
       />
       {draft ? KEEP_FIELDS.map((field) => (
-        <SchemaFieldRow
+        <FieldValueItem
           key={field}
           testID={`${props.testID}.retention.${field}`}
+          fieldTestID={`${props.testID}.retention.${field}.input`}
           title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)}
-          layout="adaptive"
+          kind="integer"
+          allowEmpty
+          placeholder="0"
+          value={draft[field]}
+          stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
           disabled={saving}
-          control={
-            <SchemaFieldValueSlot kind="number">
-              <SchemaFieldControl
-                control="text"
-                inputProps={{
-                  testID: `${props.testID}.retention.${field}.input`,
-                  accessibilityLabel: t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`),
-                  value: draft[field],
-                  placeholder: '0',
-                  keyboardType: 'number-pad',
-                  editable: !saving,
-                  onChangeText: (text: string) => setDraft((current) => current ? { ...current, [field]: text } : current),
-                  style: SCHEMA_FIELD_INPUT_STYLE,
-                }}
-              />
-            </SchemaFieldValueSlot>
-          }
+          onDraftChange={(text) => setDraft((current) => current ? { ...current, [field]: text } : current)}
+          onCommit={(text) => {
+            setDraft((current) => current ? { ...current, [field]: text } : current);
+            return text;
+          }}
         />
       )) : null}
       {actions && target && configuration.retention.kind === 'keep' && !draft ? (

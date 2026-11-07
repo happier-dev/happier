@@ -21,7 +21,11 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
+import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -111,6 +115,10 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     );
     const section = (id: DeploymentEnvironmentSettingsSectionV1) =>
       `project-deployments.environment.settings.${id}`;
+    const rolloutOptions: ReadonlyArray<SegmentedChoiceOption<'recreate' | 'startFirst'>> = [
+      { id: 'recreate', label: t('projects.deployments.settingsSections.rolloutRecreateShort') },
+      { id: 'startFirst', label: t('projects.deployments.settingsSections.rolloutStartFirstShort') },
+    ];
     const projectSourceId = detail.environment.projectSourceId;
     const checkLifetime = editing ? props.lifetime ?? null : null;
     const checkActions = React.useMemo(() => checkLifetime ? createDeploymentActions(checkLifetime, projectSourceId) : null,
@@ -276,7 +284,40 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           title={t('projects.deployments.sectionRollout')}
           description={t('projects.deployments.sectionRolloutDescription')}
         >
-          {ownServer ? (
+          {ownServer && editing ? (
+            <>
+              {/* How it deploys (lab review/howitdeploys): each choice saves once through environments.update. */}
+              <SegmentedChoiceItem<'recreate' | 'startFirst'>
+                testID={`${section('rollout')}.rollout`}
+                testIDPrefix={`${section('rollout')}.rollout`}
+                title={t('projects.deployments.sectionRollout')}
+                subtitle={ownServer.rollout === 'startFirst'
+                  ? t('projects.deployments.rolloutStartFirst')
+                  : t('projects.deployments.rolloutRecreate')}
+                accessoryLayout="adaptive"
+                options={rolloutOptions}
+                value={ownServer.rollout}
+                disabled={change.running}
+                onChange={(rollout) => {
+                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { ownServer: { rollout } }));
+                }}
+              />
+              <Item
+                testID={`${section('rollout')}.restore`}
+                title={t('projects.deployments.restoreOnFail')}
+                rightElement={
+                  <Switch
+                    value={ownServer.autoRestorePreviousRelease}
+                    disabled={change.running}
+                    onValueChange={(autoRestorePreviousRelease) => {
+                      void change.press(() => editing.actions.updateEnvironment(detail.environment,
+                        { ownServer: { autoRestorePreviousRelease } }));
+                    }}
+                  />
+                }
+              />
+            </>
+          ) : ownServer ? (
             <>
               <Item
                 title={t('projects.deployments.sectionRollout')}
@@ -298,13 +339,35 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               />
             </>
           ) : null}
-          <Item
-            title={t('projects.deployments.keptForRollback')}
-            detail={t('projects.deployments.keptCount', {
-              count: detail.content.retainPreviousDeployments,
-            })}
-            mode="info"
-          />
+          {editing ? (
+            <FieldValueItem
+              testID={`${section('rollout')}.kept`}
+              fieldTestID={`${section('rollout')}.kept.input`}
+              title={t('projects.deployments.keptForRollback')}
+              kind="integer"
+              value={String(detail.content.retainPreviousDeployments)}
+              stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+              disabled={change.running}
+              onCommit={(draft) => {
+                const count = Number(draft.trim());
+                if (draft.trim() !== '' && Number.isSafeInteger(count) && count >= 0
+                  && count !== detail.content.retainPreviousDeployments) {
+                  void change.press(() => editing.actions.updateEnvironment(detail.environment,
+                    { retainPreviousDeployments: count }));
+                }
+                // The settled Environment re-read replaces this value.
+                return String(detail.content.retainPreviousDeployments);
+              }}
+            />
+          ) : (
+            <Item
+              title={t('projects.deployments.keptForRollback')}
+              detail={t('projects.deployments.keptCount', {
+                count: detail.content.retainPreviousDeployments,
+              })}
+              mode="info"
+            />
+          )}
         </ItemGroup>
 
         <ItemGroup
@@ -343,12 +406,15 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         >
           <BackupRows {...props} testID={section('backups')} />
         </ItemGroup>
-        {detail.environment.purpose === 'preview' || props.lifetime ? (
+        {detail.environment.purpose === 'preview' || props.lifetime || detail.content.previewTemplate ? (
           <ItemGroup
             testID={section('previews')}
             title={t('projects.deployments.sectionPreviews')}
             description={t('projects.deployments.sectionPreviewsDescription')}
           >
+            {detail.environment.purpose !== 'preview' ? (
+              <PreviewTemplateRows detail={detail} machineName={machineName} testID={`${section('previews')}.template`} />
+            ) : null}
             {detail.environment.purpose === 'preview' ? (
               <PreviewOfRow {...props} testID={section('previews')} />
             ) : props.lifetime ? (
@@ -547,6 +613,65 @@ function retentionLabel(retention: DeploymentBackupConfigurationV1['retention'])
     retention.weekly !== undefined ? t('projects.deployments.backupKeepWeekly', { count: retention.weekly }) : null,
     retention.monthly !== undefined ? t('projects.deployments.backupKeepMonthly', { count: retention.monthly }) : null,
   ].filter((part): part is string => part !== null).join(' · ');
+}
+
+/**
+ * The preview template this Environment carries (lab `d5d/template`, `previewdb/template`, `previewdb/branch`,
+ * `d5d/prodmachine`): whether new pull requests get previews, where they run, their address pattern and their data.
+ * Read from the Environment's own content; forks never get previews, which is a fact rather than a choice here.
+ */
+function PreviewTemplateRows(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  machineName: (machineId: string) => string;
+  testID: string;
+}>) {
+  const { theme } = useUnistyles();
+  const template = props.detail.content.previewTemplate;
+  // Without a template the preview list below already says there are none.
+  if (!template) return null;
+  const link = props.detail.targetLinks.find((row) => row.targetLink.id === template.runtimeTargetLinkId)?.targetLink;
+  const machines = link && 'machines' in link && Array.isArray(link.machines) ? link.machines.map(props.machineName) : [];
+  const sharesProduction = template.runtimeTargetLinkId === (props.detail.environment.runtimeTargetLinkId ?? props.detail.runtimeTargetLink?.id);
+  const data = template.data[0];
+  return (
+    <>
+      <Item
+        testID={`${props.testID}.enabled`}
+        title={t('projects.deployments.settingsSections.previewsTitle')}
+        detail={template.enabled
+          ? t('projects.deployments.settingsSections.previewsOn')
+          : t('projects.deployments.settingsSections.previewsOff')}
+        mode="info"
+      />
+      <Item
+        testID={`${props.testID}.runsOn`}
+        title={t('projects.deployments.settingsSections.previewsRunsOn')}
+        subtitle={sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined}
+        subtitleLeading={sharesProduction ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined}
+        detail={machines.join(', ') || link?.targetKind}
+        mode="info"
+      />
+      {template.domain ? (
+        <Item
+          testID={`${props.testID}.address`}
+          title={t('projects.deployments.settingsSections.previewsAddress')}
+          detail={template.domain.hostnamePattern}
+          mode="info"
+        />
+      ) : null}
+      <Item
+        testID={`${props.testID}.data`}
+        title={t('projects.deployments.settingsSections.previewsData')}
+        detail={!data ? t('projects.deployments.settingsSections.previewsDataNone')
+          : data.kind === 'managed' ? t('projects.deployments.settingsSections.previewsDataBranch')
+            : t('projects.deployments.settingsSections.previewsDataOwn')}
+        mode="info"
+      />
+      {template.forkPreviews === 'off' ? (
+        <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')} mode="info" />
+      ) : null}
+    </>
+  );
 }
 
 /** A preview Environment names the pull request it serves and the template it was made from. */
