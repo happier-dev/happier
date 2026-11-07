@@ -11,6 +11,7 @@ import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFro
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { encrypt, decryptResult, encodeBase64, decodeBase64 } from '@/api/encryption';
 import { TaskResourceV1Schema, TaskResourceMutateRequestV1Schema, TaskAccessGrantSetRequestV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
+import { TODO_LABEL_CATALOG_KEY_V1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 
 const scope = { serverId: 'task-home', accountId: 'task-account' };
 const token = `header.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`;
@@ -195,6 +196,7 @@ it('opens predecessor E2EE records and retains their encryption and bare Session
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(url).pathname;
     if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-current', contentKeyFingerprint: fingerprint, updatedAt: 1 } };
+    if (path === `/v1/kv/${TODO_LABEL_CATALOG_KEY_V1}`) return { status: 404 };
     const row = { key: 'todo.old', value: encoded, version };
     if (path === '/v1/kv') return { status: 200, data: { items: [row] } };
     if (path === '/v1/kv/todo.old') return { status: 200, data: row };

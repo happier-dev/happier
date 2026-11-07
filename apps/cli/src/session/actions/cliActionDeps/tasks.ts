@@ -8,11 +8,12 @@ import { createCliTaskResourceOptions, createCliTaskResourceClient } from '@/api
 import { createTaskResourceSessionLinkPortV1 } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 export function createCliTasksActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverId'>,
-  { homeAccountId, resolveServerRequestHeaders, todoHomeBaseUrl, todoHomeServerId }: Readonly<{
+  { homeAccountId, resolveServerRequestHeaders, todoHomeBaseUrl, todoHomeServerId, actionHomeId }: Readonly<{
     homeAccountId: string | null;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     todoHomeBaseUrl: string;
     todoHomeServerId: string;
+    actionHomeId: string;
   }>,
 ): Pick<ActionExecutorDeps, 'internalTaskAction' | 'listReorder' | 'todoSessionLink'> {
   return {
@@ -24,7 +25,7 @@ export function createCliTasksActionDeps(
         }
       };
       const { createCliAccountKvJsonCollectionTransport } = await import("@/api/client/accountKvJsonTransport");
-      return executeInternalTaskAction({ actionId, input, scope: { serverId: todoHomeServerId, accountId: homeAccountId }, requireCurrent, createId: randomUUID,
+      return executeInternalTaskAction({ actionId, input, scope: { serverId: actionHomeId, accountId: homeAccountId }, requireCurrent, createId: randomUUID,
         resources: createCliTaskResourceOptions({ credentials: params.credentials, accountId: homeAccountId, serverBaseUrl: todoHomeBaseUrl,
           requireCurrent, signal, resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request) }),
         port: createCliAccountKvJsonCollectionTransport({ credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl, signal,
@@ -41,7 +42,7 @@ export function createCliTasksActionDeps(
         }
       };
       const { createCliAccountKvJsonCollectionTransport } = await import("@/api/client/accountKvJsonTransport");
-      return executeInternalTaskReorder({ input, scope: { serverId: todoHomeServerId, accountId: homeAccountId }, requireCurrent,
+      return executeInternalTaskReorder({ input, scope: { serverId: actionHomeId, accountId: homeAccountId }, requireCurrent,
         resources: createCliTaskResourceOptions({ credentials: params.credentials, accountId: homeAccountId, serverBaseUrl: todoHomeBaseUrl,
           requireCurrent, signal, resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request) }),
         port: createCliAccountKvJsonCollectionTransport({ credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl, signal,
@@ -61,7 +62,7 @@ export function createCliTasksActionDeps(
         }
       };
       try {
-        const intent = resolveTodoSessionLinkInputV1(parsed.data, { serverId: todoHomeServerId, accountId: homeAccountId });
+        const intent = resolveTodoSessionLinkInputV1(parsed.data, { serverId: actionHomeId, accountId: homeAccountId });
         requireCurrent();
         const { createCliAccountKvJsonTransport } = await import("@/api/client/accountKvJsonTransport");
         const personalPort = createCliAccountKvJsonTransport({
