@@ -898,7 +898,13 @@ function resolvePackageNameShadowedByArtifactAssetExt(context, moduleName) {
 }
 
 const defaultResolveRequest = config.resolver.resolveRequest;
+const shikiGrammarRegistryPath = require('./scripts/shikiGrammarRegistry.cjs').resolveShikiGrammarRegistry(__dirname);
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'web' && context?.originModulePath && moduleName.startsWith('.')
+    && path.resolve(path.dirname(context.originModulePath), moduleName) === shikiGrammarRegistryPath) {
+    return { type: 'sourceFile', filePath: path.join(__dirname,
+      'sources/components/ui/code/highlighting/shiki/shikiGrammarRegistry.web.ts') };
+  }
   const inventoryImportPath = privatePluginUiInventory
     ? moduleName.startsWith('@/')
       ? path.resolve(__dirname, 'sources', moduleName.slice(2))

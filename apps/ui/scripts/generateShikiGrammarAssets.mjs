@@ -45,7 +45,7 @@ export async function generateShikiGrammarAssets({
     publicationPath = outputPath,
 } = {}) {
     const require = createRequire(join(uiPackageDir, 'package.json'));
-    const { bundledLanguages } = await import(pathToFileURL(require.resolve('shiki/langs')).href);
+    const { bundledLanguages, bundledLanguagesInfo } = await import(pathToFileURL(require.resolve('shiki/langs')).href);
     const assets = new Map();
     const languages = [];
     for (const [id, load] of Object.entries(bundledLanguages)) {
@@ -75,6 +75,7 @@ export async function generateShikiGrammarAssets({
         'export const SHIKI_LANGUAGE_ASSETS = {',
         ...languages,
         '};',
+        `export const SHIKI_LANGUAGE_INFO = ${JSON.stringify(bundledLanguagesInfo.map(({ import: _load, ...metadata }) => metadata))};`,
         '',
     ].join('\n'));
     return { outputPath, assetPaths, inputPaths: await resolveShikiGrammarAssetInputPaths({ uiPackageDir }) };

@@ -1,4 +1,4 @@
-import type { LanguageInput, LanguageRegistration } from 'shiki';
+import type { DynamicImportLanguageRegistration, LanguageInput, LanguageRegistration } from 'shiki';
 
 import { readBundledAssetBytes } from '@/utils/assets/readBundledAssetBytes';
 import { SHIKI_LANGUAGE_ASSETS } from './generatedShikiGrammarAssets';
@@ -24,13 +24,13 @@ function loadRegistration(asset: AssetModule): Promise<LanguageRegistration> {
     return promise;
 }
 
-const bundledLanguages: Record<string, LanguageInput> = Object.fromEntries(
+export const bundledShikiLanguageLoaders: Record<string, DynamicImportLanguageRegistration> = Object.fromEntries(
     Object.entries(SHIKI_LANGUAGE_ASSETS).map(([id, assets]) => [
         id,
-        () => Promise.all(assets.map(loadRegistration)),
+        async () => ({ default: await Promise.all(assets.map(loadRegistration)) }),
     ]),
 );
 
 export async function loadShikiLanguages(): Promise<Record<string, LanguageInput>> {
-    return bundledLanguages;
+    return bundledShikiLanguageLoaders;
 }
