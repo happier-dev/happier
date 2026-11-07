@@ -72,6 +72,13 @@ and an offered Summary model that supports structured output. An unavailable or
 unverified model cannot start a walkthrough. Chat continuation is a separate
 capability, so a model that can write an explanation may not support discussion.
 
+The **Subagents** feature must also be enabled. In 0.3 development it is standard
+and enabled by default; an explicit off choice in **Settings → Features** is preserved. See
+[Feature flags](/extras/feature-flags#features-you-can-turn-on-yourself).
+If Start says **Agents can't start on this Home.**, check that feature's
+availability for the selected Home. A reachable machine and a compatible model
+do not enable it. This explanation also applies to Project commit proposals.
+
 In the development Project flow, choose an accepted checkout first. Its Files
 and Walkthrough use that checkout's machine without starting a helper session.
 Access to the machine and directory alone does not unlock saved session-private
@@ -85,6 +92,8 @@ the comparison surface. Pending changes in Git, Companion's Changes glance, the
 command palette and a Walkthrough board widget also open that surface. Opening
 it does not run a model. Select a model and choose **Start** when you want an
 explanation; an existing saved result can reopen without generation.
+If the Session model cannot be used, Start or Try again stops and offers
+**Choose a model**; select a usable model to continue.
 
 Reopening first checks for saved output. While that read is pending, the surface
 shows restoration progress; an unavailable read offers retry. It does not treat
@@ -108,8 +117,18 @@ These notes use the same saved explanation
 and personal reviewed marks; they do not generate a second explanation.
 The turn card's **Open in Files** keeps the selected turn, even after a later turn.
 List/tree presentation shares the existing changed-files preference with Git.
-In the phone cockpit, full-screen Files and Walkthrough hide the Session tab bar
-while reading. Use the reading controls and Back to return to the conversation.
+On wide layouts, Files keeps its changed-file index in a side rail, including
+when Explain is on. Phones use the compact file control above the reading.
+On phones, full-screen Files and Walkthrough use one tab bar while reading.
+A page opened from a Details page gets its own rail tab, so the reading remains
+available. The Tabs button also opens its page as a rail tab. Use the reading
+controls and Back to return to the conversation.
+
+Native Copy controls for diff selections, paths and file contents use the shared
+clipboard Action and can require approval or be refused. Browser Copy writes
+directly from your click or tap to meet browser clipboard requirements; those
+UI copies do not use the Action's disable or approval settings. A failed copy
+does not establish that the clipboard changed.
 
 ### What the comparison means
 
@@ -135,14 +154,22 @@ The surface distinguishes source availability, model analysis and **your** revie
 An inventory can be incomplete even after the requested explanation finishes.
 Large analyses can continue in parts in one conversation; failure or cancellation
 keeps earlier prose and available evidence. Unanalysed changes remain visible.
+Part totals can grow if the Agent rejects an input as too large. If even the
+instructions or final integration cannot fit, the output keeps an explicit
+capacity failure or partial state. Refine and discussion do not automatically
+split their saved context into parts.
 
 Choose **Mark reviewed** explicitly after reading a stop; select its reviewed
 control again to clear the mark. Marks sync with your Account for the comparison
 scope. An unrelated edit or a line shift keeps the mark for unchanged change
 content; rewriting that content makes it unreviewed. Generating prose, resolving
-a finding or opening code does not mark it reviewed. Loading marks is an unknown
-state, not a confirmed zero count. Deleting a saved explanation leaves your marks
-intact; use Reset review to clear them.
+a finding or opening code does not mark it reviewed. While the first marks read
+is pending, the header reserves room for the count without showing or announcing
+zero. Use Reset review to clear marks for the current comparison scope.
+Mark, Keep and Reset use the shared Action admission and approval controls.
+They require the comparison's machine to validate the evidence. When that
+machine is unavailable, readable Account marks remain visible but these controls
+are unavailable; they do not queue an offline write.
 
 That content retention also applies when a PR's base or head is refreshed:
 unchanged change content keeps its marks within the same repository and PR scope.
@@ -157,6 +184,14 @@ titles or explanations, reorder stops, or merge with the next stop.
 the saved revision. If another device edited it first, your draft stays available:
 choose **Load latest version**, review the differences and save again. A late
 model response cannot replace a newer manual edit.
+An unsaved title draft remains available when another publication arrives; a
+stale save asks you to reconcile with the latest version.
+
+For a Session-owned generator, Refine from the UI or terminal shows your entered
+instructions in the Run conversation; the model still receives the captured
+context. Discuss shows your question, and adding outputs shows the requested
+task. Host setup text stays out of the person-facing conversation, and a saved
+output update appears as a separate receipt with Undo when available.
 
 **Ask about this** hands the stop to the existing Session composer with the
 generator as recipient. **Open the walkthrough conversation** opens its actual
@@ -176,17 +211,30 @@ Cold offline recovery is not guaranteed.
 ### Preparation, costs and Clear
 
 In **Settings → Source control**, **Summary model** selects an offered model.
+Choose a machine first: without one, the model menu says **Choose a machine first
+to see its models.** Loading, a failed catalog read and an empty offering have
+their own states; a failed read offers retry rather than proving no models exist.
 **Prepare after each turn** is off by default and applies only to
 completed durable checkpoint turns, not pending changes or PRs. The seven-day
 cost is a subtotal from retained Run reports, not a complete charge ledger.
 It is labelled partial when priced records exist, or unavailable when none do.
 
-**Clear** names the selected machine and confirms loss of saved edits and the
-associated personal marks. It does not clear other machines or review findings.
+**Clear** discloses the selected machine, loss of saved walkthroughs and manual
+edits, and conditional removal of associated personal marks. It uses the shared
+Action confirmation policy. Generating a cleared reading again runs fresh.
+It does not delete saved results on other machines
+or review findings.
 An unavailable machine or a revision conflict can leave results undeleted, with
-partial failures reported. Failed mark cleanup keeps the result so you can retry;
-a concurrent edit can preserve the result after its marks were cleared. Clear is
-not an atomic operation across your Account and machine.
+partial failures reported. Marks are cleared only after the machine confirms
+deletion of the associated saved results, and only when no saved result in that
+repository/source comparison scope remains on the selected machine. A refused
+or unselected surviving result preserves the scope's marks, including a result
+from another capture of that scope. A refused or unconfirmed
+deletion does not authorize mark cleanup. Saved results on other machines are
+outside this check. If a result was deleted but its mark cleanup
+failed, Clear reports both outcomes and offers a retry for the marks; retrying
+does not repeat the deletion. Clear is not an atomic operation across your
+Account and machine.
 
 ### Review narration
 

@@ -7,6 +7,47 @@ open; the presentation gaps below must not be documented as completed flows.
 
 ## Owners and data flow
 
+### Source-owned file Viewed state (unreleased 0.3)
+
+A PR comparison locator may publish `fileViewedActions: { read, set }`, each an
+existing `ActionInvokeInput` reference. Omission means the source offers no
+Viewed control. Protocol SCM owns the closed `ScmFileViewedReadResultV1Schema`
+and `ScmFileViewedSetResultV1Schema`; SDK `/scm` projects those same schemas.
+The read returns one complete `files: [{ path, state }]` map and `headOid`, or a
+typed unavailable result carrying the source's existing failure classification.
+Locator references, result envelopes, rows and failure objects are recursively
+closed under the existing draft V1 contract. Matching unreleased 0.3 host/SDK
+source is required; this adds no epoch, persisted format or rollback adapter.
+The set extends its reference input with `path` and `viewed: boolean`, and returns
+the acknowledged path/state without rereading the write.
+
+GitHub's source reads only the opened PR, on open, return or explicit Refresh.
+It walks `files(first: 100)` cursors without a Happier file cap or polling,
+through the existing configured-source admission, credential and quota owners.
+GitHub `VIEWED`, `UNVIEWED` and `DISMISSED` become `viewed`, `unviewed` and
+`dismissed`; dismissed means the file changed since it was viewed. Current-head
+PR file summaries and navigation consume this source fact. Local hunk Keep stays
+content-keyed and never writes GitHub; other comparisons retain local whole-file
+review behavior. Captures of older heads offer no Viewed control. The private,
+reversible set Action defaults to Direct on every surface, while an explicit
+user Ask setting still applies. A GitHub-web change appears on the next read
+boundary, and a failure remains visible for user-initiated recovery.
+
+Core and same-realm plugin UI consume the same transient host source through
+`useScmFileViewed`; the plugin hook is exported from `@happier-dev/plugin-ui/hostApi`
+and backed by the existing presentation-host hook bridge. The source exposes
+path subscriptions and stable per-file snapshots; it is not copied into plugin
+state or Account KV. `useScmFileViewedFile(source, path)` is shared by core and
+plugin rows. Hosted web frames do not carry this same-realm hook.
+
+### Host Git execution and credentials (unreleased 0.3)
+
+`apps/cli/src/scm/runtime.ts` owns command admission for checkpoints and the
+public backend-command service. Workspace commands consume the existing Exec
+service and its held Agent-isolation policy; an unavailable or retired service
+does not fall back to a privileged child. Session checkpoint preparation and
+rollback carry that same host-private command port across runtime replacement.
+
 Checkpoint capture, comparison capture and SCM routes share their containing
 operation's cancellation signal. Their Git phases have no shorter command
 deadline; large staging, status and diff commands can finish while the operation
@@ -15,6 +56,33 @@ remain available for independent commands such as executable probes. Timeout and
 signal failures retain command kind, elapsed time, exit code and termination
 cause in the host result and local file log, without logging operands or content.
 Review presents the canonical failure and its existing Retry action.
+
+Credentialed push uses a host-private Git metadata view: object identities,
+references and push configuration are data, while repository/include/attributes
+execution settings are excluded. Host credential helpers remain host-owned.
+Global and system includes are resolved from the original checkout; under
+isolation, the canonical root policy rejects origins inside any enrolled
+Agent-writable root, including private-looking symlinks into those roots.
+Flattened entries must also match a fresh parse of their admitted canonical
+source; changing an include symlink after Git reads it cannot promote
+Agent-authored helper text into host authority. Each distinct canonical source
+is parsed once per push, with no persistent configuration cache.
+Neither Git nor forge credentials are copied into the Agent home.
+
+Bare local receivers use the same transport owner's fixed hook, worktree and
+maintenance policy. Non-bare receivers can run checkout filters, so those
+invocations use workspace Exec instead. Tracking references retain native Git
+old-OID collision checks. Setting upstream requires workspace Exec before the
+push; if that authority retires after a confirmed push, the result preserves
+push success and explicitly warns that upstream configuration was not updated.
+Temporary indexes are separate generated files beside the actual checkout
+index, including linked worktrees; cleanup never removes the live index or its
+parent directory.
+
+The source regressions exercise real authenticated Git HTTP push and forge HTTP
+PR creation. They do not establish native cross-UID launch, descendant custody
+or protected host-socket denial; those remain separate native integration
+evidence, not an implication of these source tests.
 
 Machine-captured repository comparisons are readable by a Session Review on that
 same Machine and Home. The capture reader first checks the Session namespace,
@@ -54,7 +122,7 @@ Template text, saved summaries and command output enter the existing prompt's
 evidence context, never its user-instructions field. The machine result retains
 that evidence privately for replacement generation and keeps the description
 under the existing summary edit/revision/Undo contract. Draft requests bypass
-analysis-cache reuse because the Session's testing context can change without a
+saved-generation reuse because the Session's testing context can change without a
 code change. They never invoke PR creation, push or browser navigation. The PR
 form (`GitPullRequestForm`, in the Git sidebar and in Details) offers the draft as
 one quiet action beside the body. It invokes the Action for the form's head/base
@@ -134,11 +202,18 @@ History is transient and independent of the directory read: failed refreshes
 retain known facts with a freshness notice, and valid files remain browsable.
 This is not a persisted history index or a replacement for paged `scm.log.list`.
 
-In this unreleased development flow, the full Code route opens folder and file
-pages in the main column; the Files companion keeps its file-to-Details behavior.
-Both consume the shared
+In this unreleased development flow, Code consumes the shared
 [`ProjectBrowseFilesSurface`](../apps/ui/sources/components/projects/detail/surfaces/ProjectBrowseFilesSurface.tsx)
-and existing file reader. In
+and existing file reader. Folder navigation stays in the browser; a new file
+activation delegates to the host's existing file opener. Existing Code file
+routes can still restore a file page. A Project's Files companion is not that
+page: `ProjectFilesPaneSurface` draws the same `WorkspaceRepositoryTreeBrowserView`
+tree as a Session's Files pane, addressed by the checkout, with the pane chrome both
+share from `useRepositoryTreePaneChrome`. Captured comparison files retain their repository root in the file
+Action, URL and tab identity. View and Edit therefore address that same file
+when the Session's working directory is below the repository root; changing
+the file's comparison does not change its base. Ordinary file links without
+an explicit root retain their Session-relative behavior. In
 [`WorkspaceFileDetailsView`](../apps/ui/sources/components/workspaces/files/details/WorkspaceFileDetailsView.tsx),
 Raw downloads the actual file through the ordinary workspace byte transfer, not
 the rendered preview or diff. Copy copies only complete loaded non-binary text;
@@ -194,11 +269,6 @@ typed failure asking for a client update. Other files' retained patch evidence
 stays daemon-side during these capture and file reads. File dependency failures leave Loading, offer Retry,
 and preserve any last-known-good content with the canonical freshness line.
 
-This projection does not yet cover `scm.diffSummary.result.read`: saved generated
-results still embed the full comparison. A pinned Files route restoring such a
-result can therefore bypass capture paging; that separate response contract
-needs the same bounded projection before all saved-result routes are bounded.
-
 Captured index pages, continuation cursors, settled read failures and hydrated
 file patches belong to the existing diff-summary Account/host state, rather than
 the mounted Review or file-details presenter. Phone recomposition and Home →
@@ -224,6 +294,14 @@ evidence records; these reads do not parse unrelated retained patches. Existing
 JSON captures are promoted after their first validated read. If promotion cannot
 write, evidence remains readable with a logged warning, but subsequent reads may
 retain the old parsing cost until promotion succeeds.
+
+For accepted Project checkouts, `useWorkspaceScmDiffSummaryBinding` supplies both
+Walkthrough and commit-proposal consumers with the existing Execution Run
+admission. Disabled `execution.runs` carries `launchUnavailableReason:
+'notEnabled'` into the common presenter, which explains that Agents cannot start
+on this Home. Machine reachability and structured-output model availability are
+separate prerequisites; neither substitutes for the feature decision. This is
+unreleased 0.3 behavior and does not establish that a particular Home is enabled.
 
 Attached Review and generation admission use the existing Execution Run start
 RPC under the caller's cancellation lifetime, without the generic Session RPC
@@ -283,7 +361,7 @@ In unreleased 0.3 source, `scm.diffSummary.outputLanguage` uses the existing Acc
 settings owner. Its empty default follows the requesting UI's active locale;
 explicit language tags select prose only. JSON keys, code, identifiers, enums and
 exact references retain their original meaning. The language travels on the
-existing generation request and separates analysis cache/request identities.
+existing generation request and separates saved-generation request identities.
 The saved generator retains that effective language for refinement, additional
 outputs and a replacement Run. An explicit language on a later request takes
 precedence. Earlier saved generators without a language remain readable and use
@@ -307,6 +385,24 @@ with the saved choice. If that Run is unavailable, its omitted binding cannot be
 reconstructed from the model tuple. A known original Team route without a
 representable saved credential choice refuses replacement rather than switching
 to current defaults.
+
+An explicit Summary picker choice uses the shared settings codec, retaining the
+canonical `modelSelection` and `connectedServices` fields through generation and
+Run admission. Own sign-in uses the existing explicit native routing contract:
+`connectedServices: null` (no connected inheritance or defaults), or a V2 binding
+with `source: 'native'`. Connected Account profiles and pool groups retain their
+V2 bindings; Provider connections retain their Provider-bound model reference.
+The legacy native picker JSON remains unchanged; its decoder restores explicit
+native routing. Model catalog evidence may supply capability support but never
+replaces the chosen authentication route. Execution admission remains owned by
+`resolveExecutionRunChildSelection`; the public `resolvedSelection` projects its
+admitted result. A retry with unknown recorded authentication requires a new
+choice rather than inferring credentials from a native model reference.
+
+These selector fields are an unreleased 0.3 contract extension; there is no 0.2
+producer at this seam. Update App and executing daemon together: older strict
+selector readers reject the new fields. Retained picker strings need no migration;
+the stored reader tolerates unrelated future fields without treating them as routing.
 
 Output notification opt-in uses the existing `RunWorkNotifications` owner and
 configured notification channels; it does not change Account preferences. An
@@ -338,8 +434,8 @@ the original pending revision so the original request can still publish into it.
 `scm.diffSummary.investigateSurroundingFiles` is off by default in unreleased
 0.3 source. Generation uses the Account preference when the request omits
 `investigateSurroundingFiles`; an explicit boolean overrides it for that request.
-The effective value follows the cache identity, saved generator and Run policy. Enabled and
-disabled analysis have different cache identities without changing comparison identity.
+The effective value follows the generation identity, saved generator and Run policy. Enabled and
+disabled analysis have different generation identities without changing comparison identity.
 When enabled, the capture owner materializes raw Git blobs at both exact captured
 endpoints, bypassing checkout filters and export attributes. The Run starts in the
 after directory and receives the before directory as read-only context. Missing
@@ -360,15 +456,15 @@ saved-result deletion under its existing lock. The Settings Action anchor is
 `sourceControl.investigateSurroundingFiles`.
 
 For an attached automatic summary Run, the runner first inherits the parent's
-applied model and route. An unavailable parent selection falls back to the
-configured summary model and that Agent's canonical Account default route;
-explicit model choices retain precedence. A different default Agent passes
-through canonical Action admission only after the parent attempt proves no Run
-was created. An unknown admission outcome is never retried. The bridge resolves
+applied model and route. When admission proves that an unavailable parent
+selection created no Run, generation returns `MODEL_UNAVAILABLE` with
+`nextAction: 'chooseModel'`; the existing Choose model control is the recovery.
+It does not silently Start again with an Account default. Explicit model
+choices retain precedence. An unknown admission outcome is never retried. The bridge resolves
 selection before summary-profile preparation so the saved generator and Run agree.
 This is development-source behavior pending daemon and runner reload validation.
 
-The summary fallback (and detached generation) resolves an unset preference to a catalog model in the `low` cost tier
+Standalone generation resolves an unset preference to a catalog model in the `low` cost tier
 with admitted structured-output support. Automatic native candidates also require
 the Agent's existing sign-in probe to report signed in on the executing machine;
 static model membership alone does not establish executable credentials.
@@ -408,9 +504,12 @@ default route cannot authenticate. Its optional `unavailableTargets` distinguish
 and `connected_default_unavailable` for automatic authentication. Explicit models
 and discovery remain available in `profiles`, including when several connected
 accounts exist without an Account default. They do not enter `automaticProfiles`
-without the existing sign-in or canonical default evidence. Choosing a model does
-not choose or persist a connected credential; the existing Session/Run admission
-still resolves an explicit or applied-parent route.
+without the existing sign-in or canonical default evidence. JSON-capable Agents
+with dynamic-only catalogs use the existing native model probe for explicit
+choices even when native sign-in is unavailable. The probe's existing cache and
+explicit refresh owner still apply. Choosing a model does not choose or persist a
+connected credential; the existing Session/Run admission still resolves an
+explicit or applied-parent route.
 A missing observation supplies
 no candidates; static UI descriptors and failed native probes cannot create a
 default or restore a signed-out route.
@@ -431,7 +530,7 @@ saved result through the existing generation admission receipt. Those
 receipts retain Run/input identity and `admission: 'outcomeUnknown'` across
 ordinary generation reuse, PR drafting and saved-result reads, without changing
 the pending output or revision. Draft evidence still excludes that result from
-ordinary analysis-cache reuse; it does not exclude its admission receipt.
+ordinary saved-generation reuse; it does not exclude its admission receipt.
 A known original Run binding supersedes that observation. The UI state projection
 reports `unknown` with retry withheld; its `admission` and `onCheckAdmission` props
 are the handoff for an uncertain-reading notice. That callback rereads the exact
@@ -511,8 +610,9 @@ it does not replace an explicit draft with generated prose.
   narration publish through this profile and the same machine result store.
 - [`resultStore.ts`](../apps/cli/src/agent/executionRuns/tasks/scmDiffSummary/results/resultStore.ts)
   owns editable output, revisions, immediate Undo, generator linkage and commit
-  application progress. Device projections and the analysis cache are readers,
-  not alternate editable authorities.
+  application progress and generation reuse. Device projections read this owner.
+  Clear removes the saved reading; generating it again runs fresh. The retired
+  output-cache file is left untouched and is neither read nor written.
 - [`useScmCommitPlan.ts`](../apps/ui/sources/components/sessions/files/commits/useScmCommitPlan.ts)
   projects saved commit plans and sends their revisioned edits, acceptance,
   stop, cancel, hook inclusion and recovery through that result owner.
@@ -549,10 +649,10 @@ it does not replace an explicit draft with generated prose.
   its gist; later files and secondary stops use title-only notes. Hunk annotations
   look up those notes directly; they do not rebuild the reading or generate prose.
 - [`resolveMobileBottomChromeModel.ts`](../apps/ui/sources/components/navigation/mobile/chrome/resolveMobileBottomChromeModel.ts)
-  hides cockpit bottom tabs for a pushed Session Details `scmReview` destination,
-  before considering a registered cockpit fallback. Files and Walkthrough retain
-  their own reading controls and Back; unrelated Details routes retain their
-  existing chrome.
+  hides cockpit bottom tabs for an immersive Session `scmReview`, including a
+  root route displaying it on Tabs. Files and Walkthrough retain their reading
+  controls and Back. On phones, a new page opened from Details and the Tabs
+  button open their own rail tabs through the existing pane presentation owner.
 
 The existing Action catalog and machine/Session RPC dispatcher remain the public
 entry points. See [Actions](actions.md) and the generated
@@ -564,7 +664,10 @@ Saved-result admission is enforced by `executeScmActionOperation` before
 inventory metadata, prose, provenance or effects are returned. Workspace-native
 results require the authenticated Home/Machine and filesystem root. A retained
 Session namespace or Session-derived source additionally requires separately
-verified Session authority through the existing `session.write` RPC proof;
+verified Session authority through the existing `session.write` RPC proof, except
+for saved-result operations by the exact Machine's currently verified custodian
+with `manage` access. That exception does not widen a Session caller's proof,
+shared Machine access, or access to standalone private captures;
 caller-supplied Session and root selectors never grant access. The fixed Run
 profile scope enforces the same rule: detached intent input cannot open a
 private capture or saved result by naming its Session.
@@ -787,14 +890,31 @@ classifier; collapse changes presentation only. Missing hosted patches leave
 binary status unknown (`null`), rather than proving a binary or clean file.
 Unavailable layers may retain usable supplied diff bytes.
 
+The host enumerates evidence before model admission. For initial generation and
+review narration, Codex's Agent/runtime preflight reports the upstream
+`MAX_USER_INPUT_TEXT_CHARS` contract in Unicode scalar values independently of
+model context tokens. Its ACP route does not borrow the app-server bound, and
+Provider/Team routes do not borrow native model capabilities to obtain it.
+Given the fact from the acquired executable Agent hook, the native host prepares
+the actual Run context and reserves its text prefix; a declaration-only catalog
+does not supply that executable fact. The retained input owner also accounts for
+the provenance/Session envelope.
+The resulting optional `maxInputUnicodeCharacters` reaches the profile's
+`finalizeStartParams` hook on demand, so cached readings and findings-only reviews
+do not acquire a runtime for this budget. SCM early preparation captures evidence and chooses
+launch policy once; finalization partitions that captured input without another
+capture or policy selection. Review retains the budget for its later narration,
+preserving the first findings turn. The progressive owner measures the complete
+rendered part prompt, including instructions, admitted role/profile guidance and
+aliases, against that budget. That guidance is retained on every part and integration turn;
+it does not invent a Codex ceiling in the SCM domain.
 In 0.3 development source, native catalog observations retain the Agent's declared
 context window, constrained further by a smaller reported Provider window. Claude
 Code's standard opt-in-context models publish the existing 200k native window;
 their separate `[1m]` variants do not enlarge the standard model's input budget.
 This distinction applies to both selected Connected Accounts and local native
 credentials. Models without a declared or reported size retain unknown capacity.
-The host enumerates evidence before model admission. For initial generation and
-review narration, when the selected offered model reports a context window, the progressive owner plans occurrence groups
+When the selected offered model reports a context window, the progressive owner plans occurrence groups
 and textual fragments before admission, charging rendered UTF-8 bytes
 conservatively against that window. This is not an exact tokenizer or a guarantee
 against native framing, retained-history or output overhead. A separate output
@@ -806,16 +926,31 @@ partial neighboring-line orientation that shrinks with the actual fragment.
 All captured evidence remains in the fragments; orientation is not counted as
 new analysis. Subsequent admissions remain in the same Run, and the
 initial retained context does not repeat the full evidence behind a planned part.
-`analysis.parts` projects confirmed evidence-part admissions, completions, total
-parts and the evidence/integration/done phase; native rejection can increase the
-total. Integration is not another evidence part. Valid structured publications
+`analysis.parts` projects completed evidence parts, total parts and the
+evidence/integration/done phase. Splitting a natively refused part replaces it
+with smaller parts and increases the total; admission itself publishes no
+saved-result revision. Integration is not another evidence part. Valid structured publications
 retain usable outputs and coverage. Undo restores editable prose and provenance,
-not the factual admission/completion counts.
+not the factual completion counts.
+If instructions and indivisible evidence cannot fit a known runtime input budget,
+preparation fails explicitly. If the final integration exceeds that budget, usable
+part publications remain partial with a capacity reason and no oversized next input.
+The typed cause is `provider_input_too_large` for the reported runtime character
+bound and `agent_context_window_exceeded` for the model-context budget; a runtime
+character bound does not imply that choosing another model changes it. Review
+narration preparation failure settles the saved requested output through the same
+terminal publication owner while leaving its published findings intact.
 Saved-result discussions and scoped refinements retain their existing native
 admission and revision-scoped publication; they do not acquire whole-result
 multipart generation authority merely because a context capacity is known.
 Cancellation or
-failure leaves evidence and earlier prose available. Unknown capacity is not
+failure leaves evidence and earlier prose available. A definitive input refusal
+reaches the existing terminal profile callback with the sanitized Run error;
+requested pending output becomes failed, and in-progress usable output becomes
+partial with that reason. Separately completed outputs remain complete. Native
+framing, retained history and output reservation remain runtime-owned; this
+profile budget is not a guarantee that native admission will accept a request.
+Unknown capacity is not
 permission to silently slice the source. Model aliases, renderer keys, fuzzy
 anchors and line ordinals do not authorize mutation. Shared anchor resolution
 qualifies ambiguous, stale, missing or unsupported navigation; it cannot transfer
@@ -830,6 +965,22 @@ discard still confirms, and Agent, MCP and CLI calls retain danger approval.
 The same executor checks Session authority and exact selected-key membership.
 It consumes Protocol's hunk engine, the backend's `fileAtRevision` bytes, and
 `commitGuardedFileReplace`; it does not add another parser, blob reader or writer.
+
+Agents discover live selections by calling `scm.diff.file` with the same path and
+explicit `area: 'both'`. For a renamed status entry, use
+`{ renamed: { path, previousPath }, area: 'both' }` instead of a top-level `path`,
+so Git can include its before side and older readers refuse the unsupported
+selector. Successful diff reads add optional `reviewUnits` with an
+opaque `key`, `hunkIndex`, `runIndex`, and old/new start/count coordinates. The
+Action executor projects these from the same `buildReviewUnits` owner used by
+Discard, without another backend read. Copy selected keys unchanged into
+`entries[].changeKeys`, with `kind: 'comparison'` and
+`against.source: { kind: 'workingTree' }`. Omitted-area reads retain the backend's
+existing default and do not advertise combined-layer keys. Captured occurrence
+ids instead belong in `changeRefs` with `against.comparisonId`; omitting both
+selectors restores the whole file. The keys are evidence selectors, not write
+authority: Discard revalidates membership against the live diff before writing.
+Agent/MCP calls that require approval wait for the decision before execution.
 
 Run discard requires strict UTF-8 and exact context. Whole-file restore is
 binary-safe. Staged selections, renames, copies and untracked files refuse this
@@ -886,7 +1037,10 @@ plan or relabel a completed walkthrough. Pending/writing/failed/complete project
 also follows the requested output when it was added after the original request.
 Run-observation refusal preserves the last saved projection and does not establish
 generation failure. Typed admission failures remain visible over retained content;
-only model-related failures offer model selection as recovery.
+only model-related failures offer model selection as recovery. An unusable Session
+model stops Start or Try again with Choose a model instead of retrying with the
+Account default. Commits displays the producer's failure reason when restoration
+is unavailable.
 
 In unreleased 0.3, restoration sends the checkout, optional Session and requested
 comparison/output selectors to `scm.diffSummary.result.list`. The machine result
@@ -897,12 +1051,26 @@ the canonical body reader, which admits the stored repository and Session scope
 before returning contents. Selectors never grant access, and inventory counts and
 bytes include only admitted results.
 
+Receipt links carry the result id and captured repository root alongside the
+comparison identity. A cold details view reads that exact address once, without
+an inventory read or waiting for a future hint. The Session Action adapter keeps
+the saved address and its Session transport proof; it does not replace a saved
+record's root with the carrier Session's current workspace. Live repository
+operations remain bound to that workspace. Subsequent content updates still use
+exact Machine result-revision hints, with Home reconnect for recovery.
+
+Session entry points without an explicit Home resolve their unique Home through
+the Session scope owner before binding credentials. An explicit Home remains
+authoritative. A settled Home credential failure or unknown Home ends restoration
+as unavailable; explicit Retry delegates unreadable device storage to the existing
+credential owner before restoring the saved reading.
+
 The projection contains selection metadata, not captured diffs, generated output
-bodies or Undo. Every result writer invalidates its row before committing the
-canonical body, then republishes metadata under the existing filesystem exclusion
-primitive. Missing or malformed projection data rebuilds from canonical files;
+bodies or Undo. Every result writer commits the canonical body, then upserts its
+metadata once under the existing filesystem exclusion primitive. Missing or
+malformed projection data rebuilds from canonical files;
 one malformed result cannot hide unrelated valid records. Interrupted metadata
-publication does not turn an already committed edit into a reported failure.
+publication does not turn an already committed body into a reported failure.
 Normal restart reads the retained projection without reopening result bodies;
 cold repair must decode records whose metadata is missing. Deletion removes the
 row before its body, so an interrupted deletion with a retained body can recover.
@@ -911,6 +1079,8 @@ not promise freshness for arbitrary external file edits or older loaded writers
 that do not maintain the projection.
 Settings explicitly requests `includeUsage: true` for the separate seven-day
 retained-Run cost projection; normal inventory/selection omits that optional field.
+After Clear, Settings refreshes the inventory without rescanning Run usage and
+retains the displayed cost; deleting readings does not delete Run cost records.
 
 `scm.diffSummary.result.*`, `refine` and `addOutputs` use the existing authenticated
 machine/Session transport. Writes bind `resultId` and `expectedRevision`; the
@@ -923,6 +1093,7 @@ Retained discussion carries the full current saved outputs and comparison, even
 when a question names one stop. The shared prompt requests prose for ordinary
 questions and structured output when the person asks to change the saved result.
 The Run composer uses that same discussion Action with a freshly read revision.
+Refine, Discuss and Add outputs bind the same saved-Session authorization scope.
 An ordinary prose answer publishes no edit. Selected stops identify the requested
 context; they do not replace the rest of the saved walkthrough. The initial turn
 of a seeded replacement conversation still admits no structured outputs. Every
@@ -930,7 +1101,8 @@ structured publication retains the existing revision check. Binding the replacem
 linkage and provenance while preserving the saved story and unrelated outputs.
 
 Rename, prose edit, reorder, merge, output addition and immediate Undo preserve
-unrelated outputs. Merge retains the chosen title and exact coverage. Undo is
+unrelated outputs. Renaming a walkthrough to its current title preserves its
+revision, Undo and publication state. Merge retains the chosen title and exact coverage. Undo is
 revision-checked and preserves current generator linkage. Accepted application
 states `applying|paused|unknown` lock editing, refinement, Undo and deletion.
 Already-published leading commit groups remain immutable after the lock releases.
@@ -942,11 +1114,15 @@ actual message without offering to rewrite them.
 The result revision owner also persists walkthrough/stop edited-title provenance,
 each stop's latest changed/moved revision, and an update notice identifying the
 affected stops (and merged selections when applicable). Immediate Undo restores
-the previous provenance and publishes an Undo notice. Host-only admission
+the previous provenance and publishes an Undo notice. Host-only completion
 progress preserves that same input's unchanged output basis without rebasing
 over manual edits or refreshing unrelated pending inputs.
 
-Results survive Run termination/cache eviction until explicit deletion. Personal
+Results survive Run termination/cache eviction and Session deletion until explicit
+result deletion. After Session deletion, the Machine custodian can list, read,
+edit and delete the saved result through the same Machine Actions; the retained
+Session id remains provenance rather than an unreachable lifetime dependency.
+Home, filesystem-root, revision and Action confirmation checks still apply. Personal
 marks use `workspace:scm-reviewed:scope:<encoded scopeId>` with
 `{ v: 1, scopeId, reviewedChangeKeys }`. The scope identifies the repository root
 and source selector, independently of captured endpoint revisions. PR reviewed
@@ -957,7 +1133,9 @@ key identifies path, layer and exact removed/added line content, with an ordinal
 for identical runs. `buildReviewUnits`, `buildScmFileReviewUnits` and
 `buildScmChangeKeys` in Protocol's occurrence owner supply that identity to the
 renderer, controller, Walkthrough and Actions. Captured Actions still validate
-exact occurrence membership before translating refs to keys; live working-tree
+exact occurrence membership before translating refs to keys. A captured selector
+can instead select exact content keys, validated against the same retained
+comparison, so Keep changes only the selected run within an occurrence. Live working-tree
 Actions recompute key membership without creating a capture. Both paths rebase
 the specific intent once on a CAS conflict; a further conflict remains visible.
 The UI subscribes through the existing
@@ -983,24 +1161,62 @@ Absent keys are retained, so content that returns is reviewed again. An explicit
 Reset review clears the scope. Prose edits keep marks, and a merged stop is
 reviewed only when every run of all its selections is marked. Unloaded marks are
 unknown, not a confirmed zero count. The native UI writes displayed key intents
-through Account KV; an offline Machine does not block Keep.
+through the same mark/unmark Actions and Account-KV port. Reset uses an explicit
+unmark selector that clears the stable scope, including absent keys. Writes need
+the view's bound Session/Machine to validate evidence; an unavailable host makes
+Mark, Keep and Reset unavailable, while retained Account-KV marks still render.
+`useScmReviewedMarks.pending` distinguishes the first unresolved read from an
+unreadable record. `WalkthroughReviewedFact` reserves its layout room invisibly
+and hides it from accessibility until marks are readable; neither reading nor
+Files presents a confirmed zero while that read is pending.
+
+The shared Files `ChangedFilesReview` owner retains its index when comparison
+chrome replaces the ordinary details header. Wide comparisons place that index
+in the rail, and phones use the compact file control; Explain uses the same
+index and saved reading rather than a second Files implementation.
+
+Native diff selection/path, File contents and PR URL copies converge through
+`useClipboardWrite` and `writeClipboardStringFromUi` on `clipboard.write`, retaining
+the source Account and mounted approval lifetime. The web UI is an explicit
+exception: its platform write runs from the user gesture before any asynchronous
+Action admission. Web UI copies therefore bypass Action disable/approval settings;
+this is not native/web admission parity. A platform refusal reports failure, not
+`copied`. Direct Action callers retain the client-placed Action contract.
 
 Settings list count/bytes from the selected machine, not all machines. Confirmed
-Clear uses exact-revision result deletion and retains application-lock admission.
-It does not read or clear personal marks. A concurrent edit can refuse deletion;
-other selected results can still succeed and report their own outcome. Neither
-cache eviction nor result deletion deletes review findings or Session checkpoints.
+Clear delegates exact-revision and application-lock decisions to the Machine's
+locked result deletion owner.
+The shared Clear Action owner cleans up personal marks only after the Machine
+confirms deletion, using the existing Account-KV owner, per-key CAS and prefix
+push for the deleted results' comparison scopes. It reads the existing selected
+Machine inventory once and preserves a scope's marks if any saved result in that
+inventory survives Clear, including a refused or unselected result or another
+capture in the same repository/source scope. Cleanup runs once per eligible
+scope after the deletion outcomes are known. Saved results on other Machines
+are outside this check. A refusal, offline Machine or revision conflict does
+not authorize mark cleanup. Other selected results can
+still succeed and report their own outcome.
+Initial cleanup retains Clear's admitted Account context; it does not invoke a
+second public unmark approval or require a separate unmark grant.
+The shared Clear presentation names the selected Machine, saved walkthrough and
+manual-edit loss, conditional mark cleanup, and results retained on other
+Machines. Its default destructive confirmation, required-approval presentation
+and waived-confirmation path all consume the existing Action policy; there is
+no separate Clear-local confirmation decision.
+
+Deletion and mark cleanup have separate outcomes: a cleanup failure does not
+restore a deleted result or erase its deletion receipt. The response reports
+the cleanup failure and supplies a retry through the existing host-validated
+unmark Reset Action (`reviewed_marks_cleanup_failed`, `resultDeleted: true`, and
+`retry: { actionId, input }`). Retry does not repeat result deletion. It still
+requires readable captured evidence and current Account authority. Plain and
+E2EE admission are unchanged. Neither cache
+eviction nor result deletion deletes review findings or Session checkpoints.
 
 Offline clients can retain an already-loaded projection; they cannot write the
 machine result, obtain fresh evidence or accept commits. There is no cold-offline
 or cross-machine reconstruction guarantee. Reconnection reads current authority
 before a revisioned write. Home/Account retirement withdraws requests/listeners.
-
-Session entry points without an explicit Home resolve their unique Home through
-the Session scope owner before binding credentials. An explicit Home remains
-authoritative. A settled Home credential failure or unknown Home ends restoration
-as unavailable; explicit Retry delegates unreadable device storage to the existing
-credential owner before restoring the saved reading.
 
 ## Generator interaction and settings
 
@@ -1038,13 +1254,19 @@ Run's sidechain and pass through the same reducer projection with or without a
 parent tool marker. The shared Run visibility projection uses the existing
 host-input provenance classifier to omit host setup prompts at both Run entrances
 and in parent previews and Find. Person-facing previews use the canonical display
-text rather than the expanded generator context. A receipt with Undo permission
-exposes the existing Undo intent without loading SCM data on mount. A known newer
-admitted revision disables that intent immediately. Otherwise, the intent reads
-the exact saved result through the existing Action and requires the receipt
-revision, Undo availability and unlocked application before invoking
-revision-guarded Undo. Stale reads return a typed conflict without mutating a newer
-result. Reads and successful Undo responses enter the canonical saved-result
+text rather than the expanded generator context. Session-owned UI and terminal
+Refine share this projection: entered refinement instructions remain the person
+row, Discuss shows the entered question, and Add outputs uses its requested-output
+task. The model retains the full admitted evidence/task context. Protected
+requester provenance distinguishes these person inputs from host setup; this
+does not grant new execution authority or relabel historical rows. Detached Runs
+retain their full-task transport without a Session person-row writer.
+A receipt with Undo permission hydrates the exact saved result when no matching
+projection is loaded. Its current revision, Undo availability and application
+state determine availability; a known newer revision disables the intent
+immediately. A warm click invokes revision-guarded Undo without another body
+read. The locked result owner returns typed stale, locked or unavailable-Undo
+refusals without mutating a newer result. Cold reads and successful Undo responses enter the canonical saved-result
 store; the receipt creates no inventory, revision cache or guessed request key.
 For a Session-owned retained Run, the host notice reaches the existing durable
 sidechain writer before native terminal settlement. Its actual committed message
@@ -1083,6 +1305,10 @@ Run; failed or unknown admission is not silently retried by prefetch. Explicit
 Regenerate bypasses that reuse. Summary model and Start share the offered model catalog and
 structured-output capability admission. Unknown/unsupported capability cannot be
 made supported by a default model name; continuation is a separate capability.
+With no selected Machine, the shared model menu says "Choose a machine first to
+see its models." It separately reports loading, failed catalog reads and no
+offered models. That empty-state guidance does not write an Account default or
+infer an executable model from a static declaration.
 In 0.3 development, UI and CLI Run preflight share Protocol's observation
 classifier. A missing method or unsupported protocol reports
 `execution_run_protocol_unsupported`; a transient or typed failed observation
@@ -1227,6 +1453,19 @@ stay unknown. A remaining suffix needs fresh explicit acceptance, and missing
 verified index reconciliation requires a fresh pending capture. There is no
 rollback, push or rewriting of landed commits in this operation. Git-pane proposal
 selection highlights refs; it does not change ordinary staging or accept a plan.
+Session and daemon processes forward committed saved-result revisions through
+the existing authenticated daemon control transport. Its single Machine publisher
+sends a content-free `scm-diff-summary-result-updated` hint. The Machine socket
+proves its current installation and the server forwards only result id/revision
+to that Machine's custodian Account. Both Home socket paths route the hint to
+mounted comparison readers, which reread only the matching saved result through
+its existing authorized Action. Applying progress and Stop after this therefore
+remain observable after a separate approval has settled the original request.
+Duplicate/older revisions do not reread; hidden or retired readers unsubscribe,
+and reconnect revalidates current results or restores a missing selection. An
+unknown result hint triggers a selection list only while a requested output is missing. Generic Run activity
+refreshes the linked Run's lifecycle controls, without rereading saved bodies or
+listing the saved inventory. No progress timer owns this flow.
 Before Include is available, wide and phone proposal views read the recorded
 before/after tree pair through the existing SCM diffCommit seam and verify its
 witnesses and file inventory. Highlighted rows expose stats and exact diffs,

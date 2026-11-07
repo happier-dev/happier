@@ -69,6 +69,19 @@ export const { manifest, activate } = definePlugin({
 });
 ```
 
+In current 0.3 development source, custom tooling can inspect the same static
+declaration through the public Collections entrypoint:
+
+```ts
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
+
+const declaration = projectPluginAccountCollectionDeclaration('review-statuses', reviewStatuses);
+```
+
+The projection keeps the declared migration identities and schema while leaving
+out executable migration callbacks. It shares the projection used by
+`definePlugin(...)`; the manifest parser still owns validation and admission.
+
 The host accepts one ordered source-to-target chain only: each callback must
 match its declared migration id and adjacent source/target versions in order.
 List every version that remains readable in `readableSchemaVersions`, including
@@ -113,8 +126,12 @@ A few rules keep that claim predictable:
   replaces it.
 - When machines run different plugin versions, the Account keeps the newest
   claimed manifest and the highest `schemaVersion` for each Collection. Until
-  it updates, a machine running an older version receives no webhook
-  deliveries, admits no Events, and cannot write. It reads a Collection only
+  it updates, a machine running an older version admits no new webhook
+  executions or Events, and cannot write. In unreleased 0.3 development source,
+  an already-started finite webhook attempt may finish under its exact captured
+  endpoint and live delivery lease; later endpoint or plugin-policy changes
+  apply at the next admission. This does not extend the delivery lease or
+  override caller cancellation. It reads a Collection only
   when its declaration already lists the newer version in
   `readableSchemaVersions`. A compatible retained contract at the same schema
   version can read but cannot write after another digest becomes current.

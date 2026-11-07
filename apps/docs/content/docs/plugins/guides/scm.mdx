@@ -59,6 +59,148 @@ source extends its existing read Action, retaining the host's credential and
 grant context. Walkthrough outputs use the host's saved result and analysis
 Actions rather than a plugin-owned generator or result store.
 
+## File Viewed state in development
+
+In unreleased 0.3 source, a pull-request comparison can offer optional
+`locator.fileViewedActions: { read, set }` Action references. Without these
+references, the host offers no Viewed control. Return a complete opened-PR map
+with its current `headOid`; the host uses it only for comparisons at that head.
+Hunk-level Keep remains local, separate from the source's whole-file Viewed fact.
+
+Use the shared portable result schemas from the public SCM entrypoint:
+
+```ts
+import {
+  ScmFileViewedReadResultV1Schema,
+  ScmFileViewedSetResultV1Schema,
+} from '@happier-dev/plugin-sdk/scm';
+
+const readResult = ScmFileViewedReadResultV1Schema.parse({
+  kind: 'ready',
+  headOid: 'a'.repeat(40),
+  files: [{ path: 'src/main.ts', state: 'dismissed' }],
+});
+const setResult = ScmFileViewedSetResultV1Schema.parse({
+  kind: 'ready', path: 'src/main.ts', state: 'viewed',
+});
+```
+
+The read states are `viewed`, `unviewed` and `dismissed` (changed since viewed).
+Extend the set reference's base input with `path` and `viewed: boolean`; return
+the acknowledged state without a confirming reread. Both schemas also accept
+`{ kind: 'unavailable', failure: { class, code, detail?, retryNotBeforeMs? } }`.
+The source owns failure classification and credential admission.
+
+Native and same-realm UI surfaces can join the host's Viewed source through
+`useScmFileViewed` and subscribe to one path with `useScmFileViewedFile`, both
+exported by `@happier-dev/plugin-ui/hostApi`. These are unreleased 0.3 hooks;
+hosted web frames do not provide the source hook. A missing source returns
+`null`, and an unread file has `state: null`, never an assumed unviewed mark.
+
+```tsx
+import { Checkbox, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { useScmFileViewed, useScmFileViewedFile } from '@happier-dev/plugin-ui/hostApi';
+import type { ScmFileViewedRequest } from '@happier-dev/plugin-sdk/scm';
+
+function ViewedFile({ comparison, path }: {
+  comparison: ScmFileViewedRequest['comparison']; path: string;
+}) {
+  const surface = useSurfaceContext();
+  const source = useScmFileViewed({ comparison,
+    serverId: surface.accountScope?.serverId ?? null,
+    host: surface.target.kind === 'session' ? { sessionId: surface.target.sessionId }
+      : surface.target.kind === 'machine' ? { machineId: surface.target.machineId } : null,
+  });
+  const file = useScmFileViewedFile(source, path);
+  if (source === null) return null;
+  // On Refresh: source.refresh(). Show "Not saved" when file.errorCode is set.
+  return (
+    <Checkbox
+      size="compact"
+      label="Viewed"
+      checked={file.state === null ? null : file.state === 'viewed'}
+      pending={file.pending}
+      onChange={(viewed) => { void source.setViewed(path, viewed); }}
+    />
+  );
+}
+```
+
+`Checkbox` draws the host's own checkbox mark. `checked: null` keeps the box's
+place without drawing or announcing it, `'mixed'` is a partly checked group, and
+`pending` shows a busy box while the change is saved. In a pressable list row,
+pass it as the `Item` accessory with `accessoryOutsidePressable`, so a press on
+the box never opens the row.
+
+The host shares the source with core consumers of that PR. Do not read the
+Viewed Action again from each row or mirror its map in plugin state. Keep the
+source reference stable, pass it to rows, and use its separate status hook
+`useScmFileViewedStatus` for the header's read status.
+The comparison input needs only the authoritative `source`, `freshness` and
+`endpoints`; no diff inventory is required.
+
+GitHub reads the whole opened PR map on open, return and explicit Refresh,
+using cursor pages of 100 files with no Happier file cap or polling. Its private,
+reversible set Action defaults to Direct on every surface; an explicit user Ask
+preference still applies. A change made on GitHub web becomes visible at the next
+read boundary. A failed read or write exposes its typed reason and can be retried
+by the user.
+
+## Exact commit export (0.3 development source)
+
+The optional `workspaceIntegration.resolveCommitRef` handler resolves an explicitly
+selected repository ref to an immutable commit identifier through the backend's
+existing command service. It must not move, fetch, repair or modify the checkout.
+Missing refs and unsupported backends refuse instead of substituting checkout
+HEAD. The host resolves once and passes that exact identifier to `exportCommit`;
+later movement of the branch cannot change the selected export. Both handlers
+receive the admitted repository context and invocation cancellation signal.
+
+Repository backends may implement the optional
+`workspaceIntegration.exportCommit` handler from
+`@happier-dev/plugin-sdk/scm/backend`. The host supplies an immutable commit
+identifier, an authorized repository context and an invocation-owned artifact
+directory. Return that exact commit identifier, portable transfer entries and
+their cleanup callback. The existing manifest/blob materializer owns destination
+containment and staging custody.
+
+Read committed object bytes, including binary content and executable modes.
+Do not export the current checkout, index, untracked files or a newer branch
+head. An unsupported backend or unavailable exact object refuses; there is no
+dirty-worktree fallback. Dispose owned export artifacts after the host has
+consumed them, including on cancellation. This optional contract is unreleased
+development source, not a claim that every backend implements commit export.
+
+When the reviewed source requires a fresh remote ref, the optional
+`workspaceIntegration.fetchCommitRef` handler receives its admitted `cloneUrl`,
+`ref` and full `expectedCommitSha`, alongside repository context and cancellation.
+It must use an existing configured remote whose actual fetch endpoint matches
+that repository, fetch the exact ref and verify the fetched commit before
+returning. It must preserve the checkout, index and local branches. Missing
+access, a missing ref or a different commit refuses; an unavailable handler does
+not fall back to an already-cached object.
+
+For example, a host can require the approved head of a base repository's PR ref:
+
+```ts
+import type { WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+
+type ApprovedRef = Parameters<NonNullable<WorkspaceIntegrationHandlers['fetchCommitRef']>>[0];
+
+async function fetchApprovedHead(
+  fetch: NonNullable<WorkspaceIntegrationHandlers['fetchCommitRef']>,
+  input: ApprovedRef,
+) {
+  await fetch(input);
+  return input.expectedCommitSha;
+}
+```
+
+The backend owns remote verification and command execution. Export the returned
+immutable identifier through `exportCommit`; do not resolve a mutable ref again.
+This handler is an unreleased 0.3 SDK addition. Older backends without it refuse
+this operation while retaining ordinary exact-commit export.
+
 ## Related
 
 - [Host Actions](/plugins/api/host-actions) — generated inputs, outputs and policy.
