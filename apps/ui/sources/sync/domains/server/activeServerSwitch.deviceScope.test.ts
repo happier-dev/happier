@@ -79,7 +79,7 @@ describe('activeServerSwitch device scope', () => {
         expect(appliedServerId()).toBe(tabId);
     });
 
-    it('opens an adopted Home without changing the saved groups', async () => {
+    it('re-adopts a known Home without moving focus, then opens it without changing the saved groups', async () => {
         const originId = requireOrigin();
         const adoptedId = await homes.addHome({
             name: 'Adopted', serverUrl: 'https://focus-adopted.test', serverIdentityId: 'srv_adopted_home',
@@ -92,8 +92,20 @@ describe('activeServerSwitch device scope', () => {
             activeTargetId: originId,
         });
         const groupsBefore = profiles.loadHomeViewState()?.groups;
+        const { connectHomeAtAddress } = await import('@/sync/ops/home/connectHomeAtAddress');
+        const reconnected = await connectHomeAtAddress({
+            serverUrl: 'https://focus-adopted.test',
+            confirmInsecureHttp: async () => true,
+            confirmCanonicalUrl: async () => true,
+        });
+        expect(reconnected.kind).toBe('connected');
+        if (reconnected.kind !== 'connected') throw new Error('Expected the known Home to reconnect');
+        expect(reconnected.profile.id).toBe(adoptedId);
+        expect(profiles.getActiveServerId()).toBe(originId);
+        expect(appliedServerId()).toBe(originId);
 
-        await expect(setActiveServerAndSwitch({ serverId: adoptedId, scope: 'device' })).resolves.toBe('switched');
+        // Add a Home preserves focus; its explicit Open action owns the switch.
+        await expect(setActiveServerAndSwitch({ serverId: reconnected.profile.id, scope: 'device' })).resolves.toBe('switched');
 
         expect(profiles.getActiveServerId()).toBe('srv_adopted_home');
         expect(profiles.getDeviceDefaultServerId()).toBe(adoptedId);
