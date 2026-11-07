@@ -78,6 +78,17 @@ describe('resolveTriageListShellState', () => {
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
     ] }).label).toBe('Linear could not be read.');
   });
+  it('offers inline retry for timed-out list reads despite generic outcome-unknown retry advice', () => {
+    const state = resolveTriageListShellState(snapshot({
+      window: window({ lanes: [{ sourceInstanceId: INSTANCE, source: SOURCE,
+        health: { kind: 'unavailable' }, exhausted: false }] }),
+      unreadableSources: [{ sourceInstanceId: INSTANCE, message: 'No answer came back in time, so it may still finish.',
+        code: 'timeout', retryable: false }],
+    }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected the timed-out list read');
+    expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
+    expect(state.failure.sources[0]?.needsConnectionChange).toBe(false);
+  });
   it('preserves the provider refusal code as well as its readable failure class', () => {
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
       sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
@@ -87,6 +98,18 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureNotice(state.failure)).toMatchObject({
       description: 'Needs you to sign in again.', details: expect.stringContaining('github_credential_mismatch'),
     });
+  });
+  it('keeps a provider diagnostic such as its request ID in Details, never in the one-line summary', () => {
+    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+      sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
+      health: { kind: 'failed', failure: { class: 'transient', code: 'http_502', detail: 'GitHub request ID: D4E2:3DFCCB:10C1E2' } },
+    }] }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a named source failure');
+    const line = readTriageListFailureLine(state.failure);
+    expect(line.label).not.toContain('D4E2:3DFCCB:10C1E2');
+    expect(line.label).toContain('Could not be reached just now.');
+    // Details (Manage sources) still carries the provider's own words, request ID included.
+    expect(readTriageListFailureNotice(state.failure).description).toContain('GitHub request ID: D4E2:3DFCCB:10C1E2');
   });
   it('keeps age-only staleness truthful without a list read warning', () => {
     const aged = snapshot({

@@ -39,6 +39,13 @@ const SOURCE_FAILURE_COPY_V1: Readonly<Record<TriageSourceFailureV1['class'], st
   unsupportedContract: 'Answered with something Happier could not read.',
 });
 
+const LIST_READ_TIMEOUT_COPY_V1 = 'The list read did not answer in time. Try again to read it.';
+
+/** This operation reads a list; the host's generic unknown-write copy does not describe its recovery. */
+function listReadFailureMessage(code: string | undefined, message: string): string {
+  return code === 'timeout' ? LIST_READ_TIMEOUT_COPY_V1 : message;
+}
+
 const SOURCE_FAILURE_TRANSLATION_KEYS_V1: Readonly<Record<TriageSourceFailureV1['class'], string>> = Object.freeze({
   authentication: 'plugins.triage.surface.failure.authentication',
   permission: 'plugins.triage.surface.failure.permission',
@@ -57,6 +64,11 @@ export type TriageListSourceFailureV1 = Readonly<{
   reason: string;
   /** Non-secret invocation diagnostic; separate from the translated reason. */
   code?: string;
+  /**
+   * The class's own sentence, present when `reason` is the provider's bounded detail. The one-line summary says
+   * this; the detail, which can carry a diagnostic such as GitHub's request ID, stays in the notice Details shows.
+   */
+  lineReason?: string;
   retryable?: boolean;
   /**
    * Present only for an invocation the host could not make (an offline Machine, a broken transport): its typed
@@ -162,8 +174,9 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
     .map((entry) => Object.freeze({
       sourceInstanceId: entry.sourceInstance.sourceInstanceId,
       displayName: entry.displayName,
-      reason: entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class],
+      reason: listReadFailureMessage(entry.failure.code, entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class]),
       code: entry.failure.code,
+      ...(entry.failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(entry.failure.code, SOURCE_FAILURE_COPY_V1[entry.failure.class]) }),
       needsConnectionChange: entry.failure.class === 'authentication' || entry.failure.class === 'permission',
     }));
   // A connection the pass could not read at all is the same kind of fact as one
@@ -178,7 +191,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
     // `plugin_action_failed` is the store's code for an exception no host classified.
     const hostWorded = entry.code !== undefined && entry.code !== 'plugin_action_failed'
       && entry.reason !== UNREADABLE_IN_THIS_PASS_V1.message;
-    const reason = (hostWorded ? readHostSentence(entry.reason) : undefined) ?? SOURCE_FAILURE_COPY_V1.transient;
+    const reason = (hostWorded ? readHostSentence(listReadFailureMessage(entry.code, entry.reason)) : undefined) ?? SOURCE_FAILURE_COPY_V1.transient;
     sources.push(Object.freeze({
       sourceInstanceId: entry.sourceInstance.sourceInstanceId,
       displayName: entry.displayName,
@@ -186,7 +199,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       ...(entry.code === undefined ? {} : { code: entry.code }),
       ...(entry.retryable === undefined ? {} : { retryable: entry.retryable }),
       sharedCauseKey: `${entry.code ?? ''}\n${entry.retryable ?? ''}\n${reason}`,
-      needsConnectionChange: entry.retryable === false,
+      needsConnectionChange: entry.retryable === false && entry.code !== 'timeout',
     }));
   }
   // Configuration admission, not the presence of a coverage lane, establishes
@@ -241,6 +254,9 @@ function resolveSourceFailureReason(
   text: TriageTextResolverV1,
   reason: string,
 ): string {
+  if (reason === LIST_READ_TIMEOUT_COPY_V1) {
+    return text('plugins.triage.surface.failure.readTimeout', reason);
+  }
   if (reason === SOURCE_UNAVAILABLE_COPY_V1) {
     return text(SOURCE_UNAVAILABLE_TRANSLATION_KEY_V1, reason);
   }
@@ -310,10 +326,11 @@ export function readTriageListFailureLine(
   const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
   const title = `${names} ${text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   const first = failure.sources[0];
-  const oneReason = first !== undefined && failure.sources.every((source) => source.reason === first.reason)
-    && !(first.retryable === false && first.reason === SOURCE_FAILURE_COPY_V1.transient);
+  const lineReason = (source: TriageListSourceFailureV1) => source.lineReason ?? source.reason;
+  const oneReason = first !== undefined && failure.sources.every((source) => lineReason(source) === lineReason(first))
+    && !(first.retryable === false && lineReason(first) === SOURCE_FAILURE_COPY_V1.transient);
   return Object.freeze({
-    label: oneReason ? `${title}. ${resolveSourceFailureReason(text, first.reason)}` : `${title}.`,
+    label: oneReason ? `${title}. ${resolveSourceFailureReason(text, lineReason(first))}` : `${title}.`,
     recovery: failure.sources.some((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
   });
 }
@@ -338,7 +355,7 @@ export function readTriageListReadFailureNotice(
     // The SDK may use the machine-readable code as its default message. Keep
     // host recovery sentences, but use our translated explanation for bare codes.
     description: reason !== undefined
-      ? reason
+      ? resolveSourceFailureReason(text, reason)
       : machineUnavailable
         ? text('plugins.triage.surface.sourcesUnreachable.description', 'Happier could not reach a machine for these sources, so nothing has been read yet. Your pins are still here, and Refresh tries again.')
         : text('plugins.triage.surface.listFailed.pinsAvailable', 'Happier could not read this list just now. Your pins are still here.'),
@@ -464,7 +481,7 @@ export function resolveTriageListShellState(
     return Object.freeze({
       kind: options.durableStateReachable !== true ? 'unavailable'
         : machineUnavailable ? 'sourcesUnreachable' : 'readFailed',
-      message: snapshot.error.message,
+      message: listReadFailureMessage(snapshot.error.code, snapshot.error.message),
       retryable: snapshot.error.retryable !== false,
       ...(snapshot.error.detail === undefined ? {} : { detail: snapshot.error.detail }),
     });
