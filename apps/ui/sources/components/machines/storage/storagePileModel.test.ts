@@ -112,6 +112,13 @@ describe('collecting a row into the pile (the pile is the one authority, ruling 
     ).toBe('none');
   });
 
+  it('gives a box to exactly the rows the owner marks collectable, whatever their verdict', () => {
+    // The owner decides `collectable` once (CLI catalog); the row's box never re-decides it from the verdict.
+    expect(describeStorageCollect(item('checked-later', '/x/c', 'check', { collectable: true }), [])).toBe('available');
+    expect(describeStorageCollect(item('in-use', '/x/u', 'keep', { reason: { code: 'in_use' }, collectable: true, loses: [{ code: 'in_use' }] }), [])).toBe('confirm');
+    expect(describeStorageCollect(item('not-offered', '/x/n', 'check', { collectable: false }), [])).toBe('none');
+  });
+
   it('turns a tick into exactly one pile delta: add the row, remove its own entry, or nothing', () => {
     const pile = [ref('wt-1', '/repo/.dev/worktree/a')];
     const available = item('wt-2', '/repo/.dev/worktree/b', 'safe');

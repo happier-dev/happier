@@ -22,7 +22,7 @@ import { storageReasonLabel } from './storageReasonPresentation';
 /**
  * How a row's box reads: in the pile; covered because a folder holding it is in the pile; free to tick;
  * a Keep item whose box first asks the person to confirm what is lost (R42.1); or no box at all
- * (Forbidden, not checked yet, or not collectable).
+ * (Forbidden, or not collectable by the owner's verdict).
  */
 export type StorageCollectState =
   | 'collected'
@@ -149,11 +149,8 @@ export function describeStorageCollect(
   if (item.verdict === 'forbidden') return 'none';
   if (pileEntryFor(item, pile)) return 'collected';
   if (pileHoldsFolderOf(item.path, pile)) return 'inside';
-  if (
-    !item.collectable ||
-    item.verdict === 'check'
-  )
-    return 'none';
+  // The owner decides once whether a row can be collected; the box never re-decides it from the verdict.
+  if (!item.collectable) return 'none';
   return item.verdict === 'keep' ? 'confirm' : 'available';
 }
 

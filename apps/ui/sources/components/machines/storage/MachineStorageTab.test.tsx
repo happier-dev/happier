@@ -468,6 +468,24 @@ describe('MachineStorageTab', () => {
         expect(screen.findByTestId('machine-storage-worktree-locale')).toBeNull();
     });
 
+    it('boxes every row the owner offers and names what an in-use row loses before it joins the pile', async () => {
+        const inUse = { ...item('pw', 'Playwright 1.56', 0.6 * GB, 'keep', 'in_use'), loses: [{ code: 'in_use' as const }] };
+        const { screen } = await mount({ id: 'storage', page: 'category', categoryId: 'caches' }, {}, ({ method }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST) return { ...CACHES, items: [inUse, ...CACHES.items.slice(1)] };
+            if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [] };
+            return undefined;
+        });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-item-pnpm')).not.toBeNull(); });
+        expect(screen.findAllHostsByTestId('machine-storage-item-pnpm-collect')).not.toHaveLength(0);
+        expect(screen.findAllHostsByTestId('machine-storage-item-pw-collect')).not.toHaveLength(0);
+        expect(screen.findAllHostsByTestId('machine-storage-item-sys-collect')).toHaveLength(0);
+        modal.current!.spies.confirm.mockClear();
+        await act(async () => { screen.pressByTestId('machine-storage-item-pw-collect'); });
+        await act(async () => { await vi.waitFor(() => expect(modal.current!.spies.confirm).toHaveBeenCalled()); });
+        expect(modal.current!.spies.confirm.mock.calls.at(-1)?.[1]).toContain(t('machineStorage.loses.in_use', { count: 0 }));
+        expect(modal.current!.spies.confirm.mock.calls.at(-1)?.[2]).toMatchObject({ confirmText: t('machineStorage.keep.confirmInUse') });
+    });
+
     it('says a nearly full disk in amber with one callout that opens the prepared low-disk view', async () => {
         const reason = { key: 'disk:mac', level: 'needs_you', since: 1, metric: 'disk', nextStep: 'free_up_space',
             kind: 'disk_nearly_full', volumeId: 'mac', volumeLabel: 'Macintosh HD' } as const;
