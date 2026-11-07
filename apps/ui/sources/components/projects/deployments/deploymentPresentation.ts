@@ -337,12 +337,12 @@ export function deploymentHealthFact(
 /**
  * The Environment's one attention slot (DEPLOY-COMPOSE R3), highest precedence first: blocking or offline, then failed,
  * then what needs the person, then information. Notices still waiting on their producer (secret withdrawn → Stop now,
- * missed backup, platform background failure, newer commit, catalog update) join this list at their rank once their
+ * missed backup, platform background failure, newer commit) join this list at their rank once their
  * fact lands; nothing else orders deployment notices.
  */
 export const DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER = [
   'machineOffline', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'approvalWaiting', 'deploying',
-  'unhealthy', 'secretWithdrawn', 'runningUnverified',
+  'unhealthy', 'secretWithdrawn', 'runningUnverified', 'catalogUpdate',
 ] as const;
 export type DeploymentEnvironmentAttentionKind = (typeof DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER)[number];
 export type DeploymentEnvironmentAttention =
@@ -364,6 +364,8 @@ export type DeploymentEnvironmentAttentionFacts = Readonly<{
   latest: Pick<DeploymentReceiptHeaderV1, 'id' | 'state'> | null;
   health: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
   servingState: ReceiptState | null;
+  /** The template's catalog has a newer release (registry update observation). */
+  catalogUpdate?: boolean;
 }>;
 
 export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAttentionFacts): DeploymentEnvironmentAttention | null {
@@ -376,6 +378,7 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
   if (facts.health?.status === 'down' || facts.health?.status === 'degraded') return { kind: 'unhealthy' };
   if (facts.servingState === 'running_unverified') return { kind: 'runningUnverified' };
+  if (facts.catalogUpdate) return { kind: 'catalogUpdate' };
   return null;
 }
 

@@ -117,6 +117,8 @@ import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
+import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
+import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -202,6 +204,12 @@ export const DeploymentEnvironmentDetail = React.memo(
     const openReceipt = useEventCallback(props.onOpenReceipt);
     const detail = environment.snapshot.value;
     const projectSource = useProjectSource(props.lifetime ?? null, detail?.environment.projectSourceId ?? null);
+    // "Point at another service" offers this Environment's declared exports (L-C variables/refpick).
+    const serviceExports = detail?.content.ownServer?.serviceExports;
+    const detailEnvironmentId = detail?.environment.id ?? null;
+    const referenceTargets = React.useMemo(() => detailEnvironmentId && serviceExports
+      ? serviceExports.map((entry) => ({ environmentId: detailEnvironmentId, export: entry.key, service: entry.service }))
+      : undefined, [detailEnvironmentId, serviceExports]);
     // The address under the title (lab d1): the first Domain that is not on its way out.
     const domains = useDeploymentEnvironmentDomains(props.controller, props.environmentId, props.demand);
     const domainHost = domains.result.items.find((item) => item.domain.state !== 'removing')?.content.hostname ?? null;
@@ -330,11 +338,6 @@ export const DeploymentEnvironmentDetail = React.memo(
         const name = knownMachine(machineId);
         return name ? [{ key: `machine:${machineId}`, text: name, icon: 'hard-drives' as const }] : [];
       }),
-      // Only a Compose definition runs with Compose; a platform builds the repository itself.
-      ...(definition
-        ? [{ key: 'compose', text: t('projects.deployments.compose') },
-            { key: 'definition', text: definition, mono: true }]
-        : []),
     ];
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
@@ -534,6 +537,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
       servingState: overview ? activeReceipt?.deployment.state ?? null : null,
+      catalogUpdate: overview && environment.catalogUpdate.upstream?.state === 'update_available',
     });
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
       void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, whenBusy: 'supersede' }));
@@ -629,6 +633,16 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           );
         }
+        case 'catalogUpdate':
+          // A newer catalog release (P1 item 12); no Action applies it yet, so the notice only informs (§7).
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.catalogUpdate"
+              tone="neutral"
+              title={t('projects.deployments.overviewStatus.catalogUpdateTitle')}
+              description={t('projects.deployments.overviewStatus.catalogUpdateBody')}
+            />
+          );
         case 'runningUnverified':
           // The receipt's own notice, where the person looks first (lab d1 `unverified`).
           return servingNotice ? (
@@ -805,6 +819,10 @@ export const DeploymentEnvironmentDetail = React.memo(
                         }).finally(() => setPreparing(false));
                     }} />
                 ) : null}
+                <EnvironmentDefinitionRow
+                  definition={detail.content.definition}
+                  servingSource={activeReceipt?.content.sourceIntent ?? null}
+                />
                 {preparationOutcome?.kind === 'refused' ? (
                   <SurfaceStateCard kind="error" size="line"
                     title={t('projects.deployments.copy.prepareTitle')}
@@ -857,6 +875,13 @@ export const DeploymentEnvironmentDetail = React.memo(
                     review={review}
                     active={props.demand.mounted && props.demand.visible}
                   />
+                  {props.lifetime ? (
+                    <EnvironmentAdminLogin
+                      template={detail.content.template ?? null}
+                      bindings={detail.content.bindings}
+                      scope={props.lifetime.scope}
+                    />
+                  ) : null}
                 </ItemGroup>
               ) : null}
               {recentReceipts.length > 0 ? (
@@ -875,7 +900,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   {recentReceipts.map(receiptRow)}
                 </ItemGroup>
               ) : null}
-              <DeploymentDataCard detail={detail}
+              <DeploymentDataCard detail={detail} place={knownMachine(machineIds[0])}
                 onOpen={props.onOpenDatabase}
                 onVariables={() => openTab('variables')}
                 onBackups={() => openTab('settings', 'backups')}
@@ -913,6 +938,9 @@ export const DeploymentEnvironmentDetail = React.memo(
               lifetime={props.lifetime ?? null}
               environmentId={props.environmentId}
               machineId={machineIds.length === 1 ? machineIds[0] : null}
+              secretRevisions={detail.secretRevisions}
+              onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
+              referenceTargets={referenceTargets}
             />
           ) : tab === 'domains' ? (
             <DeploymentDomainsPanel
@@ -1647,6 +1675,8 @@ function EnvironmentServiceRow(
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [restartState, setRestartState] = React.useState<ServiceRestartState>('idle');
+  // The refusal's typed code stays behind Details; the sentence says what it left.
+  const [restartCode, setRestartCode] = React.useState<string | null>(null);
   const { row, machineId, service } = props;
   const generation = row?.generation ?? null;
   const restartInput = row?.deployment && generation && machineId && props.targetLinkId && row.capabilities.restart ? {
@@ -1656,6 +1686,7 @@ function EnvironmentServiceRow(
   const { restart, review, onRestarted } = props;
   const pressRestart = restart && restartInput ? () => {
     setRestartState('running');
+    setRestartCode(null);
     void restart(restartInput).then((result) => {
       setRestartState(result.kind === 'unsupported' ? 'unsupported' : result.kind === 'outcome_unknown' ? 'unknown' : 'idle');
       if (result.kind === 'observed' || result.kind === 'accepted') void onRestarted();
@@ -1664,7 +1695,10 @@ function EnvironmentServiceRow(
       if (outcome.kind === 'approval') {
         review.request(outcome.artifactId);
         setRestartState('approval');
-      } else setRestartState('failed');
+      } else {
+        setRestartCode(outcome.kind === 'refused' ? outcome.code : null);
+        setRestartState('failed');
+      }
     });
   } : null;
   const runCommand = row && generation && machineId ? () => showServiceCommandSheet({
@@ -1694,6 +1728,7 @@ function EnvironmentServiceRow(
       testID={`project-deployments.environment.services.${service.name}.restart.${restartState}`}
       size="line"
       kind={restartState === 'approval' ? 'loading' : 'warning'}
+      diagnosticCode={restartState === 'failed' ? restartCode : null}
       title={restartState === 'approval' ? t('machineServices.control.approval')
         : restartState === 'unknown' ? t('machineServices.control.unknown', { machine: props.machineName })
           : restartState === 'unsupported' ? t('machineServices.control.unsupported', { machine: props.machineName, service: service.name })
@@ -1739,4 +1774,70 @@ function EnvironmentServiceRow(
       {feedback}
     </>
   );
+}
+
+/**
+ * What defines what runs (P1 §1 Definition): the repository's Compose file, or the definition stored in Happier with
+ * its revision, saying when that revision is not the one serving. Move to a repository stays Tier 3.
+ */
+function EnvironmentDefinitionRow(
+  props: Readonly<{
+    definition: DeploymentEnvironmentDetailV1['content']['definition'];
+    servingSource: DeploymentContentV1['sourceIntent'] | null;
+  }>,
+) {
+  const { definition, servingSource } = props;
+  if (definition.kind === 'repository') {
+    if (!definition.compose) return null;
+    return (
+      <Item
+        testID="project-deployments.environment.definition"
+        title={t('projects.deployments.overviewStatus.definitionTitle')}
+        subtitle={<Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>
+          {`${definition.ref} · ${definition.compose.path}`}</Text>}
+        mode="info"
+      />
+    );
+  }
+  const notDeployed = servingSource?.kind === 'stored' && servingSource.contentRevision !== definition.contentRevision;
+  return (
+    <Item
+      testID="project-deployments.environment.definition"
+      title={t('projects.deployments.overviewStatus.definitionTitle')}
+      subtitle={[t('projects.deployments.overviewStatus.definitionStored', { revision: definition.contentRevision }),
+        ...(notDeployed ? [t('projects.deployments.overviewStatus.definitionNotDeployed')] : [])].join(' · ')}
+      mode="info"
+    />
+  );
+}
+
+/**
+ * A catalog app's generated login (P1 §3 "Admin login"): the template's password variable, read through the one
+ * shared Saved Secret leaf (Reveal/Copy = `secrets.shared.reveal`). Mounted only where the template names one.
+ */
+function EnvironmentAdminLogin(
+  props: Readonly<{
+    template: DeploymentEnvironmentDetailV1['content']['template'] | null;
+    bindings: DeploymentEnvironmentDetailV1['content']['bindings'];
+    scope: ServerAccountScopeLifetime['scope'];
+  }>,
+) {
+  const key = props.template?.loginFields?.password ?? null;
+  const binding = key ? props.bindings.find((row) => row.name === key && row.source.kind === 'secret') : undefined;
+  const ref = binding && binding.source.kind === 'secret' ? binding.source.ref : null;
+  return ref ? <EnvironmentAdminLoginRow refId={ref} scope={props.scope} /> : null;
+}
+
+function EnvironmentAdminLoginRow(props: Readonly<{ refId: string; scope: ServerAccountScopeLifetime['scope'] }>) {
+  const refs = React.useMemo(() => [props.refId], [props.refId]);
+  const catalog = useSavedSecretCatalogEntries({ scope: props.scope, refs });
+  const entry = catalog.find((candidate) => candidate.ref === props.refId);
+  return entry ? (
+    <SharedSavedSecretValueItem
+      testID="project-deployments.environment.services.login"
+      scope={props.scope}
+      entry={entry}
+      active
+    />
+  ) : null;
 }

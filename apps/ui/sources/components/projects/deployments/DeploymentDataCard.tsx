@@ -18,6 +18,8 @@ export function DeploymentDataCard(props: Readonly<{
   onAdd: () => void;
   onVariables: () => void;
   onBackups: () => void;
+  /** Where the template's database runs (its Machine), named after its service; null when not known. */
+  place?: string | null;
   /** Opens one database's page in place: the template's data service, or a linked data target's id. */
   onOpen?: (database: string) => void;
 }>) {
@@ -31,8 +33,9 @@ export function DeploymentDataCard(props: Readonly<{
       action={data || targets.length > 0 ? <SectionActionButton testID={`${id}.add`} title={t('projects.deployments.dataAdd')}
         destination onPress={props.onAdd} /> : undefined}>
       {data ? <Item title={`${engineNames[data.engine]}${data.version ? ` ${data.version}` : ''}`}
-        subtitle={data.port === undefined ? data.service
-          : t('projects.deployments.dataService', { service: data.service, port: data.port })}
+        subtitle={[data.port === undefined ? data.service
+          : t('projects.deployments.dataService', { service: data.service, port: data.port }),
+          ...(props.place ? [props.place] : [])].join(' · ')}
         {...(props.onOpen ? { testID: `${id}.database.${data.service}`, onPress: () => props.onOpen?.(data.service) } : { mode: 'info' as const })} /> : null}
       {targets.map(link => <Item key={link.targetLink.id} title={link.targetLink.targetKind}
         {...(props.onOpen ? { testID: `${id}.database.${link.targetLink.id}`, onPress: () => props.onOpen?.(link.targetLink.id) } : { mode: 'info' as const })} />)}

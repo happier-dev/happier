@@ -17,6 +17,11 @@ type DeploymentOverviewTranslations = Readonly<{
   manage: string;
   openOnMachine: (params: { machine: string }) => string;
   openOnMachineDetail: string;
+  catalogUpdateTitle: string;
+  catalogUpdateBody: string;
+  definitionTitle: string;
+  definitionStored: (params: { revision: number }) => string;
+  definitionNotDeployed: string;
 }>;
 
 export const deploymentOverviewTranslations = {
@@ -36,6 +41,11 @@ export const deploymentOverviewTranslations = {
     manage: "Manage",
     openOnMachine: ({ machine }) => `Open on ${machine}`,
     openOnMachineDetail: "Logs, health and controls",
+    catalogUpdateTitle: "A newer version of this app is available",
+    catalogUpdateBody: "Happier can’t apply catalog updates yet. Your data stays as it is.",
+    definitionTitle: "Definition",
+    definitionStored: ({ revision }) => `Stored in Happier · revision ${revision}`,
+    definitionNotDeployed: "not deployed yet",
   },
   "fr": {
     controllerPausedTitle: "Tâches et alertes en pause",
@@ -53,6 +63,11 @@ export const deploymentOverviewTranslations = {
     manage: "Gérer",
     openOnMachine: ({ machine }) => `Ouvrir sur ${machine}`,
     openOnMachineDetail: "Journaux, santé et contrôles",
+    catalogUpdateTitle: "Une version plus récente de cette app est disponible",
+    catalogUpdateBody: "Happier ne peut pas encore appliquer les mises à jour du catalogue. Vos données restent intactes.",
+    definitionTitle: "Définition",
+    definitionStored: ({ revision }) => `Stockée dans Happier · révision ${revision}`,
+    definitionNotDeployed: "pas encore déployée",
   },
   "de": {
     controllerPausedTitle: "Jobs und Warnungen pausiert",
@@ -70,6 +85,11 @@ export const deploymentOverviewTranslations = {
     manage: "Verwalten",
     openOnMachine: ({ machine }) => `Auf ${machine} öffnen`,
     openOnMachineDetail: "Logs, Zustand und Steuerung",
+    catalogUpdateTitle: "Eine neuere Version dieser App ist verfügbar",
+    catalogUpdateBody: "Happier kann Katalog-Updates noch nicht anwenden. Deine Daten bleiben unverändert.",
+    definitionTitle: "Definition",
+    definitionStored: ({ revision }) => `In Happier gespeichert · Revision ${revision}`,
+    definitionNotDeployed: "noch nicht deployt",
   },
   "es": {
     controllerPausedTitle: "Tareas y alertas en pausa",
@@ -87,6 +107,11 @@ export const deploymentOverviewTranslations = {
     manage: "Gestionar",
     openOnMachine: ({ machine }) => `Abrir en ${machine}`,
     openOnMachineDetail: "Registros, salud y controles",
+    catalogUpdateTitle: "Hay una versión más nueva de esta app",
+    catalogUpdateBody: "Happier aún no puede aplicar actualizaciones del catálogo. Tus datos no cambian.",
+    definitionTitle: "Definición",
+    definitionStored: ({ revision }) => `Guardada en Happier · revisión ${revision}`,
+    definitionNotDeployed: "aún no desplegada",
   },
   "it": {
     controllerPausedTitle: "Job e avvisi in pausa",
@@ -104,6 +129,11 @@ export const deploymentOverviewTranslations = {
     manage: "Gestisci",
     openOnMachine: ({ machine }) => `Apri su ${machine}`,
     openOnMachineDetail: "Log, salute e controlli",
+    catalogUpdateTitle: "È disponibile una versione più recente di questa app",
+    catalogUpdateBody: "Happier non può ancora applicare gli aggiornamenti del catalogo. I tuoi dati restano invariati.",
+    definitionTitle: "Definizione",
+    definitionStored: ({ revision }) => `Salvata in Happier · revisione ${revision}`,
+    definitionNotDeployed: "non ancora distribuita",
   },
   "pt": {
     controllerPausedTitle: "Tarefas e alertas em pausa",
@@ -121,6 +151,11 @@ export const deploymentOverviewTranslations = {
     manage: "Gerenciar",
     openOnMachine: ({ machine }) => `Abrir em ${machine}`,
     openOnMachineDetail: "Logs, saúde e controles",
+    catalogUpdateTitle: "Há uma versão mais nova deste app",
+    catalogUpdateBody: "O Happier ainda não aplica atualizações do catálogo. Seus dados continuam como estão.",
+    definitionTitle: "Definição",
+    definitionStored: ({ revision }) => `Salva no Happier · revisão ${revision}`,
+    definitionNotDeployed: "ainda não implantada",
   },
   "ca": {
     controllerPausedTitle: "Tasques i alertes en pausa",
@@ -138,6 +173,11 @@ export const deploymentOverviewTranslations = {
     manage: "Gestiona",
     openOnMachine: ({ machine }) => `Obre a ${machine}`,
     openOnMachineDetail: "Registres, salut i controls",
+    catalogUpdateTitle: "Hi ha una versió més nova d’aquesta app",
+    catalogUpdateBody: "Happier encara no pot aplicar actualitzacions del catàleg. Les teves dades no canvien.",
+    definitionTitle: "Definició",
+    definitionStored: ({ revision }) => `Desada a Happier · revisió ${revision}`,
+    definitionNotDeployed: "encara no desplegada",
   },
   "pl": {
     controllerPausedTitle: "Zadania i alerty wstrzymane",
@@ -155,6 +195,11 @@ export const deploymentOverviewTranslations = {
     manage: "Zarządzaj",
     openOnMachine: ({ machine }) => `Otwórz na ${machine}`,
     openOnMachineDetail: "Logi, zdrowie i sterowanie",
+    catalogUpdateTitle: "Dostępna jest nowsza wersja tej aplikacji",
+    catalogUpdateBody: "Happier nie stosuje jeszcze aktualizacji z katalogu. Twoje dane pozostają bez zmian.",
+    definitionTitle: "Definicja",
+    definitionStored: ({ revision }) => `Zapisana w Happier · rewizja ${revision}`,
+    definitionNotDeployed: "jeszcze niewdrożona",
   },
   "ru": {
     controllerPausedTitle: "Задачи и оповещения приостановлены",
@@ -172,6 +217,11 @@ export const deploymentOverviewTranslations = {
     manage: "Управлять",
     openOnMachine: ({ machine }) => `Открыть на ${machine}`,
     openOnMachineDetail: "Логи, состояние и управление",
+    catalogUpdateTitle: "Доступна более новая версия этого приложения",
+    catalogUpdateBody: "Happier пока не умеет применять обновления каталога. Ваши данные не меняются.",
+    definitionTitle: "Определение",
+    definitionStored: ({ revision }) => `Хранится в Happier · ревизия ${revision}`,
+    definitionNotDeployed: "ещё не развёрнуто",
   },
   "ja": {
     controllerPausedTitle: "ジョブとアラートは一時停止中",
@@ -189,6 +239,11 @@ export const deploymentOverviewTranslations = {
     manage: "管理",
     openOnMachine: ({ machine }) => `${machine} で開く`,
     openOnMachineDetail: "ログ、ヘルス、操作",
+    catalogUpdateTitle: "このアプリの新しいバージョンがあります",
+    catalogUpdateBody: "Happier はまだカタログの更新を適用できません。データはそのままです。",
+    definitionTitle: "定義",
+    definitionStored: ({ revision }) => `Happier に保存 · リビジョン ${revision}`,
+    definitionNotDeployed: "まだデプロイされていません",
   },
   "zh-Hans": {
     controllerPausedTitle: "作业和告警已暂停",
@@ -206,6 +261,11 @@ export const deploymentOverviewTranslations = {
     manage: "管理",
     openOnMachine: ({ machine }) => `在 ${machine} 上打开`,
     openOnMachineDetail: "日志、健康状况和控制",
+    catalogUpdateTitle: "此应用有更新的版本",
+    catalogUpdateBody: "Happier 还不能应用目录更新。你的数据保持不变。",
+    definitionTitle: "定义",
+    definitionStored: ({ revision }) => `存储在 Happier 中 · 修订 ${revision}`,
+    definitionNotDeployed: "尚未部署",
   },
   "zh-Hant": {
     controllerPausedTitle: "作業和警示已暫停",
@@ -223,5 +283,10 @@ export const deploymentOverviewTranslations = {
     manage: "管理",
     openOnMachine: ({ machine }) => `在 ${machine} 上開啟`,
     openOnMachineDetail: "日誌、健康狀況和控制",
+    catalogUpdateTitle: "此應用有較新的版本",
+    catalogUpdateBody: "Happier 還不能套用目錄更新。你的資料保持不變。",
+    definitionTitle: "定義",
+    definitionStored: ({ revision }) => `儲存在 Happier 中 · 修訂 ${revision}`,
+    definitionNotDeployed: "尚未部署",
   },
 } satisfies Record<SupportedLanguage, DeploymentOverviewTranslations>;
