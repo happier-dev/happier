@@ -625,7 +625,7 @@ describe('AgentInput voice accessory slots', () => {
     it.each([
         ['web', 'web'] as const,
         ['native', 'ios'] as const,
-    ])('keeps that reading order on the %s panel when the row stacks', async (_label, os) => {
+    ])('rides the end of the last chip rail on a %s phone, read accessory first', async (_label, os) => {
         platformState.os = os;
         platformState.width = 390;
         const screen = await renderComposer({
@@ -635,32 +635,17 @@ describe('AgentInput voice accessory slots', () => {
             onMachineClick: () => {},
         });
 
-        const { NATIVE_ACTION_BAR_SECTION_GAP_Y } = await import('./AgentInput');
+        // A phone gives every rail the card's whole width. The accessory and Send sit side by side as
+        // the last item of the last rail's wrap, pushed to its trailing edge: the card's bottom-right
+        // corner whatever the chips do, never a column beside both rails that narrows them into more lines.
         const cluster = findSlotContainer(screen, TRAILING_TEST_ID, NEW_SESSION_SEND_TEST_ID);
-        // column-reverse paints the accessory *under* Send while the tree — and so
-        // the screen-reader order — still reads accessory first.
-        const clusterStyle = flattenStyle(cluster.props.style);
-        expect(clusterStyle).toMatchObject({ flexDirection: 'column-reverse' });
+        expect(flattenStyle(cluster.props.style)).toMatchObject({ flexDirection: 'row', marginLeft: 'auto' });
         expect(readSlotOrder(cluster, TRAILING_TEST_ID, NEW_SESSION_SEND_TEST_ID)).toEqual([TRAILING_TEST_ID, NEW_SESSION_SEND_TEST_ID]);
-
-        // The cluster is the chip column's **sibling**, never a passenger inside
-        // chip row 1. Nested there it was centred against the chips, so every
-        // point it stood taller than a 32pt chip was paid twice — once above the
-        // row and once below — as the dead band under the input.
-        const bar = findSlotContainer(screen, TRAILING_TEST_ID, SECOND_CHIP_ROW_TEST_ID);
-        expect(flattenStyle(bar.props.style)).toMatchObject({
-            flexDirection: 'row',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-        });
-
-        // And it rides the column's own row rhythm, so two stacked 32pt controls
-        // measure exactly the two 32pt chip rows beside them.
-        const column = bar.children.find((child): child is ReactTestInstance => typeof child !== 'string'
-            && child !== cluster && child.findAllByProps({ testID: SECOND_CHIP_ROW_TEST_ID }).length > 0);
-        expect(column).toBeDefined();
-        expect(clusterStyle.gap)
-            .toBe(flattenStyle(column!.props.style).gap ?? NATIVE_ACTION_BAR_SECTION_GAP_Y);
+        const wrap = cluster.parent;
+        expect(wrap?.children.at(-1)).toBe(cluster);
+        const lastRail = screen.root.findAll((node) => typeof node.type === 'string' && node.props?.testID === SECOND_CHIP_ROW_TEST_ID);
+        expect(lastRail).toHaveLength(1);
+        expect(lastRail[0]!.findAllByProps({ testID: NEW_SESSION_SEND_TEST_ID }).length).toBeGreaterThan(0);
 
         await screen.unmount();
     });
@@ -690,7 +675,7 @@ describe('AgentInput two-row trailing cluster', () => {
     it.each([
         ['web', 'web'] as const,
         ['native', 'ios'] as const,
-    ])('stacks Voice under Send on the %s panel once the New Session handlers arrive', async (_label, os) => {
+    ])('keeps Voice beside Send on the %s phone once the New Session handlers arrive', async (_label, os) => {
         platformState.os = os;
         platformState.width = 390;
         const screen = await renderComposerWithPlanet({
@@ -699,13 +684,14 @@ describe('AgentInput two-row trailing cluster', () => {
             ...NEW_SESSION_HANDLERS,
         });
 
+        // The machine · folder rail arriving moves the pair to the end of that rail; it stays one row,
+        // "Voice, then Send" on screen and for the screen reader.
         const cluster = findSlotContainer(screen, PLANET_TEST_ID, NEW_SESSION_SEND_TEST_ID);
-        // `column-reverse` paints the first child last: Send on top, the planet
-        // beneath it, while the tree — and the screen reader — still reads
-        // "Voice, then Send". Reversing the JSX to "fix" the stack breaks the row.
-        expect(flattenStyle(cluster.props.style)).toMatchObject({ flexDirection: 'column-reverse' });
+        expect(flattenStyle(cluster.props.style)).toMatchObject({ flexDirection: 'row' });
         expect(readSlotOrder(cluster, PLANET_TEST_ID, NEW_SESSION_SEND_TEST_ID))
             .toEqual([PLANET_TEST_ID, NEW_SESSION_SEND_TEST_ID]);
+        const lastRail = screen.root.findAll((node) => typeof node.type === 'string' && node.props?.testID === SECOND_CHIP_ROW_TEST_ID);
+        expect(lastRail[0]?.findAllByProps({ testID: PLANET_TEST_ID }).length).toBeGreaterThan(0);
 
         await screen.unmount();
     });
