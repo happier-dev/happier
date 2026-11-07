@@ -408,7 +408,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   establishedRuntimeOwner: QualifiedConnectedAccountMaterializationOwner;
   openTeamDirect?: TeamCredentialDirectMaterialClient['open'];
   workerMachineId?: string;
-  resolveQualifiedConnectedAccountV4Support(): QualifiedConnectedAccountV4Support;
+  resolveQualifiedConnectedAccountV4Support(): QualifiedConnectedAccountV4Support | Promise<QualifiedConnectedAccountV4Support>;
   /** Root Account changes/reconnect invalidate this projection; requester contexts without that observer retain only in-flight reads. */
   coordinatorInventoryIsObserved?: () => boolean;
   reloadController?: Pick<
@@ -1295,7 +1295,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     async listCoordinatorAccounts(signal = new AbortController().signal, demandedService?: QualifiedConnectedAccountRef['service']) {
       signal.throwIfAborted();
       if (
-        params.resolveQualifiedConnectedAccountV4Support() !== 'advertised'
+        await params.resolveQualifiedConnectedAccountV4Support() !== 'advertised'
         || !params.qualifiedApi
       ) {
         return Object.freeze([]);
@@ -1314,7 +1314,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     },
     async listGroupQuotaTargets(input) {
       input.signal.throwIfAborted();
-      if (params.resolveQualifiedConnectedAccountV4Support() !== 'advertised' || !params.qualifiedApi) {
+      if (await params.resolveQualifiedConnectedAccountV4Support() !== 'advertised' || !params.qualifiedApi) {
         return Object.freeze([]);
       }
       const group = await params.qualifiedApi.readGroup({

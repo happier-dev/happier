@@ -13,7 +13,6 @@ export type AccountExecutionRuntimeInput = Readonly<{
     accountExecution: NonNullable<RegistryInput['accountExecution']>;
     happyHomeDir?: string;
     signal?: AbortSignal;
-    needsAccountPurposes?: boolean;
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined | Promise<CliServerFeaturesSnapshot | undefined>;
 }>;
 
@@ -36,10 +35,16 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             isRuntimeRegistryCurrent: candidate => candidate === registry,
             subscribe: pluginReloadController.subscribe,
         };
-        const purposeRuntime = input.needsAccountPurposes && operationContext && accountId ? await (async () => {
+        let qualifiedSupport: Promise<ReturnType<typeof resolveQualifiedConnectedAccountAtomicV4Negotiation>> | undefined;
+        const resolveQualifiedSupport = () => qualifiedSupport ??= (async () => {
             const features = input.resolveServerFeaturesSnapshot ? await input.resolveServerFeaturesSnapshot()
                 : await fetchServerFeaturesSnapshot({ serverUrl: authority.serverUrl, token: authority.credentials.token,
                     ...(input.signal ? { signal: input.signal } : {}) });
+            return resolveQualifiedConnectedAccountAtomicV4Negotiation(features);
+        })();
+        // Child Actions derive their own purpose demand at admission. Composing
+        // these local services must not depend on the parent's declarations.
+        const purposeRuntime = operationContext && accountId ? (() => {
             const credentialApi = createConnectedServiceCredentialApi(authority.credentials);
             return createRequesterConnectedAccountPurposeBindingRuntime({ operationContext, accountId,
                 ...(authority.machineId ? { machineId: authority.machineId } : {}),
@@ -48,7 +53,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
                 allowNativeAccountCredentials: false,
                 getAccountEncryptionMode: options => runWithServerHttpBaseUrl(authority.serverUrl,
                     () => credentialApi.getAccountEncryptionMode(options)),
-                resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(features),
+                resolveQualifiedConnectedAccountV4Support: resolveQualifiedSupport,
             });
         })() : null;
         registry = await resolveExecutablePluginRuntimeRegistry({
