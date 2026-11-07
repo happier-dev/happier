@@ -156,7 +156,7 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, interruptedPath, navigationBeforeReply = false, childNavigation = false } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -170,6 +170,14 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
           return;
         }
+        const interrupted = method === 'Page.navigate' && new URL(params.url).pathname === interruptedPath;
+        const navigateElsewhere = () => this.message({ method: 'Page.frameNavigated', params: {
+          frame: { id: childNavigation ? 'child' : 'main', loaderId: 'manual-navigation' },
+        } });
+        if (method === 'Page.navigate') this.message({ method: 'Page.frameNavigated', params: {
+          frame: { id: 'main', loaderId },
+        } });
+        if (interrupted && navigationBeforeReply) navigateElsewhere();
         this.message({ id, result: method === 'Page.navigate'
           ? { frameId: 'main', loaderId }
           : method === 'Runtime.callFunctionOn'
@@ -180,6 +188,15 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
               ? { body: malformed ? '{' : JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
         if (method !== 'Page.navigate') return;
         this.navigations++;
+        if (interrupted) {
+          if (!navigationBeforeReply) queueMicrotask(navigateElsewhere);
+          if (!childNavigation) {
+            // The displaced document has no load event left to emit. Closing
+            // this finite transport exposes a missing navigation settlement.
+            setImmediate(() => this.dispatchEvent(new Event('close')));
+            return;
+          }
+        }
         this.message({ method: 'Runtime.executionContextCreated', params: {
           context: { id: 42, auxData: { isDefault: true, frameId: 'main' } },
         } });
@@ -228,6 +245,22 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
 
 test('reads Account identity only from this main-frame navigation, ignoring previous documents and child frames', async () => {
   assert.deepEqual(await profileSignin(), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
+
+for (const interruptedPath of ['/restore/manual', '/settings/account', '/']) {
+  for (const navigationBeforeReply of [false, true]) {
+    test(`settles a replaced ${interruptedPath} navigation ${navigationBeforeReply ? 'before' : 'after'} its CDP reply`, async () => {
+      assert.deepEqual(await profileSignin({ interruptedPath, navigationBeforeReply }), {
+        ok: false, reason: 'restore_entry_unavailable',
+      });
+    });
+  }
+}
+
+test('a child-frame navigation does not displace the sign-in document', async () => {
+  assert.deepEqual(await profileSignin({ interruptedPath: '/restore/manual', childNavigation: true, navigationBeforeReply: true }), {
+    ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl,
+  });
 });
 
 test('reports a declined migration with both safe Home origins and descriptor revisions', async () => {

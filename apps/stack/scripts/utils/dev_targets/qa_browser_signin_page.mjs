@@ -181,6 +181,7 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     let loaded;
     let navigation;
     const loadedFrames = new Map();
+    const navigatedFrames = new Map();
     const contexts = new Map();
     let observingAccount = false;
     let profileLoaded;
@@ -200,9 +201,18 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       }
     };
     const resolveLoaded = () => {
-      if (navigation && loadedFrames.get(navigation.loaderId) === navigation.frameId) loaded?.resolve();
+      if (!navigation) return;
+      const observedLoader = navigatedFrames.get(navigation.frameId);
+      if (observedLoader && observedLoader !== navigation.loaderId) {
+        loaded?.reject(failure('restore_entry_unavailable'));
+      } else if (loadedFrames.get(navigation.loaderId) === navigation.frameId) loaded?.resolve();
     };
     client = await connectPage(endpoint.href, WebSocketImpl, message => {
+      if (message.method === 'Page.frameNavigated') {
+        const { id, loaderId } = message.params.frame;
+        navigatedFrames.set(id, loaderId);
+        resolveLoaded();
+      }
       if (message.method === 'Page.lifecycleEvent' && message.params.name === 'load') {
         loadedFrames.set(message.params.loaderId, message.params.frameId);
         resolveLoaded();
@@ -246,6 +256,7 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         if (pathname !== '/restore/manual') url.searchParams.delete('server');
         loaded = Promise.withResolvers();
         loadedFrames.clear();
+        navigatedFrames.clear();
         navigation = null;
         navigation = await client.send('Page.navigate', { url: url.href });
         if (navigation.errorText) throw failure('restore_entry_unavailable');
