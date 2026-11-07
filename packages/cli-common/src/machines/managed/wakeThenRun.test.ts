@@ -16,15 +16,42 @@ const asleep = ManagedMachineV1Schema.parse({
 });
 
 describe('explicit managed execution', () => {
-    it('leaves a non-managed target unchanged without consulting managed inventory or installing a wake continuation', async () => {
-        const reads = {
+    it('retains an ordinary Session target while bypassing all managed runtime work', async () => {
+        let placement = 'ordinary-machine';
+        let placementReads = 0;
+        const reads: ManagedWakePreparationReads = {
             readMachineTarget: async () => ({ reachable: true, managedMachineRef: null }),
-            readSessionMachineId: async () => null,
+            readSessionMachineId: async () => { placementReads++; return placement; },
             readManagedMachine: async () => { throw new Error('Ordinary Machines must not consult managed inventory'); },
+            readSelectedProvisioners: async () => { throw new Error('Ordinary Machines must not consult provider admission'); },
         };
-        expect(await prepareManagedMachineWakeChildren({ actionId: 'session.open', input: {}, context: { surface: 'ui' },
-            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'ordinary-machine' } } }, reads,
-        async () => { throw new Error('Ordinary Machines must not enter managed runtime execution'); })).toBeNull();
+        const context = { surface: 'ui' as const };
+        const input = { sessionId: 'ordinary-session', intent: 'resume' as const };
+        const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.open', input, context,
+            machineRuntimeDemand: { target: { kind: 'session', sessionId: input.sessionId }, serverId: 'original-home' } }, reads,
+        async () => { throw new Error('Ordinary Machines must not enter managed runtime execution'); });
+        expect(prepared).toMatchObject({ children: [] });
+        if (!prepared || 'ok' in prepared || !prepared.executeAdmittedAction) throw new Error('Expected original target binding');
+        placement = 'later-machine';
+        const selected: unknown[] = [];
+        expect(await prepared.executeAdmittedAction({ actionId: 'session.open', input, context,
+            execute: async (originalContext, target) => {
+                expect(originalContext).toBe(context);
+                selected.push(target);
+                return { ok: true, result: 'original-operation' };
+            } })).toEqual({ ok: true, result: 'original-operation' });
+        expect(selected).toEqual([{ machineId: 'ordinary-machine', serverId: 'original-home' }]);
+        expect(placementReads).toBe(1);
+    });
+
+    it('keeps ordinary accepted input at its ACK owner without a finite continuation', async () => {
+        expect(await prepareManagedMachineWakeChildren({ actionId: 'session.message.send', input: {}, context: { surface: 'ui' },
+            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'ordinary-machine' }, activation: 'accepted-input' } }, {
+            readMachineTarget: async () => ({ reachable: true, managedMachineRef: null }),
+            readSessionMachineId: async () => { throw new Error('The concrete Machine target is already known'); },
+            readManagedMachine: async () => { throw new Error('Ordinary Machines must not consult managed inventory'); },
+            readSelectedProvisioners: async () => { throw new Error('Ordinary Machines must not consult provider admission'); },
+        }, async () => { throw new Error('Accepted input must not enter finite runtime execution'); })).toBeNull();
     });
 
     it('reviews wake for retained running observations with an unreachable guest so a vendor stop reaches fresh Inspect', async () => {

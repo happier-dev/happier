@@ -73,7 +73,11 @@ export async function prepareManagedMachineWakeChildren(
     if (machineId === reads.localMachineId) return null;
     const target = await reads.readMachineTarget(machineId, request.context);
     if ('ok' in target) return target;
-    if (!target.managedMachineRef) return null;
+    if (!target.managedMachineRef) return demand.activation === 'accepted-input' ? null : {
+        children: [],
+        executeAdmittedAction: execution => execution.execute(execution.context,
+            { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}) }),
+    };
     const machine = await reads.readManagedMachine(target.managedMachineRef, request.context);
     if (machine && 'ok' in machine) return machine;
     const powerInput = machine && isManagedMachineWakeInspectionRequiredV1(machine, machineId, target.reachable)
