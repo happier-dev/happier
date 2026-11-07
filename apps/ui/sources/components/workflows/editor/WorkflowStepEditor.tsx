@@ -38,10 +38,10 @@ import {
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { workflowEditorStyles } from './workflowEditorStyles';
-import { formatWorkflowConversationLabel, formatWorkflowWorkspaceLabel, useWorkflowContinuedSessionLabel } from './WorkflowContinuityControls';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowIssueText } from './workflowIssueText';
-import { formatWorkflowBlockOptionsSummary, useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
+import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
+import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 
@@ -235,21 +235,9 @@ export function WorkflowStepEditor(props: Readonly<{
         return () => registerPromptRef?.(step.id, null);
     }, [registerPromptRef, step.id]);
 
-    // The Step options chip reads "Workflow defaults" or what differs ("Fresh",
-    // "A background run", "Reviews before continuing"), D-7. An engine change is the
-    // engine chip's to show (bordered there), so it adds no words here.
-    const continuedSessionLabel = useWorkflowContinuedSessionLabel(step.execution?.conversation);
-    const stepDifferences = [
-        ...(step.execution?.conversation === undefined
-            ? []
-            : [formatWorkflowConversationLabel({ draft: props.draft, conversation: step.execution.conversation, sessionLabel: continuedSessionLabel })]),
-        ...(step.execution?.workspace === undefined ? [] : [formatWorkflowWorkspaceLabel(props.draft, step.execution.workspace)]),
-        ...(step.execution?.executionTarget?.kind === 'detached_run' ? [t('workflows.page.sections.aBackgroundRun')] : []),
-        ...(step.pauseForReview === true ? [t('workflows.page.inspector.reviewsBeforeContinuing')] : []),
-    ];
     const latestCustomizeRef = React.useRef(onCustomize);
     latestCustomizeRef.current = onCustomize;
-    const optionsSummary = formatWorkflowBlockOptionsSummary(step, stepDifferences);
+    const optionsSummary = useWorkflowStepOptionsSummary(props.draft, step);
     const stepOptionsChip = useWorkflowStepOptionsChip({
         label: optionsSummary.label,
         changed: optionsSummary.changed,

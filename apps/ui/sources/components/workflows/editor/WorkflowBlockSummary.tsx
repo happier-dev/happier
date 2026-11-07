@@ -4,6 +4,11 @@ import { Pressable, View } from 'react-native';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowWaitLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 
+import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { resolveEffectiveWorkflowStepExecution } from '@/sync/domains/workflows/workflowAuthoring';
+import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import {
@@ -13,18 +18,27 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { formatWorkflowStepReturns } from './WorkflowStepDataEditor';
+import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import {
   WorkflowStepSessionDropZone,
   type WorkflowSessionDrop,
 } from './WorkflowStepSessionDropZone';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
-/** The height a summary row holds (px) while its words are not mounted: one prompt line, plus a Wait's caption. */
-export const WORKFLOW_SUMMARY_ROW_ESTIMATE = { step: 48, wait: 66 } as const;
+/**
+ * The least height a summary row holds (px), also before its words mount: its heading, one prompt
+ * line and the line under it (a step's engine · options · returns, a Wait's caption).
+ */
+export const WORKFLOW_SUMMARY_ROW_ESTIMATE = { step: 66, wait: 66 } as const;
+
+/** A prompt at rest shows up to this many lines before it ends in an ellipsis (lab E1). */
+const SUMMARY_PROMPT_LINES = 3;
 
 /**
- * A prompt block that is not being worked on (lab S1 "collapsed summary row"): its number, its
- * name and the first line of its prompt, its overflow actions, and the problem it has, if any.
+ * A prompt block that is not being worked on (lab S1 "collapsed summary row", E1): its number, its
+ * name, up to three lines of its prompt, a step's quiet engine · options · returns line, its
+ * overflow actions, and the problem it has, if any.
  *
  * A long workflow mounts one block editor, not one per block: activating this row (a press, the
  * keyboard, or the page's "focus the first issue") selects the block, which then opens its editor
@@ -33,8 +47,11 @@ export const WORKFLOW_SUMMARY_ROW_ESTIMATE = { step: 48, wait: 66 } as const;
 export function WorkflowBlockSummary(
   props: Readonly<{
     block: WorkflowStep | WorkflowWaitLeafV1;
-    /** The first line of the block's prompt. */
+    /** The block's written prompt. */
     summary: string;
+    /** A step's workflow, for the engine and options it inherits; the line is left out without it. */
+    draft?: WorkflowEditorDraft;
+    authoringFacts?: SessionAuthoringControlFacts;
     ordinal: number;
     visibleOrdinal: string | null;
     total: number;
@@ -107,11 +124,15 @@ export function WorkflowBlockSummary(
       >
         <Text
           testID={`${rowPrefix}-summary-text`}
-          numberOfLines={1}
+          numberOfLines={SUMMARY_PROMPT_LINES}
           style={workflowEditorStyles.summaryPrompt}
         >
           {props.summary}
         </Text>
+        {block.kind === 'step' && props.draft !== undefined ? (
+          <WorkflowStepSummaryMeta step={block} draft={props.draft} authoringFacts={props.authoringFacts}
+            testID={`${rowPrefix}-summary-meta`} />
+        ) : null}
         {block.kind === 'wait' ? (
           <Text style={workflowEditorStyles.metaText}>
             {t(props.inLane ? 'workflows.page.blocks.waitSub' : 'workflows.page.blocks.waitSubRoot')}
@@ -145,5 +166,30 @@ export function WorkflowBlockSummary(
     </WorkflowStepSessionDropZone>
   ) : (
     row
+  );
+}
+
+/** A step at rest names what runs it and how, quietly (lab E1): "Opus 5.5 · Workflow defaults · Returns issues". */
+function WorkflowStepSummaryMeta(props: Readonly<{
+  step: WorkflowStep;
+  draft: WorkflowEditorDraft;
+  authoringFacts?: SessionAuthoringControlFacts;
+  testID: string;
+}>): React.ReactElement {
+  const { step, draft } = props;
+  const engine = useSessionAuthoringEngineSummary({
+    values: resolveEffectiveWorkflowStepExecution(draft, step),
+    engine: step.execution?.participant ?? step.execution?.engine ?? draft.defaults.engine,
+    workflowRoles: draft.roles,
+    ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
+  });
+  const options = useWorkflowStepOptionsSummary(draft, step);
+  const line = [engine, options.label, formatWorkflowStepReturns(step.result)]
+    .filter((part): part is string => part !== null && part.trim().length > 0)
+    .join(' · ');
+  return (
+    <Text testID={props.testID} numberOfLines={1} style={workflowEditorStyles.metaText}>
+      {line}
+    </Text>
   );
 }

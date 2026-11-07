@@ -300,6 +300,17 @@ export function formatWorkflowNamedResultSummary(
 }
 
 
+/**
+ * The step footer's returns line (DESIGN-7 N27), at rest and selected: named results ("Returns
+ * issues, commits, summary"), a decision, or `null` for plain text (lab E1). Field names read as
+ * words in a sentence ("missing evidence, next step"), never as wire keys.
+ */
+export function formatWorkflowStepReturns(result: WorkflowResultContract | undefined): string | null {
+    const namedFields = listWorkflowDeclaredResultFields(result);
+    if (namedFields !== undefined) return t('workflows.page.blocks.returnsFields', { fields: namedFields.map(formatWorkflowResultFieldWord).join(', ') });
+    return result === undefined || result.kind === 'text' ? null : formatWorkflowResultSummary(result);
+}
+
 /** What a result contract returns, in the footer and in Step options' Result row. */
 export function formatWorkflowResultSummary(result: WorkflowResultContract | undefined): string {
     if (result === undefined || result.kind === 'text') return t('workflows.page.blocks.returnsText');
@@ -448,14 +459,9 @@ export function WorkflowStepDataEditor(props: Readonly<{
     const id = `${props.testIDPrefix}-step-${props.step.id}`;
     const editable = props.editable !== false;
     const editing = editable && props.editing !== false;
-    const textResult = props.step.result === undefined || props.step.result.kind === 'text';
-    const namedFields = listWorkflowDeclaredResultFields(props.step.result);
-    // The footer says facts only, the same selected or at rest (DESIGN-7 N27): named results
-    // ("Returns issues, commits, summary"), a decision, or nothing for plain text (lab E1). Adding
-    // named results or an input is Step options' (Result, Add input), so selecting moves nothing.
-    // Field names read as words in a sentence ("missing evidence, next step"), never as wire keys.
-    const returns = namedFields !== undefined ? t('workflows.page.blocks.returnsFields', { fields: namedFields.map(formatWorkflowResultFieldWord).join(', ') })
-        : textResult ? null : formatWorkflowResultSummary(props.step.result);
+    // The footer says facts only, the same selected or at rest. Adding named results or an input
+    // is Step options' (Result, Add input), so selecting moves nothing.
+    const returns = formatWorkflowStepReturns(props.step.result);
     const inputTokens = editing ? [] : props.step.input;
     const showsLine = returns !== null || inputTokens.length > 0 || props.footerAccessory != null;
     // Nothing to say renders nothing: an empty line would still take the step's row gap.

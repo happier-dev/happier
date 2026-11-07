@@ -401,9 +401,11 @@ export function WorkflowBlockListEditor(
           (candidate.kind === 'step' || candidate.kind === 'wait') &&
           props.editingBlockId !== candidate.id &&
           selectedBlockId !== candidate.id;
+        // A summary shows the written prompt (up to three lines at rest); an unwritten one keeps its composer.
         const summary =
           summarized(block) && (block.kind === 'step' || block.kind === 'wait')
-            ? workflowPromptFirstLine(block.document.text)
+            && workflowPromptFirstLine(block.document.text) !== null
+            ? block.document.text.trim()
             : null;
         const waitIssue =
           (block.kind === 'wait' || summary !== null) &&
@@ -556,7 +558,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       | import('./workflowDocumentPresentation').WorkflowDocumentStepSlots
       | null;
     highlighted: boolean;
-    /** The prompt's first line while this block shows as its summary row; `null` mounts its editor. */
+    /** The written prompt while this block shows as its summary row; `null` mounts its editor. */
     summary: string | null;
     /** Whether the block before this one is a summary row too: then this gap's Add waits to be reached. */
     previousSummarized: boolean;
@@ -880,6 +882,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
               <WorkflowBlockSummary
               block={block}
               summary={row.summary}
+              {...(block.kind === 'step' ? { draft } : {})}
+              {...(row.authoringFacts === undefined ? {} : { authoringFacts: row.authoringFacts })}
               ordinal={ordinal}
               visibleOrdinal={row.visibleOrdinal}
               total={blocks.length}
