@@ -79,6 +79,21 @@ function createSession(active: boolean) {
 }
 
 describe('activatePendingInactiveSession', () => {
+  it('settles a refused connected account with its closed cause so the Session can lead to signing in again', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const result = await activatePendingInactiveSession({ credentials: tokenOnlyCredentials, machineId: 'machine-1',
+      sessionId: 'session-1', requestId: 'pending-after-ui-death', pendingVersion: 9,
+      spawnSessionForInternalResume: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'private provider message', errorDetail: { kind: 'connected_service_ux_diagnostic', uxDiagnostic: {
+          code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization', source: 'spawn_resume',
+          serviceId: 'happier.agent.claude/claude-subscription', agentId: 'claude', profileId: 'private-profile', retryable: false,
+          suggestedActions: ['reconnect_profile', 'open_connected_accounts'] } } }) });
+    const failureDetails = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED',
+      runtimeReason: 'connected_service_credential_reconnect_required' };
+    expect(result).toEqual({ status: 'rejected', reason: 'spawn-rejected', failureDetails });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
   it('retains a retryable transport spawn refusal as waiting without copying its private message', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');

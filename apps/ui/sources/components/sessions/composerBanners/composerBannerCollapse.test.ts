@@ -5,7 +5,8 @@ import {
     isSessionComposerBannerKind,
 } from './composerBannerKinds';
 import {
-    buildComposerBannerBadgeAccessibility,
+    buildCollapsedComposerBannerBadge,
+    buildComposerBannerHideAction,
     isComposerBannerCollapsedInRecord,
     normalizeComposerBannerCollapseRecord,
     planComposerBannerCollapseToggle,
@@ -164,30 +165,43 @@ describe('planComposerBannerCollapseToggle', () => {
     });
 });
 
-describe('buildComposerBannerBadgeAccessibility', () => {
-    it('announces the live status as the label and keeps the toggle verb in the hint', () => {
-        const accessibility = buildComposerBannerBadgeAccessibility({
-            statusLabel: 'Limit resets 14:20',
-            collapsed: false,
-            expandHint: 'Show banner',
-            collapseHint: 'Hide banner',
-        });
+describe('collapsible banner: banner or chip, one at a time', () => {
+    const badge = { key: 'stale-session-runner', label: 'Runner update', tone: 'warning' as const };
 
-        expect(accessibility.accessibilityLabel).toBe('Limit resets 14:20');
-        expect(accessibility.accessibilityHint).toBe('Hide banner');
-        expect(accessibility.accessibilityState).toEqual({ expanded: true });
+    it('withholds the chip while the banner is expanded', () => {
+        expect(buildCollapsedComposerBannerBadge({
+            collapsed: false,
+            badge,
+            statusLabel: 'Runner outdated',
+            expandHint: 'Show banner',
+        })).toBeNull();
     });
 
-    it('reports collapsed state without dropping the status text', () => {
-        const accessibility = buildComposerBannerBadgeAccessibility({
-            statusLabel: 'Runner outdated',
+    it('stands the chip in for a collapsed banner without dropping the status text', () => {
+        expect(buildCollapsedComposerBannerBadge({
             collapsed: true,
+            badge,
+            statusLabel: 'Runner outdated',
             expandHint: 'Show banner',
-            collapseHint: 'Hide banner',
+        })).toEqual({
+            ...badge,
+            accessibilityLabel: 'Runner outdated',
+            accessibilityHint: 'Show banner',
+            accessibilityState: { expanded: false },
         });
+    });
 
-        expect(accessibility.accessibilityLabel).toBe('Runner outdated');
-        expect(accessibility.accessibilityHint).toBe('Show banner');
-        expect(accessibility.accessibilityState).toEqual({ expanded: false });
+    it('gives the expanded banner a quiet Hide that runs the same toggle', () => {
+        const toggle = () => {};
+        expect(buildComposerBannerHideAction({
+            bannerTestID: 'session-staleRunner-version',
+            accessibilityLabel: 'Hide stale runner banner',
+            onPress: toggle,
+        })).toEqual(expect.objectContaining({
+            testID: 'session-staleRunner-version-hide',
+            accessibilityLabel: 'Hide stale runner banner',
+            variant: 'quiet',
+            onPress: toggle,
+        }));
     });
 });

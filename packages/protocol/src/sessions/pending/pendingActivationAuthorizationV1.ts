@@ -19,6 +19,7 @@ export const PendingActivationRuntimeFailureReasonV1Schema = lazyZodSchema(() =>
   'runner_authority_unavailable', 'runner_presence_unproven', 'no_token', 'shutdown',
   'transport_unavailable', 'encryption_material_unavailable', 'runtime_upgrade_required',
   'malformed_response', 'rpc_method_unavailable', 'rpc_failed', 'no_eligible_member',
+  'connected_service_credential_reconnect_required', 'connected_service_credential_refresh_unavailable',
 ]));
 
 /** Diagnostic facts only: no native prose, paths, input content or credential material. */

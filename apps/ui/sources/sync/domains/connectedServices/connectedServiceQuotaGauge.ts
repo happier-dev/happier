@@ -2,9 +2,10 @@ import type {
     ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaLimitSelectionV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
-    ConnectedServiceQuotaSnapshotV1,
+    ConnectedServiceQuotaSnapshotV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
     SessionRuntimeIssueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
@@ -279,6 +280,25 @@ export function summarizeConnectedServiceQuotaRecoveryCredits(
     return recoveryCredits.availableCount > 0
         ? { availableCount: recoveryCredits.availableCount, nextExpiresAtMs: null, providerCreditId: null }
         : null;
+}
+
+/**
+ * A Session whose current failure is classified as something other than usage keeps its gauge quiet:
+ * a red "0% left" beside a credential or configuration failure points at the wrong cause. The
+ * failure's owner classifies it (`usage` from the usage-limit recovery owner, `other` from the
+ * delivery-state presenter); the gauge only applies the answer.
+ */
+export function quietQuotaGaugeForSessionFailure(
+    viewModel: ConnectedServiceQuotaGaugeViewModel,
+    failure: 'usage' | 'other' | null,
+): ConnectedServiceQuotaGaugeViewModel {
+    if (failure !== 'other') return viewModel;
+    if (viewModel.tone === 'neutral' && viewModel.usageRings.every((ring) => ring.tone === 'neutral')) return viewModel;
+    return {
+        ...viewModel,
+        tone: 'neutral',
+        usageRings: viewModel.usageRings.map((ring) => ring.tone === 'neutral' ? ring : { ...ring, tone: 'neutral' }),
+    };
 }
 
 /** The gauge's vocabulary for the one quota tone owner's answer; a healthy gauge stays quiet. */

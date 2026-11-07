@@ -1,5 +1,5 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import type { SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionSpawnNewIncompatibleTargetV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -26,6 +26,7 @@ export type SessionSpawnNewResultFailureMessageKey =
     | 'connectedServices.diagnostics.body.connected_service_credential_refresh_unavailable'
     | 'newSession.launchStillPendingBody'
     | 'newSession.daemonRpcUnavailableBody'
+    | 'newSession.actionMethodUnavailable'
     | 'session.access.repairBody'
     | 'session.access.preparationKeyUnavailable'
     | 'teams.policy.externalSharingDisabled'
@@ -55,6 +56,13 @@ export function resolveSessionSpawnNewActionFailureMessageKey(
         : 'newSession.failedToStart';
 }
 
+/** Incompatibility reasons that mean the target Machine's Happier predates what this start needs. */
+const INCOMPATIBLE_TARGET_NEEDS_UPDATE: ReadonlySet<SessionSpawnNewIncompatibleTargetV1['reason']> = new Set([
+    'initial_access_unsupported', 'target_preparation_rpc_unavailable', 'target_preparation_invalid_result',
+    'session_spawn_protocol_unavailable', 'creation_lookup_unavailable', 'initial_trigger_protocol_unavailable',
+    'context_memory_protocol_unavailable', 'spawn_rpc_unavailable', 'creation_settlement_unavailable',
+]);
+
 /**
  * Projects the strict action result without discarding its originating typed
  * outcome. Only an explicit `machine_offline` result claims unavailable
@@ -72,6 +80,10 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
     if (result.code === 'spawn_failed' && result.launchError?.code === 'connected_service_credential_refresh_unavailable') {
         return 'connectedServices.diagnostics.body.connected_service_credential_refresh_unavailable';
     }
+    // A target that cannot take this start says what to do on that Machine, never a bare code.
+    const incompatible = result.code === 'incompatible_target' ? result.incompatibleTarget?.reason : undefined;
+    if (incompatible === 'daemon_rpc_unavailable') return 'newSession.daemonRpcUnavailableBody';
+    if (incompatible && INCOMPATIBLE_TARGET_NEEDS_UPDATE.has(incompatible)) return 'newSession.actionMethodUnavailable';
     if (
         result.code === 'recipient_key_unavailable'
         || result.code === 'session_access_invalid_recipient_envelope'

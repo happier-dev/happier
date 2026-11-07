@@ -12,6 +12,7 @@ import {
     getSessionInputFailureLabelKey,
     resolvePendingMessageHeightBearingChrome,
     resolvePendingMessagesPresentation,
+    resolveSessionDeliveryFailure,
     type PendingMessageVisualStateKind,
 } from './pendingMessageVisualState';
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
@@ -313,6 +314,20 @@ describe('getPendingMessageVisualState', () => {
         });
     });
 
+    it('gives a runtime-config block one Session-level message with the account recovery, not a row reason', () => {
+        const blocked = pendingMessage({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' });
+        // The row defers: its reason belongs to the Session's account, said once with its next action.
+        expect(getPendingMessageVisualState(blocked).deliveryBlockedPresentation?.recovery).toBe('choose_account');
+        expect(resolvePendingMessageHeightBearingChrome(getPendingMessageVisualState(blocked))).toBe('none');
+        const failure = resolveSessionDeliveryFailure([pendingMessage({ id: 'q', localId: 'q' }), blocked], null, false);
+        expect(failure?.recovery).toBe('choose_account');
+        expect(failure?.message).toBe(t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'));
+        // Removed machine access has no account to choose; other blockers stay on their row.
+        expect(resolveSessionDeliveryFailure([blocked], null, true)).toBeNull();
+        expect(resolveSessionDeliveryFailure([{ ...blocked, pendingDeliveryBlockedReason: 'payload_too_large' }], null, false)).toBeNull();
+        expect(resolveSessionDeliveryFailure([pendingMessage()], null, false)).toBeNull();
+    });
+
     it('presents removed machine access for a runtime-config block and retracts it when access returns', () => {
         const message = pendingMessage({
             pendingDeliveryStatus: 'blocked',
@@ -487,6 +502,7 @@ describe('a new Bot\'s first-run seed while it is pending', () => {
     it('leaves an ordinary message the person typed as their own', () => {
         const [row] = resolvePendingMessagesPresentation([pendingMessage({
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
-        expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, heightBearingChrome: 'blocked-notice' });
+        // Still the person's own message; its account block is said once by the Session line (JOURNEY-UX-1107 B).
+        expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, heightBearingChrome: 'none' });
     });
 });

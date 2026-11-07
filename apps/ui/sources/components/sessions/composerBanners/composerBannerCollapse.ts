@@ -1,3 +1,6 @@
+import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
+import { t } from '@/text';
+
 import { isSessionComposerBannerKind, type SessionComposerBannerKind } from './composerBannerKinds';
 
 /**
@@ -84,19 +87,49 @@ export type ComposerBannerBadgeAccessibility = Readonly<{
 }>;
 
 /**
- * The badge is the only remaining affordance once a banner is collapsed, so the live status
- * text stays the accessible name and the show/hide verb moves to the hint. Overriding the
- * label with the verb would announce "Show banner" and drop the status entirely.
+ * One message per state: a collapsible composer banner and its status chip never speak at once.
+ * The expanded banner says everything and carries its own Hide (see `buildComposerBannerHideAction`);
+ * only once it is collapsed does the chip stand in for it, and pressing the chip brings it back.
+ *
+ * The chip is then the banner's only trace, so the live status text stays its accessible name and
+ * the "show" verb goes in the hint; overriding the label with the verb would drop the status.
  */
-export function buildComposerBannerBadgeAccessibility(params: Readonly<{
-    statusLabel: string;
+export function buildCollapsedComposerBannerBadge(params: Readonly<{
     collapsed: boolean;
+    badge: AgentInputStatusBadge;
+    statusLabel: string;
     expandHint: string;
-    collapseHint: string;
-}>): ComposerBannerBadgeAccessibility {
+}>): AgentInputStatusBadge | null {
+    if (!params.collapsed) return null;
     return {
+        ...params.badge,
         accessibilityLabel: params.statusLabel,
-        accessibilityHint: params.collapsed ? params.expandHint : params.collapseHint,
-        accessibilityState: { expanded: !params.collapsed },
+        accessibilityHint: params.expandHint,
+        accessibilityState: { expanded: false },
+    } satisfies AgentInputStatusBadge & ComposerBannerBadgeAccessibility;
+}
+
+export type ComposerBannerHideAction = Readonly<{
+    key: 'hide';
+    testID: string;
+    label: string;
+    accessibilityLabel: string;
+    variant: 'quiet';
+    onPress: () => void;
+}>;
+
+/** The expanded banner's own quiet Hide; it calls the same collapse toggle the chip does. */
+export function buildComposerBannerHideAction(params: Readonly<{
+    bannerTestID: string;
+    accessibilityLabel: string;
+    onPress: () => void;
+}>): ComposerBannerHideAction {
+    return {
+        key: 'hide',
+        testID: `${params.bannerTestID}-hide`,
+        label: t('common.hide'),
+        accessibilityLabel: params.accessibilityLabel,
+        variant: 'quiet',
+        onPress: params.onPress,
     };
 }

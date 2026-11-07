@@ -6,7 +6,7 @@ export type SessionStartFailureNotice = Readonly<{
     code: string;
     /** The localized cause and recovery step for the closed startup failure. */
     message: string;
-    retryable?: boolean;
+    retryable: boolean;
 }>;
 
 /**
@@ -20,6 +20,10 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
 }>): SessionStartFailureNotice | null {
     const { issue } = input;
     if (input.sessionActive || !issue || issue.scope !== 'primary_session' || issue.status !== 'failed') return null;
-    const message = presentSessionStartupFailureCause(issue.code);
-    return message === null ? null : { code: issue.code, message, retryable: issue.code !== 'plugin_disabled' };
+    const message = presentSessionStartupFailureCause(issue.code, issue);
+    return message === null ? null : {
+        code: issue.code,
+        message,
+        retryable: issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled',
+    };
 }

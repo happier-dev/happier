@@ -3,12 +3,13 @@ import type {
     ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
     type ConnectedServiceQuotaGaugeLabelFormatter,
     computeConnectedServiceQuotaGaugeViewModel,
     deriveConnectedServiceQuotaSnapshotFromRuntimeIssue,
+    quietQuotaGaugeForSessionFailure,
     selectConnectedServiceSessionProviderUsageSnapshot,
     summarizeConnectedServiceQuotaRecoveryCredits,
 } from './connectedServiceQuotaGauge';
@@ -128,6 +129,28 @@ describe('gauge tone boundaries derive from the canonical resolveQuotaTone owner
         expect(toneAtRemaining(QUOTA_REMAINING_WARNING_THRESHOLD_PCT)).toBe('warning');
         expect(toneAtRemaining(QUOTA_REMAINING_CRITICAL_THRESHOLD_PCT + 1)).toBe('warning');
         expect(toneAtRemaining(QUOTA_REMAINING_CRITICAL_THRESHOLD_PCT)).toBe('critical');
+    });
+});
+
+describe('quietQuotaGaugeForSessionFailure', () => {
+    const exhausted = () => {
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot([meter({ meterId: 'daily', label: 'Daily', used: 100, limit: 100, remainingPct: 0 })]),
+            windowMode: 'most_constrained', nowMs: 2_000, formatter,
+        });
+        if (!vm) throw new Error('expected a gauge');
+        return vm;
+    };
+
+    it('keeps the usage alarm only when the Session failure is a usage failure or there is none', () => {
+        const vm = exhausted();
+        expect(vm.tone).toBe('critical');
+        expect(quietQuotaGaugeForSessionFailure(vm, 'usage')).toBe(vm);
+        expect(quietQuotaGaugeForSessionFailure(vm, null)).toBe(vm);
+        const quiet = quietQuotaGaugeForSessionFailure(vm, 'other');
+        expect(quiet.tone).toBe('neutral');
+        expect(quiet.usageRings.every((ring) => ring.tone === 'neutral')).toBe(true);
+        expect(quiet.valueLabel).toBe(vm.valueLabel);
     });
 });
 

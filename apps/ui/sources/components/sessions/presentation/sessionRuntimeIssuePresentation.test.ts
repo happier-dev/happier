@@ -10,7 +10,10 @@ import { resolveSessionStartFailureNotice } from '@/components/sessions/startFai
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnNewAction';
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
-import { presentSessionRuntimeIssue } from './sessionRuntimeIssuePresentation';
+import { presentSessionActivationFailure, presentSessionRuntimeIssue } from './sessionRuntimeIssuePresentation';
+import { getPendingMessageVisualState, resolvePendingMessageHeightBearingChrome, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
+import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
+import { shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 
@@ -248,5 +251,44 @@ describe('closed startup-failure recovery copy', () => {
         expect(unknown).toContain('spawn_failed');
         expect(unknown).not.toContain('daemon_private_cause');
         expect(unknown).not.toContain('private detail');
+    });
+});
+
+describe('a Session whose Agent account refused queued input: one message and one next action', () => {
+    const failed = { requestId: 'first-input', requestedAt: 200, status: 'failed' as const, failureCode: 'runtime_start_failed' as const };
+    const reconnect = { reason: 'spawn-rejected' as const, spawnErrorCode: 'SPAWN_VALIDATION_FAILED' as const,
+        runtimeReason: 'connected_service_credential_reconnect_required' as const };
+    const blockedFirstInput = { id: 'row-1', localId: 'first-input', createdAt: 10, updatedAt: 10, text: 'hello', rawRecord: {},
+        messageRole: 'user' as const, source: 'server_pending' as const,
+        pendingDeliveryStatus: 'blocked' as const, pendingDeliveryBlockedReason: 'runtime_config_blocked' as const };
+
+    it('leads a credential refusal to signing in again, and a pool or untyped refusal to another account', async () => {
+        await useLanguage('en');
+        expect(presentSessionActivationFailure(reconnect)).toEqual({
+            message: t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required'),
+            detail: t('connectedServices.diagnostics.body.connected_service_credential_reconnect_required'),
+            recovery: 'sign_in_again',
+        });
+        expect(presentSessionActivationFailure({ ...reconnect, runtimeReason: 'no_eligible_member' })).toMatchObject({
+            message: t('connectedServices.diagnostics.title.no_eligible_group_member'), recovery: 'choose_account' });
+        expect(presentSessionActivationFailure(null)).toEqual({
+            message: t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'), recovery: 'choose_account' });
+    });
+
+    it('is said once: the Session-level answer carries the typed cause and the blocked row paints no notice', async () => {
+        await useLanguage('en');
+        const session = { activeAt: 100, pendingActivationAuthorization: failed, pendingActivationFailureDetails: reconnect };
+        expect(resolveSessionDeliveryFailure([blockedFirstInput], session, false)).toEqual(presentSessionActivationFailure(reconnect));
+        const row = getPendingMessageVisualState(blockedFirstInput, { session });
+        expect(row.deliveryBlockedPresentation?.message).toBeUndefined();
+        expect(resolvePendingMessageHeightBearingChrome(row)).toBe('none');
+        expect(resolvePendingActivationBanner({ authorization: failed, activeAt: 100, active: false, machineReachable: true,
+            canWrite: true, pendingMessages: [blockedFirstInput] })).not.toHaveProperty('titleKey');
+    });
+
+    it('offers no Stop while nothing runs and the person must recover blocked input', () => {
+        expect(shouldShowAbortButtonForSessionState('action_required', 'blocked_input')).toBe(false);
+        expect(shouldShowAbortButtonForSessionState('action_required', 'request')).toBe(true);
+        expect(shouldShowAbortButtonForSessionState('thinking')).toBe(true);
     });
 });

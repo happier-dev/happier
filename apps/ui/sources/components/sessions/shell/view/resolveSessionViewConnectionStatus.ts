@@ -24,7 +24,9 @@ export type SessionViewConnectionStatus = Readonly<{
     inactiveAction?: 'resume';
 }>;
 
-export type SessionViewPendingQueueAction = 'resume' | 'retry' | 'process_when_online' | 'keep_queued';
+export type SessionViewPendingQueueAction = 'resume' | 'retry' | 'process_when_online' | 'keep_queued'
+    /** A refused account's recoveries (`presentSessionActivationFailure`). */
+    | 'choose_account' | 'sign_in_again';
 
 /**
  * Queued input waiting on this Session to start (`resolvePendingActivationBanner` keeps the fact; the
@@ -79,6 +81,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     pendingQueue?: Readonly<{ line: SessionViewPendingQueueLine | null; countText: string | null }> | null;
     /** The usage-limit recovery card is on screen and already states the limit and its recovery. */
     usageLimitRecoveryCardShown?: boolean;
+    /** The Session's "Couldn't start" notice is on screen with its cause and its Retry. */
+    startFailureNoticeShown?: boolean;
 }>): SessionViewConnectionStatus | null {
     const guard = input.guard?.state ?? null;
     // A restart or a failed account switch is the more urgent fact; otherwise the guard's word leads.
@@ -109,6 +113,12 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         };
     }
     const queueCountText = input.pendingQueue?.countText ?? null;
+    // The start-failure notice is the one place a refused start is said, with its Retry.
+    if (input.startFailureNoticeShown === true && !restartActive && !input.sessionStatusResuming) {
+        return queueCountText
+            ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
+            : null;
+    }
     // One line, highest-priority cause first: a restart or failed switch, the guard, resuming, queued
     // input waiting on this Session to start (above), a Session the machine cannot serve and a request waiting on the person right now all outrank the
     // binding; the binding outranks inactive and ordinary status, and speaks even before the runtime

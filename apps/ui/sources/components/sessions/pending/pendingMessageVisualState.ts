@@ -7,7 +7,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { followInputNeedsYou, isHostAuthoredInputMeta, isHostOnboardingInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNoticeGroups';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
-import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionActivationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -61,6 +61,11 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
     isUnknown: boolean;
     /** An owner-localized cause that replaces the generic delivery label. */
     message?: string;
+    /**
+     * The block is the Session's account, not this message: the Session says it once with this
+     * recovery (`resolveSessionDeliveryFailure`), and the row does not repeat the reason.
+     */
+    recovery?: 'choose_account';
 }>;
 
 /**
@@ -91,7 +96,9 @@ export function resolvePendingMessageHeightBearingChrome(
 ): PendingMessageHeightBearingChrome {
     // Read off the presentation the block itself renders the notice from, not off a list of kinds,
     // so a state that starts carrying a blocked presentation cannot drop out of the size version.
-    return visualState.deliveryBlockedPresentation !== undefined ? 'blocked-notice' : 'none';
+    // A block the Session owns (its account) is said once by the Session, never as a row notice.
+    return visualState.deliveryBlockedPresentation !== undefined && visualState.deliveryBlockedPresentation.recovery === undefined
+        ? 'blocked-notice' : 'none';
 }
 
 /** The actual pending paint, shared by the presenter, reorder binding and transcript measurement. */
@@ -250,29 +257,43 @@ function getDeliveryMutationPolicy(
 }
 
 export function getPendingDeliveryBlockedReasonPresentation(
-    message: Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingDeliveryBlockedReasonRaw' | 'pendingDeliveryStatusRaw'>
-        & Partial<Pick<PendingMessage, 'localId' | 'id'>>,
-    session?: PendingMessageQueuedStateOptions['session'],
+    message: Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingDeliveryBlockedReasonRaw' | 'pendingDeliveryStatusRaw'>,
     machineAccessRemoved = false,
 ): PendingDeliveryBlockedReasonPresentation {
     const reason = message.pendingDeliveryBlockedReason ?? 'unknown';
-    const activation = session?.pendingActivationAuthorization;
-    // Diagnostics belong to this failed activation, never another queued input or a later retry.
-    const cause = reason === 'runtime_config_blocked'
-        ? machineAccessRemoved
-            ? t('machineRequester.accessRemoved', { machine: t('common.machine') })
-            : session && activation?.status === 'failed'
-                && activation.requestId === (message.localId ?? message.id) && activation.requestedAt > session.activeAt
-                ? presentSessionStartupFailureCause(session.pendingActivationFailureDetails?.runtimeReason) : null
-        : null;
+    const cause = reason === 'runtime_config_blocked' && machineAccessRemoved
+        ? t('machineRequester.accessRemoved', { machine: t('common.machine') }) : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
         ...(cause ? { message: cause } : {}),
+        ...(reason === 'runtime_config_blocked' && !machineAccessRemoved ? { recovery: 'choose_account' as const } : {}),
         isUnknown:
             reason === 'unknown'
             || typeof message.pendingDeliveryBlockedReasonRaw === 'string'
             || typeof message.pendingDeliveryStatusRaw === 'string',
     };
+}
+
+/**
+ * The one Session-level delivery failure: a queued message blocked by the Session's runtime
+ * configuration (its Agent account). Every surface reads this answer — the composer line says it
+ * with its recovery; the row and the activation line do not add their own words for it.
+ */
+export function resolveSessionDeliveryFailure(
+    messages: readonly PendingMessage[],
+    session: PendingMessageQueuedStateOptions['session'],
+    machineAccessRemoved: boolean,
+): SessionActivationFailurePresentation | null {
+    for (const message of messages) {
+        if (message.pendingDeliveryStatus !== 'blocked') continue;
+        if (!getPendingDeliveryBlockedReasonPresentation(message, machineAccessRemoved).recovery) continue;
+        // The typed cause belongs to this input's own failed start, never another input or a later retry.
+        const activation = session?.pendingActivationAuthorization;
+        const ownFailedStart = session != null && activation?.status === 'failed'
+            && activation.requestId === (message.localId ?? message.id) && activation.requestedAt > session.activeAt;
+        return presentSessionActivationFailure(ownFailedStart ? session?.pendingActivationFailureDetails : null);
+    }
+    return null;
 }
 
 /**
@@ -375,7 +396,7 @@ export function getPendingMessageVisualState(
             kind: 'blocked',
             showSpinner: false,
             iconName: 'warning-circle',
-            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message, options?.session, options?.machineAccessRemoved),
+            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message, options?.machineAccessRemoved),
             ...(deliveryMutationPolicy ? { deliveryMutationPolicy } : {}),
         };
     }

@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     ComposerAttachmentDisplayV1,
-    ComposerAttachmentPreviewV1,
+    ComposerAttachmentPreviewV1} from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import type {
     ComposerAttachmentViewV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 
 import * as contracts from './agentInputContracts';
 

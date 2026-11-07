@@ -14,6 +14,7 @@ import { teamCredentialReconnectPresentation } from '@/components/settings/teams
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 
 function isTeamCredentialRefusal(code: string): code is ProviderBrokerAdmissionFailureCodeV1 {
@@ -70,6 +71,40 @@ export function presentSessionStartupFailureCause(code: unknown, issue?: Session
         : message;
     return presented && preparationCause?.requestId
         ? `${presented}\n${t('session.startFailure.requestId', { id: preparationCause.requestId })}` : presented;
+}
+
+/** The one next step for queued input whose Session's Agent account refused it; both reuse existing recovery owners. */
+export type SessionActivationFailureRecovery = 'sign_in_again' | 'choose_account';
+
+export type SessionActivationFailurePresentation = Readonly<{
+    message: string;
+    detail?: string;
+    recovery: SessionActivationFailureRecovery;
+}>;
+
+/**
+ * The single message and next action for input blocked because its Session could not start on its
+ * Agent account. The composer's status line renders it; the blocked row and the quota meter add nothing.
+ * A typed refusal names its cause; an untyped one still leads to choosing an account.
+ */
+export function presentSessionActivationFailure(
+    details: PendingActivationFailureDetailsV1 | null | undefined,
+): SessionActivationFailurePresentation {
+    const reason = details?.runtimeReason;
+    if (reason === 'no_eligible_member') return {
+        message: t('connectedServices.diagnostics.title.no_eligible_group_member'),
+        detail: t('connectedServices.diagnostics.body.no_eligible_group_member'),
+        recovery: 'choose_account',
+    };
+    if (reason === 'connected_service_credential_reconnect_required' || reason === 'connected_service_credential_refresh_unavailable') return {
+        message: t(`connectedServices.diagnostics.title.${reason}`),
+        detail: t(`connectedServices.diagnostics.body.${reason}`),
+        recovery: reason === 'connected_service_credential_reconnect_required' ? 'sign_in_again' : 'choose_account',
+    };
+    return {
+        message: presentSessionStartupFailureCause(reason) ?? t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'),
+        recovery: 'choose_account',
+    };
 }
 
 /** Present the typed cause, reported reset and recovery supported by the carried Connected Account context. */

@@ -1,6 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Platform, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import { useWindowDimensions, View, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierBanner, HappierPressable, isHappierBannerUrgent } from '@happier-dev/plugin-ui/presentation';
 
@@ -69,18 +69,10 @@ const BANNER_PADDING_VERTICAL = 10;
 /**
  * Visual control minimum height. Banners sit in the composer stack where a full-height button
  * would out-weigh its copy, but a fixed height clips an action when the reader increases their
- * text size. The tappable area is extended to the platform minimum through `hitSlop` instead, so
- * pointer devices keep a refined control and touch devices still get a forgiving target.
+ * text size. A finger's target is the shared pressable's hit area, so pointer devices keep a refined
+ * control and touch devices still get a forgiving target.
  */
 const ACTION_HEIGHT = 28;
-const ACTION_TOUCH_TARGET = Platform.OS === 'android' ? 48 : 44;
-const ACTION_HIT_SLOP_VERTICAL = Math.round((ACTION_TOUCH_TARGET - ACTION_HEIGHT) / 2);
-const ACTION_HIT_SLOP = {
-    top: ACTION_HIT_SLOP_VERTICAL,
-    bottom: ACTION_HIT_SLOP_VERTICAL,
-    left: 4,
-    right: 4,
-} as const;
 
 const actionBaseStyle = {
     flexShrink: 0,
@@ -111,6 +103,8 @@ export function resolveWarningActionBannerToneTokens(
 
 export function WarningActionBanner(props: WarningActionBannerProps): React.ReactElement {
     const { theme } = useUnistyles();
+    // Neighbouring actions split the gap between them; above and below, the banner's own padding is free.
+    const actionHitReach = { left: theme.space.s4 / 2, right: theme.space.s4 / 2 } as const;
     const presentationTheme = usePluginUiTheme(theme);
     const { width } = useWindowDimensions();
     const [measuredWidth, setMeasuredWidth] = React.useState<number | null>(null);
@@ -161,7 +155,7 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                     testID={action.testID}
                     accessibilityLabel={action.accessibilityLabel}
                     disabled={action.disabled}
-                    hitSlop={ACTION_HIT_SLOP}
+                    hitReach={actionHitReach}
                     onPress={action.onPress}
                     style={({ pressed, focused }) => [{
                         ...actionBaseStyle,
@@ -188,7 +182,7 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                     accessibilityLabel={props.actionAccessibilityLabel ?? props.actionLabel}
                     busy={props.actionBusy}
                     disabled={props.disabled}
-                    hitSlop={ACTION_HIT_SLOP}
+                    hitReach={actionHitReach}
                     onPress={props.onActionPress!}
                     style={({ pressed, focused }) => [{
                         ...actionBaseStyle,

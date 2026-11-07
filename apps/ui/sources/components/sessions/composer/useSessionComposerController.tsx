@@ -23,7 +23,7 @@ import { normalizeSessionAddress, type SessionAddress } from "@/sync/domains/ses
 import { resolveWorkspaceTargetForSession } from "@/sync/domains/session/resolveWorkspaceTargetForSession";
 import type { AgentInputSendOptions } from "@/components/sessions/agentInput";
 import { resolveSessionComposerSendActions } from '@/sync/domains/session/control/submitMode';
-import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput } from '@/components/sessions/pending/pendingMessageVisualState';
+import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
 import { SessionComposerAgentInput } from "@/components/sessions/composer/SessionComposerAgentInput";
@@ -294,9 +294,9 @@ import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSes
 import { type SessionPresentationIntentApplier } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
 import { ComposerAuxiliaryFrame } from "@/components/sessions/shell/view/ComposerAuxiliaryFrame";
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from "@/components/sessions/agentInput/composerContentInset";
-import { WarningActionBanner } from "@/components/sessions/shell/view/WarningActionBanner";
+import { WarningActionBanner, type WarningActionBannerProps } from "@/components/sessions/shell/view/WarningActionBanner";
 import { useComposerBannerCollapse } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
-import { buildComposerBannerBadgeAccessibility } from "@/components/sessions/composerBanners/composerBannerCollapse";
+import { buildCollapsedComposerBannerBadge, buildComposerBannerHideAction } from "@/components/sessions/composerBanners/composerBannerCollapse";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
 import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from "@/sync/runtime/external/externalSessionTranscriptAuthority";
 import { formatShortRelativeTimeAt } from "@/utils/time/formatShortRelativeTime";
@@ -323,6 +323,7 @@ import { useSessionRuntimeStatusSource } from "@/components/sessions/shell/useSe
 import { SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY, buildSessionUsageLimitRecoveryPresentation, resolveSessionUsageLimitRecoveryOperationStatus, isSessionUsageLimitRecoveryCheckNowAction, isSessionUsageLimitRecoveryCheckingOperationAction, readSessionUsageLimitRecoveryFromMetadata, type SessionUsageLimitRecoveryActionKind, type SessionUsageLimitRecoveryTranslate, type SessionUsageLimitRecoveryTranslationParams, type SessionUsageLimitRecoveryState, type UsageLimitRecoveryOperationStatus, type UsageLimitRecoverySettings } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation";
 import { hasMeaningfulActivityAfterRuntimeIssue } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitActivityStaleness";
 import { SessionUsageLimitRecoveryBanner } from "@/components/sessions/usageLimitRecovery/SessionUsageLimitRecoveryBanner";
+import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { buildSessionNearLimitPresentation, dismissSessionNearLimit, readDismissedSessionNearLimitKeys } from "@/components/sessions/usageLimitRecovery/sessionNearLimitPresentation";
 import { formatResetAtTime } from "@/utils/time/formatResetAtTime";
 import { formatUsageLimitRecoveryOperationError } from "@/components/sessions/usageLimitRecovery/formatUsageLimitRecoveryOperationError";
@@ -330,7 +331,7 @@ import { buildSessionUsageLimitRecoveryOperationFailureAlert, type SessionUsageL
 import { handleReadyUsageLimitRecoveryResult } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryReadyResult";
 import { normalizeSessionUsageLimitRecoveryOperationResultV1, SessionUsageLimitRecoveryOperationResultV1Schema, type SessionUsageLimitRecoveryOperationResultV1 as SessionUsageLimitRecoveryOperationResult } from "@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1";
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from "@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc";
-import { computeConnectedServiceQuotaGaugeViewModel, selectConnectedServiceSessionProviderUsageSnapshot, type ConnectedServiceQuotaGaugeLabelFormatter, type ConnectedServiceQuotaGaugeWindowMode } from "@/sync/domains/connectedServices/connectedServiceQuotaGauge";
+import { computeConnectedServiceQuotaGaugeViewModel, quietQuotaGaugeForSessionFailure, selectConnectedServiceSessionProviderUsageSnapshot, type ConnectedServiceQuotaGaugeLabelFormatter, type ConnectedServiceQuotaGaugeWindowMode } from "@/sync/domains/connectedServices/connectedServiceQuotaGauge";
 import { resolveQualifiedConnectedAccountProfilePreference } from "@/sync/domains/connectedServices/connectedServiceProfilePreferences";
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from "@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation";
 import { useConnectedServiceQuotaSnapshots } from "@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots";
@@ -503,7 +504,10 @@ const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormat
     durationMinutes: ({ minutes }) => t('agentInput.providerUsage.duration.minutes', { minutes }),
 };
 
-export function SessionAuthRecoveryBanner({ message }: Readonly<{ message: string }>) {
+export function SessionAuthRecoveryBanner({ message, secondaryActions }: Readonly<{
+    message: string;
+    secondaryActions?: WarningActionBannerProps['secondaryActions'];
+}>) {
     const router = useDestinationRouter();
 
     return (
@@ -515,6 +519,7 @@ export function SessionAuthRecoveryBanner({ message }: Readonly<{ message: strin
             actionLabel={t('connect.restoreAccount')}
             actionAccessibilityLabel={t('connect.restoreAccount')}
             onActionPress={() => router.push('/restore')}
+            secondaryActions={secondaryActions}
         />
     );
 }
@@ -1551,7 +1556,6 @@ export function useSessionComposerController({
         if (isComposerSending) return null;
         return resolvePendingActivationBanner({
             authorization: session.pendingActivationAuthorization,
-            failureDetails: session.pendingActivationFailureDetails,
             activeAt: session.activeAt,
             active: session.active,
             machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
@@ -1561,7 +1565,14 @@ export function useSessionComposerController({
             managedWakeProjection,
             autoResumeAdmission,
         });
-    }, [autoResumeAdmission, hasWriteAccess, isComposerSending, isMachineReachable, machineReachability, managedWakeProjection, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionRuntimeStatusSource.resumingAt]);
+    }, [autoResumeAdmission, hasWriteAccess, isComposerSending, isMachineReachable, machineReachability, managedWakeProjection, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, sessionRuntimeStatusSource.resumingAt]);
+    // The delivery-state presenter's one Session-level failure (a queued message blocked by this
+    // Session's Agent account): the status line says it with its recovery; nothing else repeats it.
+    const sessionDeliveryFailure = React.useMemo(() => resolveSessionDeliveryFailure(pendingMessages, {
+        activeAt: session.activeAt,
+        pendingActivationAuthorization: session.pendingActivationAuthorization,
+        pendingActivationFailureDetails: session.pendingActivationFailureDetails,
+    }, sessionMachineAccessRemoved), [pendingMessages, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
     const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
@@ -2240,17 +2251,17 @@ export function useSessionComposerController({
         : staleSessionRunnerPresentation;
     const staleSessionRunnerBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         if (!staleSessionRunnerPresentation) return [];
-        return [{
-            ...staleSessionRunnerPresentation.statusBadge,
-            ...buildComposerBannerBadgeAccessibility({
-                statusLabel: staleSessionRunnerPresentation.statusBadge.label,
-                collapsed: staleSessionRunnerBanner.collapsed,
-                expandHint: t('session.staleRunner.actions.showBanner'),
-                collapseHint: t('session.staleRunner.actions.hideBanner'),
-            }),
-            icon: (tint) => <Icon name="arrow-clockwise" size={14} color={tint} />,
-            onPress: staleSessionRunnerBanner.toggle,
-        }];
+        const badge = buildCollapsedComposerBannerBadge({
+            collapsed: staleSessionRunnerBanner.collapsed,
+            statusLabel: staleSessionRunnerPresentation.statusBadge.label,
+            expandHint: t('session.staleRunner.actions.showBanner'),
+            badge: {
+                ...staleSessionRunnerPresentation.statusBadge,
+                icon: (tint) => <Icon name="arrow-clockwise" size={14} color={tint} />,
+                onPress: staleSessionRunnerBanner.toggle,
+            },
+        });
+        return badge ? [badge] : [];
     }, [
         staleSessionRunnerBanner.collapsed,
         staleSessionRunnerBanner.toggle,
@@ -2259,17 +2270,17 @@ export function useSessionComposerController({
     ]);
     const usageLimitRecoveryBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         if (!usageLimitRecoveryPresentation) return [];
-        return [{
-            ...usageLimitRecoveryPresentation.statusBadge,
-            ...buildComposerBannerBadgeAccessibility({
-                statusLabel: usageLimitRecoveryPresentation.statusBadge.label,
-                collapsed: usageLimitRecoveryBanner.collapsed,
-                expandHint: t('session.usageLimitRecovery.actions.showBanner'),
-                collapseHint: t('session.usageLimitRecovery.actions.hideBanner'),
-            }),
-            icon: (tint) => <Icon name="clock" size={14} color={tint} />,
-            onPress: usageLimitRecoveryBanner.toggle,
-        }];
+        const badge = buildCollapsedComposerBannerBadge({
+            collapsed: usageLimitRecoveryBanner.collapsed,
+            statusLabel: usageLimitRecoveryPresentation.statusBadge.label,
+            expandHint: t('session.usageLimitRecovery.actions.showBanner'),
+            badge: {
+                ...usageLimitRecoveryPresentation.statusBadge,
+                icon: (tint) => <Icon name="clock" size={14} color={tint} />,
+                onPress: usageLimitRecoveryBanner.toggle,
+            },
+        });
+        return badge ? [badge] : [];
     }, [
         t,
         usageLimitRecoveryBanner.collapsed,
@@ -2849,12 +2860,14 @@ export function useSessionComposerController({
     const instrumentQuota = React.useMemo<SessionInstrumentStripQuota | null>(() => (
         providerUsageGauge
             ? {
-                viewModel: providerUsageGauge,
+                // The usage alarm speaks only for a usage failure: each failure's owner classifies it.
+                viewModel: quietQuotaGaugeForSessionFailure(providerUsageGauge,
+                    usageLimitRecoveryPresentation ? 'usage' : sessionDeliveryFailure ? 'other' : null),
                 onRecoveryCreditPress: providerUsageRecoveryCreditAction,
                 recoveryCreditPending: providerUsageRecoveryCreditActionPending,
             }
             : null
-    ), [providerUsageGauge, providerUsageRecoveryCreditAction, providerUsageRecoveryCreditActionPending]);
+    ), [providerUsageGauge, providerUsageRecoveryCreditAction, providerUsageRecoveryCreditActionPending, sessionDeliveryFailure, usageLimitRecoveryPresentation]);
     const reviewScope = useWorkspaceScopeForSession(sessionId, sessionRouteServerId);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const includedReviewCommentDrafts = React.useMemo(
@@ -5506,6 +5519,17 @@ export function useSessionComposerController({
         // producer (`resolvePendingActivationBanner`) keeps the fact; the line states it with one recovery.
         // A managed wake keeps its own badge and popover, which own its observed stages.
         const pendingQueueLine = React.useMemo<SessionViewPendingQueueLine | null>(() => {
+            // A queued message blocked by the Session's account is the one cause: the presenter's words,
+            // with the account chooser as its next action, instead of the activation's own failure title.
+            if (sessionDeliveryFailure && !pendingActivationPresentation?.managedWakeProjection) {
+                return {
+                    text: sessionDeliveryFailure.message,
+                    ...(sessionDeliveryFailure.detail ? { detail: sessionDeliveryFailure.detail } : {}),
+                    action: !hasWriteAccess ? null
+                        : sessionDeliveryFailure.recovery === 'sign_in_again' || connectedServicesAuthRecoveryChip ? sessionDeliveryFailure.recovery : null,
+                    color: theme.colors.state.attention.textForeground,
+                };
+            }
             const presentation = pendingActivationPresentation;
             if (!presentation || presentation.managedWakeProjection) return null;
             const action: SessionViewPendingQueueAction | null = presentation.primaryAction && presentation.row
@@ -5515,12 +5539,12 @@ export function useSessionComposerController({
                 text: t(presentation.titleKey ?? `session.pendingActivation.${presentation.kind}.title`),
                 detail: presentation.holdReason === 'managed_power_required'
                     ? t('managedWake.refusedDetail')
-                    : t(presentation.bodyKey ?? `session.pendingActivation.${presentation.kind}.body`),
+                    : t(`session.pendingActivation.${presentation.kind}.body`),
                 action,
                 color: presentation.kind === 'failed' || presentation.holdReason === 'managed_power_required'
                     ? theme.colors.state.attention.textForeground : sessionStatus.statusColor,
             };
-        }, [pendingActivationPresentation, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
+        }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, sessionDeliveryFailure, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
         // An agent exchange paused for the person (lab T1): the held input carries its exact original root.
         const exchangeCheckInRoot = React.useMemo(() => pendingMessages.find((message) =>
             message.pendingDeliveryBlockedReason === 'autonomous_check_in')?.pendingAutonomousExchangeRoot ?? null, [pendingMessages]);
@@ -5542,10 +5566,17 @@ export function useSessionComposerController({
             () => mainPendingCount > 0 && pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)).every(isNextTurnHostInput),
             [mainPendingCount, pendingMessages],
         );
+        // The account chooser the usage-limit card also opens ("Runs through"), not a second picker.
+        const openSessionAccountChooser = useEventCallback(() => {
+            if (connectedServicesAuthRecoveryChip) requestComposerActionChipOpen(connectedServicesAuthRecoveryChip.key);
+        });
         const handlePendingQueueAction = React.useCallback(async (action: SessionViewPendingQueueAction) => {
             if (action === 'resume' || action === 'retry') await handleResumeSession();
+            else if (action === 'choose_account') openSessionAccountChooser();
+            // Signing a refused account in again is the existing Connected services recovery.
+            else if (action === 'sign_in_again') router.push('/(app)/settings/connected-services');
             else await handlePendingActivationRequest(action);
-        }, [handlePendingActivationRequest, handleResumeSession]);
+        }, [handlePendingActivationRequest, handleResumeSession, openSessionAccountChooser, router]);
         // The machine's guard is about to stop this Session, stopped it, or the next message is waking it.
         const guardPresentationKey = JSON.stringify(ownerMetadata?.sessionGuardStateV1 ?? null);
         const guardComposerState = React.useMemo(() => resolveSessionGuardComposerState({
@@ -5590,7 +5621,11 @@ export function useSessionComposerController({
                     ? t(queuedAreNextTurnUpdates ? 'session.pendingMessages.updatesWaiting' : 'session.pendingMessages.indicator', { count: mainPendingCount }) : null,
             },
             usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
+            // The same owner SessionView renders its "Couldn't start" notice from.
+            startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
         }), [
+            session.active,
+            session.lastRuntimeIssue,
             visibleUsageLimitRecoveryPresentation,
             providerBindingLine,
             pendingQueueLine,
@@ -5740,7 +5775,8 @@ export function useSessionComposerController({
                         ? { ...connectionStatus, action: { label: providerBindingBanner.actionLabel, onPress: handleProviderBindingAction } }
                         : connectionStatus.pendingQueueAction
                             ? { ...connectionStatus, action: {
-                                label: t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction}`),
+                                label: connectionStatus.pendingQueueAction === 'sign_in_again' ? t('connectionStatus.summary.signInAgain')
+                                    : t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction === 'choose_account' ? 'chooseAccount' : connectionStatus.pendingQueueAction}`),
                                 onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
                             } }
                             : connectionStatus.inactiveAction === 'resume'
@@ -5838,6 +5874,60 @@ export function useSessionComposerController({
             router, handleManagedWakeRecovery, t]);
         const hasConnectedServicesAuthChip = Boolean(sessionConnectedServicesAuthSwitch.connectedServicesAuthChip);
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
+            const authRecoveryBadge = authSurfaceState
+                ? buildCollapsedComposerBannerBadge({
+                    collapsed: authRecoveryBanner.collapsed,
+                    statusLabel: t('connect.restoreAccount'),
+                    expandHint: t('session.composerBanners.showBannerAction'),
+                    badge: {
+                        key: 'session-auth-recovery',
+                        testID: 'session.authRecovery.badge',
+                        label: t('connect.restoreAccount'),
+                        tone: 'warning',
+                        icon: (tint) => <Icon name="key" size={14} color={tint} />,
+                        onPress: authRecoveryBanner.toggle,
+                    },
+                })
+                : null;
+            const agentTransitionOutcomeBadge = armedContinuationNotice
+                ? buildCollapsedComposerBannerBadge({
+                    collapsed: agentTransitionOutcomeBanner.collapsed,
+                    // The collapsed badge stands in for the banner, so it carries the
+                    // whole sentence to assistive tech.
+                    statusLabel: armedContinuationNotice.message,
+                    expandHint: t('session.composerBanners.showBannerAction'),
+                    badge: {
+                        key: 'session-agentTransition-outcome',
+                        testID: 'session.agentTransitionOutcome.badge',
+                        label: t('session.agentContinuation.transition.badgeLabel'),
+                        tone: armedContinuationNotice.tone === 'warning' ? 'warning' : 'neutral',
+                        icon: (tint) => (
+                            <Icon
+                                name={armedContinuationNotice.tone === 'warning' ? 'warning-circle' : 'info'}
+                                size={14}
+                                color={tint}
+                            />
+                        ),
+                        onPress: agentTransitionOutcomeBanner.toggle,
+                    },
+                })
+                : null;
+            const externalTranscriptSnapshotBadge = externalTranscriptAuthority?.kind === 'server_snapshot'
+                ? buildCollapsedComposerBannerBadge({
+                    collapsed: externalTranscriptSnapshotBanner.collapsed,
+                    statusLabel: t('externalSessions.sharingUpdateSharedCopy'),
+                    expandHint: t('session.composerBanners.showBannerAction'),
+                    badge: {
+                        key: 'session-externalTranscript-snapshot',
+                        testID: 'session.externalTranscript.snapshot.badge',
+                        label: t('externalSessions.sharingUpdateSharedCopy'),
+                        tone: 'neutral',
+                        emphasis: 'quiet',
+                        icon: (tint) => <Icon name="cloud-arrow-down" size={14} color={tint} />,
+                        onPress: externalTranscriptSnapshotBanner.toggle,
+                    },
+                })
+                : null;
             const badges: AgentInputStatusBadge[] = [
             ...(sessionCapabilitiesApplyBadge ? [sessionCapabilitiesApplyBadge] : []),
             ...sessionConnectedServicesAuthSwitch.statusBadges,
@@ -5858,64 +5948,10 @@ export function useSessionComposerController({
                     onPress: openSessionModelPicker,
                 } satisfies AgentInputStatusBadge]
                 : []),
-            ...(authSurfaceState
-                ? [{
-                    key: 'session-auth-recovery',
-                    testID: 'session.authRecovery.badge',
-                    label: t('connect.restoreAccount'),
-                    tone: 'warning',
-                    ...buildComposerBannerBadgeAccessibility({
-                        statusLabel: t('connect.restoreAccount'),
-                        collapsed: authRecoveryBanner.collapsed,
-                        expandHint: t('session.composerBanners.showBannerAction'),
-                        collapseHint: t('session.composerBanners.hideBannerAction'),
-                    }),
-                    icon: (tint: string) => <Icon name="key" size={14} color={tint} />,
-                    onPress: authRecoveryBanner.toggle,
-                } satisfies AgentInputStatusBadge]
-                : []),
+            ...(authRecoveryBadge ? [authRecoveryBadge] : []),
             ...(managedWakeStatusBadge ? [managedWakeStatusBadge] : []),
-            ...(armedContinuationNotice
-                ? [{
-                    key: 'session-agentTransition-outcome',
-                    testID: 'session.agentTransitionOutcome.badge',
-                    label: t('session.agentContinuation.transition.badgeLabel'),
-                    tone: armedContinuationNotice.tone === 'warning' ? 'warning' : 'neutral',
-                    ...buildComposerBannerBadgeAccessibility({
-                        // Collapsing demotes the banner to this badge, so the badge
-                        // has to carry the whole sentence to assistive tech.
-                        statusLabel: armedContinuationNotice.message,
-                        collapsed: agentTransitionOutcomeBanner.collapsed,
-                        expandHint: t('session.composerBanners.showBannerAction'),
-                        collapseHint: t('session.composerBanners.hideBannerAction'),
-                    }),
-                    icon: (tint: string) => (
-                        <Icon
-                            name={armedContinuationNotice.tone === 'warning' ? 'warning-circle' : 'info'}
-                            size={14}
-                            color={tint}
-                        />
-                    ),
-                    onPress: agentTransitionOutcomeBanner.toggle,
-                } satisfies AgentInputStatusBadge]
-                : []),
-            ...(externalTranscriptAuthority?.kind === 'server_snapshot'
-                ? [{
-                    key: 'session-externalTranscript-snapshot',
-                    testID: 'session.externalTranscript.snapshot.badge',
-                    label: t('externalSessions.sharingUpdateSharedCopy'),
-                    tone: 'neutral',
-                    emphasis: 'quiet',
-                    ...buildComposerBannerBadgeAccessibility({
-                        statusLabel: t('externalSessions.sharingUpdateSharedCopy'),
-                        collapsed: externalTranscriptSnapshotBanner.collapsed,
-                        expandHint: t('session.composerBanners.showBannerAction'),
-                        collapseHint: t('session.composerBanners.hideBannerAction'),
-                    }),
-                    icon: (tint: string) => <Icon name="cloud-arrow-down" size={14} color={tint} />,
-                    onPress: externalTranscriptSnapshotBanner.toggle,
-                } satisfies AgentInputStatusBadge]
-                : []),
+            ...(agentTransitionOutcomeBadge ? [agentTransitionOutcomeBadge] : []),
+            ...(externalTranscriptSnapshotBadge ? [externalTranscriptSnapshotBadge] : []),
             ...(pendingMessageEdit
                 ? [{
                     key: 'pending-message-edit',
@@ -6109,7 +6145,14 @@ export function useSessionComposerController({
             <View>
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
-                    <SessionAuthRecoveryBanner message={authSurfaceState.message} />
+                    <SessionAuthRecoveryBanner
+                        message={authSurfaceState.message}
+                        secondaryActions={[buildComposerBannerHideAction({
+                            bannerTestID: 'session-auth-sync-error',
+                            accessibilityLabel: t('session.composerBanners.hideBannerAction'),
+                            onPress: authRecoveryBanner.toggle,
+                        })]}
+                    />
                 </ComposerAuxiliaryFrame>
             ) : null}
             {temporaryComputerRecovery.status === 'failed' ? (
@@ -6166,6 +6209,11 @@ export function useSessionComposerController({
                         testID="session.agentTransitionOutcome.banner"
                         tone={armedContinuationNotice.tone}
                         title={armedContinuationNotice.message}
+                        secondaryActions={[buildComposerBannerHideAction({
+                            bannerTestID: 'session.agentTransitionOutcome.banner',
+                            accessibilityLabel: t('session.composerBanners.hideBannerAction'),
+                            onPress: agentTransitionOutcomeBanner.toggle,
+                        })]}
                         {...(armedContinuationNotice.recovery === 'resumeSession'
                             ? {
                                 actionTestID: 'session.agentTransitionOutcome.resume',
@@ -6199,14 +6247,22 @@ export function useSessionComposerController({
                         actionAccessibilityLabel={visibleUsageLimitRecoveryPresentation.banner.actionAccessibilityLabel}
                         disabled={usageLimitRecoveryActionsDisabled || !hasWriteAccess || visibleUsageLimitRecoveryPresentation.banner.actionsDisabled}
                         onActionPress={() => handleUsageLimitRecoveryAction(visibleUsageLimitRecoveryPresentation.banner.mode)}
-                        secondaryActions={visibleUsageLimitRecoveryPresentation.banner.secondaryActions.map((action) => ({
-                            key: action.kind,
-                            accessibilityLabel: action.accessibilityLabel,
-                            label: action.label,
-                            testID: action.testID,
-                            disabled: usageLimitRecoveryActionsDisabled || !hasWriteAccess || visibleUsageLimitRecoveryPresentation.banner.actionsDisabled,
-                            onPress: () => handleUsageLimitRecoveryAction(action.kind),
-                        }))}
+                        secondaryActions={[
+                            // The quiet Hide leads, farthest from the primary action, like "Not now".
+                            buildComposerBannerHideAction({
+                                bannerTestID: visibleUsageLimitRecoveryPresentation.banner.testID,
+                                accessibilityLabel: t('session.usageLimitRecovery.actions.hideBanner'),
+                                onPress: usageLimitRecoveryBanner.toggle,
+                            }),
+                            ...visibleUsageLimitRecoveryPresentation.banner.secondaryActions.map((action) => ({
+                                key: action.kind,
+                                accessibilityLabel: action.accessibilityLabel,
+                                label: action.label,
+                                testID: action.testID,
+                                disabled: usageLimitRecoveryActionsDisabled || !hasWriteAccess || visibleUsageLimitRecoveryPresentation.banner.actionsDisabled,
+                                onPress: () => handleUsageLimitRecoveryAction(action.kind),
+                            })),
+                        ]}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
@@ -6258,6 +6314,11 @@ export function useSessionComposerController({
                         actionBusy={visibleStaleSessionRunnerPresentation.banner.actionBusy}
                         disabled={visibleStaleSessionRunnerPresentation.banner.disabled || !hasWriteAccess}
                         onActionPress={handleStaleSessionRunnerRestart}
+                        secondaryActions={[buildComposerBannerHideAction({
+                            bannerTestID: visibleStaleSessionRunnerPresentation.banner.testID,
+                            accessibilityLabel: t('session.staleRunner.actions.hideBanner'),
+                            onPress: staleSessionRunnerBanner.toggle,
+                        })]}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
@@ -6266,6 +6327,11 @@ export function useSessionComposerController({
                     <WarningActionBanner
                         testID="session.externalTranscript.snapshot"
                         tone="neutral"
+                        secondaryActions={[buildComposerBannerHideAction({
+                            bannerTestID: 'session.externalTranscript.snapshot',
+                            accessibilityLabel: t('session.composerBanners.hideBannerAction'),
+                            onPress: externalTranscriptSnapshotBanner.toggle,
+                        })]}
                         title={t('externalSessions.sharingSnapshotFrom', {
                             time: formatShortRelativeTimeAt(
                                 externalTranscriptAuthority.materializedThroughSourceAt,
@@ -6290,6 +6356,7 @@ export function useSessionComposerController({
                         scope={sessionAccountScope}
                         address={sessionDraftAddress}
                         conflict={currentSessionDraftConflict}
+                        onHide={draftConflictBanner.hide}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}

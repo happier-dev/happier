@@ -1,4 +1,4 @@
-import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol';
+import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { SessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -68,12 +68,19 @@ export function resolvePendingActivationBanner(input: Readonly<{
         // absence and uncertain custody; the generic banner must not reinterpret them.
         const row = input.pendingMessages.filter(isEligiblePendingUserRow)
             .find(candidate => candidate.localId === input.authorization?.requestId) ?? null;
+        // Stopped input needs the same recovery as before its first wake
+        // attempt. Keep native progress in the badge; rearming uses the existing
+        // queue status line and its Process when online control.
+        if (row && managedWakeProjection.canRequestWake) return {
+            kind: input.machineReachable === false ? 'queued_offline' : 'queued', row,
+            primaryAction: input.machineReachable === null ? null : 'process_when_online',
+            secondaryAction: null, settingsAction: 'settings',
+        };
         return {
             kind: managedWakeProjection.kind === 'agentStartFailed' ? 'failed' : input.machineReachable === false ? 'waiting_offline' : 'waiting',
             managedWakeProjection, row,
             primaryAction: row && managedWakeProjection.canRetryAgentStart ? 'retry'
-                : row && managedWakeProjection.canResumeRuntime ? 'resume'
-                    : row && managedWakeProjection.canRequestWake ? 'process_when_online' : null,
+                : row && managedWakeProjection.canResumeRuntime ? 'resume' : null,
             secondaryAction: null,
             settingsAction: 'settings',
         };

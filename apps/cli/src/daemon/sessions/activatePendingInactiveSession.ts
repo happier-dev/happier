@@ -14,6 +14,7 @@ import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { isSessionSpawnBrokerUnavailable, SpawnFailureSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import type { PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 
@@ -253,6 +254,11 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
   } : options, { requestId: finalAuthorization.requestId, requestedAt: finalAuthorization.requestedAt });
   const failureDetail = result.type === 'error' ? SpawnFailureSpawnErrorDetailSchema.safeParse(result.errorDetail).data : undefined;
   const failure = failureDetail ? { reason: failureDetail.reason, ...(failureDetail.errno ? { errno: failureDetail.errno } : {}) } : undefined;
+  // A connected account's closed refusal travels with the failure so the Session can lead to its recovery.
+  const credentialCause = result.type === 'error' ? readConnectedServiceUxDiagnosticFromError(result)?.code : undefined;
+  const runtimeReason = credentialCause === 'connected_service_credential_reconnect_required'
+    || credentialCause === 'connected_service_credential_refresh_unavailable'
+    ? credentialCause : result.type === 'error' ? result.runtimeFailureReason : undefined;
   if (
     (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT)
     || (result.type === 'success' && result.sessionId !== params.sessionId)
@@ -270,6 +276,6 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
     return await rejectTerminal('session-directory-missing', failure, result.errorCode, result.runtimeFailureReason);
   }
   if (result.type !== 'success') return await rejectTerminal('spawn-rejected', failure, result.type === 'error' ? result.errorCode : undefined,
-    result.type === 'error' ? result.runtimeFailureReason : undefined);
+    runtimeReason);
   return { status: 'activated' };
 }
