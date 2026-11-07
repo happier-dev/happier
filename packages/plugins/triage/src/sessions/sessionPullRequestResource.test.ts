@@ -22,7 +22,6 @@ import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/
 import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME as runtime } from './sessionPullRequestResource.js';
 import { createTriageSourceSessionRelations } from './sourceSessionRelations.js';
-import { linkEntryToSession } from './entrySessionLinks.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot } from './testkit/entrySessionTestkit.test-support.js';
 
@@ -741,7 +740,8 @@ describe('the composed Session PR Resource', () => {
         const owner = createTriageSourceSessionRelations(context, collections);
         const admitted = await owner.read({ sessionId: 'session-a' });
         expect(admitted.links).toHaveLength(1);
-        if (identityCase === 'same' || identityCase === 'native-connected') expect(admitted.links[0]?.sourceInstanceId).toBe(
+        const selectsForRead = ['unknown', 'missing-second', 'unavailable', 'same', 'native-connected'].includes(identityCase);
+        if (selectsForRead) expect(admitted.links[0]?.sourceInstanceId).toBe(
             instances.map(instance => instance.instance.sourceInstanceId).sort()[0]);
         else expect(admitted.links[0]).not.toHaveProperty('sourceInstanceId');
         expect(admitted.configureSources).toHaveLength(2);
@@ -755,7 +755,7 @@ describe('the composed Session PR Resource', () => {
         }
         const host = boundary({ readRelations });
         try {
-            if (identityCase === 'same' || identityCase === 'native-connected') {
+            if (selectsForRead) {
                 expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ nativeStatus: { kind: 'current' } }] });
                 expect(host.counts().nativeReads).toBe(1);
                 expect(accountReads).toBe(2); // One service metadata listing per relation read; no provider identity request.
@@ -793,19 +793,22 @@ describe('the composed Session PR Resource', () => {
         }));
         const pr63 = { ...entryRef, source: connected.instance.source, entryId: '63' };
         const prUrl = 'https://github.com/example/repository/pull/63';
-        expect(await linkEntryToSession({ collections, entryRef: pr63, sessionId: 'session-a',
-            display: { locator: { ...locator, webUrl: prUrl }, scopeLabel: 'example/repository' }, nowMs: 1,
-        })).toMatchObject({ status: 'linked' });
         let accountReads = 0;
         const source = testkitReadOnlySourceSnapshot().contributions[0]!;
         const context = { signal: new AbortController().signal, services: {
             targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{ ...source,
                 contributor: { pluginId: connected.instance.source.pluginId, contributionId: connected.instance.source.localId },
+                operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
             }] }), dispose() {} }) },
             actions: { async execute(actionId: string) {
                 expect(actionId).toBe('connectedServices.accounts.list');
                 accountReads++;
                 return { accounts: [{ account: { ref: connected.binding.account, providerIdentity: { accountId: '1729528' } } }] };
+            }, async executeAdmittedTargetedOperation() {
+                // The GitHub role returns the retained PR63 relationship without a sourceInstanceId.
+                return { kind: 'complete', links: [{ localRef: { kindId: pr63.kindId,
+                    collisionScope: pr63.collisionScope, entryId: pr63.entryId }, sessionId: 'session-a',
+                    linkedAtMs: 1, displayPath: 'example/repository#63', locator: { ...locator, webUrl: prUrl } }] };
             } },
         } } as unknown as TriageDataActionContext; // Only host inventory/Action transports are replaced.
         const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });

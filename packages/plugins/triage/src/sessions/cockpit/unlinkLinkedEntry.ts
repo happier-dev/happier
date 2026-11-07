@@ -1,10 +1,6 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
-import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
-import { unlinkEntryFromSession } from '../entrySessionLinks.js';
-import { findTriageEntrySessionLinkV1 } from '../readEntrySessionLinks.js';
 import {
     TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
     TriageUnlinkEntryFromSessionActionResultV1Schema,
@@ -14,12 +10,9 @@ import {
 /**
  * The cockpit's path to the canonical link remover.
  *
- * Two transports, one owner. A mount that can reach the reader's Account
- * directly deletes through its own `session-links` handle, so **Unlink** keeps
- * working with no daemon reachable — a Session link is Account state, not
- * provider data. Source-owned relationships use the source-neutral Action,
- * including after their source goes offline; external relationships keep
- * reaching `entrySessionLinks.ts#unlinkEntryFromSession` directly.
+ * The Account Action owns per-kind source/corpus selection even when source
+ * admission changes after a row was rendered. The UI carries the exact target,
+ * without a direct corpus write or a second ownership decision.
  *
  * It owns no state: there is no local removed set and no optimistic commitment,
  * because a link is durable Account state with no upstream owner to reconstruct
@@ -56,8 +49,6 @@ export type TriageUnlinkHostV1 = Readonly<{
 export type TriageUnlinkLinkedEntryV1 = Readonly<{
     sessionId: string;
     entryRef: TriageEntryRefV1;
-    /** Carried by a source-read row even if that source later goes offline. */
-    sourceOwned?: true;
 }>;
 
 /**
@@ -72,35 +63,7 @@ export type TriageUnlinkTransportV1 = Readonly<{
     ): Promise<TriageUnlinkEntryFromSessionActionResultV1 | null>;
 }>;
 
-/** The direct transport: this mount's own `session-links` Collection handle. */
-export function createDirectTriageUnlinkTransport(
-    collections: Pick<CorpusCollectionsV1, 'sessionLinks'>,
-    host: Pick<PluginUiHostApi, 'admitAction'> & Partial<TriageUnlinkHostV1>,
-    sourceOwnsRelationships: (entryRef: TriageEntryRefV1) => boolean | undefined = () => false,
-): TriageUnlinkTransportV1 {
-    return Object.freeze({
-        unlink: async (target, options) => {
-            const ownership = sourceOwnsRelationships(target.entryRef);
-            const sourceOwned = target.sourceOwned === true || ownership === true
-                || (ownership === undefined && await findTriageEntrySessionLinkV1(collections.sessionLinks, target, options) === null);
-            if (sourceOwned) {
-                if (host.executeAction === undefined) return { v: 1, status: 'failed' };
-                return await submitTriageUnlinkLinkedEntry({ executeAction: host.executeAction }, target, options);
-            }
-            if (!await host.admitAction(TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
-                { v: 1, sessionId: target.sessionId, entryRef: target.entryRef }, options)) return null;
-            const result = await unlinkEntryFromSession({
-                collections,
-                sessionId: target.sessionId,
-                entryRef: target.entryRef,
-                ...(options?.signal ? { signal: options.signal } : {}),
-            });
-            return { v: 1, status: result.status };
-        },
-    });
-}
-
-/** The daemon transport: the same owner, reached through the published Action. */
+/** The composed relation owner reached through its portable Account Action. */
 export function createActionTriageUnlinkTransport(
     host: TriageUnlinkHostV1,
 ): TriageUnlinkTransportV1 {

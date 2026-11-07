@@ -1,15 +1,15 @@
 import type { TriageEntryLocatorV1, TriageEntryRefV1, TriagePullRequestStatusV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
-import type { TriageListRowV1 } from '../../projection/listWindow.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { projectTriageEntryDisplay } from '../../ui/window/entryDisplay.js';
 import { readTriageSelectedObservationV1 } from '../../ui/window/selectedObservation.js';
 import type { TriageEntryDetailInputSourceV1 } from '../../ui/detail/useTriageEntryDetail.js';
 
 export type TriageSessionLinkedEntrySummaryV1 = Readonly<{
-    kind: 'pullRequest' | 'issue';
+    kind: TriageSourceWorkflowSubjectV1;
     number: string | null;
     repository: string | null;
     title: string;
-    lifecycle: 'open' | 'draft' | 'merged' | 'closed' | 'done' | 'notPlanned' | 'unknown';
+    lifecycle: 'open' | 'draft' | 'merged' | 'closed' | 'done' | 'notPlanned' | 'suppressed' | 'unknown';
     stateLabel: string;
     comments: number | null;
     author: Readonly<{ name: string; avatarUrl: string | null }> | null;
@@ -26,12 +26,42 @@ export type TriageSessionLinkedEntrySummaryV1 = Readonly<{
     scopeLabel: string;
 }>;
 
+/** The mounted reader retains only its current admitted window's membership. */
+export type TriageSessionLinkedEntrySummaryBaselineV1 = Map<string, Readonly<{
+    row: TriageListRowV1;
+    subject: TriageSourceWorkflowSubjectV1 | null;
+    summary: TriageSessionLinkedEntrySummaryV1 | null;
+}>>;
+
+export function projectTriageSessionLinkedEntrySummaries(
+    rows: readonly TriageListRowV1[],
+    workflowSubject: (ref: TriageEntryRefV1) => TriageSourceWorkflowSubjectV1 | null,
+    baseline?: TriageSessionLinkedEntrySummaryBaselineV1,
+): ReadonlyMap<string, TriageSessionLinkedEntrySummaryV1 | null> {
+    const summaries = new Map<string, TriageSessionLinkedEntrySummaryV1 | null>();
+    for (const row of rows) {
+        const key = triageEntryRowKey(row.entryRef);
+        const subject = workflowSubject(row.entryRef);
+        const retained = baseline?.get(key);
+        const summary = retained?.row === row && retained.subject === subject
+            ? retained.summary : projectTriageSessionLinkedEntrySummary(row, subject);
+        summaries.set(key, summary);
+        if (retained === undefined || retained.summary !== summary || retained.row !== row || retained.subject !== subject) {
+            baseline?.set(key, { row, subject, summary });
+        }
+    }
+    if (baseline !== undefined) {
+        for (const key of baseline.keys()) if (!summaries.has(key)) baseline.delete(key);
+    }
+    return summaries;
+}
+
 export function projectTriageSessionLinkedEntrySummary(
     row: TriageListRowV1,
     workflowSubject: TriageSourceWorkflowSubjectV1 | null,
 ): TriageSessionLinkedEntrySummaryV1 | null {
     const content = row.content;
-    if (content === null || (workflowSubject !== 'pullRequest' && workflowSubject !== 'issue')) return null;
+    if (content === null || workflowSubject === null) return null;
     const display = projectTriageEntryDisplay(row);
     const snapshot = content.outcome.snapshot;
     const facts = snapshot.facts;
@@ -42,14 +72,15 @@ export function projectTriageSessionLinkedEntrySummary(
     const selected = readTriageSelectedObservationV1(row);
     const kind = workflowSubject;
     const label = display.lifecycleLabel ?? '';
-    const lifecycle = label === 'Draft' ? 'draft'
-        : label === 'Merged' ? 'merged'
-        : label === 'Closed as not planned' ? 'notPlanned'
+    const lifecycle = kind === 'pullRequest' && label === 'Draft' ? 'draft'
+        : kind === 'pullRequest' && label === 'Merged' ? 'merged'
+        : kind === 'issue' && snapshot.state.completionReason === 'canceled' ? 'notPlanned'
         : snapshot.state.presentation === 'resolved' ? (kind === 'pullRequest' ? 'merged' : 'done')
         : snapshot.state.presentation === 'closed' ? 'closed'
+        : snapshot.state.presentation === 'suppressed' ? 'suppressed'
         : snapshot.state.presentation === 'active' ? 'open' : 'unknown';
     const review = fact('github/review-decision');
-    const decision: NonNullable<TriageSessionLinkedEntrySummaryV1['review']>['decision'] | null = review?.kind !== 'status' ? null
+    const decision: NonNullable<TriageSessionLinkedEntrySummaryV1['review']>['decision'] | null = kind !== 'pullRequest' || review?.kind !== 'status' ? null
         : review.value === 'Approved' ? 'approved'
         : review.value === 'Changes requested' ? 'changesRequested'
         : review.value === 'Review required' ? 'reviewRequired' : null;

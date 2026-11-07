@@ -1,358 +1,96 @@
 import { describe, expect, it } from 'vitest';
-import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
-import {
-    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    type TriageSourceDescriptorV1,
-} from '@happier-dev/triage-protocol/v1';
 
-import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { testkitEntryRef, testkitPresentOutcome, testkitSnapshot, TESTKIT_SOURCE_INSTANCE_ID } from '../../corpus/testkit/observations.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
-import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
-import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js';
-import {
-    projectTriageSessionLinkedEntries,
-    triageSessionLinkHydrationTargets,
-    type TriageSessionLinkHydrationV1,
-    type TriageSessionLinkQueryRowV1,
-    type TriageSessionLinkedEntriesQueryStateV1,
-} from './linkedEntryRows.js';
+import { projectTriageSessionLinkedEntries } from './linkedEntryRows.js';
+import type { TriageSessionLinkedEntrySummaryBaselineV1 } from './linkedEntrySummary.js';
 
-/**
- * The cockpit's two honesty contracts, proven where they are decided.
- *
- * A link is durable Account state and the entry it names is not stored at all,
- * so the failure this file exists to catch is a projection that quietly makes a
- * durable link disappear — by dropping an unhydrated row, by reporting an
- * unsettled page as an empty link set, or by presenting a stale read as current.
- */
+const entryRef = testkitEntryRef();
+const link = { entryRef, sessionId: 'session-1', linkedAtMs: 42, displayPath: 'example/repository#42' };
 
-function queryRow(
-    rowId: string,
-    linkedAtMs: number,
-    revision = 1,
-): TriageSessionLinkQueryRowV1 {
-    return {
-        rowId,
-        revision,
-        fields: {
-            [CORPUS_SESSION_LINKS_FIELD.sessionId]: 'session-1',
-            [CORPUS_SESSION_LINKS_FIELD.entryTag]: `${rowId}-entry`,
-            [CORPUS_SESSION_LINKS_FIELD.linkedAtMs]: linkedAtMs,
-        },
-    };
-}
-
-function state(
-    overrides: Partial<TriageSessionLinkedEntriesQueryStateV1> = {},
-): TriageSessionLinkedEntriesQueryStateV1 {
-    return { status: 'ready', rows: [], hasMore: false, failure: null, ...overrides };
-}
-
-/** The reference the private link row held, as every `ready` read carries it. */
-const ENTRY_REF = testkitEntryRef();
-
-function hydration(
-    entries: readonly (readonly [string, TriageSessionLinkHydrationV1])[],
-): ReadonlyMap<string, TriageSessionLinkHydrationV1> {
-    return new Map(entries);
-}
-
-describe('the Session cockpit linked-entry projection', () => {
-    it('renders source-owned links in the same cockpit projection and keeps their stale notice', () => {
-        const result = projectTriageSessionLinkedEntries({ query: state(), hydration: new Map(),
-            sourceLinks: [{ entryRef: ENTRY_REF, sessionId: 'session-1', linkedAtMs: 42, displayPath: 'Personal task' }],
-            sourceLinksStatus: 'failed',
-        });
-        expect(result.kind).toBe('linked');
-        if (result.kind !== 'linked') return;
-        expect(result.rows).toEqual([expect.objectContaining({ linkedAtMs: 42,
-            presentation: { kind: 'linked', displayPath: 'Personal task', entryRef: ENTRY_REF, entry: null },
-        })]);
-        expect(result.notice).not.toBeNull();
+describe('the Session cockpit composed relationship projection', () => {
+    it('retains unchanged finding rows across relation refresh and derives only changed summaries', () => {
+        const refs = Array.from({ length: 100 }, (_, index) => ({ ...entryRef, kindId: 'external-finding', entryId: String(index) }));
+        const window = foldTriageListWindow({ observations: refs.map(ref => ({ entryRef: ref, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+            observedAtMs: 10, outcome: testkitPresentOutcome() })), lanes: [], activeSourceInstanceIds: [TESTKIT_SOURCE_INSTANCE_ID],
+            configuredSourcesStatus: 'complete', lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: refs.length }, assembledAtMs: 10 });
+        const links = refs.map(ref => ({ ...link, entryRef: ref }));
+        const summaryBaseline: TriageSessionLinkedEntrySummaryBaselineV1 = new Map();
+        const input = { links, status: 'ready' as const, entries: window.rows, workflowSubject: () => 'errorIssue' as const, summaryBaseline };
+        const first = projectTriageSessionLinkedEntries(input);
+        const equal = projectTriageSessionLinkedEntries({ ...input, links: structuredClone(links), previous: first });
+        expect(equal).toBe(first);
+        const changed = projectTriageSessionLinkedEntries({ ...input, links: links.map((item, index) => index === 0
+            ? { ...item, displayPath: 'Renamed finding' } : item), previous: equal });
+        if (first.kind !== 'linked' || changed.kind !== 'linked') throw new Error('Expected linked findings');
+        const prior = new Map(first.rows.map(row => [row.key, row]));
+        expect(changed.rows.filter(row => row !== prior.get(row.key))).toHaveLength(1);
     });
 
-    it('joins by the complete canonical reference to the existing window content winner', () => {
+    it('keeps healthy co-links visible with explicit failed-kind coverage', () => {
+        const issue = { ...link, entryRef: { ...entryRef, kindId: 'issue' }, displayPath: 'Issue #42' };
+        const view = projectTriageSessionLinkedEntries({ links: [issue], status: 'partial', lanes: [{
+            source: entryRef.source, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, displayLabel: 'Example forge',
+            kindIds: ['pull-request'], health: { kind: 'unavailable' },
+        }] });
+        expect(view).toMatchObject({ kind: 'linked', more: false,
+            rows: [{ presentation: { kind: 'linked', displayPath: issue.displayPath, entryRef: issue.entryRef } }],
+            notice: { sources: [{ label: 'Example forge' }] },
+        });
+    });
+
+    it.each(['partial', 'failed'] as const)('does not claim absence for an empty %s result', status => {
+        expect(projectTriageSessionLinkedEntries({ links: [], status })).toEqual({
+            kind: 'unavailable', notice: { sources: [] },
+        });
+    });
+
+    it('claims an empty set only after the owner completes the relation walk', () => {
+        expect(projectTriageSessionLinkedEntries({ links: [], status: 'loading' })).toEqual({ kind: 'loading' });
+        expect(projectTriageSessionLinkedEntries({ links: [], status: 'ready' })).toEqual({ kind: 'empty' });
+    });
+
+    it('retains known links while a refresh is pending and marks a failed refresh stale', () => {
+        expect(projectTriageSessionLinkedEntries({ links: [link], status: 'loading' }))
+            .toMatchObject({ kind: 'linked', rows: [{ presentation: { entryRef } }], notice: null });
+        expect(projectTriageSessionLinkedEntries({ links: [link], status: 'failed' }))
+            .toMatchObject({ kind: 'linked', rows: [{ presentation: { entryRef } }], notice: { sources: [] } });
+    });
+
+    it('uses the canonical reference and frozen display path without inventing source ownership', () => {
+        const view = projectTriageSessionLinkedEntries({ links: [link], status: 'ready' });
+        if (view.kind !== 'linked') throw new Error('Expected linked entries');
+        expect(view.rows[0]).toEqual({ key: expect.any(String), linkedAtMs: 42,
+            presentation: { kind: 'linked', displayPath: link.displayPath, entryRef, entry: null } });
+        if (view.rows[0]!.presentation.kind !== 'linked') throw new Error('Expected a linked row');
+        expect(view.rows[0]!.presentation.entryRef).toBe(entryRef);
+    });
+
+    it('joins the admitted link to the exact existing window entry', () => {
         const window = foldTriageListWindow({
-            observations: [{ entryRef: ENTRY_REF, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, observedAtMs: 10,
-                outcome: testkitPresentOutcome({ snapshot: testkitSnapshot({ title: 'A real title', state: { presentation: 'resolved', nativeLabel: 'Merged' }, facts: [
-                    { id: 'github/number', importance: 'primary', value: { kind: 'text', value: '#17' } },
-                    { id: 'github/comments', importance: 'secondary', value: { kind: 'number', value: 7, format: 'compact' } },
-                    { id: 'github/author', importance: 'secondary', value: { kind: 'actor', value: 'octocat' } },
-                ] }) }) }],
+            observations: [{ entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, observedAtMs: 10,
+                outcome: testkitPresentOutcome({ snapshot: testkitSnapshot({ title: 'A real title' }) }) }],
             lanes: [], activeSourceInstanceIds: [TESTKIT_SOURCE_INSTANCE_ID], configuredSourcesStatus: 'complete',
             lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 10,
         });
-        const protocol = {
-            id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-            version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-        };
-        const targetedContributions = {
-            target: {
-                pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                occurrenceId: 'target-occurrence-1',
-                sourceCustody: { kind: 'managed', immutableGenerationId: 'target-generation-1', installSource: 'npm' },
-            },
-            points: [{
-                pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-                protocols: [{ protocol, contributions: [{
-                    contributor: {
-                        pluginId: ENTRY_REF.source.pluginId,
-                        contributionId: ENTRY_REF.source.localId,
-                        occurrenceId: 'source-occurrence-1',
-                        sourceCustody: { kind: 'managed', immutableGenerationId: 'source-generation-1', installSource: 'npm' },
-                    },
-                    protocol,
-                    descriptor: {
-                        v: 1,
-                        purpose: 'triage-source',
-                        displayName: 'Example forge',
-                        kinds: [{ id: ENTRY_REF.kindId, workflowSubject: 'pullRequest', displayName: 'Pull request' }],
-                    } satisfies TriageSourceDescriptorV1,
-                    operations: [],
-                    surfaces: [],
-                }] }],
-            }],
-        } satisfies PluginUiTargetedContributionsV1;
-        const input = {
-            query: state({ rows: [queryRow('known', 10), queryRow('unknown', 9)] }),
-            hydration: hydration([
-                ['known', { kind: 'ready', revision: 1, displayPath: 'old/path', entryRef: ENTRY_REF }],
-                ['unknown', { kind: 'ready', revision: 1, displayPath: 'other/path', entryRef: { ...ENTRY_REF, collisionScope: 'another/repo' } }],
-            ]),
-            entries: window.rows,
-        };
-        const view = projectTriageSessionLinkedEntries({
-            ...input,
-            workflowSubject: (entryRef) => resolveTriageSourceWorkflowSubjectV1(targetedContributions, entryRef),
-        });
-        if (view.kind !== 'linked') throw new Error('expected links');
-        expect(view.rows[0]?.presentation).toMatchObject({ kind: 'linked', entry: {
-            kind: 'pullRequest', title: 'A real title', number: '17', repository: 'repository',
-            lifecycle: 'merged', stateLabel: 'Merged', comments: 7, author: { name: 'octocat', avatarUrl: null },
-            sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
-        } });
-        expect(view.rows[1]?.presentation).toMatchObject({ kind: 'linked', displayPath: 'other/path', entry: null });
-
-        const absentDeclaration = projectTriageSessionLinkedEntries({
-            ...input,
-            workflowSubject: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
-                { ...targetedContributions, points: [] }, entryRef,
-            ),
-        });
-        if (absentDeclaration.kind !== 'linked') throw new Error('expected links');
-        expect(absentDeclaration.rows[0]?.presentation).toMatchObject({
-            kind: 'linked', displayPath: 'old/path', entryRef: ENTRY_REF, entry: null,
-        });
-    });
-    it('renders the link from its own frozen display path', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10)] }),
-            hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42', entryRef: ENTRY_REF }],
-            ]),
-        });
-
-        expect(view).toEqual({
-            kind: 'linked',
-            rows: [{
-                key: 'link-a',
-                linkedAtMs: 10,
-                presentation: {
-                    kind: 'linked',
-                    displayPath: 'example/repository#42',
-                    // Unlink is addressed by the entry AND the Session, and the
-                    // mounted surface knows only the Session. Without the
-                    // reference the private read already returned, a reader who
-                    // linked the wrong entry has nothing to undo it with.
-                    entryRef: ENTRY_REF,
-                    entry: null,
-                },
-            }],
-            more: false,
-            notice: null,
-        });
+        const other = { ...link, entryRef: { ...entryRef, collisionScope: 'another/repo' } };
+        const view = projectTriageSessionLinkedEntries({ links: [link, other], status: 'ready',
+            entries: window.rows, workflowSubject: () => 'pullRequest' });
+        if (view.kind !== 'linked') throw new Error('Expected linked entries');
+        expect(view.rows.find(row => row.presentation.kind === 'linked' && row.presentation.entryRef === entryRef)?.presentation)
+            .toMatchObject({ entry: { title: 'A real title', sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID } });
+        expect(view.rows.find(row => row.presentation.kind === 'linked' && row.presentation.entryRef === other.entryRef)?.presentation)
+            .toMatchObject({ entry: null });
     });
 
-    it('keeps a link whose private row has not been read yet, rather than dropping it', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10), queryRow('link-b', 20)] }),
-            hydration: hydration([
-                ['link-b', { kind: 'ready', revision: 1, displayPath: 'example/repository#7', entryRef: ENTRY_REF }],
-            ]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows.map((row) => row.key)).toEqual(['link-b', 'link-a']);
-        expect(view.rows[1]?.presentation).toEqual({ kind: 'reading' });
-    });
-
-    it('says a link was removed underneath the page instead of hiding the row', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10)] }),
-            hydration: hydration([['link-a', { kind: 'unlinked', revision: 1 }]]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows[0]?.presentation).toEqual({ kind: 'unlinked' });
-    });
-
-    it('says a link could not be read instead of presenting it as unlinked', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10)] }),
-            hydration: hydration([['link-a', { kind: 'unreadable', revision: 1 }]]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows[0]?.presentation).toEqual({ kind: 'unreadable' });
-    });
-
-    it('does not present a hydration read taken at an older revision as current', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10, 4)] }),
-            hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 3, displayPath: 'stale/path#1', entryRef: ENTRY_REF }],
-            ]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows[0]?.presentation).toEqual({ kind: 'reading' });
-    });
-
-    it('reports absence only from a settled page', () => {
-        expect(projectTriageSessionLinkedEntries({
-            query: state({ status: 'ready' }),
-            hydration: hydration([]),
-        })).toEqual({ kind: 'empty' });
-
-        for (const status of ['idle', 'loading'] as const) {
-            expect(projectTriageSessionLinkedEntries({
-                query: state({ status }),
-                hydration: hydration([]),
-            })).toEqual({ kind: 'loading' });
-        }
-    });
-
-    it('never reports an unavailable or failed empty page as an empty link set', () => {
-        expect(projectTriageSessionLinkedEntries({
-            query: state({ status: 'unavailable', failure: 'collection_unavailable' }),
-            hydration: hydration([]),
-        })).toEqual({
-            kind: 'unavailable',
-            message: 'Linked PRs and issues are unavailable for this account right now.',
-        });
-
-        expect(projectTriageSessionLinkedEntries({
-            query: state({ status: 'error', failure: 'collection_index_not_ready' }),
-            hydration: hydration([]),
-        })).toEqual({
-            kind: 'unavailable',
-            message: 'Linked PRs and issues are still being prepared for this account.',
-        });
-
-        expect(projectTriageSessionLinkedEntries({
-            query: state({ status: 'error', failure: null }),
-            hydration: hydration([]),
-        })).toEqual({
-            kind: 'unavailable',
-            message: 'Linked PRs and issues could not be read.',
-        });
-    });
-
-    it('keeps last-known-good rows on a failed refresh and says why they may be stale', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({
-                status: 'error',
-                failure: 'collection_unavailable',
-                rows: [queryRow('link-a', 10)],
-            }),
-            hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42', entryRef: ENTRY_REF }],
-            ]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows).toHaveLength(1);
-        expect(view.notice).toBe('Linked PRs and issues are unavailable for this account right now.');
-    });
-
-    it('keeps every row the canonical pager has accumulated across pages', () => {
-        const rows = Array.from(
-            { length: MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5 },
-            (_unused, index) => queryRow(`link-${String(index).padStart(3, '0')}`, index),
-        );
-
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows }),
-            hydration: hydration([]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5);
+    it('keeps every link from the full owner result reachable and orders ties deterministically', () => {
+        const links = Array.from({ length: 101 }, (_, index) => ({ ...link,
+            entryRef: { ...entryRef, entryId: String(index) }, linkedAtMs: index === 100 ? 100 : 42 }));
+        const view = projectTriageSessionLinkedEntries({ links, status: 'ready' });
+        if (view.kind !== 'linked') throw new Error('Expected linked entries');
+        expect(view.rows).toHaveLength(101);
         expect(view.more).toBe(false);
-        expect(view.rows[0]?.key).toBe('link-054');
-        expect(view.rows.at(-1)?.key).toBe('link-000');
-    });
-
-    it('reports more links when the pager still has a page, even inside the bound', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [queryRow('link-a', 10)], hasMore: true }),
-            hydration: hydration([]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.more).toBe(true);
-    });
-
-    it('orders by the link clock and breaks ties on the host-stamped row id', () => {
-        const view = projectTriageSessionLinkedEntries({
-            query: state({
-                rows: [queryRow('link-b', 5), queryRow('link-a', 5), queryRow('link-c', 9)],
-            }),
-            hydration: hydration([]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows.map((row) => row.key)).toEqual(['link-c', 'link-a', 'link-b']);
-    });
-
-    it('keeps a link whose projected clock is missing or malformed', () => {
-        const malformed: TriageSessionLinkQueryRowV1 = {
-            rowId: 'link-a',
-            revision: 1,
-            fields: { [CORPUS_SESSION_LINKS_FIELD.linkedAtMs]: 'not-a-clock' },
-        };
-
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows: [malformed] }),
-            hydration: hydration([]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows).toEqual([
-            { key: 'link-a', linkedAtMs: 0, presentation: { kind: 'reading' } },
-        ]);
-    });
-});
-
-describe('the hydration target set', () => {
-    it('is exactly every accumulated row the projection renders', () => {
-        const rows = Array.from(
-            { length: MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5 },
-            (_unused, index) => queryRow(`link-${String(index).padStart(3, '0')}`, index),
-        );
-
-        const targets = triageSessionLinkHydrationTargets(state({ rows }));
-        const view = projectTriageSessionLinkedEntries({
-            query: state({ rows }),
-            hydration: hydration([]),
-        });
-
-        if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(targets).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5);
-        expect(targets.map((row) => row.rowId)).toEqual(view.rows.map((row) => row.key));
+        expect(view.rows[0]!.presentation).toMatchObject({ entryRef: links[100]!.entryRef });
+        expect(projectTriageSessionLinkedEntries({ links: [...links].reverse(), status: 'ready' })).toEqual(view);
     });
 });

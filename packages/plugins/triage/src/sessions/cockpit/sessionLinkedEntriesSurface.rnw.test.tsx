@@ -1,12 +1,14 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 // @vitest-environment jsdom
 import * as React from 'react';
+import { createHash } from 'node:crypto';
 import { act, cloneElement, type ReactElement } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiSemanticSurfaceAdapter } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
     PluginUiCollectionQueryInput,
     PluginUiCollectionQueryPager,
@@ -16,28 +18,37 @@ import type {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../../../../../plugin-ui/src/data/accountKv.js';
+import { createPluginUiHostApiResourceClient, createPluginUiResourceStore, type PluginUiResourceStore } from '../../../../../plugin-ui/src/hostApi/resourceStore.js';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../../corpus/collections/rows.js';
 import { sessionLinkTagComponents } from '../../corpus/identity/components.js';
-import { TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1 } from './linkedEntriesQuery.js';
-import { renderSurface as renderSessionLinkedEntriesSurface } from './sessionLinkedEntriesSurface.js';
+import { TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from '../sessionLinksResource.js';
+import { TriageReadSourceSessionLinksResultV1Schema } from '../../actions/sessionLinksProtocol.js';
+import { LinkEntryPicker, renderSurface as renderSessionLinkedEntriesSurface } from './sessionLinkedEntriesSurface.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
+import { parseTriageRouteSubPathV1 } from '../../ui/navigation/location.js';
 import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
-import { Text, defineUiSurface } from '@happier-dev/plugin-ui';
+import { Button, Text, defineUiSurface } from '@happier-dev/plugin-ui';
 import { useLinkedPullRequestStatus } from './useLinkedPullRequestStatus.js';
+import { useTriageScmPullRequestCardV1 } from '../scmPullRequestCard.js';
+import { TriageScmPullRequestCard } from '../../ui/scmPullRequestCard.js';
 import { projectTriageSessionLinkedEntrySummary } from './linkedEntrySummary.js';
+import { useTriageSessionLinkCandidates } from './useSessionLinkCandidates.js';
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
-import { testkitObservation, testkitSnapshot } from '../../corpus/testkit/observations.test-support.js';
+import { testkitEntryRef, testkitObservation, testkitSnapshot } from '../../corpus/testkit/observations.test-support.js';
 import { acquireTriageListWindow, refreshTriageListWindow } from '../../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../ui/window/ephemeralSharedScope.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import { toTriageListWireRows } from '../../projection/listWindowWire.js';
 import { TriageListEntriesResultV1Schema } from '../../actions/listEntriesProtocol.js';
 import { PluginUiHostApiSurfaceContextV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
 import { createTriageReadSourceSessionLinksActionHandler } from '../../actions/sessionLinks.js';
 import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
 import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot } from '../testkit/entrySessionTestkit.test-support.js';
+import { operationOffers } from '../testkit/sessionPullRequestOperations.test-support.js';
 
 /**
  * The mounted Session cockpit, driven through the real host boundary.
@@ -139,6 +150,7 @@ type DataHarness = Readonly<{
     identityRequests: Array<Readonly<{ field: string; components: readonly string[] }>>;
     deletes: Array<Readonly<{ rowId: string; expectedRevision: number }>>;
     control: PagerControl;
+    readRelations(): Promise<unknown>;
 }>;
 
 function createDataHarness(input: Readonly<{
@@ -191,7 +203,15 @@ function createDataHarness(input: Readonly<{
         accountKv: createUnavailablePluginUiAccountKv(),
     };
 
-    return { client, opened, gets, identityRequests, deletes, control };
+    return { client, opened, gets, identityRequests, deletes, control,
+        async readRelations() {
+            const snapshot = control.pager.getSnapshot();
+            if (snapshot.status !== 'ready') throw new Error('The relation Action could not read Account state.');
+            return { kind: 'complete', links: [...rowsById.values()].map(row => ({
+                entryRef: row.entryRef, sessionId: row.sessionId, linkedAtMs: row.linkedAtMs, displayPath: row.displayPathAtLink,
+            })), lanes: [] };
+        },
+    };
 }
 
 /** Mirrors the host's post-render private Data binding without widening author context. */
@@ -203,14 +223,30 @@ function createCockpitAdapter(
     const rnwAdapter = createPluginUiRnwSemanticSurfaceAdapter({ overlays: true });
     return {
         async mount(mountInput) {
+            function HostedCockpit(context: RenderContext): ReactElement {
+                    const scope = typeof sharedScope === 'function' ? sharedScope() : sharedScope;
+                    // Model the host's admitted declaration placement while
+                    // keeping the real Resource store and transport path.
+                    const resourceStore = React.useMemo<PluginUiResourceStore>(() => {
+                        const store = createPluginUiResourceStore({ client: createPluginUiHostApiResourceClient(context.hostApi), pluginId: PLUGIN_ID });
+                        return { ...store, requiresMachine(resource) {
+                            if (typeof resource !== 'string' && 'hostRead' in resource) return false;
+                            if (typeof resource !== 'string' && resource.pluginId !== PLUGIN_ID) return true;
+                            const localId = typeof resource === 'string' ? resource : resource.localId;
+                            return PLUGIN_MANIFEST.contributes.resources.find(declaration => declaration.id === localId)?.execution?.target !== 'account';
+                        } };
+                    }, [context.hostApi, scope]);
+                    React.useEffect(() => () => resourceStore.dispose(), [resourceStore]);
+                    return cloneElement(
+                        mountInput.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient; ephemeralSharedScope?: PluginUiEphemeralSharedScope; resourceStoreGeneration?: unknown; resourceStore?: PluginUiResourceStore }>,
+                        { ...(dataClient === null ? {} : { dataClient }),
+                            resourceStore,
+                            ...(scope === undefined ? {} : { ephemeralSharedScope: scope, resourceStoreGeneration: scope }) },
+                    );
+            }
             return await rnwAdapter.mount({
                 ...mountInput,
-                surface: (context: RenderContext): ReactElement => dataClient === null
-                    ? mountInput.surface(context) as ReactElement
-                    : cloneElement(
-                        mountInput.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient; ephemeralSharedScope?: PluginUiEphemeralSharedScope }>,
-                        { dataClient, ...(sharedScope === undefined ? {} : { ephemeralSharedScope: typeof sharedScope === 'function' ? sharedScope() : sharedScope }) },
-                    ),
+                surface: context => React.createElement(HostedCockpit, context),
             });
         },
     };
@@ -241,8 +277,21 @@ async function mountCockpit(
     sourceLinks?: () => Promise<unknown>,
     sourceScope?: () => PluginUiEphemeralSharedScope,
     machinePending = false,
+    observeResource = false,
+    surface = renderSessionLinkedEntriesSurface,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
+    let resourceReady: ((digest: string) => void) | undefined;
+    const firstResource = new Promise<string>(resolve => { resourceReady = resolve; });
+    const readRelations = async () => {
+        actionCalls.push({ action: 'sessions/read-source-links-v1', input: { v: 1, sessionId: 'sessionId' in target ? target.sessionId : SESSION_ID } });
+        const result = TriageReadSourceSessionLinksResultV1Schema.parse(await (sourceLinks ?? harness.readRelations)());
+        return result.lanes !== undefined && result.lanes.length > 0 ? result : { ...result, lanes: [{
+            source: linkRow().entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111', displayLabel: 'Example forge',
+            kindIds: ['pull-request', 'merge-request', 'issue', 'dependency-finding', 'scan-finding'],
+            health: result.kind === 'complete' ? { kind: 'complete' as const } : { kind: 'unavailable' as const },
+        }] };
+    };
     const surfaceContext = createSurfaceContextFixture({
         ...(machinePending ? { machineConnectionPending: true, machineExecutionReady: false } : {}),
         mount: {
@@ -261,6 +310,8 @@ async function mountCockpit(
                     descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
                         kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
                             { id: 'merge-request', workflowSubject: 'pullRequest', displayName: 'Merge request' },
+                            { id: 'dependency-finding', workflowSubject: 'errorIssue', displayName: 'Dependency finding' },
+                            { id: 'scan-finding', workflowSubject: 'errorIssue', displayName: 'Scanning finding' },
                             { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }] },
                     operations: sourceLinks === undefined ? [] : ['readSessionLinks', 'linkSession'].map((role) => ({
                         point: { pointId: 'sources', protocol: { id: 'happier.triage/sources', version: 1 } },
@@ -279,27 +330,53 @@ async function mountCockpit(
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-165', mountNonce: 'fixture-mount-165' },
             authorPlugin: { id: PLUGIN_ID, version: '0.0.0' },
-            surface: renderSessionLinkedEntriesSurface,
+            surface,
             surfaceContext,
             adapter: createCockpitAdapter(accountReachable ? harness.client : null, sourceScope ?? statusFixture?.scope),
             handlers: {
                 confirm: async () => true,
                 // Direct Account writes use the host's Action admission boundary.
                 admitAction: async () => true,
+                readResource: async ({ resource }) => {
+                    const localId = typeof resource === 'string' ? resource : 'localId' in resource ? resource.localId : null;
+                    if (localId === 'session-pull-request-status-v1') {
+                        if (statusFixture === undefined) throw new Error('This mount scripts no PR status demand.');
+                        actionCalls.push({ action: 'resources/session-pull-request-status-v1', input: {} });
+                        const status = await statusFixture.readStatus();
+                        const bytes = new TextEncoder().encode(JSON.stringify({ kind: 'ready',
+                            sessionId: 'sessionId' in target ? target.sessionId : SESSION_ID,
+                            pullRequests: [{ bindingId: 'binding-1', revision: 1,
+                                link: { provider: 'github', repository: 'example/repository', number: 42,
+                                    url: 'https://github.com/example/repository/pull/42' },
+                                watch: { policy: { mode: 'notify', archiveAfterMerge: false },
+                                    reason: null, fixAttemptLimit: 3, roundsStarted: 0, watchingMachine: null }, latestUpdate: null,
+                                nativeStatus: { kind: 'current', value: status, checkedAtMs: status.observedAtMs } }],
+                        }));
+                        return { contentType: 'application/json', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };
+                    }
+                    const text = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
+                        context: { kind: 'session', sessionId: 'sessionId' in target ? target.sessionId : SESSION_ID },
+                        signal: new AbortController().signal,
+                        readAction: async () => ({ ok: true, result: await readRelations() }),
+                    }));
+                    const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : text;
+                    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+                    resourceReady?.(digest);
+                    return { contentType: 'application/json', digest, bytes };
+                },
+                ...(observeResource ? { watchResource: async () => ({ digest: await firstResource }) } : {}),
                 executeAction: async ({ action, input }) => {
                     actionCalls.push({ action: String(action), input });
-                    if (sourceLinks !== undefined && String(action) === 'sessions/read-source-links-v1') {
-                        return await sourceLinks() as never;
+                    if (String(action) === 'sessions/read-source-links-v1') {
+                        return await (sourceLinks ?? harness.readRelations)() as never;
                     }
                     if (listEntries !== undefined && String(action) === 'entries/list-v1') {
                         return await listEntries() as never;
                     }
-                    if (statusFixture !== undefined && String(action) === 'entries/read-pull-request-status-v1') {
-                        return await statusFixture.readStatus() as never;
-                    }
                     if (unlinkResult === null) {
                         throw new Error('This mount scripts no host Action.');
                     }
+                    if (unlinkResult instanceof Error) throw unlinkResult;
                     return unlinkResult as never;
                 },
                 openSurface: async ({ view, input, subPath }) => {
@@ -329,7 +406,288 @@ async function openRow(fixture: PluginUiTestkit, name: string): Promise<void> {
 }
 
 describe('expanded PR status from the exact linked source observation', () => {
-    it('uses shared host pending and re-admission for an expanded source read', async () => {
+    describe('createdHere PR linking', () => {
+        function createdPullRequestFixture(options: Readonly<{ failFirst?: boolean; project?: boolean; initialRead?: Promise<void> }> = {}) {
+            const url = 'https://github.com/acme/widgets/pull/42';
+            const calls: unknown[] = [];
+            let linked = false;
+            let reads = 0;
+            const signal = new AbortController().signal;
+            const surface = defineUiSurface(() => <TriageScmPullRequestCard signal={signal} launchInput={{
+                homeServerId: 'home-1', origin: 'createdHere', pullRequest: {
+                    provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/widgets' },
+                    number: 42, url, title: 'Created PR', headBranch: 'topic', baseBranch: 'main', state: 'open',
+                },
+            }} />);
+            const mount = async () => {
+                const fixture = await createPluginUiTestkit({
+                    identity: { instanceId: `created-pr-${reads}`, mountNonce: `created-pr-nonce-${reads}` },
+                    authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface,
+                    surfaceContext: createSurfaceContextFixture({
+                        target: options.project ? { kind: 'app' } : { kind: 'session', sessionId: SESSION_ID, agentId: 'codex' },
+                        accountScope: { serverId: 'home-1', accountId: 'viewer-1' },
+                    }),
+                    adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+                        readResource: async () => {
+                            reads += 1;
+                            if (reads === 1) await options.initialRead;
+                            return { contentType: 'application/json', digest: `sha256:${(linked ? 'b' : 'a').repeat(64)}`,
+                                bytes: new TextEncoder().encode(JSON.stringify({ kind: 'ready', sessionId: SESSION_ID,
+                                    pullRequests: linked ? [{ bindingId: 'binding-42', revision: 1,
+                                        link: { provider: 'github', repository: 'acme/widgets', number: 42, url },
+                                        watch: { policy: { mode: 'off', archiveAfterMerge: false }, reason: null,
+                                            fixAttemptLimit: 3, roundsStarted: 0, watchingMachine: null }, latestUpdate: null,
+                                        nativeStatus: { kind: 'unavailable', failure: { class: 'transient', code: 'offline' } },
+                                    }] : [],
+                                })) };
+                        },
+                        executeAction: ({ action, input }) => {
+                            if (action === 'plugins.settings.list') return getActionSpec(action).outputSchema.parse({
+                                ok: true, kind: action, data: {
+                                    scope: { kind: 'account' }, target: { kind: 'account' }, revision: 'settings-1',
+                                    fields: [
+                                        { localId: 'pr-watch-default-mode', secret: false, value: 'off' },
+                                        { localId: 'pr-watch-fix-attempt-limit', secret: false, value: 3 },
+                                        { localId: 'pr-watch-archive-after-merge', secret: false, value: false },
+                                    ],
+                                },
+                            });
+                            calls.push({ action, input });
+                            if (options.failFirst && calls.length === 1) throw new Error('Attach unavailable');
+                            linked = true;
+                            return { kind: 'attached', bindingId: 'binding-42' };
+                        },
+                    },
+                });
+                mounted.push(fixture);
+                await act(async () => { await Promise.resolve(); });
+                return fixture;
+            };
+            return { mount, calls, url, reads: () => reads };
+        }
+
+        it('attaches the exact Session and URL once per createdHere mount before reads settle and retains the link after remount', async () => {
+            let settleRead!: () => void;
+            const scenario = createdPullRequestFixture({ initialRead: new Promise<void>(resolve => { settleRead = resolve; }) });
+            const first = await scenario.mount();
+            // A createdHere intent goes straight to Channels; PR reads do not admit attachment.
+            expect(scenario.calls).toEqual([{ action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
+                input: { kind: 'attach', sessionId: SESSION_ID, pullRequestUrl: scenario.url } }]);
+            // A PR created here is an intent to link, never presented as an unwatched branch hint.
+            await expect(first.getByText('Created from this session. Linking it here…')).resolves.toBeDefined();
+            await expect(first.queryByText('Branch hint')).resolves.toBeUndefined();
+            await act(async () => { settleRead(); });
+            expect(scenario.calls).toHaveLength(1);
+            await expect(first.queryByRole('button', { name: 'Link this PR' })).resolves.toBeUndefined();
+            await act(async () => { await first.dispose(); });
+            mounted.splice(mounted.indexOf(first), 1);
+            const remounted = await scenario.mount();
+            await expect(remounted.getByText('Not watching')).resolves.toBeDefined();
+            await expect(remounted.queryByRole('button', { name: 'Link this PR' })).resolves.toBeUndefined();
+            // A cold createdHere mount repeats the intent before its read can
+            // reveal the link. Channels rejoins the retained binding-42.
+            expect(scenario.calls).toEqual(Array.from({ length: 2 }, () => ({
+                action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
+                input: { kind: 'attach', sessionId: SESSION_ID, pullRequestUrl: scenario.url },
+            })));
+        });
+
+        it('renders a failed automatic attach and retries only when Link is pressed', async () => {
+            const scenario = createdPullRequestFixture({ failFirst: true });
+            const fixture = await scenario.mount();
+            await expect(fixture.getByText('Couldn’t link this PR. The branch and the session are unchanged.')).resolves.toBeDefined();
+            expect(scenario.calls).toHaveLength(1);
+            await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Link this PR' })); });
+            expect(scenario.calls).toHaveLength(2);
+            await expect(fixture.queryByRole('button', { name: 'Link this PR' })).resolves.toBeUndefined();
+        });
+
+        it('keeps a createdHere Project hint manual without an exact Session', async () => {
+            const scenario = createdPullRequestFixture({ project: true });
+            const fixture = await scenario.mount();
+            await expect(fixture.findByRole('button', { name: 'Link to a session…' })).resolves.toBeDefined();
+            expect(scenario.calls).toEqual([]);
+            expect(scenario.reads()).toBe(0);
+        });
+    });
+
+    it('offers one-click Link for a Session branch hint and never auto-links it', async () => {
+        const calls: unknown[] = [];
+        const signal = new AbortController().signal;
+        const surface = defineUiSurface(() => <TriageScmPullRequestCard signal={signal} launchInput={{ homeServerId: 'home-1', pullRequest: {
+            provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/widgets' },
+            number: 42, url: 'https://github.com/acme/widgets/pull/42', title: 'Branch PR', headBranch: 'topic', baseBranch: 'main', state: 'open',
+        } }} />);
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'session-branch-link', mountNonce: 'session-branch-link-nonce' },
+            authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface,
+            surfaceContext: createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION_ID, agentId: 'codex' },
+                accountScope: { serverId: 'home-1', accountId: 'viewer-1' } }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+                readResource: () => ({ contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
+                    bytes: new TextEncoder().encode(JSON.stringify({ kind: 'ready', sessionId: SESSION_ID, pullRequests: [] })) }),
+                executeAction: ({ action, input }) => { calls.push({ action, input }); return { kind: 'attached', bindingId: 'binding-42' }; },
+            },
+        });
+        mounted.push(fixture);
+        const link = await fixture.findByRole('button', { name: 'Link this PR' });
+        expect(calls).toEqual([]);
+        await act(async () => { await fixture.press(link); });
+        expect(calls).toEqual([{ action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
+            input: { kind: 'attach', sessionId: SESSION_ID, pullRequestUrl: 'https://github.com/acme/widgets/pull/42' } }]);
+    });
+
+    it('renders linked merged PRs without a snapshot hint and never attaches on mount', async () => {
+        let reads = 0;
+        const calls: unknown[] = [];
+        const surface = defineUiSurface(() => <TriageScmPullRequestCard
+            launchInput={{ homeServerId: 'home-1' }} signal={new AbortController().signal} />);
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'no-branch-hint', mountNonce: 'no-branch-hint-nonce' },
+            authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface,
+            surfaceContext: createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION_ID, agentId: 'codex' },
+                accountScope: { serverId: 'home-1', accountId: 'viewer-1' } }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+                readResource: () => {
+                    reads += 1;
+                    return { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
+                        bytes: new TextEncoder().encode(JSON.stringify({ kind: 'ready', sessionId: SESSION_ID,
+                            pullRequests: [7, 8].map(number => ({ bindingId: `binding-${number}`, revision: 1,
+                                link: { provider: 'github', repository: 'acme/widgets', number, url: `https://github.com/acme/widgets/pull/${number}`, state: 'merged' },
+                                watch: { policy: { mode: 'notify', archiveAfterMerge: false }, reason: null, fixAttemptLimit: 3, roundsStarted: 0, watchingMachine: null },
+                                latestUpdate: null, nativeStatus: { kind: 'current', checkedAtMs: 200, value: {
+                                    kind: 'status', observedAtMs: 100, title: `Completed PR ${number}`, checks: null, review: null,
+                                    merge: null, branch: null, facts: [] } },
+                            })) })) };
+                },
+                executeAction: ({ action, input }) => { calls.push({ action, input }); throw new Error('No write expected'); },
+            },
+        });
+        mounted.push(fixture);
+        await act(async () => { await Promise.resolve(); });
+        await expect(fixture.getByText('Completed PR 7')).resolves.toBeDefined();
+        await expect(fixture.queryByText('Completed PR 8')).resolves.toBeUndefined();
+        await act(async () => { await fixture.press(await fixture.findByRole('radio', { name: '#8' })); });
+        await expect(fixture.getByText('Completed PR 8')).resolves.toBeDefined();
+        await expect(fixture.queryByText('Completed PR 7')).resolves.toBeUndefined();
+        expect(reads).toBe(1);
+        expect(calls).toEqual([]);
+    });
+    it('keeps Project branch hints cold and links the detected URL only after exact Session choice', async () => {
+        const url = 'https://github.com/acme/widgets/pull/42';
+        const calls: unknown[] = [];
+        let reads = 0;
+        const signal = new AbortController().signal;
+        const surface = defineUiSurface(() => <TriageScmPullRequestCard signal={signal} launchInput={{ homeServerId: 'home-1', pullRequest: {
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/widgets' },
+                number: 42, url, title: 'Detected PR', baseBranch: 'main', headBranch: 'topic', state: 'open', checks: { state: 'pending' },
+            } }} />);
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'project-pr-link', mountNonce: 'project-pr-link-nonce' },
+            authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface,
+            surfaceContext: createSurfaceContextFixture({ target: { kind: 'app' }, accountScope: { serverId: 'home-1', accountId: 'viewer-1' } }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+                readResource: () => { reads += 1; throw new Error('Project-only branch discovery cannot acquire Session status'); },
+                selectActionInput: ({ request }) => {
+                    calls.push(request);
+                    return { kind: 'sessionAddress', session: { serverId: 'home-1', sessionId: 'chosen-session' } };
+                },
+                executeAction: ({ action, input }) => {
+                    calls.push({ action, input });
+                    return { kind: 'attached', bindingId: 'binding-1' };
+                },
+            },
+        });
+        mounted.push(fixture);
+        await expect(fixture.getByText('Detected PR')).resolves.toBeDefined();
+        expect(calls).toEqual([]);
+        expect(reads).toBe(0);
+        await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Link to a session…' })); });
+        expect(calls).toEqual([
+            { hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } },
+            { action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
+                input: { kind: 'attach', sessionId: 'chosen-session', pullRequestUrl: url } },
+        ]);
+        expect(reads).toBe(0);
+    });
+
+    it('shares one demanded Session Resource across linked PR presentations without a legacy Action read', async () => {
+        const url = 'https://github.com/acme/widgets/pull/42';
+        const observation = testkitObservation({ entryRef: linkRow().entryRef, outcome: {
+            kind: 'present', locator: { v: 1, displayPath: 'acme/widgets#42', webUrl: url },
+            snapshot: testkitSnapshot(), viewer: { involvement: [] },
+        } });
+        const row = foldTriageListWindow({ observations: [observation], lanes: [],
+            activeSourceInstanceIds: [observation.sourceInstanceId], configuredSourcesStatus: 'complete',
+            lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: observation.observedAtMs }).rows[0]!;
+        const entry = projectTriageSessionLinkedEntrySummary(row, 'pullRequest');
+        let resourceReads = 0;
+        let legacyReads = 0;
+        let rowRenders = 0;
+        let resourceError: unknown;
+        let releaseRefresh: (() => void) | undefined;
+        const snapshot = { kind: 'ready', sessionId: SESSION_ID, pullRequests: [{
+            bindingId: 'binding-1', revision: 1,
+            link: { provider: 'github', repository: 'acme/widgets', number: 42, url },
+            watch: { policy: { mode: 'notify', archiveAfterMerge: false },
+                reason: null, fixAttemptLimit: 3, roundsStarted: 0, watchingMachine: null },
+            latestUpdate: null,
+            nativeStatus: { kind: 'current', checkedAtMs: 200, value: {
+                kind: 'status', observedAtMs: 100, checks: null, review: null, merge: null, branch: null, facts: [],
+            } },
+        }] };
+        const RowStatus = () => {
+            rowRenders += 1;
+            const first = useLinkedPullRequestStatus(entry, true, 0);
+            return <Text value={`row:${first.phase}`} />;
+        };
+        const ScmStatus = () => {
+            const second = useTriageScmPullRequestCardV1({ homeServerId: 'home-1', pullRequest: {
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/widgets' },
+                number: 42, url, title: 'Shared PR', baseBranch: 'main', headBranch: 'topic', state: 'open', checks: { state: 'pending' },
+            } });
+            resourceError = second.resource.error;
+            return <><Text value={`card:${second.cards[0]?.kind === 'bound' ? 'ready' : 'unavailable'}`} />
+                <Button title="Refresh shared PR" onPress={() => { void second.refresh(); }} /></>;
+        };
+        const surface = defineUiSurface(() => <><RowStatus /><ScmStatus /></>);
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'shared-status-read', mountNonce: 'shared-status-read-nonce' },
+            authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface,
+            surfaceContext: createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION_ID, agentId: 'codex' } }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            handlers: {
+                readResource: async ({ resource }) => {
+                    expect(resource).toEqual({ pluginId: PLUGIN_ID, localId: 'session-pull-request-status-v1' });
+                    resourceReads += 1;
+                    if (resourceReads > 1) await new Promise<void>(resolve => { releaseRefresh = resolve; });
+                    return { contentType: 'application/json', digest: `sha256:${(resourceReads === 1 ? 'a' : 'b').repeat(64)}`,
+                        bytes: new TextEncoder().encode(JSON.stringify(snapshot)) };
+                },
+                watchResource: () => ({ digest: `sha256:${'a'.repeat(64)}` }),
+                executeAction: () => { legacyReads += 1; throw new Error('The retired per-hook PR loader must not run.'); },
+            },
+        });
+        mounted.push(fixture);
+        await act(async () => { await Promise.resolve(); });
+        expect(resourceError).toBeUndefined();
+        await expect(fixture.getByText('row:ready')).resolves.toBeDefined();
+        await expect(fixture.getByText('card:ready')).resolves.toBeDefined();
+        expect(resourceReads).toBe(1);
+        expect(legacyReads).toBe(0);
+        const admittedRenders = rowRenders;
+        await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Refresh shared PR' })); });
+        expect(resourceReads).toBe(2);
+        await expect(fixture.getByText('row:ready')).resolves.toBeDefined();
+        expect(rowRenders).toBe(admittedRenders);
+        snapshot.pullRequests[0]!.nativeStatus.checkedAtMs = 300;
+        await act(async () => { releaseRefresh?.(); await Promise.resolve(); });
+        await expect(fixture.getByText('row:ready')).resolves.toBeDefined();
+        expect(rowRenders).toBe(admittedRenders);
+        expect(legacyReads).toBe(0);
+    });
+
+    it('stays cold without an exact mounted Session or canonical PR URL', async () => {
         const observation = testkitObservation({ entryRef: linkRow().entryRef, outcome: {
             kind: 'present', locator: { v: 1, displayPath: 'example/repository#42' },
             snapshot: testkitSnapshot(), viewer: { involvement: [] },
@@ -339,22 +697,57 @@ describe('expanded PR status from the exact linked source observation', () => {
             lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: observation.observedAtMs }).rows[0]!;
         const entry = projectTriageSessionLinkedEntrySummary(row, 'pullRequest');
         expect(entry?.detailSource).toBeTruthy();
-        let withdrawn = true;
+        let reads = 0;
         const initial = { ...createSurfaceContextFixture(), machineConnectionPending: true, machineExecutionReady: false };
         const surface = defineUiSurface(() => <Text value={useLinkedPullRequestStatus(entry, true, 0).phase} />);
         const fixture = await createPluginUiTestkit({ identity: { instanceId: 'status-read', mountNonce: 'status-read-nonce' },
             authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface, surfaceContext: initial,
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { executeAction: async () => {
-                if (withdrawn) throw new Error('The mounted host has withdrawn Machine reads.');
-                return { kind: 'status', observedAtMs: observation.observedAtMs,
-                    checks: null, review: null, merge: null, branch: null, facts: [] };
-            } },
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+                readResource: () => { reads += 1; throw new Error('No exact Session/URL means no demand.'); },
+                executeAction: () => { throw new Error('The legacy per-row Action reader is retired.'); },
+            },
         });
         mounted.push(fixture);
-        await expect(fixture.getByText('reading')).resolves.toBeDefined();
-        withdrawn = false;
+        await expect(fixture.getByText('idle')).resolves.toBeDefined();
         await act(async () => { await fixture.updateSurface({ ...initial, machineConnectionPending: false, machineExecutionReady: true }); });
-        await expect(fixture.getByText('ready')).resolves.toBeDefined();
+        await expect(fixture.getByText('idle')).resolves.toBeDefined();
+        expect(reads).toBe(0);
+    });
+
+    it('keeps source-declared findings visible and openable without reading PR status', async () => {
+        const scope = createTriageEphemeralSharedScopeFixture();
+        const rows = ['dependency-finding', 'scan-finding'].map((kindId, index) => {
+            const ref = { ...linkRow().entryRef, kindId };
+            return linkRow({ entryRef: ref, identityEntryRef: ref, displayPathAtLink: `Finding ${index + 1}` });
+        });
+        const observations = rows.map((link, index) => testkitObservation({ entryRef: link.entryRef, outcome: {
+            kind: 'present', locator: { v: 1, displayPath: link.displayPathAtLink, routingToken: 'exact-route' },
+            snapshot: testkitSnapshot({ title: `Finding ${index + 1}`, state: { presentation: 'suppressed', nativeLabel: 'Dismissed' } }),
+            viewer: { involvement: [] },
+        } }));
+        const sourceInstanceId = observations[0]!.sourceInstanceId;
+        const response = TriageListEntriesResultV1Schema.parse({ v: 1, configuredSourcesStatus: 'complete',
+            configuredSources: [{ sourceInstanceId, configurationRowId: sourceInstanceId, source: rows[0]!.entryRef.source, available: true }],
+            window: { v: 1, assembledAtMs: observations[0]!.observedAtMs, coverage: 'complete',
+                lanes: [{ sourceInstanceId, source: rows[0]!.entryRef.source, health: { kind: 'walkFinished' }, exhausted: true }],
+                rows: toTriageListWireRows(foldTriageListWindow({ observations, lanes: [], activeSourceInstanceIds: [sourceInstanceId],
+                    configuredSourcesStatus: 'complete', lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: observations[0]!.observedAtMs })),
+            } });
+        const seedHost = { executeAction: async () => response };
+        const lease = acquireTriageListWindow(seedHost, scope);
+        await refreshTriageListWindow('manual', seedHost, scope);
+        lease.release();
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: rows.map((row, index) => queryRow(`finding-${index}`, row.linkedAtMs)) },
+            rowsById: new Map(rows.map((row, index) => [`finding-${index}`, row])) });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+            { scope, readStatus: async () => { throw new Error('Finding must not read PR status'); } });
+        await expect(fixture.getByText('Finding 1')).resolves.toBeDefined();
+        await expect(fixture.getByText('Finding 2')).resolves.toBeDefined();
+        await openRow(fixture, 'Finding 1');
+        expect(actionCalls.filter((call) => call.action === 'entries/read-pull-request-status-v1')).toHaveLength(0);
+        await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Open' })); });
+        expect(surfaceOpens).toEqual([expect.objectContaining({ view: TRIAGE_ENTRY_DETAIL_DESTINATION_V1 })]);
+        expect(parseTriageRouteSubPathV1(surfaceOpens[0]?.subPath).selection).toEqual(rows[0]!.entryRef);
     });
 
     it('loads only on expansion and retains source facts across collapse and failed refresh, then recovers', async () => {
@@ -362,13 +755,13 @@ describe('expanded PR status from the exact linked source observation', () => {
         const link = linkRow();
         const observation = testkitObservation({ entryRef: link.entryRef, outcome: {
             kind: 'present',
-            locator: { v: 1, displayPath: link.displayPathAtLink, routingToken: 'exact-route' },
+            locator: { v: 1, displayPath: link.displayPathAtLink, routingToken: 'exact-route', webUrl: 'https://github.com/example/repository/pull/42' },
             snapshot: testkitSnapshot({ title: 'Key settings modals by route' }),
             viewer: { involvement: [] },
         } });
         const seedHost = { executeAction: async () => ({
             v: 1, configuredSourcesStatus: 'complete',
-            configuredSources: [{ sourceInstanceId: observation.sourceInstanceId, source: link.entryRef.source, available: true }],
+            configuredSources: [{ sourceInstanceId: observation.sourceInstanceId, configurationRowId: observation.sourceInstanceId, source: link.entryRef.source, available: true }],
             window: { v: 1, assembledAtMs: observation.observedAtMs, coverage: 'complete',
                 lanes: [{ sourceInstanceId: observation.sourceInstanceId, source: link.entryRef.source, health: { kind: 'walkFinished' }, exhausted: true }],
                 rows: toTriageListWireRows(foldTriageListWindow({
@@ -389,6 +782,7 @@ describe('expanded PR status from the exact linked source observation', () => {
             review: { decision: 'changesRequested', incomplete: false,
                 reviewers: [{ id: 'user:ana', name: 'Ana', verb: 'changesRequested' }, { id: 'user:jonas', name: 'Jonas', verb: 'pending' }] },
             merge: { state: 'blocked', blocker: 'Blocked by the failing check and required review' },
+            operations: { ...operationOffers, readiness: 'blocked' },
             branch: { head: 'fix/settings-remount', base: 'main', additions: 48, deletions: 12 }, facts: [],
         };
         const harness = createDataHarness({
@@ -400,43 +794,48 @@ describe('expanded PR status from the exact linked source observation', () => {
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null, { scope, readStatus: async () => {
             if (readFails) throw new Error('The source is temporarily unavailable.');
             return currentStatus;
-        } });
+        } }, true, undefined, async () => ({ kind: 'partial', links: [{
+            entryRef: link.entryRef, sessionId: SESSION_ID, linkedAtMs: link.linkedAtMs, displayPath: link.displayPathAtLink,
+        }] }));
         expect(actionCalls.filter((call) => call.action === 'entries/read-pull-request-status-v1')).toEqual([]);
         await openRow(fixture, 'Key settings modals by route');
         await expect(fixture.getByText('ui-tests (web)')).resolves.toBeDefined();
         await expect(fixture.getByText('Ana')).resolves.toBeDefined();
-        await expect(fixture.getByText('Jonas')).resolves.toBeDefined();
+        // The shared PR facts name who decided the review (Ana); a reviewer still pending is not a decision.
         await expect(fixture.getByText(status.merge!.blocker!)).resolves.toBeDefined();
         await expect(fixture.getByText('fix/settings-remount')).resolves.toBeDefined();
         await expect(fixture.getByText('+48')).resolves.toBeDefined();
         await expect(fixture.getByText('−12')).resolves.toBeDefined();
         await expect(fixture.getByText('9/10')).resolves.toBeDefined();
-        const calls = actionCalls.filter((call) => call.action === 'entries/read-pull-request-status-v1');
-        expect(calls).toEqual([{ action: 'entries/read-pull-request-status-v1', input: {
-            v: 1, entryRef: link.entryRef, sourceInstanceId: observation.sourceInstanceId,
-            lastKnownLocator: observation.outcome.kind === 'present' ? observation.outcome.locator : null,
-        } }]);
+        const calls = actionCalls.filter((call) => call.action === 'resources/session-pull-request-status-v1');
+        expect(calls).toHaveLength(1);
+        expect(actionCalls.filter((call) => call.action === 'entries/read-pull-request-status-v1')).toEqual([]);
         await openRow(fixture, 'Key settings modals by route');
         await openRow(fixture, 'Key settings modals by route');
         await expect(fixture.getByText('ui-tests (web)')).resolves.toBeDefined();
-        expect(actionCalls.filter((call) => call.action === 'entries/read-pull-request-status-v1')).toEqual(calls);
+        expect(actionCalls.filter((call) => call.action === 'resources/session-pull-request-status-v1')).toHaveLength(2);
         readFails = true;
-        // The tab's existing refresh appears on its retained-query failure line, not as new header chrome.
-        await act(async () => { harness.control.publish({ rows: [queryRow('link-pr', link.linkedAtMs)], status: 'error' }); });
+        // The incomplete relationship read and status recovery use the same Refresh control.
         await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Refresh' })); });
         await act(async () => { await Promise.resolve(); });
         await expect(fixture.getByText('PR status is unavailable.')).resolves.toBeDefined();
         await expect(fixture.getByText('ui-tests (web)')).resolves.toBeDefined();
         await expect(fixture.getByText('9/10')).resolves.toBeDefined();
+        const anaNameNode = [...document.querySelectorAll<HTMLElement>('*')]
+            .find((node) => node.textContent === 'Ana' && node.children.length === 0);
+        expect(anaNameNode).toBeDefined();
         readFails = false;
         currentStatus = { ...status, checks: { ...status.checks!, passed: 10, failed: 0,
-            rows: status.checks!.rows.map((check) => ({ ...check, state: 'passed' as const })) } };
+            rows: status.checks!.rows.map((check) => ({ ...check, state: 'passed' as const })) },
+            review: { ...status.review!, reviewers: [...status.review!.reviewers].reverse() } };
         // The query failure line and status recovery use the same existing refresh owner.
         const refreshButtons = (await fixture.queryAllByRole('button')).filter((button) => button.name === 'Refresh');
         await act(async () => { await fixture.press(refreshButtons.at(-1)!); });
         await act(async () => { await Promise.resolve(); });
         await expect(fixture.getByText('10/10')).resolves.toBeDefined();
         await expect(fixture.queryByText('PR status is unavailable.')).resolves.toBeUndefined();
+        // Reordering source-native reviewers must preserve their mounted rows.
+        expect(document.body.contains(anaNameNode!)).toBe(true);
     });
 });
 
@@ -493,11 +892,134 @@ describe('the Session tab, round 2', () => {
 
         await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Unlink example/repository#42' })); });
         await act(async () => { await Promise.resolve(); });
-        expect(harness.deletes).toHaveLength(1);
+        expect(actionCalls.filter(call => call.action === 'sessions/unlink-entry-v1')).toHaveLength(1);
+        expect(harness.deletes).toHaveLength(0);
     });
 });
 
 describe('the mounted Session cockpit', () => {
+    it('discloses the original whole-read failure and request identity', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => {
+                throw new PluginError({ code: 'session_relations_unavailable', retryable: false,
+                    details: { requestId: 'whole-read-request-1' } });
+            });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+        await expect(fixture.getByText('session_relations_unavailable')).resolves.toBeDefined();
+        await expect(fixture.getByText('whole-read-request-1')).resolves.toBeDefined();
+    });
+    it('keeps readable links beside per-source diagnostic details through a failed refresh', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => ({ kind: 'partial',
+                links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'Readable PR' }],
+                lanes: [{ source: { pluginId: 'acme.ledger', localId: 'items' },
+                    sourceInstanceId: '22222222-2222-4222-8222-222222222222', displayLabel: 'acme/ledger',
+                    kindIds: ['issue'], health: { kind: 'failed',
+                        failure: { class: 'transient', code: 'sessionLinksReadFailed' },
+                        invocationError: { code: 'source_transport_unavailable', retryable: false,
+                            requestId: 'source-read-request-1' } } }],
+            }));
+        await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
+        await expect(fixture.getByText('acme/ledger: Could not be reached just now.')).resolves.toBeDefined();
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details: acme/ledger' })); });
+        await expect(fixture.getByText('source_transport_unavailable')).resolves.toBeDefined();
+        await expect(fixture.getByText('source-read-request-1')).resolves.toBeDefined();
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
+        await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
+    });
+    it('offers complete-lane candidates when an unrelated configured source is unavailable', async () => {
+        const scope = createTriageEphemeralSharedScopeFixture();
+        const observation = testkitObservation({ entryRef: testkitEntryRef() });
+        const instanceId = observation.sourceInstanceId;
+        const lane = { sourceInstanceId: instanceId, source: observation.entryRef.source,
+            health: { kind: 'walkFinished' as const }, exhausted: true };
+        const window = foldTriageListWindow({ observations: [observation], lanes: [lane],
+            activeSourceInstanceIds: [instanceId], configuredSourcesStatus: 'complete',
+            lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: Date.now() });
+        const listEntries = async () => ({ v: 1,
+            configuredSources: [{ sourceInstanceId: instanceId, configurationRowId: instanceId, source: observation.entryRef.source, available: true }],
+            configuredSourcesStatus: 'complete',
+            window: { v: 1, rows: toTriageListWireRows(window), lanes: [lane], coverage: 'complete', assembledAtMs: Date.now() } });
+        const seedHost = { executeAction: listEntries };
+        const lease = acquireTriageListWindow(seedHost, scope);
+        const probe = defineUiSurface(() => {
+            const result = useTriageSessionLinkCandidates(SESSION_ID, '');
+            return <Text value={JSON.stringify({ status: result.status,
+                candidates: result.candidates.map(candidate => candidate.entry.title),
+                unavailableSources: result.sourceHealth?.filter(lane => lane.health.kind !== 'complete').map(lane => lane.displayLabel),
+            })} />;
+        });
+        let partial = false;
+        const relation = () => ({ kind: partial ? 'partial' : 'complete', links: [], lanes: [
+            { source: observation.entryRef.source, sourceInstanceId: instanceId, displayLabel: 'Example forge',
+                kindIds: ['pull-request'], health: { kind: 'complete' } },
+            ...(partial ? [{ source: { pluginId: 'acme.ledger', localId: 'acme-ledger' },
+                sourceInstanceId: '22222222-2222-4222-8222-222222222222', displayLabel: 'acme/ledger',
+                health: { kind: 'unavailable' } }] : []),
+        ] });
+        try {
+            await refreshTriageListWindow('manual', seedHost, scope);
+            const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+            const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+                undefined, true, listEntries, async () => relation(), () => scope, false, true, probe);
+            await expect(fixture.getByText(JSON.stringify({ status: 'ready',
+                candidates: ['Replace the duplicated normalizer'], unavailableSources: [] }))).resolves.toBeDefined();
+            partial = true;
+            const bytes = new TextEncoder().encode(JSON.stringify(TriageReadSourceSessionLinksResultV1Schema.parse(relation())));
+            await act(async () => { fixture.invalidateResource('session-links-v1', `sha256:${createHash('sha256').update(bytes).digest('hex')}`); });
+            await expect(fixture.getByText(JSON.stringify({ status: 'partial',
+                candidates: ['Replace the duplicated normalizer'], unavailableSources: ['acme/ledger'] }))).resolves.toBeDefined();
+            expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(2);
+            expect(actionCalls.filter(call => call.action === 'sessions/link-entry-v1')).toHaveLength(0);
+        } finally { await act(async () => { lease.release(); }); }
+    });
+    it('shares one live relation snapshot with the picker and reacquires once on qualified invalidation', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        let linked = false;
+        const result = () => ({ kind: 'complete', links: linked ? [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID,
+            linkedAtMs: 1, displayPath: 'New live link' }] : [], lanes: [{ source: linkRow().entryRef.source,
+            sourceInstanceId: '11111111-1111-4111-8111-111111111111', displayLabel: 'Example forge', kindIds: ['pull-request'],
+            health: { kind: 'complete' } }] });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => result(), undefined, false, true);
+        const linkControls = await fixture.getAllByRole('button', { name: 'Link a PR or issue' });
+        await act(async () => { await fixture.press(linkControls.at(-1)!); });
+        await expect(fixture.findByRole('textbox', { name: 'Search PRs & Issues' })).resolves.toBeDefined();
+        expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(1);
+        linked = true;
+        const bytes = new TextEncoder().encode(JSON.stringify(TriageReadSourceSessionLinksResultV1Schema.parse(result())));
+        await act(async () => { fixture.invalidateResource('session-links-v1', `sha256:${createHash('sha256').update(bytes).digest('hex')}`); });
+        await act(async () => { await Promise.resolve(); });
+        await expect(fixture.getByText('New live link')).resolves.toBeDefined();
+        expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(2);
+        expect(harness.opened).toHaveLength(0);
+        expect(harness.gets).toHaveLength(0);
+    });
+
+    it('uses only the composed relation read and never revives a stale raw PR beside healthy co-links', async () => {
+        const issue = linkRow({ entryRef: { ...linkRow().entryRef, kindId: 'issue', entryId: '7' }, displayPathAtLink: 'Healthy issue' });
+        const harness = createDataHarness({
+            snapshot: { status: 'ready', rows: [queryRow('stale-pr', 100)], hasMore: false },
+            rowsById: new Map([['stale-pr', linkRow({ displayPathAtLink: 'Stale raw PR' })]]),
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => ({ kind: 'partial',
+                links: [{ entryRef: issue.entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'Healthy issue' }],
+                lanes: [{ source: issue.entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111', displayLabel: 'Example forge',
+                    kindIds: ['pull-request'], health: { kind: 'failed', failure: { class: 'transient', code: 'offline' } } },
+                    { source: issue.entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111', displayLabel: 'Example forge',
+                        kindIds: ['issue'], health: { kind: 'complete' } }],
+            }));
+        await expect(fixture.getByText('Healthy issue')).resolves.toBeDefined();
+        await expect(fixture.queryByText('Stale raw PR')).resolves.toBeUndefined();
+        expect(harness.opened).toHaveLength(0);
+        expect(harness.gets).toHaveLength(0);
+        expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(1);
+        expect(actionCalls.find(call => call.action === 'sessions/read-source-links-v1')?.input).toEqual({ v: 1, sessionId: SESSION_ID });
+    });
+
     it('reads source relations through the Account aggregate without a Machine', async () => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
@@ -506,16 +1028,20 @@ describe('the mounted Session cockpit', () => {
             }] }), undefined, true);
         await expect(fixture.getByText('My linked Account task')).resolves.toBeDefined();
         expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(1);
+        expect(actionCalls.find(call => call.action === 'sessions/read-source-links-v1')?.input).toEqual({ v: 1, sessionId: SESSION_ID });
         expect(harness.gets).toHaveLength(0);
     });
 
     it('never carries source-only links into another Account scope with the same Session id', async () => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
         let scope = createTriageEphemeralSharedScopeFixture();
+        const firstAccount = scope;
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
-            null, true, null, undefined, true, undefined, async () => ({ kind: 'complete', links: [{
+            null, true, null, undefined, true, undefined, async () => {
+                if (scope !== firstAccount) throw new Error('The new Account is unavailable.');
+                return { kind: 'complete', links: [{
                 entryRef: linkRow().entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'First Account private task',
-            }] }), () => scope);
+            }] }; }, () => scope);
         await expect(fixture.getByText('First Account private task')).resolves.toBeDefined();
         scope = createTriageEphemeralSharedScopeFixture();
         const nextContext = createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION_ID } });
@@ -541,9 +1067,10 @@ describe('the mounted Session cockpit', () => {
         const snapshot = testkitReadOnlySourceSnapshot();
         const context = { surface: 'ui', caller: { kind: 'plugin', pluginId: PLUGIN_ID }, signal: new AbortController().signal,
             services: {
-                storage: { account: { collection: () => collections.sourceInstances } },
+                storage: { account: { collection: (definition: { id: string }) => definition.id === 'source-instances'
+                    ? collections.sourceInstances : definition.id === 'session-links' ? collections.sessionLinks : collections.userMarks } },
                 targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [
-                    { ...snapshot.contributions[0], operations: { readSessionLinks: { role: 'readSessionLinks' } } },
+                    { ...snapshot.contributions[0], operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } } },
                 ] }), dispose: () => {} }) },
                 actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links }) },
             },
@@ -552,13 +1079,99 @@ describe('the mounted Session cockpit', () => {
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
             null, true, null, undefined, true, undefined, async () => await read({ v: 1, sessionId: SESSION_ID }, context));
         await expect(fixture.getByText('Healthy linked work')).resolves.toBeDefined();
-        await expect(fixture.getByText('Some linked entries could not be read: Retained source.')).resolves.toBeDefined();
+        // The source is named with why, in the shell's own words for an uninstalled source, never a raw code.
+        await expect(fixture.getByText('Retained source: Not installed or enabled on this machine.')).resolves.toBeDefined();
         links = [];
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
         await act(async () => { await Promise.resolve(); });
         await expect(fixture.queryByText('Healthy linked work')).resolves.toBeUndefined();
-        await expect(fixture.getByText('Some linked entries could not be read: Retained source.')).resolves.toBeDefined();
+        await expect(fixture.getByText('Linked entries could not be read')).resolves.toBeDefined();
+        // With no links, the unavailable state presents all source reasons in one description.
+        await expect(fixture.getByText('Happier tasks: Not installed or enabled on this machine. Retained source: Not installed or enabled on this machine.')).resolves.toBeDefined();
         await expect(fixture.queryByText('Keep this session’s PRs and issues at hand')).resolves.toBeUndefined();
+    });
+
+    describe('the link picker over a partial relation read', () => {
+        /** One PR is in the retained window; `readableKinds` are the kinds the one healthy source could read for links. */
+        async function mountPartialPicker(readableKinds: readonly string[], linkResult: unknown = null): Promise<PluginUiTestkit> {
+            const scope = createTriageEphemeralSharedScopeFixture();
+            const link = linkRow();
+            const observation = testkitObservation({ entryRef: link.entryRef, outcome: {
+                kind: 'present',
+                locator: { v: 1, displayPath: link.displayPathAtLink, routingToken: 'exact-route' },
+                snapshot: testkitSnapshot({ title: 'Key settings modals by route' }),
+                viewer: { involvement: [] },
+            } });
+            const listResult = {
+                v: 1, configuredSourcesStatus: 'complete',
+                configuredSources: [{ sourceInstanceId: observation.sourceInstanceId, configurationRowId: observation.sourceInstanceId, source: link.entryRef.source, available: true }],
+                window: { v: 1, assembledAtMs: observation.observedAtMs, coverage: 'complete',
+                    lanes: [{ sourceInstanceId: observation.sourceInstanceId, source: link.entryRef.source, health: { kind: 'walkFinished' }, exhausted: true }],
+                    rows: toTriageListWireRows(foldTriageListWindow({
+                        observations: [observation], lanes: [], activeSourceInstanceIds: [observation.sourceInstanceId],
+                        configuredSourcesStatus: 'complete', lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: observation.observedAtMs,
+                    })),
+                },
+            };
+            const relation = async () => ({ kind: 'partial', links: [], lanes: [
+                { source: link.entryRef.source, sourceInstanceId: observation.sourceInstanceId, displayLabel: 'Example forge',
+                    kindIds: [...readableKinds], health: { kind: 'complete' } },
+                { source: { pluginId: 'acme.ledger', localId: 'acme-ledger' }, sourceInstanceId: '22222222-2222-4222-8222-222222222222',
+                    displayLabel: 'acme/ledger', kindIds: ['issue'],
+                    health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksSourceNotAdmitted' } } },
+            ] });
+            // The picker is the Popover's content: mounted on its own, the pane's linked rows and header are not around it.
+            const picker = defineUiSurface(() => <LinkEntryPicker sessionId={SESSION_ID} label="Link a PR or issue" onLinked={() => undefined} />);
+            const harness = createDataHarness({ snapshot: { rows: [], hasMore: false, status: 'ready' } });
+            return await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, linkResult, true, null,
+                { scope, readStatus: async () => { throw new Error('No status read is expected here.'); } }, true,
+                async () => listResult, relation, undefined, false, true, picker);
+        }
+
+        /** The open picker asks the list window for entries; let that read and the relation read settle. */
+        const settlePicker = async (): Promise<void> => {
+            for (let turn = 0; turn < 3; turn += 1) await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+        };
+
+        it('shows a typed link refusal in Details and settles without replaying the mutation', async () => {
+            const fixture = await mountPartialPicker([linkRow().entryRef.kindId], new PluginError({
+                code: 'unavailable', message: 'The PR binding could not be attached.', retryable: false,
+                diagnostics: [{ code: 'channels_pr_link_binding_not_ready', severity: 'error' }],
+                details: { requestId: 'session-attach-request-1' },
+            }));
+            await settlePicker();
+            await act(async () => {
+                const rows = await fixture.queryAllByRole('button');
+                const row = rows.find(target => target.name?.includes('Key settings modals by route'));
+                expect(row, JSON.stringify(rows.map(target => target.name))).toBeDefined();
+                await fixture.press(row!);
+            });
+            await expect(fixture.getByText('The PR binding could not be attached.')).resolves.toBeDefined();
+            await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+            await expect(fixture.getByText('Code')).resolves.toBeDefined();
+            await expect(fixture.getByText('unavailable channels_pr_link_binding_not_ready')).resolves.toBeDefined();
+            await expect(fixture.getByText('Request ID')).resolves.toBeDefined();
+            await expect(fixture.getByText('session-attach-request-1')).resolves.toBeDefined();
+            expect(actionCalls.filter(call => call.action === 'sessions/link-entry-v1')).toHaveLength(1);
+        });
+
+        it('keeps the healthy rows and search, and names the unavailable source with why and its one Refresh', async () => {
+            const fixture = await mountPartialPicker([linkRow().entryRef.kindId]);
+            await settlePicker();
+            await expect(fixture.findByRole('textbox', { name: 'Search PRs & Issues' })).resolves.toBeDefined();
+            await expect(fixture.getByText('Key settings modals by route')).resolves.toBeDefined();
+            await expect(fixture.getByText('acme/ledger: Not installed or enabled on this machine.')).resolves.toBeDefined();
+            await expect(fixture.getByRole('button', { name: 'Refresh' })).resolves.toBeDefined();
+        });
+
+        it('says the read was partial, never that nothing matches, when no readable source covers an entry', async () => {
+            const fixture = await mountPartialPicker(['issue']);
+            await settlePicker();
+            await expect(fixture.getByText('Nothing matches in the sources that could be read')).resolves.toBeDefined();
+            await expect(fixture.queryByText('Nothing matches in PRs & Issues yet')).resolves.toBeUndefined();
+            await expect(fixture.queryByText('Key settings modals by route')).resolves.toBeUndefined();
+            await expect(fixture.getByText('acme/ledger: Not installed or enabled on this machine.')).resolves.toBeDefined();
+        });
     });
 
     it('joins source-owned work without a v2 row and retains it after a failed source refresh', async () => {
@@ -567,13 +1180,12 @@ describe('the mounted Session cockpit', () => {
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
             { v: 1, status: 'unlinked' }, true, null, undefined, true, undefined, async () => {
                 if (failSource) throw new Error('The source is offline');
-                return { kind: 'complete', links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID,
+                return { kind: 'partial', links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID,
                     linkedAtMs: 10, displayPath: 'Personal task without external storage' }] };
             });
         await expect(fixture.getByText('Personal task without external storage')).resolves.toBeDefined();
         expect(harness.gets).toHaveLength(0);
         failSource = true;
-        await act(async () => { harness.control.publish({ status: 'error', rows: [], hasMore: false }); });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
         await act(async () => { await Promise.resolve(); });
         await expect(fixture.getByText('Personal task without external storage')).resolves.toBeDefined();
@@ -583,186 +1195,25 @@ describe('the mounted Session cockpit', () => {
         expect(harness.deletes).toHaveLength(0);
     });
 
-    it('loads and retains every linked-entry page so link 51 can be inspected and unlinked', async () => {
-        const firstPage = Array.from({ length: 50 }, (_, index) => (
-            queryRow(`link-${index + 1}`, 100 - index)
-        ));
-        // The appended row is newest, so the real virtualized List mounts it
-        // without the test pretending every retained row is simultaneously in
-        // the viewport. Link 1 remaining mounted proves page-one retention.
-        const allRows = [...firstPage, queryRow('link-51', 101)];
-        const rowsById = new Map(allRows.map((row, index) => [
-            row.context.rowId,
-            linkRow({
-                displayPathAtLink: `example/repository#${index + 1}`,
-                entryRef: {
-                    source: { pluginId: 'happier.example.source', localId: 'example-forge' },
-                    kindId: 'pull-request',
-                    collisionScope: 'example/repository',
-                    entryId: `${index + 1}`,
-                },
-                identityEntryRef: {
-                    source: { pluginId: 'happier.example.source', localId: 'example-forge' },
-                    kindId: 'pull-request',
-                    collisionScope: 'example/repository',
-                    entryId: `${index + 1}`,
-                },
-            }),
-        ]));
-        const harness = createDataHarness({
-            snapshot: { rows: firstPage, hasMore: true, status: 'ready' },
-            rowsById,
-            onLoadMore: async (publish) => {
-                publish({ rows: allRows, hasMore: false, status: 'ready' });
-            },
-        });
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        await expect(fixture.getByText('example/repository#1')).resolves
-            .toEqual({ content: 'example/repository#1' });
-        await expect(fixture.queryByText('example/repository#51')).resolves.toBeUndefined();
-
-        await act(async () => {
-            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
-        });
-        await act(async () => { await Promise.resolve(); });
-        await act(async () => { await Promise.resolve(); });
-
-        expect(harness.control.loadMoreCalls()).toBe(1);
-        await expect(fixture.getByText('example/repository#1')).resolves
-            .toEqual({ content: 'example/repository#1' });
-        await expect(fixture.getByText('example/repository#51')).resolves
-            .toEqual({ content: 'example/repository#51' });
-
-        await unlinkThroughSharedPolicy(fixture, 'example/repository#51');
-
-        const link51 = rowsById.get('link-51')!;
-        expect(harness.identityRequests).toContainEqual({
-            field: CORPUS_SESSION_LINKS_FIELD.linkTag,
-            components: sessionLinkTagComponents(link51.identityEntryRef, SESSION_ID),
-        });
-    }, 15_000);
-
-    it('keeps retained links visible while loading and after an error, then retries the same pager', async () => {
-        const firstRows = [queryRow('link-a', 2)];
-        const appendedRows = [...firstRows, queryRow('link-b', 1)];
-        let attempt = 0;
-        const harness = createDataHarness({
-            snapshot: { rows: firstRows, hasMore: true, status: 'ready' },
-            rowsById: new Map([
-                ['link-a', linkRow({ displayPathAtLink: 'example/repository#1' })],
-                ['link-b', linkRow({ displayPathAtLink: 'example/repository#2' })],
-            ]),
-            onLoadMore: async (publish) => {
-                attempt += 1;
-                publish(attempt === 1
-                    ? { rows: firstRows, hasMore: true, status: 'error' }
-                    : { rows: appendedRows, hasMore: false, status: 'ready' });
-            },
-        });
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        await act(async () => {
-            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
-        });
-        await expect(fixture.getByText('example/repository#1')).resolves
-            .toEqual({ content: 'example/repository#1' });
-        await expect(fixture.getByText('More entries could not be loaded')).resolves
-            .toEqual({ content: 'More entries could not be loaded' });
-
-        await act(async () => {
-            await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
-        });
-        await act(async () => { await Promise.resolve(); });
-        await act(async () => { await Promise.resolve(); });
-
-        expect(harness.control.loadMoreCalls()).toBe(2);
-        await expect(fixture.getByText('example/repository#1')).resolves
-            .toEqual({ content: 'example/repository#1' });
-        await expect(fixture.getByText('example/repository#2')).resolves
-            .toEqual({ content: 'example/repository#2' });
-    });
-
-    it('keeps retained links visible during a pending page and ignores its completion after disposal', async () => {
-        const rows = [queryRow('link-a', 1)];
-        let settle!: () => void;
-        const pending = new Promise<void>((resolve) => { settle = resolve; });
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: true, status: 'ready' },
-            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#1' })]]),
-            onLoadMore: async () => { await pending; },
-        });
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        await act(async () => {
-            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
-        });
-        const loadingButton = await fixture.getByRole('button', { name: 'Load more' });
-        expect(loadingButton.state).toMatchObject({ busy: true, disabled: true });
-        await expect(fixture.getByText('example/repository#1')).resolves
-            .toEqual({ content: 'example/repository#1' });
-
-        await fixture.dispose();
-        await act(async () => {
-            settle();
-            await pending;
-        });
-        expect(harness.control.loadMoreCalls()).toBe(1);
-    });
-
-    it('describes a bounded query page without claiming its client-side sort is globally recent', async () => {
-        const harness = createDataHarness({
-            snapshot: {
-                rows: [queryRow('link-a', 1_000)],
-                hasMore: true,
-                status: 'ready',
-            },
-            rowsById: new Map([['link-a', linkRow()]]),
-        });
-
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        await expect(fixture.getByText('Recent links from this page are shown; the rest are still linked.'))
-            .resolves.toEqual({
-                content: 'Recent links from this page are shown; the rest are still linked.',
-            });
-        await expect(fixture.queryByText('This panel shows the most recently linked; the rest are still linked.'))
-            .resolves.toBeUndefined();
-    });
-
-    it('opens exactly one declared query for the exact mounted Session and hydrates each row once', async () => {
-        const rows = [queryRow('link-a', 2_000), queryRow('link-b', 1_000)];
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: false, status: 'ready' },
-            rowsById: new Map([
-                ['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })],
-                ['link-b', linkRow({ displayPathAtLink: 'example/other#7' })],
-            ]),
-        });
-
-        const fixture = await mountCockpit(harness, {
-            kind: 'session',
-            sessionId: SESSION_ID,
-            agentId: 'codex',
-        });
-
-        // ONE query, over the one durable collection, parameterized by the exact
-        // host-stamped mounted Session — never a launch input or active Session.
-        expect(harness.opened).toHaveLength(1);
-        expect(harness.opened[0]?.collectionId).toBe(CORPUS_SESSION_LINKS_COLLECTION_ID);
-        expect(harness.opened[0]?.uiQueryId).toBe(TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1);
-        expect(harness.opened[0]?.parameters).toEqual({ sessionId: SESSION_ID });
-
-        // One private read per rendered row, addressed by the host-stamped rowId.
-        expect(harness.gets.slice().sort()).toEqual(['link-a', 'link-b']);
-
-        await expect(fixture.getByText('example/repository#42')).resolves
-            .toEqual({ content: 'example/repository#42' });
-        await expect(fixture.getByText('example/other#7')).resolves
-            .toEqual({ content: 'example/other#7' });
-
-        // The panel reaches no host Action and therefore no provider at all.
-        expect(actionCalls).toEqual([]);
+    it('keeps every link in the complete owner result reachable beyond the first corpus page', async () => {
+        const links = Array.from({ length: 101 }, (_, index) => linkRow({
+            entryRef: { ...linkRow().entryRef, entryId: String(index + 1) },
+            displayPathAtLink: `example/repository#${index + 1}`,
+            linkedAtMs: index === 100 ? 1000 : 100 - index,
+        }));
+        const harness = createDataHarness({ snapshot: { rows: [], status: 'ready' } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, { v: 1, status: 'unlinked' },
+            true, null, undefined, true, undefined, async () => ({ kind: 'complete', links: links.map(link => ({
+                entryRef: link.entryRef, sessionId: link.sessionId, linkedAtMs: link.linkedAtMs, displayPath: link.displayPathAtLink,
+            })) }));
+        await expect(fixture.getByText('example/repository#101')).resolves.toBeDefined();
+        await expect(fixture.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+        await unlinkThroughSharedPolicy(fixture, 'example/repository#101');
+        expect(actionCalls.filter(call => call.action === 'sessions/unlink-entry-v1')).toEqual([{
+            action: 'sessions/unlink-entry-v1', input: { v: 1, sessionId: SESSION_ID, entryRef: links[100]!.entryRef },
+        }]);
+        expect(harness.opened).toHaveLength(0);
+        expect(harness.gets).toHaveLength(0);
     });
 
     it('opens a linked row through the qualified Triage destination and keeps Unlink beside Open', async () => {
@@ -786,7 +1237,7 @@ describe('the mounted Session cockpit', () => {
         expect((await fixture.queryAllByRole('button'))
             .filter((button) => button.name === 'Unlink example/repository#42'))
             .toHaveLength(1);
-        expect(actionCalls).toEqual([]);
+        expect(actionCalls.filter(call => call.action !== 'sessions/read-source-links-v1')).toEqual([]);
     });
 
     it('keeps an open refusal visible and leaves unlink available', async () => {
@@ -811,111 +1262,13 @@ describe('the mounted Session cockpit', () => {
         expect((await fixture.queryAllByRole('button'))
             .filter((button) => button.name === 'Unlink example/repository#42'))
             .toHaveLength(1);
-        expect(actionCalls).toEqual([]);
+        expect(actionCalls.filter(call => call.action !== 'sessions/read-source-links-v1')).toEqual([]);
     });
 
-    it('does not re-read a hydrated row when the pager republishes the same revisions', async () => {
-        const rows = [queryRow('link-a', 2_000)];
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: false, status: 'ready' },
-            rowsById: new Map([['link-a', linkRow()]]),
-        });
 
-        await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-        expect(harness.gets).toEqual(['link-a']);
 
-        await act(async () => {
-            harness.control.publish({ rows, hasMore: false, status: 'ready' });
-        });
-        await act(async () => { await Promise.resolve(); });
 
-        expect(harness.gets).toEqual(['link-a']);
-    });
 
-    it('re-reads a link the pager republishes at a new revision', async () => {
-        const stored = new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]);
-        const harness = createDataHarness({
-            snapshot: { rows: [queryRow('link-a', 2_000, 1)], hasMore: false, status: 'ready' },
-            rowsById: stored,
-        });
-
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-        await expect(fixture.getByText('example/repository#42')).resolves
-            .toEqual({ content: 'example/repository#42' });
-
-        stored.set('link-a', linkRow({ displayPathAtLink: 'example/repository#99' }));
-        await act(async () => {
-            harness.control.publish({
-                rows: [queryRow('link-a', 2_000, 2)],
-                hasMore: false,
-                status: 'ready',
-            });
-        });
-        await act(async () => { await Promise.resolve(); });
-        await act(async () => { await Promise.resolve(); });
-
-        // A revision the hydration map does not describe is re-read, not
-        // presented from the read taken at the previous revision.
-        expect(harness.gets).toEqual(['link-a', 'link-a']);
-        await expect(fixture.getByText('example/repository#99')).resolves
-            .toEqual({ content: 'example/repository#99' });
-    });
-
-    it('recovers an unreadable private link at the same revision without rereading healthy links', async () => {
-        const rows = [queryRow('link-a', 2_000), queryRow('link-b', 1_000)];
-        const failures = new Set(['link-b']);
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: false, status: 'ready' },
-            rowsById: new Map([
-                ['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })],
-                ['link-b', linkRow({ displayPathAtLink: 'example/repository#43' })],
-            ]),
-            failingRowIds: failures,
-        });
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-        await expect(fixture.getByText('This link could not be read.')).resolves.toBeDefined();
-        failures.clear();
-        await act(async () => {
-            await fixture.press(await fixture.getByRole('button', { name: 'Refresh' }));
-        });
-        await act(async () => { await Promise.resolve(); });
-        await expect(fixture.getByRole('button', { name: 'example/repository#43' })).resolves.toBeDefined();
-        await expect(fixture.findByRole('button', { name: 'example/repository#42' })).resolves.toBeDefined();
-        expect(harness.gets).toEqual(['link-a', 'link-b', 'link-b']);
-        await act(async () => { harness.control.publish({ rows, hasMore: false, status: 'ready' }); });
-        expect(harness.gets).toEqual(['link-a', 'link-b', 'link-b']);
-    });
-
-    it('renders a link whose private row could not be read instead of dropping it', async () => {
-        const rows = [queryRow('link-a', 2_000), queryRow('link-b', 1_000)];
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: false, status: 'ready' },
-            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]),
-            failingRowIds: new Set(['link-b']),
-        });
-
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        // The readable link still renders, and the unreadable one says so rather
-        // than vanishing or taking the panel down with it.
-        await expect(fixture.getByText('example/repository#42')).resolves
-            .toEqual({ content: 'example/repository#42' });
-        await expect(fixture.getByText('This link could not be read.')).resolves
-            .toEqual({ content: 'This link could not be read.' });
-    });
-
-    it('says a link was removed underneath the page rather than showing an empty panel', async () => {
-        const rows = [queryRow('link-a', 2_000)];
-        const harness = createDataHarness({
-            snapshot: { rows, hasMore: false, status: 'ready' },
-            rowsById: new Map(),
-        });
-
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
-
-        await expect(fixture.getByText('This link was removed.')).resolves
-            .toEqual({ content: 'This link was removed.' });
-    });
 
     it('never presents an unavailable page as an empty link set', async () => {
         const harness = createDataHarness({
@@ -934,23 +1287,6 @@ describe('the mounted Session cockpit', () => {
         expect(harness.gets).toEqual([]);
     });
 
-    it('reports linked entries unavailable when the Account Data client is absent', async () => {
-        const harness = createDataHarness({
-            snapshot: { rows: [], hasMore: false, status: 'ready' },
-        });
-
-        const fixture = await mountCockpit(
-            harness,
-            { kind: 'session', sessionId: SESSION_ID },
-            null,
-            false,
-        );
-
-        await expect(fixture.getByText('Linked entries could not be read')).resolves
-            .toEqual({ content: 'Linked entries could not be read' });
-        expect(harness.opened).toEqual([]);
-        expect(harness.gets).toEqual([]);
-    });
 
     it('reports a settled empty page as an empty link set', async () => {
         const harness = createDataHarness({
@@ -996,7 +1332,7 @@ describe('the mounted Session cockpit', () => {
         } });
         const listResult = {
             v: 1, configuredSourcesStatus: 'complete',
-            configuredSources: [{ sourceInstanceId: observation.sourceInstanceId, source: link.entryRef.source, available: true }],
+            configuredSources: [{ sourceInstanceId: observation.sourceInstanceId, configurationRowId: observation.sourceInstanceId, source: link.entryRef.source, available: true }],
             window: { v: 1, assembledAtMs: observation.observedAtMs, coverage: 'complete',
                 lanes: [{ sourceInstanceId: observation.sourceInstanceId, source: link.entryRef.source, health: { kind: 'walkFinished' }, exhausted: true }],
                 rows: toTriageListWireRows(foldTriageListWindow({
@@ -1055,7 +1391,10 @@ describe('undoing a link from the mounted cockpit', () => {
             snapshot: { rows, hasMore: false, status: 'ready' },
             rowsById: new Map([
                 ['link-a', wrongEntry],
-                ['link-b', linkRow({ displayPathAtLink: 'example/other#7' })],
+                ['link-b', linkRow({ displayPathAtLink: 'example/other#7',
+                    entryRef: { ...wrongEntry.entryRef, collisionScope: 'example/other', entryId: '7' },
+                    identityEntryRef: { ...wrongEntry.entryRef, collisionScope: 'example/other', entryId: '7' },
+                })],
             ]),
         });
 
@@ -1067,19 +1406,15 @@ describe('undoing a link from the mounted cockpit', () => {
 
         // Unlink is addressed by the open row and admitted by the shared Action policy.
         await unlinkThroughSharedPolicy(fixture, 'example/repository#42');
+        await expect(fixture.getByText('example/other#7')).resolves.toBeDefined();
 
-        // The mounted surface can reach Account Collections directly, so it
-        // removes through that canonical transport rather than needlessly
-        // routing the user's own durable state through a daemon Action. The
-        // identity derivation still receives the exact mounted Session and the
-        // exact immutable reference the private row held.
-        expect(harness.identityRequests).toContainEqual({
-            field: CORPUS_SESSION_LINKS_FIELD.linkTag,
-            components: sessionLinkTagComponents(wrongEntry.identityEntryRef, SESSION_ID),
-        });
-        expect(harness.deletes).toHaveLength(1);
-        expect(harness.deletes[0]?.expectedRevision).toBe(1);
-        expect(actionCalls).toEqual([]);
+        expect(actionCalls.filter(call => call.action === 'sessions/unlink-entry-v1')).toEqual([{
+            action: 'sessions/unlink-entry-v1',
+            input: { v: 1, sessionId: SESSION_ID, entryRef: wrongEntry.entryRef },
+        }]);
+        expect(harness.identityRequests).toHaveLength(0);
+        expect(harness.deletes).toHaveLength(0);
+
     });
 
     it('says a refused removal failed instead of showing the link as gone', async () => {

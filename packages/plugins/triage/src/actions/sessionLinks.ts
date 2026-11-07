@@ -1,4 +1,5 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
+import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
@@ -26,8 +27,11 @@ export function createTriageLinkEntryToSessionActionHandler(): TriageDataActionH
     TriageLinkEntryToSessionActionResultV1
 > {
     return async (input, context: TriageDataActionContext) => {
+        const sessionId = SessionIdSchema.parse(input.sessionId);
         const collections = bindCorpusCollections(requireTriageAccountStorage(context));
-        const result = await createTriageSourceSessionRelations(context, collections).write({ ...input, linked: true });
+        const result = await createTriageSourceSessionRelations(context, collections).write({ ...input,
+            sessionId, linked: true });
+        if (result.status === 'failed') throw result.failure;
         return { v: 1, status: result.status === 'linked' ? 'linked' : 'failed' };
     };
 }

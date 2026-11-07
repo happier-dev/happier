@@ -1,22 +1,23 @@
 // @vitest-environment jsdom
 import { act, cloneElement, type ReactElement } from 'react';
+import { createHash } from 'node:crypto';
 import * as React from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiTestkit, createSurfaceContextFixture, createTestResourceInvocationContext, type PluginUiTestkit, type PluginUiSemanticSurfaceAdapter } from '@happier-dev/plugin-sdk/testing';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import type { PluginUiCollectionQuerySnapshot, PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
-import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
-import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitObservation, TESTKIT_SOURCE_INSTANCE_ID } from '../../corpus/testkit/observations.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import { toTriageListWireRows } from '../../projection/listWindowWire.js';
 import { acquireTriageListWindow, refreshTriageListWindow, setTriageListWindowLens } from '../../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../ui/window/ephemeralSharedScope.test-support.js';
-import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
+import { TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from '../sessionLinksResource.js';
+import type { TriageReadSourceSessionLinksResultV1 } from '../../actions/sessionLinksProtocol.js';
 import { useTriageSessionLinkCandidates } from './useSessionLinkCandidates.js';
+import { createPluginUiHostApiResourceClient, createPluginUiResourceStore, type PluginUiResourceStore } from '../../../../../plugin-ui/src/hostApi/resourceStore.js';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,10 +26,42 @@ const SESSION = 'session-link-picker';
 const mounted: PluginUiTestkit[] = [];
 const releases: Array<() => void> = [];
 
+async function readRelationsResource(read: () => Promise<TriageReadSourceSessionLinksResultV1>) {
+    // Replace the host Action transport only; resource parsing and retained projection stay real.
+    const text = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
+        context: { kind: 'session', sessionId: SESSION }, signal: new AbortController().signal,
+        readAction: async () => ({ ok: true, result: await read() }),
+    }));
+    const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : text;
+    return { contentType: 'application/json', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };
+}
+
 const probe = defineUiSurface(() => {
     const result = useTriageSessionLinkCandidates(SESSION, 'NORMALIZER repository');
     return <Text value={`${result.status}:${result.candidates.map(({ entry, alreadyLinked }) => `${entry.title}:${alreadyLinked}`).join(',')}`} />;
 });
+
+function resourceAdapter(scope: ReturnType<typeof createTriageEphemeralSharedScopeFixture>): PluginUiSemanticSurfaceAdapter<typeof probe> {
+    const base = createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope });
+    return { async mount(input) {
+        function HostedPicker(context: RenderContext): ReactElement {
+            // The host installs this private Resource store after rendering the author's surface.
+            const store = React.useMemo<PluginUiResourceStore>(() => {
+                const resourceStore = createPluginUiResourceStore({ client: createPluginUiHostApiResourceClient(context.hostApi), pluginId: 'happier.triage' });
+                return { ...resourceStore, requiresMachine(resource) {
+                    if (typeof resource !== 'string' && 'hostRead' in resource) return false;
+                    if (typeof resource !== 'string' && resource.pluginId !== 'happier.triage') return true;
+                    const id = typeof resource === 'string' ? resource : resource.localId;
+                    return PLUGIN_MANIFEST.contributes.resources.find(declaration => declaration.id === id)?.execution?.target !== 'account';
+                } };
+            }, [context.hostApi]);
+            React.useEffect(() => () => store.dispose(), [store]);
+            return cloneElement(input.surface(context) as ReactElement<{ resourceStore?: PluginUiResourceStore; resourceStoreGeneration?: unknown;
+                ephemeralSharedScope?: typeof scope }>, { resourceStore: store, resourceStoreGeneration: scope, ephemeralSharedScope: scope });
+        }
+        return base.mount({ ...input, surface: context => React.createElement(HostedPicker, context) });
+    } };
+}
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
@@ -38,27 +71,15 @@ afterEach(async () => {
 describe('the mounted Session link candidate reader', () => {
     it.each([false, true])('distinguishes a first acquisition failure from an admitted empty window (failure=%s)', async (failed) => {
         const scope = createTriageEphemeralSharedScopeFixture();
-        const corpus = createTestkitCorpusCollections();
-        const empty: PluginUiCollectionQuerySnapshot = { status: 'ready', rows: [], hasMore: false };
-        const client: PluginUiDataClient = {
-            collection: () => corpus.collections.sessionLinks as ReturnType<PluginUiDataClient['collection']>,
-            accountKv: createTestkitAccountKv().kv,
-            openCollectionQuery: async () => ({
-                getSnapshot: () => empty,
-                subscribe: () => () => {}, refresh: async () => {}, loadMore: async () => {}, dispose: () => {},
-            }),
-        };
-        const base = createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope });
         let fixture!: PluginUiTestkit;
         await act(async () => {
             fixture = await createPluginUiTestkit({
                 identity: { instanceId: 'first-demand', mountNonce: 'first-demand-mount' },
                 authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: probe,
-                surfaceContext: createSurfaceContextFixture(),
-                adapter: { mount: async (input) => base.mount({ ...input,
-                    surface: (context) => cloneElement(input.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>, { dataClient: client }),
-                }) },
-                handlers: { executeAction: async () => {
+                surfaceContext: createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION, agentId: 'codex' } }),
+                adapter: resourceAdapter(scope),
+                handlers: { readResource: () => readRelationsResource(async () => ({ kind: 'complete', links: [], lanes: [] })),
+                    executeAction: async () => {
                     if (failed) throw Object.assign(new Error('Aggregate unavailable'), { code: 'unavailable' });
                     return { v: 1, configuredSources: [], configuredSourcesStatus: 'complete',
                         window: { v: 1, rows: [], lanes: [], coverage: 'complete', assembledAtMs: Date.now() } };
@@ -69,7 +90,7 @@ describe('the mounted Session link candidate reader', () => {
         await vi.waitFor(() => fixture.getByText(failed ? 'unavailable:' : 'ready:'));
     });
 
-    it('searches the retained acquisition outside the page lens and finishes Session paging before saying not linked', async () => {
+    it.each([false, true])('searches outside the page lens and settles Session coverage before saying not linked (partial=%s)', async (partial) => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const lane = { sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, source: ENTRY.source,
             health: { kind: 'walkFinished' as const }, exhausted: true };
@@ -77,7 +98,7 @@ describe('the mounted Session link candidate reader', () => {
             activeSourceInstanceIds: [TESTKIT_SOURCE_INSTANCE_ID], configuredSourcesStatus: 'complete',
             lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: Date.now() });
         const seedHost = { executeAction: async () => ({ v: 1,
-            configuredSources: [{ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, source: ENTRY.source, available: true }],
+            configuredSources: [{ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, configurationRowId: TESTKIT_SOURCE_INSTANCE_ID, source: ENTRY.source, available: true }],
             configuredSourcesStatus: 'complete',
             window: { v: 1, rows: toTriageListWireRows(folded), lanes: [lane], coverage: 'complete', assembledAtMs: Date.now() },
         }) };
@@ -86,49 +107,15 @@ describe('the mounted Session link candidate reader', () => {
         await refreshTriageListWindow('manual', seedHost, scope);
         setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'hides-every-row' }, seedHost, scope);
 
-        const corpus = createTestkitCorpusCollections();
-        const row = (entryId: string, index: number) => {
-            const linkTag = String(index).repeat(43);
-            const entryTag = String(index + 2).repeat(43);
-            const seeded = corpus.control.sessionLinks.seed(toCorpusStoredValue({
-                linkTag, entryTag, sessionId: SESSION, linkedAtMs: index,
-                entryRef: { ...ENTRY, entryId }, identityEntryRef: { ...ENTRY, entryId },
-                displayPathAtLink: `example/repository #${entryId}`,
-            }));
-            return { context: { collection: { pluginId: 'happier.triage', collectionId: 'session-links' }, ...seeded },
-                fields: { [CORPUS_SESSION_LINKS_FIELD.sessionId]: SESSION,
-                    [CORPUS_SESSION_LINKS_FIELD.entryTag]: entryTag, [CORPUS_SESSION_LINKS_FIELD.linkedAtMs]: index } };
-        };
-        const first = row('18', 1);
-        const second = row(ENTRY.entryId, 2);
-        let snapshot: PluginUiCollectionQuerySnapshot = { status: 'ready', rows: [first], hasMore: true };
-        const listeners = new Set<() => void>();
-        const publish = (next: PluginUiCollectionQuerySnapshot) => {
-            snapshot = next;
-            for (const listener of listeners) listener();
-        };
         let finishPage!: () => void;
         const page = new Promise<void>((resolve) => { finishPage = resolve; });
-        let pending: Promise<void> | undefined;
-        const client: PluginUiDataClient = {
-            // This is the Account Collection transport boundary; its codec and hydration stay real.
-            collection: () => corpus.collections.sessionLinks as ReturnType<PluginUiDataClient['collection']>,
-            accountKv: createTestkitAccountKv().kv,
-            openCollectionQuery: async () => ({ getSnapshot: () => snapshot,
-                subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-                refresh: async () => {},
-                loadMore: () => pending ??= page.then(() => { publish({ status: 'ready', rows: [first, second], hasMore: false }); }),
-                dispose: () => { listeners.clear(); },
-            }),
-        };
-        const base = createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope });
         let sourceReads = 0;
         let fixture!: PluginUiTestkit;
         await act(async () => {
             fixture = await createPluginUiTestkit({
                 identity: { instanceId: 'session-link-probe', mountNonce: 'session-link-probe-mount' },
                 authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: probe,
-                surfaceContext: createSurfaceContextFixture({ targetedContributions: {
+                surfaceContext: createSurfaceContextFixture({ target: { kind: 'session', sessionId: SESSION, agentId: 'codex' }, targetedContributions: {
                     ...createSurfaceContextFixture().targetedContributions!,
                     points: [{ pointId: 'sources', protocols: [{ protocol: { id: 'happier.triage/sources', version: 1 },
                         contributions: [{
@@ -141,17 +128,29 @@ describe('the mounted Session link candidate reader', () => {
                         }],
                     }] }],
                 } }),
-                adapter: { mount: async (input) => base.mount({ ...input,
-                    surface: (context) => cloneElement(input.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>, { dataClient: client }),
-                }) },
-                handlers: { executeAction: async () => { sourceReads += 1; throw new Error('Picker mount must not refresh sources'); } },
+                adapter: resourceAdapter(scope),
+                handlers: {
+                    readResource: () => readRelationsResource(async () => {
+                        await page;
+                        return { kind: partial ? 'partial' : 'complete',
+                            links: ['18', ENTRY.entryId].map(entryId => ({ sessionId: SESSION,
+                                entryRef: { ...ENTRY, entryId }, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, linkedAtMs: 1,
+                                displayPath: `example/repository #${entryId}` })),
+                            lanes: [{ source: ENTRY.source, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, displayLabel: 'Example forge', kindIds: [ENTRY.kindId],
+                                health: partial ? { kind: 'partial', unavailableRefs: [{ ...ENTRY, collisionScope: 'account:unreadable' }] }
+                                    : { kind: 'complete' } }],
+                        };
+                    }),
+                    executeAction: async () => { sourceReads += 1; throw new Error('Picker mount must not refresh sources'); },
+                },
             });
         });
         mounted.push(fixture);
         await expect(fixture.getByText('loading:')).resolves.toEqual({ content: 'loading:' });
         await act(async () => { finishPage(); await page; });
-        await expect(fixture.getByText('ready:Replace the duplicated normalizer:true')).resolves
-            .toEqual({ content: 'ready:Replace the duplicated normalizer:true' });
+        const expected = `${partial ? 'partial' : 'ready'}:Replace the duplicated normalizer:true`;
+        await vi.waitFor(() => fixture.getByText(expected));
+        await expect(fixture.getByText(expected)).resolves.toEqual({ content: expected });
         expect(sourceReads).toBe(0);
     });
 });

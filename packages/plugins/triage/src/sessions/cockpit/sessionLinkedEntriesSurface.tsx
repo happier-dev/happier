@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { SurfaceContext, RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     Avatar,
@@ -18,20 +19,23 @@ import {
     Status,
     Text,
     defineUiSurface,
+    projectPluginActionRejectionV1,
     usePluginHostApi,
     usePluginTheme,
     usePluginTranslation,
     useSurfaceContext,
     type IconName,
     type ListSectionData,
+    type PluginActionExecution,
     type TextTone,
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
-import type { TriageSessionLinkedEntryRowV1, TriageSessionLinkedEntrySummaryV1 } from './linkedEntryRows.js';
+import type { TriageSessionLinkedEntriesNoticeV1, TriageSessionLinkedEntryRowV1, TriageSessionLinkedEntrySummaryV1 } from './linkedEntryRows.js';
+import { projectTriageUnavailableLinkSources, type TriageUnavailableLinkSourceV1 } from './linkedEntrySourceHealth.js';
 import type { TriageSessionLinkedEntryCandidateV1 } from './linkedEntrySearch.js';
 import { linkTriageSessionEntry, useTriageSessionLinkCandidates } from './useSessionLinkCandidates.js';
-import { formatTriageCompactAgeV1 } from '../../ui/list/rows.js';
+import { formatTriageCompactAgeV1 } from '@happier-dev/triage-protocol/v1';
 import { readTriageEntryGlyphV1 } from '../../ui/window/entryDisplay.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
@@ -41,7 +45,8 @@ import { openTriageLinkedEntry } from '../../ui/navigation/openLinkedEntry.js';
 import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 import { applyTriageSessionPullRequestStatus } from './linkedEntrySummary.js';
 import { useLinkedPullRequestStatus, type LinkedPullRequestStatusRead } from './useLinkedPullRequestStatus.js';
-import { PullRequestStatus } from './pullRequestStatus.js';
+import { PullRequestStatusFacts } from '../pullRequestGlance/PullRequestGlance.js';
+import { PullRequestFailureDetails } from '../pullRequestGlance/PullRequestReadFailure.js';
 
 /**
  * The Session-targeted linked-entries surface.
@@ -81,7 +86,7 @@ function entryOf(row: LinkedRow): LinkedEntry | null {
 
 function rowKind(row: LinkedRow, sources: SurfaceContext['targetedContributions']): 'pullRequest' | 'issue' | 'other' {
     const entry = entryOf(row);
-    if (entry !== null) return entry.kind;
+    if (entry !== null) return entry.kind === 'pullRequest' || entry.kind === 'issue' ? entry.kind : 'other';
     if (row.presentation.kind !== 'linked') return 'other';
     const subject = resolveTriageSourceWorkflowSubjectV1(sources, row.presentation.entryRef);
     return subject === 'pullRequest' || subject === 'issue' ? subject : 'other';
@@ -103,8 +108,8 @@ function rowTitle(row: LinkedRow, text: Translate): string {
 /** The one glyph an entry wears (the PRs & Issues row owner), coloured by where its lifecycle is. */
 function entryMark(row: LinkedRow, sources: SurfaceContext['targetedContributions']): Readonly<{ name: IconName; tone: TextTone }> {
     const entry = entryOf(row);
-    const kind = rowKind(row, sources);
-    const subject = kind === 'other' ? null : kind;
+    const subject = entry?.kind ?? (row.presentation.kind === 'linked'
+        ? resolveTriageSourceWorkflowSubjectV1(sources, row.presentation.entryRef) : null);
     if (entry === null) return { name: readTriageEntryGlyphV1('active', subject), tone: 'secondary' };
     switch (entry.lifecycle) {
         case 'open':
@@ -118,6 +123,8 @@ function entryMark(row: LinkedRow, sources: SurfaceContext['targetedContribution
             return { name: readTriageEntryGlyphV1('closed', subject), tone: 'danger' };
         case 'notPlanned':
             return { name: readTriageEntryGlyphV1('closed', subject), tone: 'muted' };
+        case 'suppressed':
+            return { name: readTriageEntryGlyphV1('suppressed', subject), tone: 'muted' };
         default:
             return { name: readTriageEntryGlyphV1('active', subject), tone: 'secondary' };
     }
@@ -258,8 +265,8 @@ function LinkedRowPeek(props: Readonly<{
 
     const unlink = React.useCallback(() => {
         if (entryRef === null) return;
-        void unlinkRelationship({ sessionId, entryRef, ...(row.sourceOwned ? { sourceOwned: true } : {}) });
-    }, [entryRef, sessionId, unlinkRelationship, row.sourceOwned]);
+        void unlinkRelationship({ sessionId, entryRef });
+    }, [entryRef, sessionId, unlinkRelationship]);
 
     if (entryRef === null || presentation.kind !== 'linked') return null;
     const facts = entry === null
@@ -294,7 +301,7 @@ function LinkedRowPeek(props: Readonly<{
 
     return (
         <Stack gap="medium" testID={`triage-session-link-peek:${row.key}`}>
-            {hasDetails && status !== null ? <PullRequestStatus status={status} /> : <Metadata entries={facts} />}
+            {hasDetails && status !== null ? <PullRequestStatusFacts status={status} /> : <Metadata entries={facts} />}
             {props.statusRead.phase === 'reading' ? <FreshnessLine tone="neutral" reason={text('plugins.triage.sessionLinks.status.reading', 'Reading PR status…')} />
                 : props.statusRead.phase === 'unavailable' ? <FreshnessLine tone="warning" reason={text('plugins.triage.sessionLinks.status.unavailable', 'PR status is unavailable.')}
                     action={{ label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: onRefresh }} />
@@ -381,6 +388,48 @@ function LinkedEntryRow(props: Readonly<{
     );
 }
 
+/** "{source}: {reason}": the connection's own name, then why it could not be read. */
+function sourceProblemText(text: Translate, source: TriageUnavailableLinkSourceV1): string {
+    return text('plugins.triage.sessionLinks.sourceProblem', '{source}: {reason}', {
+        source: source.label,
+        reason: text(source.reason.key, source.reason.fallback),
+    });
+}
+
+/**
+ * The sources a Session's links could not be read from, each named with why, as the quiet line over rows that
+ * are still shown (never an empty state). One Refresh serves them all, so it sits on the first line only.
+ */
+function UnavailableLinkSources(props: Readonly<{
+    notice: TriageSessionLinkedEntriesNoticeV1;
+    onRefresh: () => void;
+}>): React.ReactElement {
+    const text = usePluginTranslation();
+    const refresh = { label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: props.onRefresh };
+    const reasons = props.notice.sources.length === 0
+        ? [text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read')]
+        : props.notice.sources.map((source) => sourceProblemText(text, source));
+    return (
+        <Stack gap="xsmall">
+            {reasons.map((reason, index) => (
+                <Stack key={`${reason}\u0000${props.notice.sources[index]?.diagnostic?.code ?? ''}\u0000${props.notice.sources[index]?.diagnostic?.requestId ?? ''}`} gap="xsmall">
+                    <FreshnessLine tone="warning" reason={reason} {...(index === 0 ? { action: refresh } : {})} />
+                    <PullRequestFailureDetails codes={[props.notice.sources[index]?.diagnostic?.code]}
+                        title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${props.notice.sources[index]?.label ?? ''}`}
+                        requestId={props.notice.sources[index]?.diagnostic?.requestId} />
+                </Stack>
+            ))}
+            <LinkReadFailureDetails notice={props.notice} />
+        </Stack>
+    );
+}
+
+function LinkReadFailureDetails({ notice }: Readonly<{ notice: TriageSessionLinkedEntriesNoticeV1 }>): React.ReactElement | null {
+    const error = notice.error;
+    const requestId = readPluginErrorRequestIdV1(error);
+    return <PullRequestFailureDetails codes={[error?.code, ...(error?.diagnostics ?? [])]} requestId={requestId} />;
+}
+
 /**
  * Search PRs & Issues and link one to this Session (lab PA). One control, two triggers: the pane header's "+",
  * and the empty state's one primary action (lab PE), which opens the same picker from where it was pressed.
@@ -416,33 +465,43 @@ function LinkEntryControl(props: Readonly<{
  * The open picker: the public List with its own search over the one candidate reader. Every match is listed
  * (the List's virtualization bounds what mounts; nothing is cut at a count), a linked entry wears a check.
  */
-function LinkEntryPicker(props: Readonly<{ sessionId: string; label: string; onLinked: () => void }>): React.ReactElement {
+export function LinkEntryPicker(props: Readonly<{ sessionId: string; label: string; onLinked: () => void }>): React.ReactElement {
     const text = usePluginTranslation();
     const host = usePluginHostApi();
     const [query, setQuery] = React.useState('');
     const [linking, setLinking] = React.useState<string | null>(null);
-    const [failed, setFailed] = React.useState(false);
-    const { candidates, status } = useTriageSessionLinkCandidates(props.sessionId, query);
+    const [failure, setFailure] = React.useState<PluginActionExecution | null>(null);
+    const { candidates, status, sourceHealth, refresh } = useTriageSessionLinkCandidates(props.sessionId, query);
+    // Healthy rows and search stay; a source that could not be read is named with why, never folded into "no match".
+    const unavailable = React.useMemo(() => projectTriageUnavailableLinkSources(sourceHealth), [sourceHealth]);
     const link = React.useCallback((candidate: TriageSessionLinkedEntryCandidateV1) => {
         if (candidate.alreadyLinked || linking !== null) return;
         setLinking(candidateKey(candidate));
-        setFailed(false);
+        setFailure(null);
         void linkTriageSessionEntry(host, props.sessionId, candidate.entry).then((result) => {
             setLinking(null);
             if (result.status === 'failed') {
-                setFailed(true);
+                setFailure(projectPluginActionRejectionV1({
+                    message: text('plugins.triage.sessionLinks.linkFailed', 'That link didn’t go through. Try again.'),
+                }, text));
                 return;
             }
             props.onLinked();
+        }).catch((error: unknown) => {
+            setLinking(null);
+            setFailure(projectPluginActionRejectionV1(error, text));
         });
-    }, [host, linking, props]);
+    }, [host, linking, props, text]);
     const renderCandidate = React.useCallback((candidate: TriageSessionLinkedEntryCandidateV1): React.ReactElement => {
         const facts = [whereLabel(candidate.entry), candidate.alreadyLinked ? text('plugins.triage.sessionLinks.alreadyLinked', 'Linked') : null].filter(Boolean);
         return (
             <List.Item
                 title={candidate.entry.title}
                 titleNumberOfLines={1}
-                icon={<Icon name={candidate.entry.kind === 'issue' ? 'issue' : 'change-open'} size="small" tone={candidate.entry.lifecycle === 'open' ? 'success' : 'secondary'} />}
+                icon={<Icon name={readTriageEntryGlyphV1(candidate.entry.lifecycle === 'suppressed' ? 'suppressed'
+                    : candidate.entry.lifecycle === 'closed' || candidate.entry.lifecycle === 'notPlanned' ? 'closed'
+                    : candidate.entry.lifecycle === 'done' || candidate.entry.lifecycle === 'merged' ? 'resolved' : 'active', candidate.entry.kind)}
+                    size="small" tone={candidate.entry.lifecycle === 'open' ? 'success' : 'secondary'} />}
                 busy={linking === candidateKey(candidate)}
                 disabled={candidate.alreadyLinked}
                 // A linked entry says so with a mark at the row's end, as in the lab; the words stay beside it.
@@ -465,11 +524,15 @@ function LinkEntryPicker(props: Readonly<{ sessionId: string; label: string; onL
             // The List owns the field; the match is the PRs & Issues search owner's (inside the candidate reader).
             search={{
                 label: text('plugins.triage.sessionLinks.search', 'Search PRs & Issues'),
-                placeholder: text('plugins.triage.sessionLinks.searchPlaceholder', 'Search by title or number'),
+                placeholder: text('plugins.triage.sessionLinks.searchPlaceholder', 'Search by title, number or repository'),
                 value: query,
                 onValueChange: setQuery,
                 filter: keepProjectedCandidate,
             }}
+            // Under the search, where it is seen with the first results; a footer would wait at the end of a long list.
+            header={unavailable.length === 0 ? null : (
+                <UnavailableLinkSources notice={{ sources: unavailable }} onRefresh={() => { void refresh(); }} />
+            )}
             empty={status === 'loading' ? (
                 <LoadingState rows={3} title={text('plugins.triage.sessionLinks.loading', `Reading linked ${TRIAGE_DISPLAY_NAME}`)} />
             ) : (
@@ -477,12 +540,22 @@ function LinkEntryPicker(props: Readonly<{ sessionId: string; label: string; onL
                     layout="line"
                     title={status === 'unavailable'
                         ? text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read')
-                        : text('plugins.triage.sessionLinks.searchEmpty', 'Nothing matches in PRs & Issues yet')}
+                        : status === 'partial'
+                            ? text('plugins.triage.sessionLinks.searchEmptyPartial', 'Nothing matches in the sources that could be read')
+                            : text('plugins.triage.sessionLinks.searchEmpty', 'Nothing matches in PRs & Issues yet')}
                 />
             )}
             footer={(
                 <Stack gap="xsmall">
-                    {failed ? <Status tone="warning" label={text('plugins.triage.sessionLinks.linkFailed', 'That link didn’t go through. Try again.')} /> : null}
+                    {failure?.status === 'error' || failure?.status === 'outcomeUnknown' ? (
+                        <Stack gap="small">
+                            <ErrorState size="pane" title={failure.message} />
+                            <PullRequestFailureDetails
+                                codes={[failure.code, ...(failure.status === 'error' ? failure.diagnostics?.map(diagnostic => diagnostic.code) ?? [] : [])]}
+                                requestId={failure.requestId}
+                            />
+                        </Stack>
+                    ) : null}
                     <Text variant="micro" tone="secondary" value={text('plugins.triage.sessionLinks.linkReassurance', 'Linking doesn’t change anything at the source.')} />
                 </Stack>
             )}
@@ -594,7 +667,9 @@ function TriageSessionLinkedEntriesPanel(
                         'plugins.triage.sessionLinks.unavailable',
                         'Linked entries could not be read',
                     )}
-                    description={view.message}
+                    {...(view.notice.sources.length === 0 ? {} : {
+                        description: view.notice.sources.map((source) => sourceProblemText(text, source)).join('\n'),
+                    })}
                     action={(
                         <Button
                             title={text('plugins.triage.surface.refresh', 'Refresh')}
@@ -603,6 +678,10 @@ function TriageSessionLinkedEntriesPanel(
                         />
                     )}
                 />
+                {view.notice.sources.map((source, index) => <PullRequestFailureDetails key={index}
+                    title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
+                    codes={[source.diagnostic?.code]} requestId={source.diagnostic?.requestId} />)}
+                <LinkReadFailureDetails notice={view.notice} />
             </Screen>
         );
     }
@@ -648,11 +727,7 @@ function TriageSessionLinkedEntriesPanel(
                     // Links are durable Account state, so they stay readable whenever the Account server is
                     // reachable — with or without a daemon. What can go missing is the entry's current provider
                     // facts: one freshness line over the retained rows, never a banner.
-                    <FreshnessLine
-                        tone="warning"
-                        reason={view.notice}
-                        action={{ label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: onRefresh }}
-                    />
+                    <UnavailableLinkSources notice={view.notice} onRefresh={onRefresh} />
                 )}
                 footer={view.more ? (
                     <Row gap="small" align="center" style={{ paddingHorizontal: spacing.large, paddingVertical: spacing.small }}>

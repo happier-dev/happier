@@ -4,8 +4,8 @@ import {
     defineProtocolString,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
+import { SessionTargetV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import {
-    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryLocatorV1Schema,
@@ -36,13 +36,6 @@ const triageText = defineProtocolString({
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
-/** The host-stamped mounted `SessionId`, bounded by the durable row's own field. */
-const triageSessionId = defineProtocolString({
-    minLength: 1,
-    maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-});
-
 /**
  * The entry as the caller's device-local projection rendered it.
  *
@@ -58,7 +51,7 @@ export const TriageEntrySessionLinkDisplayV1Schema = defineProtocolObject({
 
 export const TriageLinkEntryToSessionInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    sessionId: triageSessionId,
+    sessionId: SessionTargetV1Schema,
     entryRef: TriageEntryRefV1Schema,
     sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
     display: TriageEntrySessionLinkDisplayV1Schema,

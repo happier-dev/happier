@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 } from '../../actions/entrySessionProtocol.js';
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
-import { createDirectTriageUnlinkTransport, submitTriageUnlinkLinkedEntry } from './unlinkLinkedEntry.js';
-import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
-import { linkEntryToSession } from '../entrySessionLinks.js';
+import { createActionTriageUnlinkTransport, submitTriageUnlinkLinkedEntry } from './unlinkLinkedEntry.js';
 
 /**
  * The mounted cockpit's transport to the canonical link remover.
@@ -30,40 +28,27 @@ function recordingHost(result: unknown) {
 }
 
 describe('the cockpit Unlink transport', () => {
-    it('routes a source-owned unlink through the source-neutral Action even with direct Account storage', async () => {
-        const fixture = createTestkitCorpusCollections();
+    it('routes every unlink through the composed Account Action', async () => {
         const { calls, host } = recordingHost({ v: 1, status: 'unlinked' });
-        const transport = createDirectTriageUnlinkTransport(fixture.collections,
-            { ...host, admitAction: async () => true }, () => true);
+        const transport = createActionTriageUnlinkTransport(host);
         expect(await transport.unlink({ sessionId: 'session-a', entryRef: testkitEntryRef() }))
             .toEqual({ v: 1, status: 'unlinked' });
         expect(calls).toEqual([{ action: TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
             input: { v: 1, sessionId: 'session-a', entryRef: testkitEntryRef() } }]);
     });
 
-    it('waits for shared Action policy before a direct Account unlink and leaves a declined link intact', async () => {
-        const fixture = createTestkitCorpusCollections();
-        const entryRef = testkitEntryRef();
-        const linked = await linkEntryToSession({ collections: fixture.collections, entryRef, sessionId: 'session-a',
-            display: { locator: { v: 1, displayPath: 'test#42' }, scopeLabel: 'test' }, nowMs: 1 });
-        if (linked.status !== 'linked') throw new Error('Could not seed the real link owner');
-        let answer: ((approved: boolean) => void) | undefined;
-        const host = { admitAction: async (action: unknown) => {
-            expect(action).toBe(TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1);
-            return await new Promise<boolean>(resolve => { answer = resolve; });
-        } };
-        const transport = createDirectTriageUnlinkTransport(fixture.collections, host);
-        const declined = transport.unlink({ sessionId: 'session-a', entryRef });
-        await Promise.resolve();
-        expect(answer).toBeTypeOf('function');
-        expect(await fixture.collections.sessionLinks.get(linked.linkTag)).not.toBeNull();
-        answer?.(false);
-        await expect(declined).resolves.toBeNull();
-        expect(await fixture.collections.sessionLinks.get(linked.linkTag)).not.toBeNull();
-        const accepted = transport.unlink({ sessionId: 'session-a', entryRef });
-        answer?.(true);
-        await expect(accepted).resolves.toEqual({ v: 1, status: 'unlinked' });
-        expect(await fixture.collections.sessionLinks.get(linked.linkTag)).toBeNull();
+    it('preserves a failed or uncertain effect without replaying it', async () => {
+        const { calls, host } = recordingHost({ v: 1, status: 'failed' });
+        expect(await createActionTriageUnlinkTransport(host).unlink({ sessionId: 'session-a', entryRef: testkitEntryRef() }))
+            .toEqual({ v: 1, status: 'failed' });
+        expect(calls).toHaveLength(1);
+        let attempts = 0;
+        const unavailable = createActionTriageUnlinkTransport({ executeAction: async () => {
+            attempts += 1;
+            throw new Error('The relation owner did not answer.');
+        } });
+        await expect(unavailable.unlink({ sessionId: 'session-a', entryRef: testkitEntryRef() })).rejects.toThrow();
+        expect(attempts).toBe(1);
     });
     it('names the exact entry and mounted Session the row was rendered from', async () => {
         const entryRef = testkitEntryRef();

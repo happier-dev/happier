@@ -1,26 +1,16 @@
 import * as React from 'react';
-import { usePluginHostApi, useSurfaceContext } from '@happier-dev/plugin-ui';
-import { resolveTriageSourceSessionRelationsV1, resolveTriageSourceDescriptorV1 } from '../../ui/detail/sourceSurface.js';
-
-import { useTriageDurableAccount } from '../../ui/durable/accountDurableState.js';
+import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import {
     createActionTriageUnlinkTransport,
-    createDirectTriageUnlinkTransport,
     type TriageUnlinkLinkedEntryV1,
 } from './unlinkLinkedEntry.js';
 
 /** Both ends of a relationship use the same admitted removal and authoritative reread. */
 export function useTriageUnlinkLinkedEntry(onRefresh: () => void | Promise<void>) {
     const host = usePluginHostApi();
-    const durable = useTriageDurableAccount();
-    const { targetedContributions } = useSurfaceContext();
     const transport = React.useMemo(
-        () => durable.collections
-            ? createDirectTriageUnlinkTransport(durable.collections, host,
-                (entryRef) => resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source) === null
-                    ? undefined : resolveTriageSourceSessionRelationsV1(targetedContributions, entryRef.source, 'linkSession'))
-            : createActionTriageUnlinkTransport(host),
-        [durable.collections, host, targetedContributions],
+        () => createActionTriageUnlinkTransport(host),
+        [host],
     );
     const [phase, setPhase] = React.useState<'idle' | 'removing' | 'failed'>('idle');
     const unlink = React.useCallback(async (target: TriageUnlinkLinkedEntryV1) => {

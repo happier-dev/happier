@@ -4,7 +4,7 @@ import {
     validatePluginCollectionUiQueryParametersV1,
 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
-import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import { describe, expect, it } from 'vitest';
 
 import { CORPUS_SESSION_LINKS_COLLECTION } from '../../corpus/collections/definitions.js';
