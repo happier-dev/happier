@@ -29,13 +29,14 @@
 
 import type {
   SentryApiClientV1,
-  SentryApiResponseV1,
 } from '../api/sentryApiClient.js';
 import {
   advanceCursorCycleWalkV1,
   type CursorCycleWalkV1,
 } from '@happier-dev/triage-sources/runtime';
 import { classifySentryFailure } from '../api/sentryFailure.js';
+import { decodeSentryResponse as decodeBody } from '../api/sentryResponse.js';
+import { readSentryAssignee, readSentryIssueAssignment, type SentryAssigneeV1, type SentryIssueAssignmentProjectionV1 } from './assignment.js';
 import { readSentryNextPageRelation } from '../api/sentryLinkHeader.js';
 import {
   buildSentryIssueEventUrl,
@@ -59,7 +60,6 @@ import {
 import {
   SENTRY_FAILURE_CODES,
   type SentryFailureV1,
-  type SentryOperationV1,
 } from '../sentryContracts.js';
 import type { SentryDetailIncompleteReasonV1 } from '../ui/detail/panelState.js';
 
@@ -92,31 +92,6 @@ function requestInvalid<T>(): SentryDetailReadResultV1<T> {
   }));
 }
 
-/**
- * Settles one response into a decoded body, or into the failure that response
- * actually is. A non-200 and an unreadable body are different facts and stay
- * different codes.
- */
-function decodeBody(
-  response: SentryApiResponseV1,
-  operation: SentryOperationV1,
-  nowMs: number,
-): Readonly<{ ok: true; body: unknown }> | Readonly<{ ok: false; failure: SentryFailureV1 }> {
-  if (response.status !== 200) {
-    return Object.freeze({
-      ok: false as const,
-      failure: classifySentryFailure({ kind: 'status', operation, nowMs, response }),
-    });
-  }
-  try {
-    return Object.freeze({ ok: true as const, body: JSON.parse(response.bodyText) as unknown });
-  } catch {
-    return Object.freeze({
-      ok: false as const,
-      failure: classifySentryFailure({ kind: 'unparseable', operation }),
-    });
-  }
-}
 
 /**
  * Where a detail walk stands after one page: continuing, genuinely finished, or
@@ -226,6 +201,7 @@ export type SentryEventTrendPointV1 = Readonly<{ atMs: number; count: number }>;
 /** The Tier-A live summary the detail root holds for every panel that needs it. */
 export type SentryIssueOverviewProjectionV1 = Readonly<{
   kind: 'overview';
+  assignee?: SentryAssigneeV1 | null;
   nativeStateLabel?: string;
   statePresentation: 'active' | 'resolved' | 'suppressed' | 'closed' | 'unknown';
   eventCount?: string;
@@ -253,6 +229,7 @@ export type SentryIssueActivityProjectionResultV1 = Readonly<{
 export type SentryIssueProjectionV1 =
   | SentryIssueOverviewProjectionV1
   | SentryIssueTagsProjectionResultV1
+  | SentryIssueAssignmentProjectionV1
   | SentryIssueActivityProjectionResultV1;
 
 export type SentryIssueProjectionKindV1 = SentryIssueProjectionV1['kind'];
@@ -265,6 +242,7 @@ export type SentryIssueReadInputV1 = Readonly<{
 }>;
 
 function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIssueOverviewProjectionV1 {
+  const assignee = readSentryAssignee(body['assignedTo']);
   const state = mapSentryIssueState(body['status'], body['substatus']);
   const eventCount = readCountText(body['count']);
   const userCount = readUserCount(body['userCount']);
@@ -281,6 +259,7 @@ function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIs
   const eventTrend = readHourlyEventTrend(body['stats']);
   return Object.freeze({
     kind: 'overview' as const,
+    ...(assignee === undefined ? {} : { assignee }),
     ...(state.nativeLabel === '' ? {} : { nativeStateLabel: state.nativeLabel }),
     statePresentation: state.presentation,
     ...(eventCount === null ? {} : { eventCount }),
@@ -329,6 +308,8 @@ export async function readSentryIssueProjection(
   }
 
   switch (input.projection) {
+    case 'assignment':
+      return { ok: true, value: await readSentryIssueAssignment(client, { instance: input.instance, body, nowMs: input.nowMs }) };
     case 'overview':
       return Object.freeze({ ok: true as const, value: projectIssueOverview(body) });
     case 'tags': {

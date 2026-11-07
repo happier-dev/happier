@@ -20,6 +20,7 @@
 import { SENTRY_FAILURE_CODES, type SentryFailureV1 } from '../sentryContracts.js';
 import type { SentryApiClientV1, SentryApiOutcomeV1 } from '../api/sentryApiClient.js';
 import { classifySentryFailure } from '../api/sentryFailure.js';
+import { readSentryAssignee } from '../detail/assignment.js';
 import { buildSentryIssueUrl } from '../api/sentryRoutes.js';
 import {
   resolveSentryInvokedScope,
@@ -134,13 +135,7 @@ export function resolveSentryGetOutcome(input: SentryGetOutcomeInputV1): SentryG
       }));
   }
 
-  const assignedTo: Extract<SentryGetOutcomeV1, { kind: 'present' }>['assignedTo'] = body.assignedTo === null ? null : (
-    isRecord(body.assignedTo)
-    && (body.assignedTo.type === 'user' || body.assignedTo.type === 'team')
-    && typeof body.assignedTo.id === 'string'
-      ? { type: body.assignedTo.type, id: body.assignedTo.id }
-      : undefined
-  );
+  const assignedTo = readSentryAssignee(body.assignedTo);
   return Object.freeze({
     kind: 'present' as const,
     localRef: mapped.snapshot.localRef,

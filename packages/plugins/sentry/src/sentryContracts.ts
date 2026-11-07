@@ -182,6 +182,8 @@ export const SENTRY_SELF_HOSTED_UNSUPPORTED_CODES = Object.freeze({
   issueEvents: 'sentry-self-hosted-issue-events-unsupported',
   event: 'sentry-self-hosted-event-unsupported',
   tagValues: 'sentry-self-hosted-tag-values-unsupported',
+  projectMembers: 'sentry-self-hosted-project-members-unsupported',
+  projectTeams: 'sentry-self-hosted-project-teams-unsupported',
 } as const);
 
 export type SentryOperationV1 = keyof typeof SENTRY_SELF_HOSTED_UNSUPPORTED_CODES;

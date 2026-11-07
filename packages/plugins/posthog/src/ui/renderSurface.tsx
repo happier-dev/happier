@@ -70,6 +70,8 @@ import {
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { PosthogNativeOverviewResultV1Schema } from '../source/detail/nativeOverviewContract.js';
+import type { PosthogAssignmentReadV1 } from '../source/detail/nativeOverviewContract.js';
+import { PosthogAssigneeProperty } from './detail/assigneeProperty.js';
 import { PosthogIssueWriteInputV1Schema } from '../source/writeContracts.js';
 import { createPosthogEvidenceCandidate } from '../composer/candidate.js';
 import {
@@ -147,17 +149,27 @@ const LIVE_RESULT_UNREADABLE: TriageSourceFailureV1 = Object.freeze({
 function useLiveEntry(
     input: TriageDetailSurfaceInputV1,
     signal: AbortSignal,
-): PosthogDetailLiveReadV1 {
+): Readonly<{ live: PosthogDetailLiveReadV1; reading: boolean; refresh: () => void }> {
     const action = React.useMemo(
         () => ({ pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.nativeOverview }),
         [],
     );
     const { execute } = useExecutePluginAction(action);
     const [live, setLive] = React.useState<PosthogDetailLiveReadV1>({ kind: 'pending' });
-    const { overview: request } = usePosthogDetailRequest(input);
+    const [reading, setReading] = React.useState(true);
+    const [revision, setRevision] = React.useState(0);
+    const includeAssignees = input.panel === undefined || input.panel === 'actions';
+    const { overview } = usePosthogDetailRequest(input);
+    const request = React.useMemo(() => overview.kind === 'ready'
+        ? { ...overview, input: { ...overview.input, ...(includeAssignees ? { includeAssignees: true } : {}) } }
+        : overview, [overview, includeAssignees]);
     const { active, activeSignal } = useTabPanelActivity();
     const previousRequest = React.useRef(request);
     const settledRequest = React.useRef<typeof request | null>(null);
+    const refresh = React.useCallback(() => {
+        settledRequest.current = null;
+        setRevision(value => value + 1);
+    }, []);
     if (previousRequest.current !== request) {
         previousRequest.current = request;
         setLive({ kind: 'pending' });
@@ -166,10 +178,12 @@ function useLiveEntry(
     React.useEffect(() => {
         if (!active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
         if (request.kind !== 'ready') {
+            setReading(false);
             setLive({ kind: 'failed', failure: LIVE_READ_REFUSED });
             return undefined;
         }
         const controller = new AbortController();
+        setReading(true);
         const abort = (): void => {
             controller.abort();
         };
@@ -178,6 +192,7 @@ function useLiveEntry(
         void (async () => {
             const execution = await execute(request.input, { signal: controller.signal });
             if (controller.signal.aborted) return;
+            setReading(false);
             settledRequest.current = request;
             if (execution.status !== 'success') {
                 setLive({
@@ -201,9 +216,9 @@ function useLiveEntry(
             activeSignal.removeEventListener('abort', abort);
             controller.abort();
         };
-    }, [active, activeSignal, execute, request, signal]);
+    }, [active, activeSignal, execute, request, revision, signal]);
 
-    return live;
+    return { live, reading, refresh };
 }
 
 function posthogFactLabel(field: PosthogDetailFieldV1, text: PluginTranslate): string {
@@ -1153,14 +1168,15 @@ function ActivityTab({
 
 /**
  * The person's native issue writes: the source's own Actions as host controls, offered only where
- * they would change the issue. Suppress keeps its own warning in the host confirmation. Assign
- * needs a PostHog user or role id and this source reads no assignable members yet, so it stays an
- * Agent/MCP/CLI write until that read exists rather than becoming a raw id field.
+ * they would change the issue. Assignment and status writes share the same settlement group.
  */
-function PosthogIssueWrites({ input, presentation }: Readonly<{
+function PosthogIssueWrites({ input, presentation, assignment, reading, refresh }: Readonly<{
     input: TriageDetailSurfaceInputV1;
     /** The live state when the live read disagrees with the observation, else the observation's. */
     presentation: TriageDetailSurfaceInputV1['observation']['snapshot']['state']['presentation'];
+    assignment: PosthogAssignmentReadV1 | undefined;
+    reading: boolean;
+    refresh: () => void;
 }>): React.ReactElement | null {
     const request = useTriageDetailRequest(input);
     const writes = React.useMemo((): readonly TriageSourceWriteV1[] => {
@@ -1181,10 +1197,12 @@ function PosthogIssueWrites({ input, presentation }: Readonly<{
             : presentation === 'resolved' ? [suppress]
                 : presentation === 'suppressed' ? [unsuppress] : [];
     }, [presentation, request]);
-    if (writes.length === 0) return null;
     const webUrl = input.observation.locator.webUrl;
     return <TriageSourceWrites key={`${input.observation.observedAtMs}:${presentation}`} writes={writes} sourceName="PostHog"
-        {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} />;
+        {...(webUrl === undefined ? {} : { sourceUrl: webUrl })}>
+        {({ held, settle }) => <PosthogAssigneeProperty input={input} assignment={assignment} reading={reading}
+            held={held} settle={settle} onRefresh={refresh} />}
+    </TriageSourceWrites>;
 }
 
 function PosthogDetailBody({
@@ -1197,7 +1215,7 @@ function PosthogDetailBody({
     // One render-time read, passed down as data, so no child owns a hidden clock.
     const nowMs = Date.now();
 
-    const live = useLiveEntry(input, signal);
+    const { live, reading, refresh } = useLiveEntry(input, signal);
     const controller = usePosthogOccurrenceController(input, signal);
     const openFrameStackTrace = useTriageDetailPanelOpener('stack-trace');
     const model = React.useMemo(
@@ -1205,7 +1223,8 @@ function PosthogDetailBody({
         [input, live],
     );
 
-    const writes = <PosthogIssueWrites input={input}
+    const writes = <PosthogIssueWrites input={input} assignment={live.kind === 'settled' ? live.assignment : undefined}
+        reading={reading} refresh={refresh}
         presentation={model.nativeStateNow?.presentation ?? input.observation.snapshot.state.presentation} />;
     const panels: Readonly<Record<PosthogDetailTabIdV1, React.ReactNode>> = {
         overview: (

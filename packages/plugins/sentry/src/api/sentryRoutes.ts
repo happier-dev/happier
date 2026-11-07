@@ -95,6 +95,17 @@ export function buildSentryIssueUrl(input: SentryIssueRouteInputV1): string {
   return new URL(issueBasePath(input.instance, input.entryId), origin).toString();
 }
 
+/** The issue's immutable project selects the assignable member/team directory. */
+export function buildSentryProjectPeopleUrl(input: Readonly<{
+  instance: SentryInvokedInstanceV1; projectId: string; kind: 'members' | 'teams'; cursor?: string;
+}>): string {
+  const origin = assertRoutableSentryInstance(input.instance);
+  if (!isSentryNumericId(input.projectId)) throw new Error('A Sentry project route requires the immutable numeric project id.');
+  const url = new URL(`/api/0/projects/${input.instance.organizationId}/${input.projectId}/${input.kind}/`, origin);
+  if (input.cursor !== undefined) url.searchParams.set('cursor', input.cursor);
+  return url.toString();
+}
+
 export type SentryIssueEventsRouteInputV1 = SentryIssueRouteInputV1 & Readonly<{
   perPage: number;
   /**

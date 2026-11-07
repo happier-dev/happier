@@ -126,7 +126,7 @@ export type TriageScanResultV1 = ReturnType<typeof TriageScanResultV1Schema.pars
  * requested ref before calling anything `present`. It is absent on a first read
  * and on any entry the target has never observed (`CONTRACT.md` §5, §6).
  */
-const triageGetInputFieldsV1 = {
+export const triageGetInputFieldsV1 = {
     localRef: TriageSourceEntryLocalRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
 } as const;

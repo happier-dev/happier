@@ -258,6 +258,7 @@ export type {
 
 export {
     TriageGetInputV1Schema,
+    triageGetInputFieldsV1,
     TriageGetResultV1Schema,
     TriageScanInputV1Schema,
     TriageScanResultV1Schema,

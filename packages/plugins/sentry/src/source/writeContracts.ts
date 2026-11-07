@@ -13,8 +13,8 @@ const target = {
 export const SentryIssueWriteInputV1Schema = defineProtocolObject(target, { policy: 'closed' });
 export const SentryIssueAssignInputV1Schema = defineProtocolObject({
   ...target,
-  assignee: defineProtocolObject({
+  assignee: defineProtocolUnion([defineProtocolObject({
     type: defineProtocolUnion([defineProtocolLiteral('user'), defineProtocolLiteral('team')]),
     id: defineProtocolString({ pattern: '^[0-9]+$' }),
-  }, { policy: 'closed' }),
+  }, { policy: 'closed' }), defineProtocolLiteral(null)]),
 }, { policy: 'closed' });

@@ -40,7 +40,7 @@ export type GithubOverviewControllerV1 = Readonly<{
  */
 export function useGithubOverview(
   input: TriageDetailSurfaceInputV1,
-  options: Readonly<{ readWhenActive?: boolean; activity?: ReturnType<typeof useTabPanelActivity> }> = {},
+  options: Readonly<{ readWhenActive?: boolean; includePropertyChoices?: boolean; activity?: ReturnType<typeof useTabPanelActivity> }> = {},
 ): GithubOverviewControllerV1 {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID,
@@ -52,6 +52,7 @@ export function useGithubOverview(
   const routingToken = useGithubRoutingToken(input);
   const tabActivity = useTabPanelActivity();
   const { active, activeSignal } = options.activity ?? tabActivity;
+  const includePropertyChoices = options.includePropertyChoices === true;
   const head = input.observation.snapshot.reviewRevision?.headSha;
   const revision = input.observation.sourceUpdatedAtMs;
   const retentionKey = useMemo(() => JSON.stringify([request, routingToken]), [request, routingToken]);
@@ -72,7 +73,7 @@ export function useGithubOverview(
   readNow.current = visibleState;
   const previousRead = useRef<Promise<ExecuteResult | null>>(Promise.resolve(null));
   const readLifetime = useRef<Readonly<{ scope: typeof scope; activeSignal: AbortSignal; signal: AbortSignal }> | null>(null);
-  const readFor = useRef<{ scope: typeof scope; signal: AbortSignal; revision: number | undefined; settled: boolean } | null>(null);
+  const readFor = useRef<{ scope: typeof scope; signal: AbortSignal; revision: number | undefined; settled: boolean; propertyChoices: boolean } | null>(null);
 
   useEffect(() => {
     if (!active || activeSignal.aborted) return undefined;
@@ -101,7 +102,11 @@ export function useGithubOverview(
     const signal = readLifetime.current?.signal;
     if (!settled || settled.head !== head || settled.revision !== revision || !signal || signal.aborted
       || readNow.current.refreshing) return;
-    readFor.current = { scope, signal, revision, settled: true };
+    readFor.current = { scope, signal, revision, settled: true,
+      // A source that cannot supply this optional projection still settles the
+      // requested read; its missing field must not turn into an automatic retry.
+      propertyChoices: settled.state.value?.propertyChoices !== undefined
+        || (readFor.current?.scope === scope && readFor.current.revision === revision && readFor.current.propertyChoices) };
     readNow.current = settled.state;
     setState(settled.state);
   }, [active, activeSignal, head, revision, scope, settled, visibleState.refreshing]);
@@ -132,7 +137,8 @@ export function useGithubOverview(
       await prior;
       if (lifetime.signal.aborted || scopeNow.current !== scope) return null;
       return execute(
-        { v: 1, instance, localRef, routingToken, ...(includeBranchRules ? { includeBranchRules: true } : {}) },
+        { v: 1, instance, localRef, routingToken, ...(includeBranchRules ? { includeBranchRules: true } : {}),
+          ...(includePropertyChoices ? { includePropertyChoices: true } : {}) },
         { signal: lifetime.signal },
       );
     })();
@@ -174,7 +180,7 @@ export function useGithubOverview(
         && !(head !== undefined && admitted.headRevision !== undefined && head !== admitted.headRevision);
     }
     return false;
-  }, [active, activeSignal, execute, head, instance, localRef, retained, revision, routingToken, scope]);
+  }, [active, activeSignal, execute, head, includePropertyChoices, instance, localRef, retained, revision, routingToken, scope]);
   const readRequirements = useCallback(() => refresh(true), [refresh]);
 
   const readWhenActive = options.readWhenActive === true;
@@ -183,11 +189,12 @@ export function useGithubOverview(
     // A newer same-head revision remains demand while the current read is
     // busy. Its settlement clears refreshing and admits only the latest one.
     if (!readWhenActive || !active || retained === null || visibleState.refreshing || signal === undefined || signal.aborted
-      || (readFor.current?.scope === scope && readFor.current.revision === revision)) return;
-    const acquisition = { scope, signal, revision, settled: false };
+      || (readFor.current?.scope === scope && readFor.current.revision === revision
+        && (!includePropertyChoices || readFor.current.propertyChoices))) return;
+    const acquisition = { scope, signal, revision, settled: false, propertyChoices: includePropertyChoices };
     readFor.current = acquisition;
     void refresh().then(() => { if (!signal.aborted) acquisition.settled = true; });
-  }, [active, activeSignal, readWhenActive, refresh, retained, revision, scope, visibleState.refreshing]);
+  }, [active, activeSignal, includePropertyChoices, readWhenActive, refresh, retained, revision, scope, visibleState.refreshing]);
 
   return useMemo(() => ({ ...visibleState,
     ...(retention.kind === 'unavailable' ? { refreshing: false, failure: retention.failure } : {}),

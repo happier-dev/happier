@@ -96,6 +96,8 @@ import {
   type SentryDetailFieldV1,
   type SentryDetailOverviewV1,
 } from './detail/model.js';
+import { SentryIssueAssignment } from './detail/issueAssignment.js';
+import type { SentryAssigneeV1 } from '../detail/assignment.js';
 import {
   useSentryActivityHistory,
   useSentryIssueSummary,
@@ -861,7 +863,7 @@ function OverviewPanel({
           </Row>
         )}
         {/* In a Triage panel the writes are the frame's `actions` panel, beside the header's own actions. */}
-        {story ? null : <SentryIssueWrites input={input} />}
+        {story ? null : <SentryIssueWrites input={input} current={summary.kind === 'ready' ? summary.value.assignee : undefined} />}
         {entries.length > 0
           ? <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />
           : story ? null : (
@@ -926,11 +928,10 @@ function OverviewPanel({
 
 /**
  * The person's native issue writes. Resolve and Archive forever are the source's own Actions,
- * mounted as host controls, offered only where they would change the issue's state. Assign needs
- * a Sentry member or team id and Sentry exposes no member read to this source yet, so it stays an
- * Agent/MCP/CLI write until that read exists rather than becoming a raw id field.
+ * mounted as host controls, offered only where they would change the issue's state. Assignment
+ * consumes the same group's hold and settlement, with project-owned named choices.
  */
-function SentryIssueWrites({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
+function SentryIssueWrites({ input, current }: Readonly<{ input: TriageDetailSurfaceInputV1; current: SentryAssigneeV1 | null | undefined }>): React.ReactElement {
   const request = useTriageDetailRequest(input);
   const presentation = input.observation.snapshot.state.presentation;
   const writes = React.useMemo((): readonly TriageSourceWriteV1[] => {
@@ -948,10 +949,11 @@ function SentryIssueWrites({ input }: Readonly<{ input: TriageDetailSurfaceInput
     };
     return presentation === 'active' ? [resolve, archive] : presentation === 'suppressed' ? [resolve] : [];
   }, [presentation, request]);
-  if (writes.length === 0) return null;
   const webUrl = input.observation.locator.webUrl;
   return <TriageSourceWrites key={input.observation.observedAtMs} writes={writes} sourceName="Sentry"
-    {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} />;
+    {...(webUrl === undefined ? {} : { sourceUrl: webUrl })}>
+      {({ held, settle }) => <SentryIssueAssignment input={input} current={current} held={held} settle={settle} />}
+    </TriageSourceWrites>;
 }
 
 /* ----------------------------------------------------------------- Occurrences */
@@ -1872,7 +1874,7 @@ function SentryDetailBody({
             'stack-trace': panels['stack-trace'],
             occurrences: panels.occurrences,
             release: panels.release,
-            actions: <SentryIssueWrites input={input} />,
+            actions: <SentryIssueWrites input={input} current={summary.kind === 'ready' ? summary.value.assignee : undefined} />,
           }}
         />
       </Screen>

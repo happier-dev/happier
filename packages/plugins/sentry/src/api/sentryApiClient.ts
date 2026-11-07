@@ -35,7 +35,7 @@ import { buildSentryIssueUrl } from './sentryRoutes.js';
 export type SentryIssueUpdateV1 =
   | Readonly<{ status: 'resolved' }>
   | Readonly<{ status: 'ignored'; substatus: 'archived_forever' }>
-  | Readonly<{ assignedTo: `user:${string}` | `team:${string}` }>;
+  | Readonly<{ assignedTo: `user:${string}` | `team:${string}` | null }>;
 
 export type SentryApiResponseV1 = Readonly<{
   status: number;

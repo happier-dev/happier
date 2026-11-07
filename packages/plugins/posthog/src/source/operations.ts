@@ -57,7 +57,9 @@ import {
 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 
 import { fitPosthogDiscoveredEnvironments } from '../connect/configuration.js';
-import type { PosthogNativeOverviewResultV1 } from './detail/nativeOverviewContract.js';
+import { PosthogNativeOverviewInputV1Schema, type PosthogNativeOverviewResultV1 } from './detail/nativeOverviewContract.js';
+import { PosthogAssigneeV1Schema } from './writeContracts.js';
+import { readPosthogAssignmentChoices } from './detail/assignees.js';
 import {
     MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1,
     PosthogConfigurationDirectoryInputV1Schema,
@@ -67,6 +69,7 @@ import type { PosthogFailure } from '../api/errors.js';
 import { errorTrackingIssueAssignPath, errorTrackingIssueCrudPath, resolvePosthogTeamRouteId, organizationProjectsPath, organizationsListPath } from '../api/paths.js';
 import type { PosthogResult } from '../api/client.js';
 import {
+    isForwardDirectoryContinuation,
     parsePosthogDirectoryPage,
     parsePosthogEnvironmentRow,
     parsePosthogOrganizationRow,
@@ -277,31 +280,6 @@ function sameAccount(left: ConnectedAccountRef, right: ConnectedAccountRef): boo
     return left.accountId === right.accountId
         && left.service.pluginId === right.service.pluginId
         && left.service.localId === right.service.localId;
-}
-
-function readDirectoryOffset(url: URL): number | null {
-    const raw = url.searchParams.get('offset');
-    if (raw === null) return 0;
-    if (!/^\d+$/.test(raw)) return null;
-    const offset = Number(raw);
-    return Number.isSafeInteger(offset) ? offset : null;
-}
-
-/** PostHog directory continuations are offset pages and must move that frontier forward. */
-function isForwardDirectoryContinuation(requestedUrl: string, nextUrl: string): boolean {
-    try {
-        const requested = new URL(requestedUrl);
-        const next = new URL(nextUrl);
-        const requestedOffset = readDirectoryOffset(requested);
-        const nextOffset = readDirectoryOffset(next);
-        return requested.origin === next.origin
-            && requested.pathname === next.pathname
-            && requestedOffset !== null
-            && nextOffset !== null
-            && nextOffset > requestedOffset;
-    } catch {
-        return false;
-    }
 }
 
 /** Factory seam for tests or a caller that supplies a real external deadline. */
@@ -1123,6 +1101,7 @@ async function readPosthogSourceEntry(
     input: unknown,
     context: PosthogSourceContext,
     signal: AbortSignal,
+    includeAssignees = false,
 ): Promise<PosthogNativeOverviewResultV1> {
     const parsed = TriageGetInputV1Schema.parse(input);
     const localRef = Object.freeze({
@@ -1170,6 +1149,12 @@ async function readPosthogSourceEntry(
     }
 
     const { snapshot, row } = projectPosthogReadSnapshot(outcome, parsed.localRef, environment);
+    const assignment = includeAssignees
+        ? await readPosthogAssignmentChoices(client, configuration.organizationUuid, { signal })
+        : undefined;
+    const parsedAssignee = PosthogAssigneeV1Schema.safeParse(outcome.crud.assignee);
+    const current = outcome.crud.assignee === null ? { current: null }
+        : parsedAssignee.success ? { current: parsedAssignee.data } : {};
     return {
         observation: buildPosthogPresentObservation({
             snapshot,
@@ -1180,6 +1165,9 @@ async function readPosthogSourceEntry(
             enrichmentFailure: toTriageSourceFailure(outcome.enrichmentFailure),
         }),
         ...posthogSparklineTrend(outcome.queryDetail?.sparkline ?? null, detailWindow),
+        ...(assignment === undefined ? {} : { assignment: assignment.ok
+            ? { kind: 'ready' as const, ...current, choices: [...assignment.value] }
+            : { kind: 'unavailable' as const, ...current, failure: toTriageSourceFailure(assignment.failure) } }),
     };
 }
 
@@ -1277,7 +1265,10 @@ export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, con
 export const readPosthogNativeOverview = async (
     input: unknown,
     context: PosthogSourceContext,
-): Promise<PosthogNativeOverviewResultV1> => await readPosthogSourceEntry(input, context, context.signal);
+): Promise<PosthogNativeOverviewResultV1> => {
+    const { includeAssignees, ...target } = PosthogNativeOverviewInputV1Schema.parse(input);
+    return await readPosthogSourceEntry(target, context, context.signal, includeAssignees === true);
+};
 
 /**
  * Mounted-detail sampled reads inherit the host-stamped caller lifetime.
@@ -1666,6 +1657,7 @@ async function writePosthogIssue(
             if (!current.ok) return { kind: 'uncertain', failure: toTriageSourceFailure(current.failure) };
             const matches = 'status' in change
                 ? current.value.nativeStatus === change.status
+                : change.assignee === null ? current.value.assignee === null
                 : current.value.assignee?.type === change.assignee.type
                     && current.value.assignee.id === change.assignee.id;
             const { snapshot } = projectPosthogReadSnapshot(

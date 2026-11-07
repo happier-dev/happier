@@ -60,6 +60,28 @@ export type PosthogPaginatedEnvelope = Readonly<{
 const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
+function readDirectoryOffset(url: URL): number | null {
+    const raw = url.searchParams.get('offset');
+    if (raw === null) return 0;
+    if (!/^\d+$/.test(raw)) return null;
+    const offset = Number(raw);
+    return Number.isSafeInteger(offset) ? offset : null;
+}
+
+/** The provider's directory next must stay on this route and advance its offset. */
+export function isForwardDirectoryContinuation(requestedUrl: string, nextUrl: string): boolean {
+    try {
+        const requested = new URL(requestedUrl, nextUrl);
+        const next = new URL(nextUrl);
+        const requestedOffset = readDirectoryOffset(requested);
+        const nextOffset = readDirectoryOffset(next);
+        return requested.origin === next.origin && requested.pathname === next.pathname
+            && requestedOffset !== null && nextOffset !== null && nextOffset > requestedOffset;
+    } catch {
+        return false;
+    }
+}
+
 function readUuid(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;

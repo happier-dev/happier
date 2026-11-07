@@ -1,3 +1,5 @@
+import { posthogDetailTabDeclaration } from './ui/detail/tabDeclarations.js';
+import { POSTHOG_ACCOUNT_ACTIONS } from './accountActions.js';
 /**
  * The sole PostHog plugin manifest.
  *
@@ -15,75 +17,18 @@
 
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import {
-    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    TriageSourcesContributionProtocolV1,
-    TriageSourceConnectedAccountInputsV1,
-    TriageTaskWriteResultV1Schema,
-    TriageListScopeUnitsResultV1Schema,
-} from '@happier-dev/triage-protocol/v1';
+import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { runPosthogIssueObserver, resetPosthogIssueHistoryGap } from './source/issueObserver.js';
 
-import { posthogConnectedAccountRuntime } from './connect/account.js';
-import {
-    PosthogConfigurationDirectoryInputV1Schema,
-    PosthogConfigurationDirectoryResultV1Schema,
-} from './connect/configurationContract.js';
-import {
-    POSTHOG_ACTION_IDS,
-    POSTHOG_API_ORIGIN_FIELD_ID,
-    POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-    POSTHOG_DETAIL_ARTIFACT_ID,
-    POSTHOG_DETAIL_FALLBACK_RENDERER_ID,
-    POSTHOG_EVIDENCE_REFERENCE_ID,
-    POSTHOG_SOURCE_DISPLAY_NAME,
-    POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID,
-    POSTHOG_TRIAGE_SETTINGS_GROUP_ID,
-    POSTHOG_TRIAGE_SETTINGS_PAGE_ID,
-    POSTHOG_TRIAGE_SETTINGS_RENDERER_ID,
-    POSTHOG_DETAIL_RENDERER_ID,
-    POSTHOG_NETWORK_HOST_ACCESS_ID,
-    POSTHOG_PERSONAL_API_KEY_FIELD_ID,
-    POSTHOG_PERSONAL_API_KEY_MODE_ID,
-    POSTHOG_PLUGIN_ID,
-    POSTHOG_SOURCE_CONTRIBUTION_ID,
-} from './posthogContracts.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+
+import { posthogConnectedAccountRuntime, posthogPortableAccountRuntime } from './connect/account.js';
+
+import { POSTHOG_ACTION_IDS, POSTHOG_API_ORIGIN_FIELD_ID, POSTHOG_CONNECTED_ACCOUNT_PURPOSE, POSTHOG_DETAIL_ARTIFACT_ID, POSTHOG_DETAIL_FALLBACK_RENDERER_ID, POSTHOG_EVIDENCE_REFERENCE_ID, POSTHOG_SOURCE_DISPLAY_NAME, POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID, POSTHOG_TRIAGE_SETTINGS_GROUP_ID, POSTHOG_TRIAGE_SETTINGS_PAGE_ID, POSTHOG_TRIAGE_SETTINGS_RENDERER_ID, POSTHOG_DETAIL_RENDERER_ID, POSTHOG_NETWORK_HOST_ACCESS_ID, POSTHOG_PERSONAL_API_KEY_FIELD_ID, POSTHOG_PERSONAL_API_KEY_MODE_ID, POSTHOG_PLUGIN_ID, POSTHOG_SOURCE_CONTRIBUTION_ID } from './posthogContracts.js';
 import { POSTHOG_ENTRY_KIND } from './source/map/entrySnapshot.js';
-import { PosthogNativeOverviewResultV1Schema } from './source/detail/nativeOverviewContract.js';
-import { POSTHOG_UI_TRANSLATIONS } from './ui/translations.js';
-import {
-    PosthogIssueActivityInputV1Schema,
-    PosthogIssueActivityResultV1Schema,
-} from './source/detail/issueActivityContract.js';
-import {
-    PosthogSampledEventsInputV1Schema,
-    PosthogSampledEventsResultV1Schema,
-} from './source/detail/issueEventsContract.js';
-import {
-    PosthogCodeVariablesInputV1Schema,
-    PosthogCodeVariablesResultV1Schema,
-} from './source/detail/codeVariablesContract.js';
-import {
-    getPosthogSourceEntry,
-    readPosthogNativeOverview,
-    listPosthogInstances,
-    readPosthogActivity,
-    readPosthogConfigurationDirectory,
-    readPosthogScopeUnits,
-    readPosthogCodeVariablesForIssue,
-    readPosthogSampledEvents,
-    scanPosthogSource,
-    resolvePosthogIssue,
-    suppressPosthogIssue,
-    unsuppressPosthogIssue,
-    assignPosthogIssue,
-} from './source/operations.js';
-import { PosthogIssueAssignInputV1Schema, PosthogIssueWriteInputV1Schema } from './source/writeContracts.js';
-import {
-    resolvePosthogEvidenceReference,
-    searchPosthogEvidenceReferences,
-} from './composer/reference.js';
+
+import { resolvePosthogEvidenceReference, searchPosthogEvidenceReferences } from './composer/reference.js';
 
 export {
     POSTHOG_ACTION_IDS,
@@ -130,7 +75,8 @@ const PERSONAL_API_KEY_FIELD = {
     description: {
         key: 'plugins.posthog.auth.personalApiKey.description',
         fallback: 'A personal API key scoped to error_tracking:read, organization:read,'
-            + ' project:read and activity_log:read. Issue writes additionally need error_tracking:write.',
+            + ' project:read and activity_log:read. The assignee picker additionally needs'
+            + ' organization_member:read; issue writes need error_tracking:write.',
     },
     schema: { type: 'string' as const, minLength: 1 },
     secret: true as const,
@@ -160,13 +106,16 @@ const POSTHOG_SOURCE_DESCRIPTOR = {
         // for each as a panel. Files and Checks come from the linked fix PR;
         // this source's own views follow the shared tabs.
         detailTabs: [
-            { kind: 'shared' as const, id: 'overview' as const },
-            { kind: 'shared' as const, id: 'activity' as const },
-            { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.posthog.ui.tab.stackTrace' },
+            { kind: 'shared' as const, id: 'overview' as const, scrollOwner: posthogDetailTabDeclaration('overview').scrollOwner },
+            { kind: 'shared' as const, id: 'activity' as const, scrollOwner: posthogDetailTabDeclaration('activity').scrollOwner },
+            { kind: 'source' as const, id: 'stack-trace', scrollOwner: posthogDetailTabDeclaration('stack-trace').scrollOwner, title: 'Stack trace', titleKey: 'plugins.posthog.ui.tab.stackTrace' },
             // The row's own counts are these tabs' summaries.
-            { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.posthog.ui.tab.occurrences', summaryFact: 'posthog/occurrences' },
-            { kind: 'source' as const, id: 'affected-sessions', title: 'Affected sessions', titleKey: 'plugins.posthog.ui.tab.affectedSessions', summaryFact: 'posthog/sessions' },
+            { kind: 'source' as const, id: 'occurrences', scrollOwner: posthogDetailTabDeclaration('occurrences').scrollOwner, title: 'Occurrences', titleKey: 'plugins.posthog.ui.tab.occurrences', summaryFact: 'posthog/occurrences' },
+            { kind: 'source' as const, id: 'affected-sessions', scrollOwner: posthogDetailTabDeclaration('affected-sessions').scrollOwner, title: 'Affected sessions', titleKey: 'plugins.posthog.ui.tab.affectedSessions', summaryFact: 'posthog/sessions' },
         ],
+        // Resolve and Suppress are the issue's own actions: the frame places them in its header (its ⋯), not
+        // under the story.
+        detailActions: true as const,
     }],
 };
 
@@ -184,11 +133,6 @@ const POSTHOG_SOURCE_DESCRIPTOR = {
  * `listInstances` is the one read without a binding, and not by omission: its published
  * input carries no account, because discovering them is what the operation does.
  */
-const READ_HOST_ACCESS = [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, POSTHOG_NETWORK_HOST_ACCESS_ID];
-const INSTANCE_ACCOUNT_BINDINGS = [{
-    path: 'instance.binding.account',
-    purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-}];
 
 export const POSTHOG_PLUGIN = definePlugin({
     id: POSTHOG_PLUGIN_ID,
@@ -198,9 +142,19 @@ export const POSTHOG_PLUGIN = definePlugin({
     brand: { iconResourceId: 'brand-icon', monochrome: true },
     resources: {
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+      "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+      "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+      "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+      "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+      "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+      "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+      "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+      "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+      "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+      "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+      "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+      "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
     },
-    engines: { happier: '^0.0.0' },
-    runtime: { apiVersion: 1 },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
     composer: {
         references: {
@@ -212,8 +166,29 @@ export const POSTHOG_PLUGIN = definePlugin({
             }),
         },
     },
+    notifications: {
+        'issue-alerts': { kind: 'plugin', title: 'Issue alerts', eventIds: ['issue-transition'] },
+    },
+    events: {
+        'issue-transition': { declaration: {
+            kind: 'event', title: 'PostHog issue changed', description: 'A watched issue opened, changed, or resolved.',
+            payloadSchema: TriageIssueTransitionV1Schema.jsonSchema,
+            automation: { v: 1, eligible: true, source: {
+                sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+                sourceConfigSchema: TriageIssueEventSourceConfigV1Schema.jsonSchema,
+                setupActionRef: { pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.setupIssueEvent },
+                historyGapResetActionRef: { pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.resetIssueEvent },
+                connectedAccountPurposeBindings: [{ path: 'instance.binding.account', purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE }],
+            } },
+        } },
+    },
+    accountCollections: { [TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1.id]: TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 },
+    backgroundServices: [{ declaration: { id: 'issue-observer', title: 'PostHog issue observer' }, runner: runPosthogIssueObserver }],
     hostAccess: {
         required: [{
+            id: 'issue-checkpoint-storage', capability: 'storage.account',
+            reason: 'Retain issue transition checkpoints for enabled source observers.', scope: { enabled: true },
+        }, {
             id: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
             capability: 'connectedAccounts',
             reason: 'Materialize only the exact selected PostHog Connected Account for PostHog API requests.',
@@ -293,213 +268,38 @@ export const POSTHOG_PLUGIN = definePlugin({
             defaultRank: 10,
             renderer: POSTHOG_TRIAGE_SETTINGS_RENDERER_ID,
         }],
-        translations: withTriageSourceSettingsTranslationsV1([{
-            locale: 'en',
-            messages: {
-                ...POSTHOG_UI_TRANSLATIONS.en,
-                'plugins.posthog.settings.group': 'PostHog',
-                'plugins.posthog.settings.sources': 'PRs & Issues',
-                'plugins.posthog.settings.sources.subtitle':
-                    'Choose which PostHog organizations and projects appear in PRs & Issues.',
-            },
-        }, {
-            locale: 'ru', messages: { ...POSTHOG_UI_TRANSLATIONS.ru, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR и задачи', 'plugins.posthog.settings.sources.subtitle': 'Выберите организации и проекты PostHog, которые будут отображаться в разделе PR и задач.' },
-        }, {
-            locale: 'pl', messages: { ...POSTHOG_UI_TRANSLATIONS.pl, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR-y i zgłoszenia', 'plugins.posthog.settings.sources.subtitle': 'Wybierz organizacje i projekty PostHog wyświetlane w sekcji PR-ów i zgłoszeń.' },
-        }, {
-            locale: 'es', messages: { ...POSTHOG_UI_TRANSLATIONS.es, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR e incidencias', 'plugins.posthog.settings.sources.subtitle': 'Elige qué organizaciones y proyectos de PostHog aparecen en PR e incidencias.' },
-        }, {
-            locale: 'fr', messages: { ...POSTHOG_UI_TRANSLATIONS.fr, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR et tickets', 'plugins.posthog.settings.sources.subtitle': 'Choisis les organisations et projets PostHog affichés dans PR et tickets.' },
-        }, {
-            locale: 'it', messages: { ...POSTHOG_UI_TRANSLATIONS.it, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR e segnalazioni', 'plugins.posthog.settings.sources.subtitle': 'Scegli le organizzazioni e i progetti PostHog da mostrare in PR e segnalazioni.' },
-        }, {
-            locale: 'pt', messages: { ...POSTHOG_UI_TRANSLATIONS.pt, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PRs e problemas', 'plugins.posthog.settings.sources.subtitle': 'Escolha as organizações e os projetos PostHog apresentados em PRs e problemas.' },
-        }, {
-            locale: 'de', messages: { ...POSTHOG_UI_TRANSLATIONS.de, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PRs & Tickets', 'plugins.posthog.settings.sources.subtitle': 'Wähle aus, welche PostHog-Organisationen und -Projekte unter PRs & Tickets angezeigt werden.' },
-        }, {
-            locale: 'ca', messages: { ...POSTHOG_UI_TRANSLATIONS.ca, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR i incidències', 'plugins.posthog.settings.sources.subtitle': 'Tria les organitzacions i els projectes de PostHog que es mostren a PR i incidències.' },
-        }, {
-            locale: 'zh-Hans', messages: { ...POSTHOG_UI_TRANSLATIONS['zh-Hans'], 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR 和问题', 'plugins.posthog.settings.sources.subtitle': '选择要在 PR 和问题中显示的 PostHog 组织和项目。' },
-        }, {
-            locale: 'zh-Hant', messages: { ...POSTHOG_UI_TRANSLATIONS['zh-Hant'], 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR 與問題', 'plugins.posthog.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 PostHog 組織和專案。' },
-        }, {
-            locale: 'ja', messages: { ...POSTHOG_UI_TRANSLATIONS.ja, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR と課題', 'plugins.posthog.settings.sources.subtitle': 'PR と課題に表示する PostHog の組織とプロジェクトを選択します。' },
-        }]),
+        translations: [
+          { locale: "en", resourceId: "i18n-en" },
+          { locale: "ru", resourceId: "i18n-ru" },
+          { locale: "pl", resourceId: "i18n-pl" },
+          { locale: "es", resourceId: "i18n-es" },
+          { locale: "fr", resourceId: "i18n-fr" },
+          { locale: "it", resourceId: "i18n-it" },
+          { locale: "pt", resourceId: "i18n-pt" },
+          { locale: "de", resourceId: "i18n-de" },
+          { locale: "ca", resourceId: "i18n-ca" },
+          { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+          { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+          { locale: "ja", resourceId: "i18n-ja" },
+        ],
     },
     actions: {
-        [POSTHOG_ACTION_IDS.resolve]: {
-            title: 'Resolve PostHog issue',
-            description: 'Resolves one exact PostHog issue and confirms its live CRUD state.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: ['detailsPanel'],
-            dangerLevel: 'writesRemote',
-            confirmation: { title: 'Resolve this PostHog issue?', body: 'Changes this issue to Resolved in PostHog. Requires error_tracking:write.', confirmLabel: 'Resolve' },
-            inputSchema: PosthogIssueWriteInputV1Schema.jsonSchema,
-            resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: resolvePosthogIssue,
+        ...POSTHOG_ACCOUNT_ACTIONS,
+        [POSTHOG_ACTION_IDS.resetIssueEvent]: {
+            title: 'Check PostHog issue baseline', surfaces: ['plugin'], dangerLevel: 'safe',
+            inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+            resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+            run: resetPosthogIssueHistoryGap,
         },
-        [POSTHOG_ACTION_IDS.suppress]: {
-            title: 'Suppress PostHog issue',
-            description: 'Suppresses one exact PostHog issue. PostHog will drop future events for this issue.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: ['detailsPanel'],
-            dangerLevel: 'writesRemote',
-            confirmation: { title: 'Suppress this PostHog issue?', body: 'PostHog will drop future events for this issue. Unsuppress allows future events again but does not recover dropped events. Requires error_tracking:write.', confirmLabel: 'Suppress issue' },
-            inputSchema: PosthogIssueWriteInputV1Schema.jsonSchema,
-            resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: suppressPosthogIssue,
-        },
-        [POSTHOG_ACTION_IDS.unsuppress]: {
-            title: 'Unsuppress PostHog issue',
-            description: 'Returns one exact PostHog issue to Active so PostHog can accept future events again.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: ['detailsPanel'],
-            dangerLevel: 'writesRemote',
-            confirmation: { title: 'Unsuppress this PostHog issue?', body: 'Returns this issue to Active in PostHog and allows future events again. Previously dropped events are not recovered. Requires error_tracking:write.', confirmLabel: 'Unsuppress issue' },
-            inputSchema: PosthogIssueWriteInputV1Schema.jsonSchema,
-            resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: unsuppressPosthogIssue,
-        },
-        [POSTHOG_ACTION_IDS.assign]: {
-            title: 'Assign PostHog issue',
-            description: 'Assigns one exact PostHog issue to the selected native user or role id.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: ['detailsPanel'],
-            dangerLevel: 'writesRemote',
-            confirmation: { title: 'Assign this PostHog issue?', body: 'Changes the assignee in PostHog and may notify that user or role. Requires error_tracking:write.', confirmLabel: 'Assign' },
-            inputSchema: PosthogIssueAssignInputV1Schema.jsonSchema,
-            resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: assignPosthogIssue,
-        },
-        [POSTHOG_ACTION_IDS.listScopeUnits]: {
-            title: 'List PostHog environments',
-            description: 'Lists selectable environments or the retained configured selection.',
-            surfaces: sources.operations.listScopeUnits.declaration.surfaces,
-            dangerLevel: 'safe', placementBindings: [],
-            inputSchema: TriageSourceConnectedAccountInputsV1.listScopeUnits.jsonSchema,
-            resultSchema: TriageListScopeUnitsResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: [{ path: 'draft.binding.account', purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE }],
-            run: readPosthogScopeUnits,
-        },
-        [POSTHOG_ACTION_IDS.configuration]: {
-            title: 'Configure PostHog error issues',
-            description: 'Reads one user-requested page of PostHog organizations or environments.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: [],
-            inputSchema: PosthogConfigurationDirectoryInputV1Schema.jsonSchema,
-            resultSchema: PosthogConfigurationDirectoryResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: [{
-                path: 'binding.account',
-                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-            }],
-            run: readPosthogConfigurationDirectory,
-        },
-        [POSTHOG_ACTION_IDS.listInstances]: {
-            title: 'Discover PostHog organizations',
-            description: 'Lists the PostHog organizations each connected PostHog account can reach.',
-            surfaces: sources.operations.listInstances.declaration.surfaces,
-            // Mounted-only placement. `plugin` stays because the Triage daemon
-            // consumes it and `ui` remains admitted by the shared get contract;
-            // native Overview now consumes its own projection of this same read.
-            // The explicit empty list only
-            // withdraws the Action from global placement discovery — it
-            // disables no invocation.
-            placementBindings: [],
-            dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
-            inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
-            resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            run: listPosthogInstances,
-        },
-        [POSTHOG_ACTION_IDS.scan]: {
-            title: 'Scan PostHog error issues',
-            description: 'Reads one page of the configured PostHog error-issue walk.',
-            surfaces: sources.operations.scan.declaration.surfaces,
-            dangerLevel: sources.operations.scan.declaration.dangerLevel,
-            inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
-            resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: scanPosthogSource,
-        },
-        [POSTHOG_ACTION_IDS.issueEvents]: {
-            title: 'Read sampled PostHog occurrences',
-            description: 'Reads one bounded page of sampled exception events for one PostHog issue.',
-            // Native reads share the configured-account owner across UI and agent
-            // surfaces; the empty list only removes global placement discovery.
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: [],
-            inputSchema: PosthogSampledEventsInputV1Schema.jsonSchema,
-            resultSchema: PosthogSampledEventsResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: readPosthogSampledEvents,
-        },
-        [POSTHOG_ACTION_IDS.issueActivity]: {
-            title: 'Read PostHog issue activity',
-            description: 'Reads one page of the recorded activity for one PostHog issue.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: [],
-            inputSchema: PosthogIssueActivityInputV1Schema.jsonSchema,
-            resultSchema: PosthogIssueActivityResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: readPosthogActivity,
-        },
-        [POSTHOG_ACTION_IDS.codeVariables]: {
-            title: 'Reveal captured PostHog code variables',
-            description: 'Rereads one selected occurrence and returns its captured variables after confirmation.',
-            dangerLevel: 'safe',
-            confirmation: {
-                title: { key: 'plugins.posthog.ui.codeVariables.confirmTitle', fallback: 'Reveal sensitive captured variables?' },
-                body: { key: 'plugins.posthog.ui.codeVariables.confirmDescription', fallback: 'Captured local variables can contain credentials, tokens, personal data, and request bodies.' },
-            },
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: [],
-            inputSchema: PosthogCodeVariablesInputV1Schema.jsonSchema,
-            resultSchema: PosthogCodeVariablesResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: readPosthogCodeVariablesForIssue,
-        },
-        [POSTHOG_ACTION_IDS.nativeOverview]: {
-            title: 'Read a PostHog issue overview',
-            description: 'Reads native overview facts and query-enrichment status through the canonical issue read.',
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
-            placementBindings: [],
-            inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-            resultSchema: PosthogNativeOverviewResultV1Schema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: readPosthogNativeOverview,
-        },
-        [POSTHOG_ACTION_IDS.get]: {
-            title: 'Read a PostHog error issue',
-            description: 'Reads one PostHog error issue authoritatively through its configured environment.',
-            surfaces: sources.operations.get.declaration.surfaces,
-            // Mounted-only placement. `plugin` stays because the Triage daemon
-            // consumes it and `ui` because this source's own mounted surfaces
-            // hold present-user authority; the explicit empty list only
-            // withdraws the Action from global placement discovery — it
-            // disables no invocation.
-            placementBindings: [],
-            dangerLevel: sources.operations.get.declaration.dangerLevel,
-            inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-            resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-            hostAccess: READ_HOST_ACCESS,
-            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-            run: getPosthogSourceEntry,
-        },
+        [POSTHOG_ACTION_IDS.setupIssueEvent]: {
+            title: 'Watch PostHog issues',
+            description: 'Prepares an existing configured source for issue alerts without changing it.',
+            surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
+            inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
+            inputHints: TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1,
+            resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
+            run: createTriageIssueEventSourceSetupV1({ pluginId: POSTHOG_PLUGIN_ID, sourceLocalId: POSTHOG_SOURCE_CONTRIBUTION_ID, displayName: 'PostHog' }),
+        }
     },
     connectedAccountDescriptors: {
         [POSTHOG_CONNECTED_ACCOUNT_PURPOSE]: {
@@ -511,10 +311,17 @@ export const POSTHOG_PLUGIN = definePlugin({
                         + ' organizations, environments and Error Tracking issues.',
                 },
                 authentication: {
+                    account: { artifactId: 'posthog-account-runtime', exportName: 'activate' },
                     defaultModeId: POSTHOG_PERSONAL_API_KEY_MODE_ID,
                     modes: [{
                         id: POSTHOG_PERSONAL_API_KEY_MODE_ID,
                         kind: 'manual',
+                        setup: {
+                            url: 'https://posthog.com/docs/api/personal-api-keys',
+                            checklist: ['Open Personal API keys in the account settings of the PostHog deployment you will connect.', 'Create a personal API key with the scopes needed for the projects and actions you want to use.', 'Copy the key and enter the matching deployment URL here.'],
+                            createKeyTitle: 'Read PostHog API key instructions',
+                        },
+                        credentialOrigin: 'authentication',
                         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
                         title: {
                             key: 'plugins.posthog.auth.personalApiKey.mode',
@@ -533,7 +340,7 @@ export const POSTHOG_PLUGIN = definePlugin({
                     }],
                 },
             },
-            runtime: posthogConnectedAccountRuntime,
+            runtime: posthogConnectedAccountRuntime, accountRuntime: posthogPortableAccountRuntime,
         },
     },
     contributesTo: {
@@ -562,3 +369,4 @@ export const POSTHOG_PLUGIN = definePlugin({
 
 /** The sole PostHog plugin manifest. */
 export const PLUGIN_MANIFEST = POSTHOG_PLUGIN.manifest;
+export const collectionMigrations = POSTHOG_PLUGIN.collectionMigrations;

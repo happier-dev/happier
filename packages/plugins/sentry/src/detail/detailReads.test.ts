@@ -48,6 +48,61 @@ function nextLink(cursor: string, results = 'true', path = EVENTS_PATH): string 
 }
 
 describe('Sentry issue projections', () => {
+  it('reads project members and teams for assignment, using user ids rather than membership ids', async () => {
+    const harness = client(
+      respond({ id: '1234', project: { id: '91', name: 'Checkout' }, assignedTo: { type: 'team', id: '7', name: 'Payments' } }),
+      respond([{ id: 'membership-88', name: 'Ada', user: { id: '88', name: 'Ada' } }, { id: 'pending', user: null }]),
+      respond([{ id: '7', name: 'Payments' }], { link: '<https://us.sentry.io/api/0/projects/42/91/teams/?cursor=0:0:0>; rel="next"; results="false"' }),
+    );
+    const result = await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE, entryId: '1234', projection: 'assignment', nowMs: 0,
+    });
+    expect(result).toMatchObject({ ok: true, value: {
+      kind: 'assignment', projectName: 'Checkout', assignee: { type: 'team', id: '7', name: 'Payments' },
+      candidates: [{ type: 'user', id: '88', name: 'Ada' }, { type: 'team', id: '7', name: 'Payments' }],
+    } });
+    expect(harness.request.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual([
+      '/api/0/organizations/42/issues/1234/', '/api/0/projects/42/91/members/', '/api/0/projects/42/91/teams/',
+    ]);
+  });
+
+  it('retains the known assignee when the people read fails and never calls missing assignment unassigned', async () => {
+    const harness = client(
+      respond({ id: '1234', project: { id: '91', name: 'Checkout' }, assignedTo: null }),
+      respond({}, {}, 403),
+      respond([], { link: '<https://us.sentry.io/api/0/projects/42/91/teams/?cursor=0:0:0>; rel="next"; results="false"' }),
+    );
+    expect(await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE, entryId: '1234', projection: 'assignment', nowMs: 0,
+    })).toMatchObject({ ok: true, value: { kind: 'assignment', assignee: null, failure: { class: 'permission' } } });
+    const unknown = client(respond({ id: '1234', status: 'unresolved' }));
+    const overview = await readSentryIssueProjection(unknown.client, {
+      instance: INSTANCE, entryId: '1234', projection: 'overview', nowMs: 0,
+    });
+    expect(overview).toMatchObject({ ok: true });
+    if (overview.ok) expect(overview.value).not.toHaveProperty('assignee');
+  });
+
+  it('follows the provider team cursor without losing valid options and reports an incomplete directory', async () => {
+    const teamsPath = '/api/0/projects/42/91/teams/';
+    const harness = client(
+      respond({ id: '1234', project: { id: '91', name: 'Checkout' }, assignedTo: null }),
+      respond([]),
+      respond([{ id: '7', name: 'Payments', memberCount: 6 }], {
+        link: `<https://us.sentry.io${teamsPath}?cursor=0:100:0>; rel="next"; results="true"; cursor="0:100:0"`,
+      }),
+      respond([{ id: '8', name: 'Checkout', memberCount: 2 }]),
+    );
+    const result = await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE, entryId: '1234', projection: 'assignment', nowMs: 0,
+    });
+    expect(result).toMatchObject({ ok: true, value: {
+      kind: 'assignment', candidates: [{ id: '7', memberCount: 6 }, { id: '8', memberCount: 2 }],
+      failure: { code: 'sentry-pagination-header-absent' },
+    } });
+    expect(new URL(harness.request.mock.calls[3]?.[0].url).searchParams.get('cursor')).toBe('0:100:0');
+  });
+
   it('reads the three projections from the one public issue request', async () => {
     const body = {
       id: '1234',

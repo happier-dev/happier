@@ -360,6 +360,7 @@ describe('PostHog Triage source operations', () => {
         ['posthog/suppress-issue', {}, { status: 'suppressed' }, '', { status: 'suppressed' }],
         ['posthog/unsuppress-issue', {}, { status: 'active' }, '', { status: 'active' }],
         ['posthog/assign-issue', { assignee: { type: 'user', id: 42 } }, { assignee: { type: 'user', id: 42 } }, 'assign/', { assignee: { type: 'user', id: 42 } }],
+        ['posthog/assign-issue', { assignee: null }, { assignee: null }, 'assign/', { assignee: null }],
     ])('dispatches %s once on the configured Team and confirms CRUD truth', async (action, extra, body, suffix, changed) => {
         const before = action === 'posthog/unsuppress-issue' ? { ...crudIssueRead, status: 'suppressed' } : crudIssueRead;
         const host = context([before, { success: true }, { ...crudIssueRead, ...changed }]);
@@ -434,6 +435,67 @@ describe('PostHog Triage source operations', () => {
             localRef: { kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id },
         }, host.value);
         expect(result).toMatchObject({ kind: 'present', snapshot: { state: { presentation: 'resolved' } } });
+    });
+
+    it('reads named assignment choices only when the mounted assignment section asks for them', async () => {
+        const input = { v: 1, instance: configuredInstance(), localRef: {
+            kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id,
+        } };
+        const roleId = '00000000-0000-4000-8000-000000000042';
+        const host = context([
+            { ...crudIssueRead, assignee: { type: 'user', id: 42 } }, queryIssueDetail,
+            { results: [{ user: { id: 42, first_name: 'Ada', last_name: 'Lovelace', email: 'ada@example.com' } }], next: null },
+            { results: [{ id: roleId, name: 'On call' }], next: null },
+        ]);
+        const result = PosthogNativeOverviewResultV1Schema.parse(await readPosthogNativeOverview({ ...input, includeAssignees: true }, host.value));
+        expect(result).toMatchObject({ assignment: { kind: 'ready', current: { type: 'user', id: 42 }, choices: [
+            { assignee: { type: 'user', id: 42 }, name: 'Ada Lovelace' },
+            { assignee: { type: 'role', id: roleId }, name: 'On call' },
+        ] } });
+        expect(host.request.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual([
+            `/api/projects/4821/error_tracking/issues/${crudIssueRead.id}/`, '/api/projects/4821/error_tracking/query/issue/',
+            '/api/organizations/00000000-0000-4000-8000-0000000000a1/members/',
+            '/api/organizations/00000000-0000-4000-8000-0000000000a1/roles/',
+        ]);
+        const ordinary = context([crudIssueRead, queryIssueDetail]);
+        await readPosthogNativeOverview(input, ordinary.value);
+        expect(ordinary.request).toHaveBeenCalledTimes(2);
+        const forbidden = context([crudIssueRead, queryIssueDetail, {}], [200, 200, 403]);
+        expect(await readPosthogNativeOverview({ ...input, includeAssignees: true }, forbidden.value)).toMatchObject({
+            observation: { kind: 'present' }, assignment: { kind: 'unavailable', failure: { class: 'permission' } },
+        });
+        expect(forbidden.request).toHaveBeenCalledTimes(3);
+    });
+
+    it('follows the provider member pages and preserves an unreadable directory as a failure', async () => {
+        const input = { v: 1, instance: configuredInstance(), localRef: {
+            kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id,
+        }, includeAssignees: true };
+        const path = '/api/organizations/00000000-0000-4000-8000-0000000000a1/members/';
+        const host = context([
+            { ...crudIssueRead, assignee: null }, queryIssueDetail,
+            { results: [{ user: { id: 41, email: 'first@example.com' } }], next: `https://eu.posthog.com${path}?limit=1&offset=1` },
+            { results: [{ user: { id: 42, first_name: 'Ada', last_name: 'Lovelace' } }], next: null },
+            { results: [], next: null },
+        ]);
+        expect(await readPosthogNativeOverview(input, host.value)).toMatchObject({ assignment: {
+            kind: 'ready', current: null, choices: [
+                { name: 'first@example.com', assignee: { type: 'user', id: 41 } },
+                { name: 'Ada Lovelace', assignee: { type: 'user', id: 42 } },
+            ],
+        } });
+        expect(new URL(host.request.mock.calls[3]![0].url).searchParams.get('offset')).toBe('1');
+        const malformed = context([crudIssueRead, queryIssueDetail, { results: [], next: 'https://eu.posthog.com/wrong-page/?offset=1' }]);
+        expect(await readPosthogNativeOverview(input, malformed.value)).toMatchObject({ assignment: { kind: 'unavailable', failure: { code: POSTHOG_FAILURE_CODES.responseUnreadable } } });
+        expect(malformed.request).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not confirm clearing from missing or unreadable assignee metadata', async () => {
+        for (const assignee of [undefined, 'unreadable', { type: 'user', id: null }]) {
+            const host = context([crudIssueRead, { success: true }, { ...crudIssueRead, assignee }]);
+            expect(await write(POSTHOG_ACTION_IDS.assign, host, { assignee: null })).toMatchObject({ kind: 'uncertain' });
+            expect(host.request.mock.calls.filter(([request]) => request.method === 'PATCH')).toHaveLength(1);
+        }
     });
 
     it('keeps a cancelled PostHog dispatch uncertain and does not replay', async () => {

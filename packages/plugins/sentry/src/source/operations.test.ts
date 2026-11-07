@@ -1,4 +1,10 @@
+import { activate as activateAccount } from '../accountRuntime.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetResultV1Schema,
   TriageListInstancesResultV1Schema,
@@ -6,8 +12,10 @@ import {
   TriageScanResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
-import { activate } from '../activate.js';
+import { activate } from '../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { SENTRY_PLUGIN } from '../manifest.js';
+import { SENTRY_ACTION_IDS } from '../sentryContracts.js';
 import { TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import issueDetail from '../fixtures/issueDetail.json' with { type: 'json' };
@@ -17,6 +25,7 @@ import organizationsCloudPage from '../fixtures/organizationsCloudPage.json' wit
 import {
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
   SENTRY_FAILURE_CODES,
+  SENTRY_ORGANIZATIONS_PAGE_SIZE,
   SENTRY_SCOPE_SEPARATOR,
 } from '../sentryContracts.js';
 import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
@@ -123,6 +132,18 @@ function configuredInstance(origin: string) {
 }
 
 describe('Sentry Triage source operations', () => {
+    it('executes the Account scan through registration and HTTP without a Machine', async () => {
+        const h = host({ responses: [onOrigin(issuesListPage1, 'https://us.sentry.io')] });
+        const kit = await createPluginTestkit({ manifest: SENTRY_PLUGIN.manifest,
+            module: { activate: SENTRY_PLUGIN.activate, activateAccount }, services: h.context.services });
+        try {
+            expect(await kit.invokeAction(SENTRY_ACTION_IDS.scan, { v: 1, instance: configuredInstance('https://us.sentry.io'), page: { kind: 'initial', limit: 3 } }))
+                .toMatchObject({ kind: 'page', observations: expect.arrayContaining([
+                    expect.objectContaining({ kind: 'present', snapshot: expect.objectContaining({ title: issuesListPage1.body[0]!.title }) }),
+                ]) });
+            expect(h.request).toHaveBeenCalledTimes(1);
+        } finally { await kit.dispose(); }
+    });
   it('keeps valid project choices with explicit partial evidence and does not render provider refusal as emptiness', async () => {
     const register = vi.fn();
     await activate({ actions: { register }, connectedAccounts: { register: vi.fn() }, composerReferences: { register: vi.fn() } } as never);
@@ -214,17 +235,23 @@ describe('Sentry Triage source operations', () => {
       .toEqual([['9001'], ['9001']]);
   });
 
-  async function write(action: string, harness: ReturnType<typeof host>, extra: object = {}) {
-    const register = vi.fn();
-    await activate({ actions: { register }, connectedAccounts: { register: vi.fn() }, composerReferences: { register: vi.fn() } } as never);
-    const handler = register.mock.calls.find(([id]) => id === action)?.[1];
-    expect(handler, `registered ${action}`).toBeTypeOf('function');
-    const result: unknown = await handler({
-      v: 1, instance: configuredInstance('https://de.sentry.io'),
-      localRef: { kindId: 'error-issue', collisionScope: `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}${ORGANIZATION_ID}`, entryId: issueDetail.body.id },
-      ...extra,
-    }, harness.context);
-    return TriageTaskWriteResultV1Schema.parse(result);
+  async function write(action: string, harness: ReturnType<typeof host>, extra: object = {}, observeCancelledSettlement = false) {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate: SENTRY_PLUGIN.activate, activateAccount }, services: harness.context.services });
+    try {
+      const handler = kit.registration('actions', action);
+      if (!handler) throw new Error(`Missing registered Action ${action}`);
+      const input = {
+        v: 1, instance: configuredInstance('https://de.sentry.io'),
+        localRef: { kindId: 'error-issue', collisionScope: `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}${ORGANIZATION_ID}`, entryId: issueDetail.body.id },
+        ...extra,
+      };
+      // Only cancellation settlement needs observation before the Action RPC discards an aborted reply.
+      return TriageTaskWriteResultV1Schema.parse(await (observeCancelledSettlement
+        ? handler(input, harness.context)
+        : kit.invokeAction(action, input)));
+    } finally {
+      await kit.dispose();
+    }
   }
 
   it.each([
@@ -276,9 +303,27 @@ describe('Sentry Triage source operations', () => {
     expect(harness.request).not.toHaveBeenCalled();
   });
 
+  it('refuses an unavailable selected Account before Sentry mutation HTTP', async () => {
+    const harness = host();
+    harness.materializeListedAccount.mockRejectedValue(new Error('selected account unavailable'));
+    expect(await write('sentry/resolve-issue', harness)).toMatchObject({ kind: 'failed', failure: { class: 'authentication' } });
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
   it('requires exact Sentry assignee identity on confirmation, not its display name', async () => {
     const harness = host({ responses: [issueDetail, { status: 200, headers: {}, body: {} }, { ...issueDetail, body: { ...issueDetail.body, assignedTo: { type: 'user', id: '999', name: 'QA team' } } }] });
     expect(await write('sentry/assign-issue', harness, { assignee: { type: 'team', id: '42' } })).toMatchObject({ kind: 'uncertain' });
+  });
+
+  it.each([
+    { assignedTo: null, expected: 'applied' },
+    { assignedTo: undefined, expected: 'uncertain' },
+  ])('clears assignment through the same exact issue writer and confirms explicit unassignment ($expected)', async ({ assignedTo, expected }) => {
+    const harness = host({ responses: [issueDetail, { status: 200, headers: {}, body: {} }, { ...issueDetail, body: { ...issueDetail.body, assignedTo } }] });
+    expect(await write('sentry/assign-issue', harness, { assignee: null })).toMatchObject({ kind: expected });
+    const dispatched = harness.request.mock.calls[1]?.[0];
+    expect(JSON.parse(new TextDecoder().decode(dispatched?.body))).toEqual({ assignedTo: null });
+    expect(harness.request).toHaveBeenCalledTimes(3);
   });
 
   it('does not confirm Archived forever from a temporary Sentry archive', async () => {
@@ -298,7 +343,7 @@ describe('Sentry Triage source operations', () => {
     harness.context = { ...harness.context, signal: controller.signal };
     harness.request.mockImplementationOnce(async (input) => ({ status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(issueDetail.body)) }));
     harness.request.mockImplementationOnce(async () => { controller.abort(); throw new Error('cancelled after send'); });
-    expect(await write('sentry/resolve-issue', harness)).toMatchObject({ kind: 'uncertain', failure: { code: SENTRY_FAILURE_CODES.cancelled } });
+    expect(await write('sentry/resolve-issue', harness, {}, true)).toMatchObject({ kind: 'uncertain', failure: { code: SENTRY_FAILURE_CODES.cancelled } });
     expect(harness.request.mock.calls).toHaveLength(2);
   });
 
@@ -405,6 +450,56 @@ describe('Sentry Triage source operations', () => {
     if (result.kind !== 'complete') throw new Error('expected complete discovery');
     expect(result.candidates).toHaveLength(33);
   });
+
+  it('keeps a useful discovery prefix with explicit incompleteness inside the public response envelope', async () => {
+    const origin = 'https://de.sentry.io';
+    const recorded = onOrigin(organizationsCloudPage, origin);
+    const organization = (recorded.body as readonly Record<string, unknown>[])[0];
+    if (organization === undefined) throw new Error('expected one recorded organization');
+    // Sentry's Organization model and API serializer both bound name to 64
+    // characters. Derive membership from a real registered draft's bytes,
+    // rather than stretching a native field beyond its provider contract.
+    const label = 'o'.repeat(64);
+    const responses: RecordedResponse[] = [{
+      ...recorded, headers: { link: `<${origin}/api/0/organizations/>; rel="next"; results="false"` },
+      body: [{ ...organization, id: '1', slug: 'organization-1', name: label }],
+    }];
+    const harness = host({ origins: [origin], responses });
+    const kit = await createPluginTestkit({ manifest: SENTRY_PLUGIN.manifest,
+      module: { activate: SENTRY_PLUGIN.activate, activateAccount }, services: harness.context.services });
+    try {
+      const seed = TriageListInstancesResultV1Schema.parse(await kit.invokeAction(SENTRY_ACTION_IDS.listInstances, { v: 1 }));
+      if (seed.kind !== 'complete' || seed.candidates.length !== 1) throw new Error('expected one complete discovery draft');
+      const draftBytes = new TextEncoder().encode(JSON.stringify(seed.candidates[0])).byteLength;
+      const count = Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / draftBytes) + 1;
+      const pages = Math.ceil(count / SENTRY_ORGANIZATIONS_PAGE_SIZE);
+      responses.push(...Array.from({ length: pages }, (_unused, page) => ({
+        ...recorded,
+        headers: { link: `<${origin}/api/0/organizations/?per_page=${SENTRY_ORGANIZATIONS_PAGE_SIZE}&cursor=0:${page + 1}:0>; rel="next"; results="${page + 1 < pages}"; cursor="0:${page + 1}:0"` },
+        body: Array.from({ length: Math.min(SENTRY_ORGANIZATIONS_PAGE_SIZE, count - page * SENTRY_ORGANIZATIONS_PAGE_SIZE) }, (_row, offset) => ({
+          ...organization,
+          id: String(1 + page * SENTRY_ORGANIZATIONS_PAGE_SIZE + offset),
+          slug: `organization-${1 + page * SENTRY_ORGANIZATIONS_PAGE_SIZE + offset}`,
+          name: label,
+        })),
+      })));
+      const result = TriageListInstancesResultV1Schema.parse(await kit.invokeAction(SENTRY_ACTION_IDS.listInstances, { v: 1 }));
+      expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+      expect(result.kind).toBe('incomplete');
+      if (result.kind !== 'incomplete') throw new Error('expected explicit discovery incompleteness');
+      expect(result.candidates.length).toBeGreaterThan(0);
+      expect(result.candidates.length).toBeLessThan(count);
+      expect(result.failure).toMatchObject({
+        class: 'unsupportedContract', code: SENTRY_FAILURE_CODES.instanceListResponseTruncated,
+      });
+      expect(isExternalActionResultWithinResponseEnvelopeLimitV1({
+        ...result, candidates: [...result.candidates, result.candidates[result.candidates.length - 1]],
+      })).toBe(false);
+      expect(harness.request).toHaveBeenCalledTimes(pages + 1);
+    } finally { await kit.dispose(); }
+    // The real 24 MB envelope requires tens of thousands of native-valid rows;
+    // its measured 21.72 s suite exceeded the ordinary 15 s test-case budget.
+  }, 60_000);
 
   it('discovers the US Cloud deployment when that is the projected origin', async () => {
     const harness = host({

@@ -138,7 +138,8 @@ function parseAggregations(value: unknown): PosthogAggregations | null {
 function parseAssignee(value: unknown): PosthogAssignee | null {
     const raw = readObject(value);
     if (raw === null) {
-        return null;
+        // Only the provider's explicit null proves that an issue is unassigned.
+        return value === null ? null : { id: null, type: null };
     }
     const id = raw['id'];
     const identity = typeof id === 'string' || typeof id === 'number' ? id : null;

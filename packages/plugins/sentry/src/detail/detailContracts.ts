@@ -52,6 +52,7 @@ import {
 } from '@happier-dev/triage-sources/runtime';
 import { SENTRY_MAX_DETAIL_PAGE_SIZE } from '../api/sentryRoutes.js';
 import { SENTRY_EVENT_BOUNDS_V1 } from '../privacy/sentryEventProjection.js';
+import { SentryAssigneeV1Schema, SentryIssueAssignmentProjectionV1Schema } from './assignment.js';
 
 import {
   SENTRY_DETAIL_BOUNDS_V1,
@@ -271,13 +272,13 @@ export const SentryProjectedReleaseV1Schema = defineProtocolObject({
 /* -------------------------------------------------------------- read-issue */
 
 /**
- * The one public issue read, with three closed consumer-qualified projections.
+ * The one public issue read, with closed consumer-qualified projections.
  *
- * The arms exist because their lifetimes and privacy tiers differ, not because
- * the request does: `overview` is the Tier-A live summary the detail root holds,
+ * `overview` is the Tier-A live summary the detail root holds,
  * while `tags` and `activity` are Tier-B content that lives only inside the
  * panel that asked for it. Splitting them is what lets the detail root hold no
- * tag value and no activity record at all (`SENTRY.md` §7.3a).
+ * tag value and no activity record at all (`SENTRY.md` §7.3a). `assignment` reads
+ * the issue's current assignee and project directory only for its changes section.
  */
 export const SentryReadIssueInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
@@ -287,12 +288,14 @@ export const SentryReadIssueInputV1Schema = defineProtocolObject({
     defineProtocolLiteral('overview'),
     defineProtocolLiteral('tags'),
     defineProtocolLiteral('activity'),
+    defineProtocolLiteral('assignment'),
   ]),
 }, { policy: 'closed' });
 export type SentryReadIssueInputV1 = ReturnType<typeof SentryReadIssueInputV1Schema.parse>;
 
 export const SentryIssueOverviewProjectionV1Schema = defineProtocolObject({
   kind: defineProtocolLiteral('overview'),
+  assignee: defineProtocolUnion([SentryAssigneeV1Schema, defineProtocolLiteral(null)]).optional(),
   /** Sentry's own current word for this issue's state, when it stated one. */
   nativeStateLabel: LabelSchema.optional(),
   statePresentation: defineProtocolUnion([
@@ -352,6 +355,7 @@ const SentryUnavailableSchema = defineProtocolObject({
 }, { policy: 'closed' });
 
 export const SentryReadIssueResultV1Schema = defineProtocolUnion([
+  SentryIssueAssignmentProjectionV1Schema,
   SentryIssueOverviewProjectionV1Schema,
   SentryIssueTagsProjectionV1Schema,
   SentryIssueActivityProjectionV1Schema,

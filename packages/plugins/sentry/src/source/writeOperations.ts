@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { SentrySourceContext } from '../api/sentryApiClient.js';
 import {
   TriageTaskWriteResultV1Schema,
   type TriageTaskWriteResultV1,
@@ -21,7 +21,7 @@ type Target = ReturnType<typeof SentryIssueWriteInputV1Schema.parse>;
 async function writeSentryIssue(
   target: Target,
   update: SentryIssueUpdateV1,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<TriageTaskWriteResultV1> {
   const admitted = admitSentryEntryInvocation({
     localInstanceKey: target.instance.localInstanceKey,
@@ -44,6 +44,7 @@ async function writeSentryIssue(
     'status' in update
       ? current.nativeStatus === update.status
         && (update.status !== 'ignored' || current.nativeSubstatus === update.substatus)
+      : update.assignedTo === null ? current.assignedTo === null
       : current.assignedTo !== null && current.assignedTo !== undefined
         && `${current.assignedTo.type}:${current.assignedTo.id}` === update.assignedTo
   );
@@ -74,15 +75,15 @@ async function writeSentryIssue(
   return { kind: 'failed', failure: toTriageFailure(failure) };
 }
 
-export async function resolveSentryIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function resolveSentryIssue(input: unknown, context: SentrySourceContext): Promise<TriageTaskWriteResultV1> {
   return writeSentryIssue(SentryIssueWriteInputV1Schema.parse(input), { status: 'resolved' }, context);
 }
 
-export async function archiveSentryIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function archiveSentryIssue(input: unknown, context: SentrySourceContext): Promise<TriageTaskWriteResultV1> {
   return writeSentryIssue(SentryIssueWriteInputV1Schema.parse(input), { status: 'ignored', substatus: 'archived_forever' }, context);
 }
 
-export async function assignSentryIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function assignSentryIssue(input: unknown, context: SentrySourceContext): Promise<TriageTaskWriteResultV1> {
   const { assignee, ...target } = SentryIssueAssignInputV1Schema.parse(input);
-  return writeSentryIssue(target, { assignedTo: `${assignee.type}:${assignee.id}` }, context);
+  return writeSentryIssue(target, { assignedTo: assignee === null ? null : `${assignee.type}:${assignee.id}` }, context);
 }

@@ -39,7 +39,8 @@ export function GithubReadFailure(props: Readonly<{
     <ErrorState title={props.title} titleKey={props.titleKey}
       description={describeTriageSourceFailureV1(props.failures[0] ?? null,
         text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
-      {...(props.failures.some(failure => failure?.retryable === true) && props.refresh !== undefined ? {
+      {...(props.failures.some(failure => failure !== null
+        && (failure.retryable ?? failure.class === 'transient')) && props.refresh !== undefined ? {
         onRetry: props.refresh, retryLabel: text('forgeCi.state.retry', 'Retry'),
       } : {})}
     />

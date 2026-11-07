@@ -27,12 +27,12 @@ import { useTriagePostMutationCompletion } from './postMutation.js';
 /**
  * A person's native source writes in a source detail panel (Sentry resolve, a Linear comment, …).
  *
- * Every write is the source's own declared Action, mounted through the host-rendered
- * `Action.Control`: the host draws the button, receives the physical press and runs the Action as
- * the present user under its declared confirmation and approval defaults. This file only prepares
- * the current input and reads the settlement back. It is not a second executor, it asks nothing
- * a confirmation already asks, and it never replays: an outcome that may already have reached the
- * provider withholds every write in the group until the entry is read again.
+ * Every write is the source's own declared Action. Buttons use the host-rendered `Action.Control`;
+ * property controls use the public Action hook and return its execution to this same group.
+ * The host runs each Action as the present user under its declared confirmation and approval
+ * policy. This file prepares button inputs and projects every settlement once. It never replays:
+ * an outcome that may already have reached the provider withholds every write in the group until
+ * the entry is read again.
  */
 
 /** What a settled write means to the person who pressed it. */
@@ -143,6 +143,7 @@ export function TriageSourceWrites({
   sourceName,
   sourceUrl,
   onSettled,
+  children,
 }: Readonly<{
   writes: readonly TriageSourceWriteV1[];
   /** The provider's name, as the outcome line names it ("Sentry"). */
@@ -150,6 +151,13 @@ export function TriageSourceWrites({
   /** Where to check an uncertain outcome. */
   sourceUrl?: string;
   onSettled?: (id: string, settlement: TriageSourceWriteSettlementV1) => void;
+  /** Property controls share this group's settlement, notice and uncertain hold.
+   * `settle` reconciles the aggregate once; children only refresh source-native facts.
+   */
+  children?: (group: Readonly<{
+    held: boolean;
+    settle: (id: string, execution: PluginUiActionControlExecution) => TriageSourceWriteSettlementV1 | null;
+  }>) => React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
@@ -162,6 +170,23 @@ export function TriageSourceWrites({
     latest.current = { writes, onSettled, completePostMutation };
   });
 
+  const settle = React.useCallback((id: string, execution: PluginUiActionControlExecution) => {
+    const settlement = projectTriageSourceWriteSettlementV1(
+      execution,
+      latest.current.writes.find((write) => write.id === id)?.readResult,
+    );
+    if (settlement === null) return null;
+    if (settlement.kind === 'uncertain') {
+      heldRef.current = true;
+      setHeld(true);
+    }
+    setLast({ id, settlement });
+    latest.current.onSettled?.(id, settlement);
+    if (mayHaveChangedProvider(settlement))
+      void latest.current.completePostMutation().catch(() => undefined);
+    return settlement;
+  }, []);
+
   const controllers = React.useMemo(() => {
     const byId = new Map<string, PluginUiActionControlController>();
     for (const { id } of writes) {
@@ -173,25 +198,13 @@ export function TriageSourceWrites({
           return heldRef.current || input === null ? null : { input };
         },
         onSettled: (execution) => {
-          const settlement = projectTriageSourceWriteSettlementV1(
-            execution,
-            latest.current.writes.find((write) => write.id === id)?.readResult,
-          );
-          if (settlement === null) return;
-          if (settlement.kind === 'uncertain') {
-            heldRef.current = true;
-            setHeld(true);
-          }
-          setLast({ id, settlement });
-          latest.current.onSettled?.(id, settlement);
-          if (mayHaveChangedProvider(settlement))
-            void latest.current.completePostMutation().catch(() => undefined);
+          settle(id, execution);
         },
       });
     }
     return byId;
     // A controller is per write id; its input is read at preparation, never captured.
-  }, [writes.map((write) => write.id).join('\u001f')]);
+  }, [writes.map((write) => write.id).join('\u001f'), settle]);
 
   const values = { source: sourceName };
   let notice: React.ReactNode = null;
@@ -292,6 +305,7 @@ export function TriageSourceWrites({
 
   return (
     <>
+      {children?.({ held, settle })}
       {writes.map((write) => (
         <Action.Control
           key={write.id}

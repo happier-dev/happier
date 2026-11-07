@@ -42,6 +42,7 @@ import type {
   SentryProjectedTagValueV1,
 } from '../../detail/detailProjection.js';
 import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../../sentryContracts.js';
+import type { SentryAssigneeV1 } from '../../detail/assignment.js';
 
 import {
   sentryPagedInitialState,
@@ -76,6 +77,7 @@ function readIssueResult(result: unknown) {
 /* -------------------------------------------------------- issue summary */
 
 export type SentryIssueSummaryV1 = Readonly<{
+  assignee?: SentryAssigneeV1 | null;
   nativeStateLabel?: string;
   statePresentation: 'active' | 'resolved' | 'suppressed' | 'closed' | 'unknown';
   eventCount?: string;

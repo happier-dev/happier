@@ -123,6 +123,7 @@ export type PosthogDetailReadV1 =
 export type PosthogDetailLiveReadV1 =
     | Readonly<{ kind: 'pending' }>
     | Readonly<{ kind: 'settled'; observation: TriageSourceObservationV1;
+        assignment?: PosthogNativeOverviewResultV1['assignment'];
         severity?: PosthogNativeOverviewResultV1['severity']; enrichmentFailure?: TriageSourceFailureV1;
         trend?: PosthogNativeOverviewResultV1['trend'] }>
     | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>;

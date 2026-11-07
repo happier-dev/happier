@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -14,6 +14,8 @@ import { Text } from './Text.js';
 import { Badge } from './Foundation.js';
 import type { HappierMarkColor } from '../presentation/semantics.js';
 import { usePropertyCommit } from './propertyCommit.js';
+import { isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
+import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 
 /** One choice a property can take: a stable id the author maps back to its value, and the words people read. */
 export type PropertyChoice = Readonly<{
@@ -63,12 +65,16 @@ export type PropertyEditor =
       kind: 'choice';
       value: string | null;
       choices: readonly PropertyChoice[];
+      /** Find choices by their name or supporting identity. */
+      searchable?: boolean;
       onCommit(next: string | null): unknown;
     }>
   | Readonly<{
       kind: 'choices';
       value: readonly string[];
       choices: readonly PropertyChoice[];
+      /** Find choices by their name or supporting identity. */
+      searchable?: boolean;
       onCommit(next: readonly string[]): unknown;
     }>;
 
@@ -91,6 +97,8 @@ export type PropertyListItem = Readonly<{
   editor?: PropertyEditor;
   /** Whether the value can be set back to "not set". Defaults to true. */
   clearable?: boolean;
+  /** The unset choice's name, such as "Unassigned". Defaults to "Clear". */
+  clearLabel?: string;
   /** This property's change is being written; its control is held. */
   busy?: boolean;
 }>;
@@ -130,8 +138,14 @@ function validCalendarDay(text: string): boolean {
  */
 export function PropertyList(props: PropertyListProps): ReactElement {
   const theme = usePluginTheme();
+  const [stacked, setStacked] = useState(false);
+  const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+    if (width !== null) setStacked(isHappierPageRowNarrow(width));
+  }, []);
   return (
     <View
+      onLayout={onLayout}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
       style={{ gap: theme.spacing.xsmall }}
@@ -145,13 +159,13 @@ export function PropertyList(props: PropertyListProps): ReactElement {
               : `${props.testID}.${item.id}`
           }
           style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.medium,
+            flexDirection: stacked ? 'column' : 'row',
+            alignItems: stacked ? 'stretch' : 'center',
+            gap: stacked ? theme.spacing.xsmall : theme.spacing.medium,
             minHeight: theme.spacing.xlarge + theme.spacing.small,
           }}
         >
-          <View style={{ width: PROPERTY_LABEL_WIDTH_PX, flexShrink: 0 }}>
+          <View style={{ ...(stacked ? {} : { width: PROPERTY_LABEL_WIDTH_PX }), flexShrink: 0 }}>
             <Text
               variant="meta"
               tone="secondary"
@@ -159,7 +173,7 @@ export function PropertyList(props: PropertyListProps): ReactElement {
               numberOfLines={1}
             />
           </View>
-          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall }}>
+          <View style={{ ...(stacked ? {} : { flex: 1 }), minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall }}>
             {item.value === null || item.valueLeading === undefined ? null : (
               // Decoration: the value's words already name it, so the mark is not announced a second time.
               <View aria-hidden importantForAccessibility="no-hide-descendants">{item.valueLeading}</View>
@@ -241,6 +255,7 @@ function PropertyChoiceMenu(
 ): ReactElement {
   const translate = usePluginTranslation();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const write = usePropertyCommit();
   const { editor, item } = props;
   const multiple = editor.kind === 'choices';
@@ -266,7 +281,7 @@ function PropertyChoiceMenu(
       ? [
           {
             id: CLEAR_ID,
-            label: translate('happier.plugin-ui.propertyList.clear', 'Clear'),
+            label: item.clearLabel ?? translate('happier.plugin-ui.propertyList.clear', 'Clear'),
           },
         ]
       : []),
@@ -274,13 +289,18 @@ function PropertyChoiceMenu(
   return (
     <Stack gap="small"><Menu
       open={open && !props.disabled}
-      onOpenChange={(next) => setOpen(next && !props.disabled && !write.busy)}
+      onOpenChange={(next) => {
+        if (next && (props.disabled || write.busy)) return;
+        setQuery('');
+        setOpen(next);
+      }}
       disabled={props.disabled || write.busy}
       trigger={props.shown}
       triggerTextTone={props.toneOfValue}
       triggerAccessibilityLabel={props.triggerAccessibilityLabel}
       sheet={{ title: item.label }}
       items={items}
+      {...(editor.searchable === true ? { search: { value: query, onValueChange: setQuery } } : {})}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
       {...(multiple
         ? {}

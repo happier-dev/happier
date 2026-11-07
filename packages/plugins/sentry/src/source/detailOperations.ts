@@ -17,7 +17,7 @@
  * given the one that is true.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { SentrySourceContext } from '../api/sentryApiClient.js';
 import {
   createBoundedInvocation,
   type CursorCycleWalkV1,
@@ -71,6 +71,11 @@ function eventResult(projection: SentryEventProjectionV1): SentryEventActionResu
 function fitSentryReadIssueResult(
   value: Exclude<SentryReadIssueResultV1, { kind: 'unavailable' }>,
 ): SentryReadIssueResultV1 {
+  if (value.kind === 'assignment') {
+    return fitActionResultSequenceV1(value.candidates, (candidates, omittedCount) => ({
+      ...value, candidates: [...candidates], omittedCandidateCount: value.omittedCandidateCount + omittedCount,
+    })).result;
+  }
   if (value.kind === 'tags') {
     return fitActionResultSequenceV1(value.tags, (tags, omittedCount) => Object.freeze({
       ...value,
@@ -296,13 +301,14 @@ function projectWalkPosition(
 /**
  * One public issue read, projected to exactly the arm the caller named.
  *
- * The arms differ in lifetime and privacy tier, not in the request: `overview`
+ * The arms differ in lifetime and privacy tier: `overview`
  * is the Tier-A summary the detail root holds, while `tags` and `activity` are
- * Tier-B content that exists only inside the panel that asked for it.
+ * Tier-B content that exists only inside the panel that asked for it. Assignment
+ * also reads the issue's project members and teams for the consumed changes section.
  */
 export async function readSentryIssue(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<SentryReadIssueResultV1> {
   const parsed = SentryReadIssueInputV1Schema.parse(input);
 
@@ -346,7 +352,7 @@ export async function readSentryIssue(
 /** One bounded page of the retained events for one issue. */
 export async function listSentryIssueEvents(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<SentryIssueEventsResultV1> {
   const parsed = SentryIssueEventsInputV1Schema.parse(input);
 
@@ -419,7 +425,7 @@ export async function listSentryIssueEvents(
 /** One bounded page of the value distribution of a single tag key. */
 export async function listSentryTagValues(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<SentryTagValuesResultV1> {
   const parsed = SentryTagValuesInputV1Schema.parse(input);
 
@@ -498,7 +504,7 @@ export async function listSentryTagValues(
  */
 export async function readSentryEvent(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<SentryReadEventResultV1> {
   const parsed = SentryReadEventInputV1Schema.parse(input);
 

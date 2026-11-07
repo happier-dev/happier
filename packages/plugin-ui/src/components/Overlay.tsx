@@ -14,12 +14,14 @@ import { HappierBadge } from '../presentation/content/Foundation.js';
 import {
   HAPPIER_MENU_ROW_METRICS,
   HAPPIER_MENU_ROW_TEXT,
+  matchesHappierMenuQuery,
   resolveHappierMenuContent,
   resolveHappierMenuRadioGroups,
   useHappierMenuInteraction,
   type HappierMenuEntry,
 } from '../presentation/interaction/Menu.js';
-import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierMarkColor, type HappierMarkColor, type HappierTextVariant, type HappierTone } from '../presentation/semantics.js';
+import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../presentation/interaction/pressFeedback.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
 import { settleHappierRaisedEdge } from '../presentation/layout/raisedEdge.js';
@@ -29,6 +31,7 @@ import {
   HappierFieldBoxTrigger,
   resolveHappierFieldBoxLabel,
 } from '../presentation/form/FieldBox.js';
+import { HappierTextField } from '../presentation/form/Fields.js';
 import { resolveHappierUiPalette, useOptionalHappierUiPalette, useOptionalHappierUiTypography } from '../environment/context.js';
 import { resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { resolveHappierIconSize } from '../presentation/content/Icon.js';
@@ -41,7 +44,7 @@ import { Surface } from './Surface.js';
 import type { HappierFloatingRole } from '../presentation/layout/Surface.js';
 import { SURFACE_PADDING_BY_SIZE } from './surfacePadding.js';
 import { HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL } from '../presentation/layout/pageChrome.js';
-import { usePluginTheme } from './PluginUiProvider.js';
+import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 
 export type PopoverProps = Readonly<{
   open: boolean;
@@ -71,6 +74,15 @@ export type PopoverProps = Readonly<{
    * inside this same owned trigger.
    */
   triggerAppearance?: 'text' | 'control' | 'primary' | 'well' | 'status' | 'composerStatus';
+  /** A primary trigger's button size; the default is the page's. */
+  triggerSize?: 'normal' | 'small';
+  /** The side a primary trigger shares with its Button in a split button (Fix | ⌄). */
+  triggerJoinedEdge?: 'start' | 'end';
+  /**
+   * `text` only: what the trigger shows when its words alone don't show the value (a property's label chips).
+   * `trigger` and `triggerAccessibilityLabel` still name it.
+   */
+  triggerContent?: ReactNode;
   /** `composerStatus` only: the badge's existing semantic tone and emphasis. */
   triggerComposerStatus?: Pick<ComposerStatusBadgeProps, 'tone' | 'emphasis'>;
   /**
@@ -181,6 +193,8 @@ function PopoverPresentation({
   triggerTextVariant = 'meta',
   triggerTextTone = 'neutral',
   triggerAppearance = 'text',
+  triggerSize = 'normal',
+  triggerJoinedEdge,
   triggerComposerStatus,
   triggerDisclosure = false,
   triggerIcon,
@@ -188,6 +202,7 @@ function PopoverPresentation({
   triggerAccessibilityLabel,
   triggerDetail,
   triggerMarks,
+  triggerContent,
   contentAccessibilityLabel: requestedContentAccessibilityLabel,
   floatingRole,
   children,
@@ -229,7 +244,7 @@ function PopoverPresentation({
   const well = iconOnly && triggerAppearance === 'well';
   // A labelled trigger is a Button's face, glyph and all: the view's primary, or the small secondary
   // of a toolbar's control row. Both hooks run on every render, whichever appearance draws.
-  const primaryFace = useButtonFace('primary', 'normal', disabled === true);
+  const primaryFace = useButtonFace('primary', triggerSize, disabled === true, triggerJoinedEdge);
   const controlFace = useButtonFace('secondary', 'small', disabled === true);
   const statusFace = useButtonFace('plain', 'small', disabled === true);
   const statusTrigger = !fieldTrigger && !iconOnly && triggerAppearance === 'status';
@@ -249,7 +264,7 @@ function PopoverPresentation({
   const isMenuPresentation = presentation !== 'popover';
   const shouldAutoFocusOnOpen = hasContent || autoFocusOnOpen;
   const content = useCallback((controls: PluginUiPopoverContentControls) => {
-    const renderedChildren = renderContent ? renderContent(controls) : children;
+    const renderedChildren = renderContent ? renderContent({ ...controls, anchorRef }) : children;
     if (renderedChildren === undefined || renderedChildren === null) return null;
     // The host's phone sheet is the surface: it titles, scrolls and pins the footer itself.
     if (controls.presentation === 'sheet') {
@@ -388,7 +403,7 @@ function PopoverPresentation({
             : triggerIcon === undefined ? {} : {
               icon: <PluginUiIconGlyph name={triggerIcon} size={resolveHappierIconSize('small')} color={buttonFace.foreground} />,
             }),
-          children: trigger,
+          children: triggerContent ?? trigger,
         }) : triggerDisclosure && !iconOnly ? (
           <View style={disclosureTriggerStyle}>
             <HappierText accessible={false} variant={triggerTextVariant} tone={triggerTextTone} numberOfLines={1}>
@@ -396,7 +411,7 @@ function PopoverPresentation({
             </HappierText>
             <HappierFieldBoxChevron open={open} color={theme.colors.secondaryText} />
           </View>
-        ) : (
+        ) : triggerContent !== undefined ? triggerContent : (
           <HappierText accessible={false} variant={triggerTextVariant} tone={triggerTextTone} numberOfLines={1}>
             {trigger}
           </HappierText>
@@ -433,6 +448,10 @@ type MenuItemBase = Readonly<{
   destructive?: boolean;
   /** Identity glyph owned by the existing public icon catalog. */
   icon?: IconName;
+  /** A task status's own glyph (`TaskStatusGlyph`) in place of `icon`: a status menu names each state by its mark. */
+  taskStatus?: TaskStatusCategory;
+  /** A colour this item names (a label colour menu), drawn as its swatch in place of `icon`. */
+  swatch?: HappierMarkColor;
   /** Supporting identity or consequence, kept separate from the action label. */
   subtitle?: string;
   disabled?: boolean;
@@ -519,7 +538,9 @@ export type MenuProps = Omit<PopoverProps, 'children' | 'floatingRole'> & MenuCo
   radioGroups?: readonly MenuRadioGroup[];
   /** Draws each named group's heading above its rows (a Filters menu of labelled checkbox groups). */
   showGroupLabels?: boolean;
-  onSelect(id: string): void;
+  /** A controlled query that finds rows by label and supporting text; absent menus have no search field. */
+  search?: Readonly<{ value: string; onValueChange(value: string): void }>;
+  onSelect(id: string, selection?: Pick<PluginUiPopoverContentControls, 'anchorRef'>): void;
 }>;
 
 type MenuPresentationKind = 'menu' | 'dropdown' | 'context';
@@ -533,6 +554,8 @@ type MenuRowsProps = Readonly<{
   triggerAccessibilityLabel: string;
   controls: PluginUiPopoverContentControls;
   initialFocusRef: MutableRefObject<View | null>;
+  search?: MenuProps['search'];
+  testID?: string;
   /** Chooser sections have visible headings as well as their semantic group names. */
   showGroupLabels?: boolean;
   /**
@@ -551,19 +574,35 @@ function MenuRows({
   triggerAccessibilityLabel,
   controls,
   initialFocusRef,
+  search,
+  testID,
   showGroupLabels = false,
   restingHighlight = true,
 }: MenuRowsProps): ReactElement {
   const theme = usePluginTheme();
-  const content = useMemo(
+  const translate = usePluginTranslation();
+  const sourceContent = useMemo(
     () => resolveHappierMenuContent({ items: ungroupedItems, groups }),
     [groups, ungroupedItems],
   );
-  const { items } = content;
   const resolvedRadioGroups = useMemo(
-    () => resolveHappierMenuRadioGroups({ items, radioGroups }),
-    [items, radioGroups],
+    () => resolveHappierMenuRadioGroups({ items: sourceContent.items, radioGroups }),
+    [sourceContent.items, radioGroups],
   );
+  const query = search?.value;
+  const content = useMemo(() => {
+    if (query === undefined || query.trim() === '') return sourceContent;
+    const matches = (item: MenuItem) => matchesHappierMenuQuery({
+      label: item.label,
+      ...(item.subtitle === undefined ? {} : { description: item.subtitle }),
+      query,
+    });
+    return resolveHappierMenuContent({
+      items: ungroupedItems.filter(matches),
+      groups: groups.map(group => ({ ...group, items: group.items.filter(matches) })).filter(group => group.items.length > 0),
+    });
+  }, [groups, query, sourceContent, ungroupedItems]);
+  const { items } = content;
   const ungroupedRenderEntries = useMemo(
     () => createMenuRenderEntries(content.ungroupedEntries, resolvedRadioGroups),
     [content.ungroupedEntries, resolvedRadioGroups],
@@ -608,8 +647,8 @@ function MenuRows({
   const registerItemRef = useCallback((id: string, node: View | null) => {
     if (node) itemRefs.current.set(id, node);
     else itemRefs.current.delete(id);
-    if (id === activeItemId) initialFocusRef.current = node;
-  }, [activeItemId, initialFocusRef]);
+    if (search === undefined && id === activeItemId) initialFocusRef.current = node;
+  }, [activeItemId, initialFocusRef, search]);
   // The one menu row type (`HAPPIER_MENU_ROW_TEXT`), in the host's face, as core's own menus draw it.
   const typography = useOptionalHappierUiTypography();
   const labelTextStyle = useMemo(() => resolveHappierTextStepStyle(HAPPIER_MENU_ROW_TEXT.label, typography), [typography]);
@@ -667,7 +706,13 @@ function MenuRows({
           opacity: state.disabled ? 0.45 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         })}
       >
-        {item.icon ? <Icon name={item.icon} size="small" tone={item.destructive ? 'danger' : 'secondary'} /> : null}
+        {item.taskStatus !== undefined ? <TaskStatusGlyph category={item.taskStatus} />
+          : item.swatch !== undefined ? (
+            <View style={{ width: resolveHappierIconSize('small'), alignItems: 'center' }}>
+              <HappierStatusDot color={resolveHappierMarkColor(theme, item.swatch)} />
+            </View>
+          )
+          : item.icon ? <Icon name={item.icon} size="small" tone={item.destructive ? 'danger' : 'secondary'} /> : null}
         <View style={{ flex: 1, flexShrink: 1 }}>
           <HappierText tone={item.destructive ? 'danger' : 'neutral'} style={labelTextStyle}>{item.label}</HappierText>
           {item.subtitle ? <HappierText tone="secondary" style={subtitleTextStyle}>{item.subtitle}</HappierText> : null}
@@ -690,12 +735,15 @@ function MenuRows({
     )
     : renderItem(entry.entry));
 
-  return (
+  const menu = (
     <View
       role="menu"
       accessibilityRole="menu"
       accessibilityLabel={triggerAccessibilityLabel}
     >
+      {search !== undefined && items.length === 0 ? (
+        <HappierText tone="secondary">{translate('happier.plugin-ui.select.noMatches', 'No matches')}</HappierText>
+      ) : null}
       {renderEntries(ungroupedRenderEntries)}
       {content.groups.map((group) => (
         <View
@@ -711,6 +759,26 @@ function MenuRows({
         </View>
       ))}
     </View>
+  );
+  if (search === undefined) return menu;
+  const searchLabel = translate('happier.plugin-ui.select.search', 'Search');
+  return (
+    <HappierStack gap={theme.spacing.small}>
+      <HappierTextField
+        label={searchLabel}
+        placeholder={searchLabel}
+        value={search.value}
+        onChangeText={search.onValueChange}
+        appearance="search"
+        autoCapitalize="none"
+        autoCorrect={false}
+        theme={theme}
+        controlRef={(node) => { initialFocusRef.current = node as View | null; }}
+        onEscape={() => { controls.requestClose('escape'); return true; }}
+        {...(testID === undefined ? {} : { testID: `${testID}.search` })}
+      />
+      {menu}
+    </HappierStack>
   );
 }
 
@@ -729,6 +797,7 @@ function MenuPresentation({
   groups = [],
   radioGroups = [],
   showGroupLabels = false,
+  search,
   onSelect,
   onOpenChange,
   kind,
@@ -758,7 +827,9 @@ function MenuPresentation({
           ungroupedItems={ungroupedItems}
           groups={groups}
           radioGroups={radioGroups}
-          onSelect={onSelect}
+          {...(search === undefined ? {} : { search })}
+          {...(popover.testID === undefined ? {} : { testID: popover.testID })}
+          onSelect={id => onSelect(id, { anchorRef: controls.anchorRef })}
           open={popover.open}
           triggerAccessibilityLabel={popover.triggerAccessibilityLabel}
           // A sheet of choices applies each one where it is touched: only Escape (or its own footer) closes it.
