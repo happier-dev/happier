@@ -21,6 +21,31 @@ export function isPresentUserHostInvocation(
   );
 }
 
+/**
+ * The present person's own Account app press for exactly this Action, admitted
+ * once by Home and relayed to its executor. Session, Workflow, terminal and
+ * public-API origins never qualify; the binding is read, not re-decided.
+ */
+export function isHomeAdmittedPresentUserHostInvocation(
+  ctx: ActionExecutorContext,
+  actionId: ActionId,
+): boolean {
+  const binding = ctx.externalActionExecutionAuthorization?.binding;
+  return (
+    !!binding &&
+    'authentication' in binding &&
+    binding.authentication.kind === 'account' &&
+    binding.actionId === actionId &&
+    !binding.sessionActionOrigin &&
+    !binding.sessionActionSource &&
+    !binding.workflowActionOrigin &&
+    isPresentUserHostInvocation({
+      ...ctx,
+      externalActionExecutionAuthorization: undefined,
+    })
+  );
+}
+
 /** The sole producer of invocation authority from verified credential provenance. */
 export function resolveInvocationAuthority(
   input: Readonly<{

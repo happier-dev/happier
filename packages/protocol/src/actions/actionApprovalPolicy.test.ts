@@ -2859,6 +2859,35 @@ describe('isApprovalRequiredByActionsSettings', () => {
     }
   });
 
+  // Owner ruling 2026-11-07 "Agent actions": the person's own app press is the consent,
+  // including after Home admits that exact press and relays it to the Machine executor.
+  it('keeps a Home-admitted present-user UI save direct on the Machine while other origins and explicit Ask still ask', () => {
+    const actionId = 'daemon.filesystem.writeFile' as const;
+    type Authorization = NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>;
+    const homeAdmission = (binding: Record<string, unknown> = {}) => ({ token: 'home-issued', binding: {
+      accountId: 'account', custodianAccountId: 'account', serverIdentityId: 'srv', machineId: 'machine', installationId: 'installation',
+      actionId, requestId: 'request', requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+      authentication: { kind: 'account', tokenEpoch: 1 }, ...binding } }) as unknown as Authorization;
+    const machineContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      externalActionTarget: { kind: 'machine', machineId: 'machine' }, externalActionExecutionAuthorization: homeAdmission() } as const;
+    const route = (context: Parameters<typeof resolveActionApprovalRouting>[0]['context'], settings = EMPTY_SETTINGS, routedActionId: ActionId = actionId) =>
+      resolveActionApprovalRouting({ actionId: routedActionId, spec: getActionSpec(routedActionId), input: {}, context, settings }).required;
+
+    expect(route(machineContext)).toBe(false);
+    expect(route({ ...machineContext, authority: 'account_automation' })).toBe(true);
+    expect(route({ ...machineContext, actionCaller: { kind: 'session', sessionId: 'session' } })).toBe(true);
+    expect(route({ ...machineContext, surface: 'agent' })).toBe(true);
+    expect(route({ ...machineContext, externalActionExecutionAuthorization: homeAdmission({ authentication: { kind: 'terminal', tokenEpoch: 1 } }) })).toBe(true);
+    expect(route({ ...machineContext, externalActionExecutionAuthorization: homeAdmission({ sessionActionOrigin: { sessionId: 'session' } }) })).toBe(true);
+    expect(route({ ...machineContext, externalActionExecutionAuthorization: homeAdmission({ workflowActionOrigin: { runId: 'run' } }) })).toBe(true);
+    expect(route({ ...machineContext, externalActionExecutionAuthorization: homeAdmission({ actionId: 'scm.commit.create' }) })).toBe(true);
+    expect(route({ ...machineContext, externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant: null } } as never)).toBe(true);
+    expect(route(machineContext, normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }))).toBe(true);
+    // A danger Action without the declared direct UI default keeps its Machine floor.
+    expect(route({ ...machineContext, externalActionExecutionAuthorization: homeAdmission({ actionId: 'scm.branch.rebase' }) },
+      EMPTY_SETTINGS, 'scm.branch.rebase')).toBe(true);
+  });
+
   it('retains declared managed-creation cancellation confirmation and the automated default', () => {
     const actionId = 'machines.managed.cancel' as const;
     const context = { surface: 'ui', authority: 'present_user' } as const;

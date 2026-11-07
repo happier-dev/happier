@@ -327,9 +327,16 @@ action, explicit dismissal or replacement. It is not a second draft history.
 ## Actions and plugin boundary
 
 `daemon.filesystem.writeFile` retains the danger default for automated callers;
-its present-user UI default is direct. Per-Action settings still govern explicit
-approval choices. Approval-required saves use the existing approval continuation
-and advance their base only after the write succeeds.
+its present-user UI default is direct. That default holds on the Machine too:
+the receiving executor reads Home's signed Account admission of that exact press
+(`isHomeAdmittedPresentUserHostInvocation`) instead of re-applying the danger
+floor, so a person's own Save never lands in the Inbox. Session, Workflow,
+terminal and public-API origins keep their policy. Per-Action settings still
+govern explicit approval choices. An explicit Ask is reviewed over the editor
+through `useInPlaceApprovalReview`, and approval-required saves use the existing
+approval continuation and advance their base only after the write succeeds. An
+editor that returns after the approved write reconciles its draft from the disk
+read, so no stale unsaved state remains.
 
 `file.editor.save` and `file.editor.resolve` address an already mounted editor
 in its qualified scope, optionally by tab. Save reports saved, clean, conflict

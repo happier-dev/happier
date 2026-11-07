@@ -145,7 +145,7 @@ const repository = { provider: { id: 'github', kind: 'github' as const, displayN
 // Extend the incumbent continuation harness. Production composition/registrars,
 // policy, custody, codecs and effects remain real; Home transport and durable
 // approval persistence are the only substituted system boundaries.
-export async function createHarness(actionId: ActionId, approval: 'ask' | 'allowed' | 'denied' = 'ask', setup = false, homeId = 'srv_n2',
+export async function createHarness(actionId: ActionId, approval: 'ask' | 'allowed' | 'denied' | 'default' = 'ask', setup = false, homeId = 'srv_n2',
   home?: Readonly<{
     token: string;
     mintAuthorization(actionId: ActionId, envelope: ExternalActionRequestEnvelope,

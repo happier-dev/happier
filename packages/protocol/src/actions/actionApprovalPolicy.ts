@@ -19,7 +19,7 @@ import { matchesApprovedOperationStepV1 } from './approvedOperationV1.js';
 import { isApiTokenDeploymentGrantV1 } from '../auth/apiTokenGrant.js';
 import type { WorkflowApprovedOperationV1 } from '../workflows/workflowDefinitionV1.js';
 import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
-import { isPresentUserHostInvocation } from './invocationAuthority.js';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -143,7 +143,9 @@ function requiresDefaultApprovalFloor(
   // A direct app press answers the automation default, while the Action's
   // designed local confirmation and host-discovered consequences still apply.
   // External and Session origins never consume this present-person default.
-  if (ctx?.surface === 'ui' && isPresentUserHostInvocation(ctx)) {
+  // A declared direct press keeps it on the executor Home admitted that exact press for.
+  if (ctx?.surface === 'ui' && (isPresentUserHostInvocation(ctx)
+    || policy?.uiConfirmation === 'direct' && isHomeAdmittedPresentUserHostInvocation(ctx, actionId))) {
     return ctx.presentUserConfirmation?.actionId !== actionId
       && ((defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input)
         ?? (policy?.uiConfirmation === 'policy'

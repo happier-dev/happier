@@ -190,6 +190,31 @@ describe('useWorkspaceFileEditorState autosave', () => {
         expect(actionBoundary.calls).toHaveLength(1);
     });
 
+    it.each(['current', 'last-known'] as const)('returns clean after an approved Save executed while the editor was away (%s disk first)', async firstRead => {
+        const drafts: Array<WorkspaceFileEditorDraft | null> = [];
+        const registered = createDeferred<ActionApprovalContinuation>();
+        const away = await createHarness({ accountId: 'account-a', autoSave: false, persistDraft: draft => { drafts.push(draft); },
+            requestApproval: registration => { if (typeof registration !== 'string') registered.resolve(registration); } });
+        await act(async () => away.getCurrent().onEditorChange('approved text'));
+        actionBoundary.read.mockResolvedValueOnce({ kind: 'approval_request_created', artifactId: 'approval-away', actionId: 'daemon.filesystem.writeFile' });
+        await act(async () => { void away.getCurrent().saveFileEdits(); await registered.promise; });
+        // The person leaves the Session; the approval then executes elsewhere and the disk has the save.
+        await away.unmount();
+        const persistedDraft = drafts.at(-1) ?? null;
+        expect(persistedDraft).toMatchObject({ editorText: 'approved text' });
+        const back = await createHarness({ accountId: 'account-a', autoSave: false, persistedDraft, startEditing: false,
+            ...(firstRead === 'current' ? { fileText: 'approved text', fileHash: 'approved-hash' } : {}) });
+        if (firstRead === 'last-known') {
+            back.disk.text = 'approved text'; back.disk.hash = 'approved-hash';
+            await back.rerender();
+        }
+        expect(back.getCurrent().conflict).toBeNull();
+        expect(back.getCurrent().editorDirty).toBe(false);
+        expect(back.getCurrent().readSnapshot().dirty).toBe(false);
+        expect(back.getCurrent().editorOriginalHash).toBe('approved-hash');
+        expect(back.persistDraft).toHaveBeenLastCalledWith(null, expect.anything());
+    });
+
     it('retains result custody when Undo of Use mine requires approval', async () => {
         const registrations: ActionApprovalContinuation[] = [];
         const hook = await createHarness({ accountId: 'account-a', autoSave: false, requestApproval: registration => {

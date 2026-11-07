@@ -56,7 +56,7 @@ import { FileBlameNote, useFileBlameRegion } from '@/components/workspaces/files
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -973,10 +973,10 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         requestApproval: approval.requestApproval,
     });
     const approvalRouter = useRouter();
-    const editorApprovalId = approval.approvalPending ? approval.approvalId : null;
-    const openEditorApproval = React.useMemo(() => editorApprovalId && scope
-        ? () => approvalRouter.pushRetainingCurrent(buildApprovalHref(editorApprovalId, scope.serverId)) : null,
-    [approvalRouter, editorApprovalId, scope]);
+    // An explicit Ask on Save is reviewed over the editor, never by leaving the Session.
+    const editorApprovalReview = useInPlaceApprovalReview({ approvalId: approval.approvalId,
+        approvalPending: approval.approvalPending, serverId: scope?.serverId ?? null });
+    const openEditorApproval = approval.approvalPending && approval.approvalId ? editorApprovalReview.reopen : null;
     const { editorSurfaceEnabled, isEditingFile, editorResetKey, editorSeedText, editorHandleRef,
         onEditorChange, editorDirty, saveFileEdits, cancelEditingFile, startEditingFile,
         liveValue, initialLine, onEditorReady } = editorState;

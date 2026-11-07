@@ -1060,6 +1060,10 @@ A declared `uiConfirmation: 'direct'` press keeps its direct default on the
 executor that Home admitted that exact Account press for (the signed binding
 names the Action and carries no Session or Workflow origin); every other
 external origin keeps the executor's floor.
+A declared `uiConfirmation: 'direct'` press keeps its direct default on the
+executor that Home admitted that exact Account press for (the signed binding
+names the Action and carries no Session or Workflow origin); every other
+external origin keeps the executor's floor.
 A host-discovered consequence uses `defaultUiConfirmation`
 through the shared approval owner and still asks unless that exact consequence
 was already confirmed or the person waived it.

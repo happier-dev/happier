@@ -1720,4 +1720,29 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(await readFile(join(h.rootPath, 'original'))).toEqual(bytes);
     } finally { await h.close(); }
   });
+
+  // Owner ruling 2026-11-07 "Agent actions": the person's own Save press is the consent.
+  it('writes a present person\'s own UI file save directly across the Home hop while automation and explicit Ask still ask', async () => {
+    const saved = Buffer.from('saved by the person');
+    const direct = await createHarness('daemon.filesystem.writeFile', 'default');
+    try {
+      const input = { rootPath: direct.rootPath, path: 'saved.txt', content: saved.toString('base64'), expectedHash: null };
+      const result = await direct.run(input, 'ui', false, 'present_user');
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+        result: { success: true, hash: createHash('sha256').update(saved).digest('hex') } });
+      expect(direct.hasApproval()).toBe(false);
+      expect(await readFile(join(direct.rootPath, 'saved.txt'))).toEqual(saved);
+      const automated = { ...input, path: 'automated.txt' };
+      expect(await direct.run(automated, 'ui', false, 'account_automation', 'daemon.filesystem.writeFile', 'automation-request'))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      await expect(stat(join(direct.rootPath, 'automated.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await direct.close(); }
+    const asked = await createHarness('daemon.filesystem.writeFile', 'ask');
+    try {
+      const input = { rootPath: asked.rootPath, path: 'saved.txt', content: saved.toString('base64'), expectedHash: null };
+      expect(await asked.run(input, 'ui', false, 'present_user'))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      await expect(stat(join(asked.rootPath, 'saved.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await asked.close(); }
+  });
 });
