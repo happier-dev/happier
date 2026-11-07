@@ -5,12 +5,17 @@ import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
+    projectExternalActionDeploymentReadEnvelopeAdmissionV1,
+    isDeploymentEnvironmentUpdateNativeAdmissionV1,
+    createDeploymentCandidatePublicationV1,
     ExternalActionExecutionAuthorizationRequestV1Schema,
     ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionResponseEnvelopeV1Schema,
     ExternalActionRequestEnvelopeSchema,
     type ExternalActionRequestEnvelopeV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -27,8 +32,11 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     accountId: string;
     custodian?: Readonly<{ accountId: string; displayName: string }>;
     machineId: string;
+    installationId?: string;
     actionId: ActionId;
     tokenEpoch: number;
+    /** Home's admitted Source fact for native candidate publication. */
+    deploymentSource?: Readonly<{ id: string; revision: number }>;
     /** Real encrypted Account codec; plaintext Accounts never acquire key material. */
     encryption?: Pick<Encryption, 'openEncryption' | 'getContentPrivateKey'>;
     /** A dispatched Action refusal is an HTTP execution envelope, not a transport rejection. */
@@ -71,6 +79,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     const codec = params.encryption ? await params.encryption.openEncryption(null) : null;
     const machine = {
         ...createPlainMachineRowFixture({ id: params.machineId, accountId: params.accountId, machine: projection }),
+        ...(params.installationId ? { installationId: params.installationId } : {}),
         ...(codec ? {
             metadata: encodeBase64((await codec.encrypt([projection.metadata]))[0]!, 'base64'),
             dataEncryptionKey: null,
@@ -106,8 +115,18 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             if (url.pathname === mintPath) {
                 if (!request) throw new Error('Expected an external Action authorization request');
                 const admittedEnvelope = { actionId: params.actionId, machineId: machine.id, envelope };
+                const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1(admittedEnvelope);
+                const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(admittedEnvelope);
+                const deploymentReadAdmission = projectExternalActionDeploymentReadEnvelopeAdmissionV1(admittedEnvelope);
+                const deploymentChildRoot = isDeploymentChildRootActionIdV1(params.actionId, deploymentPreparationAdmission);
+                const deploymentNativeAdmission = native && ('kind' in native || isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
+                    ? native : undefined;
                 const environmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(admittedEnvelope)
-                    ?? projectExternalActionDeploymentNativeEnvelopeAdmissionV1(admittedEnvelope)?.environmentId;
+                    ?? native?.environmentId;
+                const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+                const deploymentCandidatePublication = params.deploymentSource && native && !deploymentNativeAdmission
+                    ? createDeploymentCandidatePublicationV1({ ...params, requestId: envelope.requestId!, requestEnvelopeDigest,
+                        environmentId: native.environmentId, source: params.deploymentSource }) : undefined;
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
                     v: 1, token: 'test-external-action-authorization', binding: {
                         accountId: params.accountId, authentication: { kind: 'account', tokenEpoch: params.tokenEpoch },
@@ -116,7 +135,12 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         accountEncryptionMode: params.encryption ? 'e2ee' : 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
                         ...(environmentId !== undefined ? { environmentId } : {}),
-                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                        ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
+                        ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
+                        ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
+                        ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
+                        ...(deploymentCandidatePublication ? { deploymentCandidatePublication } : {}),
+                        requestEnvelopeDigest,
                     },
                 }));
             }

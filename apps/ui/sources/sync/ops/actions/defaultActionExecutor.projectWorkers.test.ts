@@ -108,7 +108,24 @@ describe('worker Actions through the captured UI Home', () => {
       expect(homes.requestsFor(PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/list')).toHaveLength(3);
     });
 
-  it.each(['ui', 'agent', 'voice'] as const)('requires the native Service review before publishing the %s approval', async surface => {
+  it('returns the receiving Service refusal without a self-approval for the person’s own UI start', async () => {
+    await homes.requireUiApproval(serverId, 'localServices.launcher.start');
+    const request = { machineId: 'worker-machine', targetId: 'web',
+      workspace: { serverId: 'srv_worker_actions', machineId: 'source', workspaceId: 'checkout', rootPath: '/source' },
+      declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } } };
+    const refusal = { protocolVersion: 1, machineId: request.machineId, targetId: request.targetId,
+      status: 'denied', reasonCode: 'project_service_effect_changed',
+      snapshot: { v: 1, machineId: request.machineId, updatedAt: 1, targets: [] } };
+    rpc.machine.mockResolvedValueOnce(refusal);
+    expect(await createDefaultActionExecutor().execute('localServices.launcher.start', request, {
+      serverId, expectedAccountId: 'owner', surface: 'ui',
+    })).toEqual({ ok: true, result: refusal });
+    expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId,
+      machineId: request.machineId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, payload: request }));
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
+  });
+
+  it.each(['agent', 'voice'] as const)('requires the native Service review before publishing the %s approval', async surface => {
     await homes.requireUiApproval(serverId, 'localServices.launcher.start');
     const request = { machineId: 'worker-machine', targetId: 'web',
       workspace: { serverId: 'srv_worker_actions', machineId: 'source', workspaceId: 'checkout', rootPath: '/source' },
@@ -222,7 +239,7 @@ describe('worker Actions through the captured UI Home', () => {
       method: 'projects.worker.status', payload: input }));
     const denied = { ok: false, errorCode: 'project_worker_access_denied', error: 'project_worker_access_denied' };
     rpc.machine.mockResolvedValueOnce(denied);
-    expect(await owner.execute('projects.worker.status', input, context)).toEqual(denied);
+    expect(await owner.execute('projects.worker.status', input, context)).toMatchObject(denied);
     rpc.machine.mockResolvedValueOnce({ ...status, candidate: { serverId, machineId: 'other' } });
     expect(await owner.execute('projects.worker.status', input, context)).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
