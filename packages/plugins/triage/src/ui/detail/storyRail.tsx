@@ -22,6 +22,8 @@ import {
 import type { SessionPendingPermissionV1, SessionPermissionAnswerV1, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
+import { TriageStoryLoadingLines } from '@happier-dev/triage-sources/ui';
+
 import { describeTriageAgentStatusV1, readTriageSessionWhereV1 } from './agentState.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
@@ -185,6 +187,17 @@ export function TriageAgentStep(props: Readonly<{
       >
         {shown.length === 0 ? null : content}
       </SessionCard>
+    );
+  }
+  // Until the linked Sessions' live reads answer, the step holds its place with the story's own reading lines and
+  // offers nothing to press: a "Loading…" card with a live Open is a promise the row cannot keep yet.
+  const reading = props.live.status === 'loading'
+    || props.sessions.some((session) => props.sessionStates?.get(session.sessionId)?.status === 'loading');
+  if (reading) {
+    return (
+      <Step marker={{ kind: 'number', value: props.number ?? 3 }} title={stepTitle} testID="triage-story-agent">
+        <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.agent.reading', 'Reading the agent\u2019s work')} />
+      </Step>
     );
   }
   return (

@@ -150,6 +150,40 @@ describe('the story rail\'s agent chapter before any Session', () => {
   });
 });
 
+const renderReadingRail = defineUiSurface(function ReadingRail(_context: RenderContext): React.ReactElement {
+  // The detail's live reads of its linked Sessions have not answered yet.
+  return (
+    <TriageAgentStep
+      sessions={[{ sessionId: 'session-a', displayTitle: 'Codex' }, { sessionId: 'session-b', displayTitle: 'Earlier run' }]}
+      hasMore={false}
+      live={{ status: 'loading', state: null }}
+      sessionStates={new Map([['session-a', { status: 'loading', state: null }], ['session-b', { status: 'loading', state: null }]])}
+      reviewEntry={{ kind: 'pullRequest', url: 'https://example.test/pull/1' }}
+    />
+  );
+});
+
+describe('the story rail\'s agent chapter while its Sessions are being read', () => {
+  it('holds the place with the story\'s reading lines and offers nothing to press until the reads settle (UI4 D18)', async () => {
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'fixture-instance-reading-rail', mountNonce: 'fixture-mount-reading-rail' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: renderReadingRail,
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { readSession: () => new Promise<never>(() => {}), watchSession: () => undefined,
+          executeAction: async () => ({ items: [], cursor: null }) },
+      });
+    });
+    mounted.push(fixture);
+    expect(document.querySelector('[data-testid="triage-story-agent"] [data-testid="triage-story-loading"]')).not.toBeNull();
+    expect(document.querySelectorAll('[data-testid="triage-story-agent"] button, [data-testid="triage-story-agent"] [role="button"]')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Loading\u2026');
+  });
+});
+
 describe('the story rail\'s live agent', () => {
   it('names the step after whose work it is, and the card after the current public Session title', async () => {
     const rail = await mountRail([], {
