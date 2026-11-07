@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Platform, View } from 'react-native';
+import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
+import { Platform, ScrollView, View } from 'react-native';
 import type { HappierTextSelection } from '../presentation/portableTypes.js';
 import { HappierTextField } from '../presentation/form/Fields.js';
 import { resolveHappierUiPalette, useOptionalHappierUiPalette } from '../environment/context.js';
@@ -17,7 +17,7 @@ import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { useListMultiSelectionStoreSnapshot, type ListMultiSelectionStore } from './ListMultiSelection.js';
 
 /**
- * One narrowing that is in force, said inside the search field before the text ("is open", "view My work"):
+ * One narrowing that is in force, said on the quiet line under the search field ("is open", "view My work"):
  * `qualifier` is the quiet word naming what it constrains. Pressing the token removes the narrowing.
  */
 export type ListCollectionSearchToken = Readonly<{
@@ -35,10 +35,24 @@ export type ListCollectionSearch = Readonly<{
   onValueChange?: (value: string) => void;
   onComposingValueChange?: (value: string | null) => void;
   placeholder?: string;
-  /** The narrowings in force, as removable tokens inside the field. */
+  /** The narrowings in force, as removable tokens on a line under the field, drawn only while there are any. */
   tokens?: readonly ListCollectionSearchToken[];
   testID?: string;
 }>;
+
+/**
+ * The control that ends the search field: `CollectionToolbar` puts its filter funnel here, so the list's filters
+ * open from the field they narrow. The Collection builds the field; the toolbar that places it fills its end.
+ *
+ * @internal Provided only by `CollectionToolbar`.
+ */
+export const ListCollectionSearchActionContext = createContext<ReactNode>(null);
+
+/** The field with whatever the toolbar placing it puts at its end. */
+function ListCollectionSearchField(props: ComponentProps<typeof HappierTextField>) {
+  const action = useContext(ListCollectionSearchActionContext);
+  return <HappierTextField {...props} {...(action == null ? {} : { action })} />;
+}
 
 /** The `/` key focuses the field (web, with focus inside the list); the field says so as a key cap. */
 const SEARCH_FOCUS_KEY = '/';
@@ -109,27 +123,34 @@ export function useListCollectionSearch(
     return () => document.removeEventListener('keydown', listener);
   }, [enabled, rootRef, target]);
   const tokens = search?.tokens ?? [];
-  const control = search === undefined ? null : <HappierTextField
+  const control = search === undefined ? null : <ListCollectionSearchField
     appearance="search" label={search.label} placeholder={search.placeholder ?? search.label} value={displayed}
     onChangeText={change} onCompositionChange={composition} onEscape={clear}
     autoCapitalize="none" autoCorrect={false} selection={selection} onSelectionChange={setSelection}
     controlRef={controlRef} leading={<Icon name="search" size="small" tone="muted" />} theme={theme} testID={search.testID}
-    {...(tokens.length === 0 ? {} : { inline: <SearchTokens tokens={tokens} compact={compact} /> })}
     // The shortcut is a hardware-keyboard fact; touch platforms have no `/` to press.
     {...(Platform.OS !== 'web' ? {} : {
       trailing: <SearchShortcut {...(search.testID === undefined ? {} : { testID: `${search.testID}:shortcut` })} />,
     })}
   />;
-  return { query, control };
+  const tokenLine = tokens.length === 0 ? null : <SearchTokenLine tokens={tokens} compact={compact}
+    {...(search?.testID === undefined ? {} : { testID: `${search.testID}:tokens` })} />;
+  return { query, control, tokenLine };
 }
 
-/** The narrowings in force, each one press to remove (lab `.tok`: an inset chip, its qualifier quiet). */
-function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchToken[]; compact: boolean }>) {
+/**
+ * The narrowings in force, on one quiet line under the field, each one press to remove (lab `spfield` B: an inset
+ * token, its qualifier quiet, a small ×). The line holds one row and scrolls sideways when it outgrows the width.
+ */
+function SearchTokenLine(props: Readonly<{ tokens: readonly ListCollectionSearchToken[]; compact: boolean; testID?: string }>) {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const translate = usePluginTranslation();
   return (
-    <Row gap="xsmall" align="center" style={searchTokensStyle}>
+    // A small inset below keeps the line off the first row the list draws under it (a phone's list starts here).
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} testID={props.testID}
+      style={{ flexGrow: 0, paddingBottom: theme.spacing.xsmall }}
+      contentContainerStyle={[searchTokensStyle, { gap: theme.spacing.xsmall }]}>
       {props.tokens.map((token) => {
         const words = token.qualifier === undefined ? token.label : `${token.qualifier} ${token.label}`;
         return (
@@ -148,10 +169,11 @@ function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchTok
             {/* Folded, the quiet qualifier gives its room to the label that tells tokens apart; the name keeps it. */}
             {token.qualifier === undefined || props.compact ? null : <HappierText variant="meta" tone="secondary" numberOfLines={1}>{token.qualifier}</HappierText>}
             <HappierText variant="meta" tone="neutral" numberOfLines={1} style={searchTokenLabelStyle}>{token.label}</HappierText>
+            <Icon name="close" size="small" tone="muted" />
           </HappierPressable>
         );
       })}
-    </Row>
+    </ScrollView>
   );
 }
 
@@ -178,17 +200,16 @@ export function CollectionKeyCap(props: Readonly<{ label: string; testID?: strin
   );
 }
 
-// The tokens stay inside the field: a narrow field truncates their labels and clips the rest rather than drawing
-// them over the controls beside it (Views, Filters).
-const searchTokensStyle = { flexShrink: 1, minWidth: 0, overflow: 'hidden' } as const;
+const searchTokensStyle = { flexDirection: 'row', alignItems: 'center' } as const;
 const searchTokenLabelStyle = { flexShrink: 1, minWidth: 0 } as const;
+/** A token is as tall as a compact control's text line plus a little air: quieter than the 32 px field above it. */
 const searchTokenStyle = {
-  flexShrink: 1,
-  minWidth: 0,
+  minHeight: 26,
   flexDirection: 'row',
   alignItems: 'center',
   gap: 4,
-  paddingHorizontal: 7,
+  paddingLeft: 8,
+  paddingRight: 4,
   borderRadius: HAPPIER_RADIUS_V1.sm,
   borderWidth: 1,
 } as const;

@@ -215,6 +215,8 @@ export function CollectionPreviewSample(): React.ReactElement {
                         refine={{
                             label: 'Filters',
                             activeCount: tokens.length,
+                            // Order is all this sample narrows by: it stands in the wide row, and folds behind the funnel.
+                            inline: true,
                             render: () => (
                                 <Select
                                     label="Order"
@@ -295,5 +297,37 @@ function PreviewDetailTabs(props: Readonly<{ entry: PreviewEntry }>): React.Reac
             <Tabs.Item value="files" title="Files" badge="17" />
             <Tabs.Item value="checks" title="Checks" />
         </Tabs>
+    );
+}
+
+type SingleLineEntry = Readonly<{ id: string; icon: IconName; title: string; status: string | null; memory: string }>;
+const SINGLE_LINE_ENTRIES: readonly SingleLineEntry[] = [
+    { id: 'refactor', icon: 'terminal', title: 'Refactor glass pipeline', status: 'Working', memory: '4.1 GB' },
+    { id: 'browser', icon: 'globe', title: 'Browser sidecar', status: '2 tabs', memory: '2.3 GB' },
+    { id: 'relay', icon: 'conversations', title: 'Fix relay retry budget', status: 'Needs you', memory: '1.8 GB' },
+    { id: 'daemon', icon: 'desktop', title: 'Happier daemon', status: null, memory: '0.2 GB' },
+];
+const singleLineKeyOf = (entry: SingleLineEntry) => entry.id;
+
+/**
+ * A single-line list (lab `rw` C, a widget's "Using the most"): an anatomy with no byline, where, reason or
+ * description draws one-line rows, the title suffix inline after the title and the meta at the end.
+ */
+export function CollectionSingleLineSample(): React.ReactElement {
+    const model = useHappierCollection({ items: SINGLE_LINE_ENTRIES, keyOf: singleLineKeyOf, openKey: null, onOpenChange: () => undefined, expandable: false });
+    const anatomy = React.useMemo((): CollectionAnatomy<SingleLineEntry> => ({
+        glyph: (entry) => <Icon name={entry.icon} size="small" tone="secondary" />,
+        title: (entry) => entry.title,
+        titleSuffix: (entry) => entry.status,
+        titleMeta: (entry) => <Text variant="meta" tone="neutral" value={entry.memory} numberOfLines={1} />,
+        accessibilityLabel: (entry) => `${entry.title}, ${entry.memory}`,
+        testID: (entry) => `dev-collection-single-${entry.id}`,
+        columnTitles: { title: 'Started by Happier' },
+    }), []);
+    return (
+        <View testID="dev-collection-single-line" style={{ width: 340, height: 180 }}>
+            <Collection model={model} anatomy={anatomy} accessibilityLabel="Using the most" presentation="list" detail="none"
+                minListWidth={0} minDetailWidth={0} preferredListRatio={1} />
+        </View>
     );
 }

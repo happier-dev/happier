@@ -37,8 +37,9 @@ import type { TriageListShellStateV1 } from '../shell/windowState.js';
  * those five into one labelled **Filters** trigger presented by the public
  * `Popover` — so focus, dismissal, focus return, Escape and Android Back stay
  * with the host — and keeps every selected constraint visible and removable as
- * a chip outside it. **Views** stays in the toolbar in both; on a phone **Order**
- * joins the facets in that Filters form (the shared Collection toolbar).
+ * a chip outside it. **Views** stays in the toolbar in both. Folded (a phone), the
+ * round Filters button opens the SAME condition editor in the shared sheet, and
+ * **Order** joins ⋯ (the shared Collection toolbar).
  *
  * The measurement is supplied the way `shell/splitComposition.rnw.test.tsx`
  * supplies it: jsdom ships no `ResizeObserver`, so React Native Web's shared
@@ -131,7 +132,7 @@ async function executeAction(action: string, result: TriageListEntriesResultV1 =
         return { v: 1, pins: [] };
     }
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
+        return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
     }
     if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
         return { kind: 'unavailable' };
@@ -268,8 +269,8 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         const shell = await mountShell();
         await measureFillRegion(WIDE_WIDTH);
 
-        // The lab's toolbar is one search with its tokens, not a row of facet pills: the narrowings in force are
-        // already said as tokens in the search field, so a pill per facet beside them says each one twice.
+        // The lab's toolbar is one search with its funnel, not a row of facet pills: the narrowings in force are
+        // said as tokens under the field, so a pill per facet would say each one twice.
         await expect(shell.getByRole('button', { name: 'Filters' })).resolves.toBeDefined();
         await expect(shell.queryByRole('button', { name: 'State' })).resolves.toBeUndefined();
         await expect(shell.queryByRole('button', { name: 'Source' })).resolves.toBeUndefined();
@@ -278,14 +279,14 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await expect(filterFacetOption(shell, 'Source', { name: 'Example account' })).resolves.toBeDefined();
     });
 
-    it('folds the facets into one Filters trigger when the measured region cannot carry them', async () => {
+    it('draws no chips at rest, at either width: the funnel is the one way into the filters', async () => {
         const shell = await mountShell();
-        await measureFillRegion(COMPACT_WIDTH);
-
-        await expect(shell.getByRole('button', { name: 'Filters' })).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'State' })).resolves.toBeUndefined();
-        await expect(shell.queryByRole('checkbox', { name: 'Open' })).resolves.toBeUndefined();
-        await expect(shell.queryByRole('checkbox', { name: 'Example account' })).resolves.toBeUndefined();
+        for (const width of [WIDE_WIDTH, COMPACT_WIDTH]) {
+            await measureFillRegion(width);
+            await expect(shell.getByRole('button', { name: 'Filters' })).resolves.toBeDefined();
+            await expect(shell.queryByRole('checkbox', { name: 'Open' })).resolves.toBeUndefined();
+            await expect(shell.queryByRole('checkbox', { name: 'Needs you' })).resolves.toBeUndefined();
+        }
     });
 
     it('on a phone opens the same condition editor from Filters and folds Order into ⋯', async () => {
@@ -309,31 +310,36 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await expect(filterFacetOption(shell, 'State', { name: 'Open' })).resolves.toBeDefined();
     });
 
-    it('keeps every selected constraint visible and removable as a token in the search field, in both arms', async () => {
+    it('says a common value set from the funnel as a token too, like any other', async () => {
         const shell = await mountShell();
         await measureFillRegion(WIDE_WIDTH);
-        const openFacet = await filterFacetOption(shell, 'State', { name: 'Open' });
-        await act(async () => { await shell.press(openFacet); });
-
-        // The narrowing in force is said in the one place a reader looks for what they are looking at: the
-        // search field, as a token. The Filters form stays the way to add one.
+        await act(async () => { await shell.press(await filterFacetOption(shell, 'State', { name: 'Open' })); });
         await expect(shell.getByRole('button', { name: 'Remove State Open' })).resolves.toBeDefined();
+    });
+
+    it('keeps a constraint visible and removable as a token under the search field, in both arms', async () => {
+        const shell = await mountShell();
+        await measureFillRegion(WIDE_WIDTH);
+        const doneFacet = await filterFacetOption(shell, 'State', { name: 'Done' });
+        await act(async () => { await shell.press(doneFacet); });
+
+        // A value in force is said in the one place a reader looks for what they are looking at: the token line
+        // under the search field. The funnel's form stays the way to add one.
+        await expect(shell.getByRole('button', { name: 'Remove State Done' })).resolves.toBeDefined();
 
         await measureFillRegion(COMPACT_WIDTH);
 
-        // The facet controls are now behind a trigger, so the token is the only thing naming the constraint.
-        // There is one such place, never a token and a chip saying it twice.
-        const token = await shell.getByRole('button', { name: 'Remove State Open' });
+        const token = await shell.getByRole('button', { name: 'Remove State Done' });
         const buttons = await shell.queryAllByRole('button');
         expect(buttons.filter((button) => (button.name ?? '').startsWith('Remove filter'))).toEqual([]);
         await act(async () => { await shell.press(token); });
 
-        await expect(shell.queryByRole('button', { name: 'Remove State Open' }))
+        await expect(shell.queryByRole('button', { name: 'Remove State Done' }))
             .resolves.toBeUndefined();
         // The token removed the constraint itself rather than only its own label.
         await measureFillRegion(WIDE_WIDTH);
         await expect(filterFacetOption(shell, 'State', {
-            name: 'Open',
+            name: 'Done',
             state: { checked: false },
         })).resolves.toBeDefined();
     });

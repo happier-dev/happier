@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import {
-  CollectionConditionEditor, HAPPIER_COLLECTION_CONDITION_EDITOR_METRICS, Popover, Select, useHappierCollectionLayout,
+  CollectionConditionEditor, HAPPIER_COLLECTION_CONDITION_EDITOR_METRICS, Select, useHappierCollectionLayout,
   type CollectionConditionEdit, type CollectionConditionModel, type CollectionToolbarProps,
   type EntityListFilterResultV1, type HappierCollectionConditionEditorLabels, type MenuGroup, type SheetMenuContentControls,
 } from '@happier-dev/plugin-ui';
@@ -13,6 +13,7 @@ import {
 import type { TriageFilterFacetValueV1, TriageSurfaceStateV1 } from '../state/surface.js';
 import type { TriageListShellStateV1, TriageTextResolverV1 } from '../shell/windowState.js';
 import type { TriageFilterFacetPlanV1 } from './plan.js';
+import { TRIAGE_LIST_ORDERS_V1 } from '../../projection/listWindow.js';
 
 /**
  * The one lens control group (`core/SURFACE.md` §6).
@@ -24,47 +25,36 @@ import type { TriageFilterFacetPlanV1 } from './plan.js';
  * which reducer action one press means — there is no Triage Pressable, chip
  * component, popover or focus handling in this file.
  *
- * **One composition on a wide page (D4-A, 2026-10-11).** The five facets sit
- * behind one labelled **Filters** trigger presented by the public `Menu` of
- * labelled checkbox groups, so the portal, the initial focus, dismissal, focus
- * return, Escape and Android Back are the host's — Triage supplies the groups
- * and nothing else. Every selected value is already said, and removable, as a token in the
- * list's search field (the shell's `searchTokens`), so a toolbar pill per facet
- * would state each constraint twice and turn the lab's one calm search row into
- * a row of grey pills. §6 allows the facets to stay exposed on wide layouts; it
- * does not require it, and the tokens are what keep the narrowing visible.
+ * **Filters live in the search field (owner 2026-11-06, lab `spfield` B).** No chips at rest: the funnel at the end
+ * of the list's search field (plugin-ui `CollectionToolbar`) opens `TriageFilterSheet`, the shared condition editor
+ * anchored under the field on a wide page and the shared sheet on a phone, so the portal, the initial focus,
+ * dismissal, focus return, Escape and Android Back are the host's. Every selected value is said, and removable, as a
+ * token on the quiet line under the toolbar (the shell's `searchTokens`).
  *
  * **Views and Order stay separate on a wide page.** The table puts Order in its title
  * column; list and board keep the toolbar control. They are separate lens questions —
  * which saved lens this is, and which ladder ranks it.
  *
- * **One filter UI at every width.** When the shared `CollectionToolbar` folds (a phone,
- * or a row that no longer fits), its round, counted Filters button (lab
- * `merged-list-phone`) opens the SAME condition editor in the shared sheet
- * (`TriageFilterSheet`), finished by "Show N results"; Order and Smart order join ⋯
+ * **One filter UI at every width.** The funnel opens the SAME condition editor (`TriageFilterSheet`) wide and
+ * folded; on a phone's sheet it is finished by "Show N results". When the toolbar folds, Order and Smart order join ⋯
  * as radio groups (`readTriageOrderChoicesV1`). Views stays in the toolbar at every width.
  */
 
+/** The wide row's ordering controls beside the search; the filters open from the search field's funnel. */
 export type TriageFilterRailPropsV1 = Readonly<{
-  facets: readonly TriageFilterFacetPlanV1[];
   order: TriageSurfaceStateV1['order'];
   smartPolicy: CorpusSmartPolicyV1;
   text: TriageTextResolverV1;
-  onToggleFilterValue: (selection: TriageFilterFacetValueV1) => void;
-  onClearFilters: () => void;
-  /** Empties one facet whole: the filter editor's row remove. */
-  onClearFacet: (facet: TriageFilterFacetPlanV1['facet']) => void;
-  /** What the narrowed window holds, said in the filter editor's footer ("9 items", "9 loaded · more may match"). */
-  result?: EntityListFilterResultV1;
   onChangeOrder: (order: TriageSurfaceStateV1['order']) => void;
   onChangeSmartPolicy: (smartPolicy: CorpusSmartPolicyV1) => void;
 }>;
 
-const ORDER_COPY: readonly (readonly [TriageSurfaceStateV1['order'], string, string])[] = [
-  ['newest', 'plugins.triage.surface.order.newest', 'Newest'],
-  ['oldest', 'plugins.triage.surface.order.oldest', 'Oldest'],
-  ['smart', 'plugins.triage.surface.order.smart', 'Smart'],
-];
+const ORDER_LABELS = {
+  newest: ['plugins.triage.surface.order.newest', 'Newest'],
+  oldest: ['plugins.triage.surface.order.oldest', 'Oldest'],
+  smart: ['plugins.triage.surface.order.smart', 'Smart'],
+} satisfies Record<TriageSurfaceStateV1['order'], readonly [string, string]>;
+const ORDER_COPY = TRIAGE_LIST_ORDERS_V1.map(value => [value, ...ORDER_LABELS[value]] as const);
 
 /** The same named ladders for the toolbar and the Collection's table title. */
 export function readTriageOrderOptionsV1(text: TriageTextResolverV1): readonly Readonly<{
@@ -81,14 +71,12 @@ export function readTriageOrderOptionsV1(text: TriageTextResolverV1): readonly R
  * whole ladder — so these are two options over one canonical vocabulary rather
  * than a policy editor.
  */
-const SMART_PRECEDENCE_COPY: readonly (readonly [
-  CorpusSmartPolicyV1['precedence'][number],
-  string,
-  string,
-])[] = [
-  ['attention', 'plugins.triage.surface.smartPolicy.attentionFirst', 'What needs you first'],
-  ['activity', 'plugins.triage.surface.smartPolicy.activityFirst', 'Most recent activity first'],
-];
+const SMART_PRECEDENCE_LABELS = {
+  attention: ['plugins.triage.surface.smartPolicy.attentionFirst', 'What needs you first'],
+  activity: ['plugins.triage.surface.smartPolicy.activityFirst', 'Most recent activity first'],
+} satisfies Record<CorpusSmartPolicyV1['precedence'][number], readonly [string, string]>;
+const SMART_PRECEDENCE_COPY = CORPUS_SMART_PRECEDENCE_TUPLES_V1.map(([value]) =>
+  [value, ...SMART_PRECEDENCE_LABELS[value]] as const);
 
 const ORDER_ROW_PREFIX = 'triage-order:';
 const SMART_ROW_PREFIX = 'triage-smart:';
@@ -152,7 +140,7 @@ export function readTriageFilterDoneLabelV1(props: Readonly<{
   const { text } = props;
   return props.windowState.kind === 'initial'
     ? text('plugins.triage.surface.filters.showUnsynchronized', 'Show results · Not yet synchronized')
-    : props.windowState.kind === 'unavailable' || props.windowState.kind === 'sourcesUnreachable'
+    : props.windowState.kind === 'unavailable' || props.windowState.kind === 'sourcesUnreachable' || props.windowState.kind === 'readFailed'
       ? text('plugins.triage.surface.filters.showUnavailable', 'Show results · Unavailable')
       : props.windowState.kind === 'window' && props.windowState.window.coverage !== 'complete'
         ? props.resultCount === 1
@@ -196,7 +184,7 @@ export function readTriageFilterConditionModelV1(facets: readonly TriageFilterFa
 function applyTriageFilterEdit(
   facets: readonly TriageFilterFacetPlanV1[],
   edit: CollectionConditionEdit,
-  actions: Pick<TriageFilterRailPropsV1, 'onToggleFilterValue' | 'onClearFacet' | 'onClearFilters'>,
+  actions: Pick<TriageFilterEditorPropsV1, 'onToggleFilterValue' | 'onClearFacet' | 'onClearFilters'>,
 ): void {
   if (edit.type === 'clear') { actions.onClearFilters(); return; }
   if (edit.type === 'remove') {
@@ -286,41 +274,10 @@ export function TriageFilterSheet(props: TriageFilterEditorPropsV1 & Readonly<{
 }>): React.ReactElement {
   const { controls, doneLabel, ...editor } = props;
   // The one way back says what the list now shows ("Show 9 results"), so the editor's own count is not said again.
+  // The one way back says what the list now shows ("Show 9 results"), so the editor's own count is not said again.
   const body = <TriageFilterEditor {...editor} result={undefined} done={{ label: doneLabel, onPress: controls.close }}
     maxHeight={controls.maxHeight} />;
   return controls.sheet ? body : <View style={conditionEditorFrameStyle}>{body}</View>;
-}
-
-/**
- * The lens on a wide row: one **Filters** trigger opening the shared editor in the public `Popover`. Every selected
- * constraint also stays named and removable as a token in the list's search field (the shell's `searchTokens`). The
- * Popover owns the overlay's layer, focus and dismissal.
- */
-function TriageCompactFilters(props: TriageFilterEditorPropsV1): React.ReactElement {
-  const { facets, text } = props;
-  const [open, setOpen] = React.useState(false);
-  const label = text('plugins.triage.surface.filters', 'Filters');
-  const activeCount = facets.reduce(
-    (count, facet) => count + facet.options.filter((option) => option.selected).length,
-    0,
-  );
-  return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      trigger={activeCount === 0 ? label : `${label} · ${activeCount}`}
-      // Quiet words that open the editor (lab: the lens is said in the search, not by filled pills).
-      triggerDisclosure
-      triggerAccessibilityLabel={label}
-      contentAccessibilityLabel={text('plugins.triage.surface.filters.condition.title', 'Filter')}
-      floatingRole="panel"
-      placement="bottom"
-    >
-      <View style={conditionEditorFrameStyle}>
-        <TriageFilterEditor {...props} />
-      </View>
-    </Popover>
-  );
 }
 
 /**
@@ -334,12 +291,8 @@ export function TriageOrderPlacement(props: Readonly<{ children: (orderedByTable
 export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactElement {
   const layout = useHappierCollectionLayout();
   const {
-    facets,
     onChangeOrder,
     onChangeSmartPolicy,
-    onClearFacet,
-    onClearFilters,
-    onToggleFilterValue,
     order,
     smartPolicy,
     text,
@@ -357,14 +310,6 @@ export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactEle
 
   return (
     <>
-      <TriageCompactFilters
-        facets={facets}
-        text={text}
-        onToggleFilterValue={onToggleFilterValue}
-        onClearFacet={onClearFacet}
-        onClearFilters={onClearFilters}
-        result={props.result}
-      />
       {layout?.composition !== 'table' ? <Select
         label={text('plugins.triage.surface.order', 'Order')}
         presentation="menu"

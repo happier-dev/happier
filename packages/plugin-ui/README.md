@@ -94,6 +94,26 @@ Subpath exports are available for narrower imports:
 import { usePluginHostApi, usePluginResource } from '@happier-dev/plugin-ui';
 ```
 
+### Primary pointer (0.3 development source)
+
+Render-time pointer choices subscribe through the environment hook:
+
+```tsx
+import { useHappierTouchPrimaryPointer, useHappierUiPlatform } from '@happier-dev/plugin-ui/environment';
+
+function useTouchActions() {
+  const { platform } = useHappierUiPlatform();
+  return useHappierTouchPrimaryPointer(platform);
+}
+```
+
+The fact updates when a browser's primary pointer changes, including attaching or
+removing a trackpad. Native iOS and Android remain touch platforms. Shared
+controls already subscribe through `useHappierTouchTargetSize`; custom controls
+consume the same fact. The synchronous `isHappierTouchPrimaryPointer(platform)`
+and `isHappierCoarsePrimaryPointer()` exports read the current capability for code
+outside render; they do not subscribe a component.
+
 ### Composer status popovers (0.3 development source)
 
 For a status item that opens details from the composer, `Popover` can draw the
@@ -117,6 +137,51 @@ existing `ComposerStatusBadge` inside its owned trigger (0.3 development source)
 The overlay still owns the single interactive trigger, expanded state, focus
 return and dismissal. The host presents the same content in its phone sheet;
 the badge adds no second press handler or detail subscription.
+
+### Host-rendered Action controls (0.3 development source)
+
+Use `Action.Control` when a person's host-owned button must freshly prepare an
+invocation through your existing controller:
+
+```tsx
+<Action.Control
+  action="projects.compute.exec"
+  titleKey="localRun.run"
+  disabled={!canRun}
+  controller={runController}
+  signal={renderContext.signal}
+  fallback={<Text valueKey="localRun.controlUnavailable" />}
+/>
+```
+
+`runController.prepare({signal})` returns `{input}` after current validation, or
+`null` to cancel. `runController.onSettled(execution)` receives the full canonical
+Action envelope, including pending approval, operation identity and unknown failure
+details. A controller replacement during a run does not take settlement away from
+the controller that prepared it. Preparation must honor cancellation; never replay
+an uncertain acceptance.
+
+The component registers the control in the mounted host's action slot; it renders
+no author-owned button. The host uses its existing button on native and hosted-web,
+outside the iframe, including `detailsPane` destinations. `title` / `titleKey`,
+`variant` and `disabled` update presentation without rebinding a running operation.
+Unsupported hosts show `fallback` and call optional `onUnavailable(error)`. The SDK
+`hostApi.actionControl` supplies the same binding directly for non-React authors;
+dispose its handle on cleanup. It exposes only `update(presentation)` and `dispose()`.
+
+For author tests, install `handlers.actionControl` in the existing SDK
+`createPluginUiTestkit`. The handler receives `{request, signal, publish}`: retain
+`publish` on `bind`, emit `{kind:'prepare', requestId}` to request preparation, then
+answer the corresponding `prepared` request with
+`{kind:'settled', requestId, execution}`. A bind handler may return a `Disposable`;
+subscription or fixture retirement aborts its signal and releases it. This tests
+the public controller transport, not physical person authority; that remains a
+mounted-host test.
+
+Ordinary `Action.Execute` and `useExecutePluginAction` retain plugin-automation
+authority. A host control grants no waiver: explicit Ask and setup consent stay
+effective, and Allow for a Project must remain a separate control from Run. See the
+[canonical ownership contract](../../docs/plugin-platform.md#mounted-host-action-controls-03-development).
 
 ### Memory facts (0.3 development source)
 
@@ -427,9 +492,9 @@ copy. Graduated so far:
 | `ActionPanel`, `ActionPanel.Section`, `Action.Execute` / `.Copy` / `.OpenExternal` / `.OpenSurface` / `.Refresh` | Real toolbar and action semantics. Each member dispatches through the canonical host method for its concern and reports a typed outcome, including the `outcomeUnknown` settlement that must never be retried blindly |
 | `Surface`, `Card` | Real native surface hosts over shared surface/press behavior; Happier's `SurfaceCard` consumes that behavior while applying its app-private RN styles locally |
 | `List`, `List.Section`, `List.Item`, `Item`, `ItemGroup` | Real list and row semantics over the shared collection owner. Virtualized `List` owns its bounded search/filter/selected-option state before rows reach the native virtualizer; authors retain match semantics and controlled values. Authors mark independently interactive accessories with `accessoryOutsidePressable`; theme injection, touch-target policy, overflow placement and group indexing remain adapter-owned |
-| `Form`, `Form.Field`, `Form.TextField`, `Form.Toggle`, `Form.Select`, `Form.ValidationMessage`, `Form.Actions` | Real form semantics over the canonical action-form owner. Authors provide static already-resolved options; host option sources and account inventory remain host-owned. `Form.Actions` is the section action cluster (`HappierFormActions`) Happier's `SectionButtonRow` binds, with a far-edge `trailing` slot and a consequence or refusal `footnote` |
+| `Form`, `Form.Field`, `Form.TextField`, `Form.Toggle`, `Form.Select`, `Form.ValidationMessage`, `Form.Actions` | Real form semantics over the canonical action-form owner. No asterisks: a `Form` that mixes required and optional fields marks only the optional ones (a quiet "optional"); an all-required form marks none. Authors provide static already-resolved options; host option sources and account inventory remain host-owned. `Form.Actions` is the section action cluster (`HappierFormActions`) Happier's `SectionButtonRow` binds, with a far-edge `trailing` slot and a consequence or refusal `footnote` |
 | `Popover`, `Menu`, `SheetMenu`, `Dropdown`, `ContextMenu` | Controlled overlay semantics over the incumbent presentation host. It owns anchoring, focus return, Escape, outside dismissal and Android Back; authors supply only semantic state and items |
-| `SessionProvider`, `SessionTranscript`, `SessionComposer`, `SessionChat` | In progress. A host-mediated live Session (transcript, composer, approvals) rendered by Happier's own session view. One controller per provider and at most one of each part; parts fill a bounded region. RN/RNW only: isolated tests and hosted web render the author's `fallback` |
+| `SessionProvider`, `SessionTranscript`, `SessionComposer`, `SessionChat` | Shipped in 0.3 development source. `SessionProvider` binds one host-mediated Session controller; `SessionTranscript` and `SessionComposer` claim at most one host-rendered part within it. `SessionChat` supplies the standard live chat composition or a read-only transcript through `variant="transcript"`. Happier's Session presentation remains the single implementation, including transcript prompts and approvals. RN/RNW only: when the host cannot render a Session, the author's `fallback` is shown (or nothing when none is supplied) |
 
 `./components` is the author UI layer, also re-exported by the root. It contains
 the ergonomic adapters and domain-neutral shared primitives over the same
@@ -439,17 +504,20 @@ contract intentionally excludes required private props/styles.
 
 ### Collection filters and long titles (0.3 development source)
 
-`CollectionToolbar.refine` supplies `render()` for the wide row and `sheet.render`
-for the folded Filters control (a phone, or a row that no longer fits). Both draw
-the same narrowing form, so a page has one filter UI at every width: the folded
-button opens `sheet.render({ close, maxHeight, sheet })` in `SheetMenu`'s content
-slot, and the form applies its own edits and closes itself. `sheet.header: 'none'`
-is for a form that leads with its own title (the shared `CollectionConditionEditor`),
-so the sheet draws no band over it. Pickers the wide row draws beside Filters
-(Order) go in `foldedChoices` as named radio groups; folded, they end the ⋯ menu.
+`CollectionToolbar.refine.sheet.render` is the page's filter form. A funnel at the
+end of the Collection's search field opens it at every width: anchored under the
+field on a wide page, the shared bottom sheet on a phone, as
+`sheet.render({ close, maxHeight, sheet })` in `SheetMenu`'s content slot; the form
+applies its own edits and closes itself. `sheet.header: 'none'` is for a form that
+leads with its own title (the shared `CollectionConditionEditor`), so the sheet draws
+no band over it. Pass what is on as the Collection's `search.tokens`: they stand on
+one quiet line under the toolbar, only while something is on. `render()` is the wide
+row's other controls (Order); give its pickers to `foldedChoices` as named radio
+groups so they end the ⋯ menu when folded. Set `inline: true` when `render()` is itself the whole filter
+(a short scope switch): the funnel then appears only when the toolbar folds.
 
 ```tsx
-import { CollectionConditionEditor, CollectionToolbar, Item, Popover } from '@happier-dev/plugin-ui/components';
+import { CollectionConditionEditor, CollectionToolbar, Item, Select } from '@happier-dev/plugin-ui/components';
 
 const editor = (done?: { label: string; onPress: () => void }) => (
   <CollectionConditionEditor model={model} labels={labels} onChange={applyEdit} result={result}
@@ -457,8 +525,7 @@ const editor = (done?: { label: string; onPress: () => void }) => (
 );
 <CollectionToolbar refine={{
   label: 'Filters', activeCount,
-  render: () => <Popover open={open} onOpenChange={setOpen} trigger="Filters"
-    triggerAccessibilityLabel="Filters" floatingRole="panel">{editor()}</Popover>,
+  render: () => <Select label="Order" presentation="menu" value={order} options={orderOptions} onChange={chooseOrder} />,
   sheet: { header: 'none',
     render: ({ close }) => editor({ label: `Show ${resultCount} results`, onPress: close }) },
   foldedChoices: { groups: orderGroups, radioGroups: orderRadioGroups, onSelect: chooseOrder },
@@ -471,6 +538,26 @@ it takes the same semantic menu props plus `sheet: { title, footer?, header? }` 
 optional `triggerCount`, or a `content` render in place of menu rows. The shared
 host owns sheet presentation, focus and dismissal. `Item.titleEllipsizeMode="middle"`
 keeps a long title on one line with its suffix visible and its full accessible name intact.
+### Bot identity and page layout (0.3 development source)
+
+Use `BotFace` with a Bot's public saved `face` value, a stable `seed` and a
+pixel `size`. The host's existing Bot face renderer resolves saved choices,
+Account defaults, reduced motion and visibility. It does not read a Session
+or acquire Bot data for the plugin.
+
+`PageAsideColumns` composes a page body, `aside` and optional `closing` row.
+Pass the page's `compact` decision; the host owns the remaining width layout.
+Place `PagePinnedBar` after the page's scroll owner to keep actions in reach,
+and wrap it in `KeyboardStickyFooter` to use native keyboard avoidance.
+
+These adapters use the app's private presentation bridge in same-realm native
+and React Native Web surfaces. Hosts without the matching renderer display the
+author's optional `fallback`; they do not copy the app's layout or face logic.
+`KeyboardStickyFooter` keeps its children in ordinary flow without the bridge.
+Import them from `@happier-dev/plugin-ui/components` or the package root.
+`BotTemplateHeader` remains the app's template release/recipient header;
+authors compose `PageHeader` with `BotFace` for their own identity surface.
+
 See the generated [API declarations](api-declarations.md) for exact types.
 
 Spinner presentation belongs to `presentation/feedback/Spinner.tsx`:
@@ -532,48 +619,3 @@ record of the public surface, and an author reads `API.md` from
 `src/**`, test, fixture, or config file is included. Feature QA proves this
 selection through source-owned inclusion tests and does not create or install a
 local release archive.
-
-### Host-rendered Action controls (0.3 development source)
-
-Use `Action.Control` when a person's host-owned button must freshly prepare an
-invocation through your existing controller:
-
-```tsx
-<Action.Control
-  action="projects.compute.exec"
-  titleKey="localRun.run"
-  disabled={!canRun}
-  controller={runController}
-  signal={renderContext.signal}
-  fallback={<Text valueKey="localRun.controlUnavailable" />}
-/>
-```
-
-`runController.prepare({signal})` returns `{input}` after current validation, or
-`null` to cancel. `runController.onSettled(execution)` receives the full canonical
-Action envelope, including pending approval, operation identity and unknown failure
-details. A controller replacement during a run does not take settlement away from
-the controller that prepared it. Preparation must honor cancellation; never replay
-an uncertain acceptance.
-
-The component registers the control in the mounted host's action slot; it renders
-no author-owned button. The host uses its existing button on native and hosted-web,
-outside the iframe, including `detailsPane` destinations. `title` / `titleKey`,
-`variant` and `disabled` update presentation without rebinding a running operation.
-Unsupported hosts show `fallback` and call optional `onUnavailable(error)`. The SDK
-`hostApi.actionControl` supplies the same binding directly for non-React authors;
-dispose its handle on cleanup. It exposes only `update(presentation)` and `dispose()`.
-
-For author tests, install `handlers.actionControl` in the existing SDK
-`createPluginUiTestkit`. The handler receives `{request, signal, publish}`: retain
-`publish` on `bind`, emit `{kind:'prepare', requestId}` to request preparation, then
-answer the corresponding `prepared` request with
-`{kind:'settled', requestId, execution}`. A bind handler may return a `Disposable`;
-subscription or fixture retirement aborts its signal and releases it. This tests
-the public controller transport, not physical person authority; that remains a
-mounted-host test.
-
-Ordinary `Action.Execute` and `useExecutePluginAction` retain plugin-automation
-authority. A host control grants no waiver: explicit Ask and setup consent stay
-effective, and Allow for a Project must remain a separate control from Run. See the
-[canonical ownership contract](../../docs/plugin-platform.md#mounted-host-action-controls-03-development).

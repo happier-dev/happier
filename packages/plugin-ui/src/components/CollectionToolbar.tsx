@@ -8,7 +8,6 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { HappierCollectionFilterChips, type HappierCollectionFilterChip } from '../presentation/collection/CollectionFilterChips.js';
 import { View } from 'react-native';
 
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
@@ -18,13 +17,14 @@ import type { CollectionHeaderSlots } from './Collection.js';
 import { Select, type SelectOption } from './Form.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
+import { ListCollectionSearchActionContext } from './listCollectionHeader.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import {
   Menu, SheetMenu, type MenuGroup, type MenuItem, type MenuRadioGroup, type SheetMenuContentControls,
 } from './Overlay.js';
-import { usePluginTheme } from './PluginUiProvider.js';
-import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { Status } from './Status.js';
 import type { TextTone } from './Text.js';
+import { usePluginTheme } from './PluginUiProvider.js';
 
 /**
  * Whether the Collection around a toolbar is phone-narrow. Collection provides it from its measured width (and,
@@ -72,21 +72,23 @@ export type CollectionToolbarProps = Readonly<{
   /** Which lens the reader looks through (a saved-view picker). It leads the controls at every width. */
   lens?: ReactNode;
   /**
-   * What narrows and orders the list. On a wide page `render()` stands in the row (a Filters control opening the
-   * shared condition editor, an Order picker). When the toolbar folds (a phone, or a row that no longer fits) they
-   * fold behind one round Filters button, counted, that opens `sheet` — the SAME narrowing form the wide row opens,
-   * drawn in the shared bottom sheet's content slot — and the wide row's pickers (Order) join ⋯ as `foldedChoices`.
+   * What narrows and orders the list (lab `spfield` B). The filters open from one funnel at the end of the search
+   * field, at every width: `sheet` is the page's narrowing form, anchored under the field on a wide page and the
+   * shared bottom sheet on a phone. What is on is said by the Collection's token line under the toolbar, never by
+   * chips at rest. `render()` is the wide row's other narrowing controls (an Order picker); folded they join ⋯ as
+   * `foldedChoices`. A page without a search keeps `render()` on the wide row and a round, counted Filters button
+   * when folded.
    */
   refine?: Readonly<{
     label: string;
-    /**
-     * What people filter by most, one press from on or off, standing in their own row under the search. The wide
-     * row's `render()` ends that row as the long tail. Folded, the chips stay and only the long tail folds.
-     */
-    chips?: readonly HappierCollectionFilterChip[];
-    /** How many narrowings are in force; said in the folded button's name and drawn as its count. */
+    /** How many narrowings are in force; said in the funnel's name, and drawn as a count only on a round button. */
     activeCount?: number;
-    render: () => ReactNode;
+    render?: () => ReactNode;
+    /**
+     * `render()` is the whole narrowing control, standing in the wide row (a short scope switch): the funnel then
+     * appears only when the toolbar folds, so the same filter never has two controls on one row.
+     */
+    inline?: boolean;
     sheet: Readonly<{
       /** The narrowing form (a condition editor). It applies its own edits and closes the sheet through `close`. */
       render: (controls: SheetMenuContentControls) => ReactNode;
@@ -139,12 +141,13 @@ const REFRESH_ITEM_ID = 'happier-collection-toolbar:refresh';
 /**
  * The one toolbar above a Collection (lab `cbar`), composed for the width it is drawn at.
  *
- * Wide: one calm row — the page's name, the search, the lens and the narrowing controls lead; the freshness,
- * Refresh, ⋯ and the arrangement switch trail.
+ * Wide: one calm row — the page's name, the search (its filter funnel at its end), the lens and the wide row's
+ * other narrowing controls lead; the freshness, Refresh, ⋯ and the arrangement switch trail.
  *
- * Phone (lab `merged-list-phone`): the search with two round buttons beside it — Filters (narrowing and order, as
- * one form) and ⋯ (Refresh carrying the freshness, then the page's actions) — and one row with the lens on the
- * left and the arrangement switch on the right. A healthy list stays quiet there; a list that is refreshing or
+ * Phone (lab `merged-list-phone`, `spfield` B): the search, its funnel at its end opening the filters as the bottom
+ * sheet, with ⋯ beside it (Refresh carrying the freshness, the page's actions, then Order), then Select where the
+ * list can select —
+ * and one row with the lens on the left and the arrangement switch on the right. A healthy list stays quiet there; a list that is refreshing or
  * not current says so in that row, so it is never only inside a menu.
  */
 export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
@@ -154,15 +157,48 @@ export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
   return compact ? <CompactToolbar {...props} /> : <WideToolbar {...props} />;
 }
 
+/**
+ * The one control that opens the page's filters: the funnel at the search field's end (`inField`), or, folded on a
+ * page without a search, a round counted button beside ⋯. Anchored on a wide page, the shared bottom sheet on a phone.
+ */
+function FilterFunnel(props: Readonly<{ refine: NonNullable<CollectionToolbarProps['refine']>; inField: boolean }>): ReactElement {
+  const { refine } = props;
+  const [open, setOpen] = useState(false);
+  const named = refine.activeCount ? `${refine.label}: ${refine.activeCount}` : refine.label;
+  return (
+    <SheetMenu
+      open={open}
+      onOpenChange={setOpen}
+      trigger={refine.label}
+      triggerIcon="filter"
+      {...(props.inField ? {} : { triggerAppearance: 'well' as const, triggerCount: refine.activeCount })}
+      triggerAccessibilityLabel={named}
+      placement="bottom"
+      sheet={{ title: refine.label, ...(refine.sheet.header === undefined ? {} : { header: refine.sheet.header }) }}
+      content={refine.sheet.render}
+    />
+  );
+}
+
+/** The search slot with the filter funnel at its end, when the page's filters open from it at this width. */
+function SearchWithFunnel(props: Readonly<{ search: ReactNode; refine: CollectionToolbarProps['refine']; folded: boolean }>): ReactNode {
+  if (props.search == null || props.refine === undefined || (props.refine.inline === true && !props.folded)) return props.search ?? null;
+  return (
+    <ListCollectionSearchActionContext.Provider value={<FilterFunnel refine={props.refine} inField />}>
+      {props.search}
+    </ListCollectionSearchActionContext.Provider>
+  );
+}
+
 function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refresh } = props;
-  const wideChips = props.refine?.chips?.length ? props.refine.chips : null;
   const chrome = useHappierPageChromeInternal();
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
-  // A healthy freshness is the first thing the one row gives up: its words go (Refresh still says them) before the
-  // toolbar folds, at the row width that needed it and anything narrower. Words that warn are never given up.
-  const quietable = freshness != null && freshness.tone === 'muted';
+  // A healthy freshness ("Updated just now") or a read in flight ("Refreshing") is the first thing the one row gives up:
+  // its words go (Refresh still says them, and spins while it reads) before the toolbar folds, at the row width that needed it and
+  // anything narrower, never cut to "R…". Words that warn are never given up.
+  const quietable = freshness != null && (freshness.tone === 'muted' || freshness.pulsing === true);
   const [quietBelowPx, setQuietBelowPx] = useState<number | null>(null);
   const quiet = quietable && quietBelowPx !== null;
   const rowRef = useRef<ComponentRef<typeof View>>(null);
@@ -208,9 +244,9 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         onLayout={measure}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:lead` })}>
         {slots?.title ?? null}
-        {slots?.search ?? null}
+        <SearchWithFunnel search={slots?.search} refine={props.refine} folded={false} />
         {props.lens ?? null}
-        {wideChips ? null : props.refine?.render() ?? null}
+        {props.refine?.render?.() ?? null}
         {slots?.selection ?? null}
         {props.accessory ?? null}
       </View>
@@ -246,18 +282,11 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
       </View>
     </View>
   );
-  return wideChips ? (
-    <Stack gap="small">
-      {row}
-      <HappierCollectionFilterChips chips={wideChips} trailing={props.refine?.render() ?? null}
-        {...(props.testID === undefined ? {} : { testID: `${props.testID}:chips` })} />
-    </Stack>
-  ) : row;
+  return row;
 }
 
 function CompactToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refine } = props;
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const fit = useContext(CollectionToolbarOverflowContext);
   // The widths the folded row can still see of what the wide row draws: the lens as drawn here, and the sizes of
   // the rest. When any of them gets smaller the wide row may fit again (`CollectionToolbarFitReport.shrank`).
@@ -289,25 +318,9 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
     seen.current = sizes;
     if (previous !== null && sizes.some((size, index) => size < previous[index]!)) fit?.shrank();
   }, [contentKey, fit]);
-  const search = slots?.search ?? null;
-  const filters =
-    refine === undefined ? null : (
-      <SheetMenu
-        open={filtersOpen}
-        onOpenChange={setFiltersOpen}
-        trigger={refine.label}
-        triggerIcon="filter"
-        triggerAppearance="well"
-        triggerCount={refine.activeCount}
-        triggerAccessibilityLabel={
-          refine.activeCount
-            ? `${refine.label}: ${refine.activeCount}`
-            : refine.label
-        }
-        sheet={{ title: refine.label, ...(refine.sheet.header === undefined ? {} : { header: refine.sheet.header }) }}
-        content={refine.sheet.render}
-      />
-    );
+  const search = slots?.search == null ? null : <SearchWithFunnel search={slots.search} refine={refine} folded />;
+  // With a search the funnel ends the field; without one it stays a round button beside ⋯.
+  const filters = refine === undefined || search !== null ? null : <FilterFunnel refine={refine} inField={false} />;
   const buttons = (
     <>
       {filters}
@@ -335,10 +348,9 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
           {trailingSelection}
         </Row>
       ) : null}
-      {refine?.chips?.length ? <HappierCollectionFilterChips chips={refine.chips} scrolls
-        {...(props.testID === undefined ? {} : { testID: `${props.testID}:chips` })} /> : null}
       <Row gap="small" align="center">
-        {/* A transient accessory wraps under the lens instead of covering it. */}
+        {/* A transient accessory (an Action picker while selecting) that does not fit beside the lens takes the line
+            under it, rather than the lens shrinking under the accessory drawn over it. */}
         <Row gap="small" wrap align="center" style={compactLeadStyle}>
           {measured('lens', props.lens, compactLensStyle)}
           {head ? null : selection}
@@ -404,7 +416,6 @@ function MoreMenu(
   // Folded, the wide row's pickers (Order) end the menu as named radio groups.
   const choices = folded ? props.refine?.foldedChoices : undefined;
   if (items.length === 0 && choices === undefined) return null;
-
   const label = more?.label ?? refresh?.label ?? '';
   return (
     <Menu
@@ -460,11 +471,11 @@ const leadStyle: HappierPortableStyle = {
 // It keeps the toolbar's trailing edge when it wraps below the leading controls (a list narrowed beside a detail
 // pane): freshness, Refresh, the switch and Run on stay where the eye finds them, never stranded on the left.
 const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
+const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactPageActionsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0 };
-/** A control's words never break inside the folded toolbar; search gives way. */
+/** A control's words never break inside the folded toolbar; the search beside it gives way instead. */
 const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
-const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** The space between the lens and the switch; a freshness that needs saying ends there, truncating first. */
 const compactFreshnessStyle: HappierPortableStyle = {
   flex: 1,
