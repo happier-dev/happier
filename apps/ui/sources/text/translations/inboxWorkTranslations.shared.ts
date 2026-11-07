@@ -63,6 +63,35 @@ export const en = {
     detail: {
         openApproval: 'Open request',
     },
+    healthNotice: {
+        where: 'Where it’s failing',
+        service: 'Service',
+        machine: 'Machine',
+        investigate: 'Investigate',
+        investigateHint: ({ machine }: { machine: string }) => `Investigate opens a new session on ${machine} with this notice as evidence.`,
+        approvalBody: 'The session opens once the request is approved.',
+        selectionTitle: 'Investigate needs a choice',
+        selectionBody: 'Investigate couldn’t pick a session or an agent on its own. Nothing was started.',
+        uncertainTitle: 'Not sure a session started',
+        uncertainBody: 'Check your sessions before trying again.',
+        unavailableTitle: 'Couldn’t start an investigation',
+        unavailableBody: 'Nothing was started.',
+        alertInvestigateHint: 'Opens a session with this issue as evidence.',
+        investigateUnavailable: 'Investigate isn’t available for this alert.',
+        notSetUpTitle: 'No investigation set up',
+        notSetUpBody: 'Set one up in PRs, Issues & Tasks, then try again.',
+        placementTitle: 'Choose where to work',
+        placementReason: {
+            controller_required: 'Its controller isn’t known. Pick the Machine to work on.',
+            machine_unreachable: 'Its Machine is offline. Pick another, or try again once it’s back.',
+            ambiguous_workspace: 'More than one folder fits. Pick the one to work in.',
+            agent_required: 'No default agent is set. Pick the agent to use.',
+        },
+        placementOffline: 'Offline',
+        placementAnyFolder: 'Any folder',
+        placementAgent: 'Agent',
+        placementConfirm: 'Start here',
+    },
 };
 
 

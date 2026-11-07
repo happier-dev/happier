@@ -882,6 +882,16 @@ describe('AgentInputAttachmentsRow', () => {
     ).toBeTruthy();
   });
 
+  it('says nothing unavailable in the accessible name when no reason is known (D4)', async () => {
+    const screen = await renderScreen(
+      <AgentInputAttachmentsRow
+        items={[{ kind: 'badge', key: 'plain', label: 'Deploy of 302cf72 failed', availability: 'unavailable', testID: 'plain' }] satisfies readonly AgentInputAttachmentsRowItem[]}
+      />,
+    );
+    expect(screen.tree.root.findAll((node) => typeof node.props.accessibilityLabel === 'string'
+      && node.props.accessibilityLabel.includes('common.unavailable'))).toHaveLength(0);
+  });
+
   it('names an unreadable item quietly, with its reason only in its label, and still alarms an invalid one', async () => {
     const onRemove = vi.fn();
     const screen = await renderScreen(

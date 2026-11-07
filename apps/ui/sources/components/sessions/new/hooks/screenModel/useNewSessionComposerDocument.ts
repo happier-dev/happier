@@ -62,7 +62,6 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
-import { t } from '@/text';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
@@ -83,7 +82,8 @@ function projectPendingAttachmentSeed(
         attachment: { pluginId: seed.pluginId, localId: seed.attachmentLocalId },
         key: seed.value.key,
         value: seed.value.value,
-        presentation: { ...seed.value.presentation, typeLabel: t('common.unavailable') },
+        // Not admitted yet, so its type is unknown: no type label rather than "Unavailable", which the chip never shows.
+        presentation: { ...seed.value.presentation, typeLabel: '' },
         availability: { status: 'unavailable' },
     };
 }

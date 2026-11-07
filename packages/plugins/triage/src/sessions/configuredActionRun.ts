@@ -182,15 +182,20 @@ export async function runTriageConfiguredHandoffV1(
     const agent = investigationAgent?.selection ?? (preferredKey === undefined ? undefined : await readTriageAgentExecutionTargetV1(host, preferredKey, cancellation));
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     if (!investigationAgent && preferredKey !== undefined && agent?.status !== 'resolved') return finish({ kind: 'selectionRequired', fields: ['agentChoice'] }, options.resumeStart);
-    if (health && action.workspaceMode !== 'reference_only' && !health.workspace) {
-        return finish({ kind: 'placement_choice_required', reason: 'ambiguous_workspace',
-            candidates: [{ machine: health.machine, reachable: true }], agents: investigationAgent?.candidates ?? [] }, options.resumeStart);
-    }
-    if (investigationAgent && agent?.status !== 'resolved') {
-        return finish({ kind: 'placement_choice_required', reason: 'agent_required',
-            candidates: [{ machine: health!.machine, ...(health!.workspace ? { workspace: health!.workspace } : {}), reachable: true }],
-            agents: investigationAgent.candidates }, options.resumeStart);
-    }
+    // A subject whose folder or Agent is still open is not a complete start. The person settles it in the
+    // prefilled composer (owner ruling 16:50Z); only a caller with no composer receives this typed choice.
+    const unresolvedChoice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> | undefined = !health
+        ? undefined
+        : action.workspaceMode !== 'reference_only' && !health.workspace
+            ? { kind: 'placement_choice_required', reason: 'ambiguous_workspace',
+                candidates: [{ machine: health.machine, reachable: true }], agents: investigationAgent?.candidates ?? [] }
+            : investigationAgent && agent?.status !== 'resolved'
+                ? { kind: 'placement_choice_required', reason: 'agent_required',
+                    candidates: [{ machine: health.machine, ...(health.workspace ? { workspace: health.workspace } : {}), reachable: true }],
+                    agents: investigationAgent.candidates }
+                : undefined;
+    // An existing Session is not authored again; its handoff keeps the typed choice.
+    if (unresolvedChoice !== undefined && input.sessionChoice.kind === 'existing') return finish(unresolvedChoice, options.resumeStart);
 
     if (primary !== undefined && input.sessionChoice.kind !== 'existing') {
         if (action.workspaceMode === 'pull_request' && primary.reviewWorkspace === undefined) return targetUnavailable('entry_review_workspace_missing');
@@ -324,8 +329,8 @@ export async function runTriageConfiguredHandoffV1(
         });
         const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
         const profile = action.profileId === null ? {} : { profileId: action.profileId };
-        const directSettlement: unknown = existing !== undefined || delivery === 'compose' ? undefined
-            : health && !health.workspace && agent?.status === 'resolved'
+        const directSettlement: unknown = existing !== undefined || delivery === 'compose' || unresolvedChoice !== undefined ? undefined
+            : health && !health.workspace && action.workspaceMode === 'reference_only' && agent?.status === 'resolved'
                 ? { executionTarget: health.machine, agentTarget: agent.agentTarget, directory: { kind: 'managed' }, ...profile }
                 : execution?.directory !== undefined && agent?.status === 'resolved' && (checkout === 'none' || checkout === 'reuseWorkspace')
                     ? { executionTarget: execution.executionTarget, agentTarget: agent.agentTarget,
@@ -340,11 +345,13 @@ export async function runTriageConfiguredHandoffV1(
                 entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
                 checkoutIntent: checkout, placement: execution, candidates, signal: options.signal,
-                ...(health && !health.workspace ? { directoryIntent: { kind: 'managed' as const } } : {}),
+                ...(health && !health.workspace && action.workspaceMode === 'reference_only'
+                    ? { directoryIntent: { kind: 'managed' as const } } : {}),
             });
             return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
                 : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })
                 // A caller with no composer (agent, MCP, CLI) keeps its typed choice request.
+                : composed.status === 'unsupported' && unresolvedChoice !== undefined ? finish(unresolvedChoice, options.resumeStart)
                 : composed.status === 'unsupported' && delivery !== 'compose'
                     ? finish({ kind: 'selectionRequired', fields: [preferredKey === undefined ? 'agentChoice' : 'sessionChoice'] })
                     : unavailable('composerUnavailable');

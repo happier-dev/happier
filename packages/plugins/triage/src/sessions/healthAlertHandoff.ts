@@ -130,6 +130,8 @@ async function readFailureSubject(
         return true;
     };
     let reference: { actionId: string; input: JsonReadInput; retained?: object };
+    // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
+    let receiptTitle: string | undefined;
     switch (subject.kind) {
         case 'deploymentReceipt': {
             const { kind: _kind, ...address } = subject;
@@ -140,6 +142,7 @@ async function readFailureSubject(
             if (!selected && !await environmentPlacement(subject.environmentId)) return null;
             const receipt = result.deployment;
             const source = result.content?.sourceIntent;
+            receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source?.kind === 'repository' ? source.sha : undefined);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
                 requestedAtMs: receipt.requestedAtMs, startedAtMs: receipt.startedAtMs, settledAtMs: receipt.settledAtMs,
@@ -196,8 +199,18 @@ async function readFailureSubject(
     if (!placement || placement.kind !== 'ready') return placement;
     return { ...placement,
         evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
-            : subject.kind === 'deploymentReceipt' ? 'Deployment reference' : 'Failure reference' }, author: { kind: 'process' as const },
+            : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference' : 'Failure reference' }, author: { kind: 'process' as const },
             text: JSON.stringify({ subject, read: reference }) } };
+}
+
+/**
+ * A failed receipt's title in the receipt page's words ("Deploy of 302cf72 failed"). Investigation only starts from a
+ * failed receipt, so only that state is named; anything else keeps the generic reference label.
+ */
+function failedReceiptTitle(operation: string | undefined, state: string, sha: string | undefined): string | undefined {
+    if (state !== 'failed' || !sha) return undefined;
+    const short = sha.slice(0, 7);
+    return operation === 'rollback' ? `Rollback to ${short} failed` : operation === 'deploy' ? `Deploy of ${short} failed` : undefined;
 }
 
 /** Subject identity chooses the controller and its accepted Source folders once.

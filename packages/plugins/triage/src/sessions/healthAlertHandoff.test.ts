@@ -95,7 +95,7 @@ describe('typed failure subjects through the existing investigation owner', () =
                 }
                 if (id === 'projects.list') return { items: [], truncated: false };
                 if (id === 'deployments.receipts.get') return { ok: true, deployment: {
-                    id: 'deployment-a', environmentId: 'environment', state: 'failed', actionOperationId: 'deployment-operation',
+                    id: 'deployment-a', environmentId: 'environment', operation: 'deploy', state: 'failed', actionOperationId: 'deployment-operation',
                     revision: 3, requestedAtMs: 100, startedAtMs: 110, settledAtMs: 120,
                     predecessorDeploymentId: 'deployment-before',
                     acceptedExecution: { controller: { machineId: 'machine-a', installationId: 'installation' } },
@@ -123,7 +123,8 @@ describe('typed failure subjects through the existing investigation owner', () =
         expect(result).toMatchObject({ kind: 'ready', machine: { serverId: 'server-a', machineId: 'machine-b' } });
         expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ subject });
         if (subject.kind === 'deploymentReceipt') {
-            expect(result?.kind === 'ready' && result.evidence.source.label).toBe('Deployment reference');
+            // The composer chip names the receipt the way its page does, not a generic reference (D4).
+            expect(result?.kind === 'ready' && result.evidence.source.label).toBe('Deploy of aaaaaaa failed');
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 actionId: 'deployments.receipts.get', input: { serverId: 'server-a', environmentId: 'environment', deploymentId: 'deployment-a' },
                 retained: { state: 'failed', receiptRevision: 3, actionOperationId: 'deployment-operation',

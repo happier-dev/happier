@@ -223,6 +223,41 @@ describe('configured action execution through the shared Session owner', () => {
         expect(JSON.stringify(seeds[0])).toContain('receipt');
     });
 
+    // Live D1 (AGENT-ACTIONS-UI-1107-LIVE): a working-copy record on a receipt whose controller has no saved folder
+    // looped on "Choose where to investigate". Owner ruling 16:50Z: an unresolved placement opens the composer.
+    it.each(['compose', 'send'] as const)('opens the prefilled composer for a working-copy record with no folder (%s)', async delivery => {
+        const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'receipt' } as const;
+        const seeds: unknown[] = [];
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            openNewSession: async (seed: unknown) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [
+                    { ...action, actionId: 'fix-deploy', label: 'Fix this deploy', workspaceMode: 'repository',
+                        target: { ...action.target, delivery } },
+                ] };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
+                if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'chosen', updatedAt: 1, targets: [] };
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'agents.backends.list') return { items: [] };
+                throw new Error(`Unexpected host Action ${id}`);
+            },
+        };
+        const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'fix-deploy',
+            context: { kind: 'failure', subject, machine: { serverId: 'server-a', machineId: 'chosen' } },
+            evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } });
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [], signal: new AbortController().signal });
+        expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
+        expect(seeds).toEqual([expect.objectContaining({ prompt: expect.any(String),
+            placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'chosen' } })]);
+        // A working copy is the person's folder choice in the composer, never a managed scratch folder.
+        expect(seeds[0]).not.toHaveProperty('directoryIntent');
+        expect(JSON.stringify(seeds[0])).toContain('receipt');
+    });
+
     it('rejects the retired top-level entry execution envelope', () => {
         expect(TriagePublicHandoffActionInputV1Schema.safeParse({
             v: 1,

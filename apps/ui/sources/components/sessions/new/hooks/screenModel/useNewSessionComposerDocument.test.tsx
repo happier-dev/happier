@@ -335,6 +335,8 @@ describe('useNewSessionComposerDocument', () => {
         });
         const row = hook.getCurrent().attachmentRowItems[0];
         expect(row?.onRemove).toEqual(expect.any(Function));
+        // Waiting to attach is not "unavailable": the chip and its accessible name both just name the item (D4).
+        expect(row?.accessibilityLabel).toBe('Pending entry');
 
         await act(async () => {
             row?.onRemove?.();

@@ -2,7 +2,7 @@ import type { ComposerAttachmentViewV1, ComposerSnapshotV1 } from '@happier-dev/
 import { describe, expect, it } from 'vitest';
 
 import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
-import { planTriageEntryAttachmentMutation } from './mutationPlan.js';
+import { buildTriageForgeEvidenceAttachmentDraftV1, planTriageEntryAttachmentMutation } from './mutationPlan.js';
 
 const SOURCE = { pluginId: 'happier.forge', localId: 'items' } as const;
 const INSTANCE_ID = '2f1c9b4e-7a55-4a8c-9d2e-0b6f4c3a1d78';
@@ -210,5 +210,14 @@ describe('planTriageEntryAttachmentMutation — remove', () => {
         });
 
         expect(plan).toEqual({ status: 'alreadySettled', reason: 'notAttached' });
+    });
+});
+
+describe('buildTriageForgeEvidenceAttachmentDraftV1', () => {
+    it('names the chip after the evidence it carries, not a generic label', () => {
+        const draft = buildTriageForgeEvidenceAttachmentDraftV1({ v: 1, items: [{
+            source: { kind: 'alert', label: 'Deploy of 302cf72 failed' }, author: { kind: 'process' }, text: '{}',
+        }] });
+        expect(draft.value.presentation.label).toBe('Deploy of 302cf72 failed');
     });
 });

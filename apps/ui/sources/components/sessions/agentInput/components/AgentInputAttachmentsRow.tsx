@@ -661,7 +661,8 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
     // An item that cannot be read right now (its source is offline, signed out) keeps its last-known name: the
     // reason is in its accessible name and tooltip, not a red alarm on the chip.
     const resolveAttachmentNote = (item: AgentInputAttachmentsRowItem): string | null => (
-        item.availability === 'unavailable' ? item.availabilityReason?.trim() || t('common.unavailable') : null
+        // Only a known reason is said: the chip shows no unavailable state of its own (D4).
+        item.availability === 'unavailable' ? item.availabilityReason?.trim() || null : null
     );
     const resolveAttachmentAccessibilityLabel = (item: AgentInputAttachmentsRowItem): string => {
         const error = resolveAttachmentError(item) ?? resolveAttachmentNote(item);

@@ -12,7 +12,9 @@ import { InvestigationPlacementChooser } from './InvestigationPlacementChooser';
  * What happened after Investigate, for every failure surface that offers it (Inbox notices, failed
  * receipts, managed setup failures): one banner per outcome; a started handoff already opened its page.
  */
-const NOT_SET_UP: ReadonlySet<string> = new Set(['catalogUnavailable', 'configuredActionUnavailable']);
+// `catalogUnavailable` is a catalog read that did not answer (transport, reconnecting Account): the unavailable
+// copy, never the set-up step.
+const NOT_SET_UP: ReadonlySet<string> = new Set(['configuredActionUnavailable']);
 
 /** One sentence for what happened after Investigate; a started handoff already opened its page. */
 export function InvestigationOutcomeBanner(props: Readonly<{

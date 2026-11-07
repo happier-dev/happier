@@ -148,6 +148,8 @@ export function projectComposerAttachmentRowItems(input: Readonly<{
             ? input.renderSurface?.({ attachment, catalog })
             : undefined;
         const removeAttachment = input.onRemove;
+        const typedLabel = attachment.presentation.typeLabel
+            ? `${attachment.presentation.typeLabel}: ${attachment.presentation.label}` : attachment.presentation.label;
         const onRemove = removeAttachment === undefined
             ? undefined
             : () => removeAttachment(attachment.instanceId);
@@ -159,8 +161,8 @@ export function projectComposerAttachmentRowItems(input: Readonly<{
             ...(interaction === undefined ? {} : interaction),
             ...(onRemove === undefined ? {} : { onRemove }),
             testID: `composer-attachment:${attachment.instanceId}`,
-            accessibilityLabel: `${attachment.presentation.typeLabel}: ${attachment.presentation.label}`,
-            removeAccessibilityLabel: `${t('common.remove')} ${attachment.presentation.typeLabel}: ${attachment.presentation.label}`,
+            accessibilityLabel: typedLabel,
+            removeAccessibilityLabel: `${t('common.remove')} ${typedLabel}`,
         });
         const icon = projectPluginAttachmentIcon(attachment.presentation.icon);
         return projected.kind === 'badge'
