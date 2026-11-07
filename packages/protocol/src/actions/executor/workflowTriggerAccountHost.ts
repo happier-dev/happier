@@ -6,6 +6,9 @@ import {
   type AvailableAutomationAccountEncryptionV1,
 } from '../../automations/automationAccountCurrentnessV1.js';
 import { AutomationSourceSelectorIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
+import { pluginJsonValuesEqual } from '../../plugins/contributions/jsonSchemaValues.js';
+import { arePluginMachineMaterializationRefsEqual } from '../../machines/administration/pluginMachineExecutionOriginV1.js';
+import type { PluginMachineMaterializationRefV1 } from '../../plugins/availability/materializationRefV1.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import {
   convertLegacyAutomationRecipeToInlineWorkflowV1,
@@ -22,6 +25,7 @@ import {
 import {
   AutomationTriggerDefinitionBindingV1Schema,
   openAutomationTriggerDefinitionStoredEnvelopeV1,
+  createAutomationPluginEventTriggerDefinitionV1,
   sealAutomationPluginEventTriggerInputV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
   type AutomationTriggerDefinitionBindingV1,
@@ -42,12 +46,16 @@ import {
   type WorkflowTriggerAutomationOperations,
   type WorkflowTriggerActions,
 } from './workflowTriggerActions.js';
+import { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+import type { WorkflowAccountRunActionDeps } from './workflowRunActions.js';
+import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
 }
 
 export type WorkflowTriggerAccountHostParams = Readonly<{
+  workflowRequesterCustody?: WorkflowAccountRunActionDeps['workflowRequesterCustody'];
   /** The host's Account Automation HTTP transport; the host adds no trigger semantics. */
   automations: WorkflowTriggerAutomationOperations;
   /** Current validated Account encryption; throws typed when unavailable or stale. */
@@ -56,7 +64,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
-}> & Pick<WorkflowTriggerActionsDependencies, 'sessionList' | 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests'>;
+}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests'>;
 
 type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes'>;
 
@@ -119,7 +127,12 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
         if (row.executionRecipe?.v !== 2) { unresolved++; continue; }
         const openedEncryption = await params.resolveEncryption();
         assertCurrent();
-        const context = AutomationStoredWorkflowDefinitionV2ReadSchema.parse(openWorkflowEnvelope(row.executionRecipe.workflow, openedEncryption));
+        let context = AutomationStoredWorkflowDefinitionV2ReadSchema.parse(openWorkflowEnvelope(row.executionRecipe.workflow, openedEncryption));
+        if (context.deploymentTriggers?.some(trigger => trigger.approval)) {
+          if (row.assignments.length !== 1) unavailable('source_unavailable');
+          context = (await normalizeStoredWorkflowTriggerConsent({ automationId: row.id, context,
+            project: { machineId: row.assignments[0]!.machineId, ...context.workspace } })).context;
+        }
         if (readTriggerTargetV1(row, context).kind !== 'available') unavailable('source_unavailable');
         const sameAuthority = (current: AvailableAutomationAccountEncryptionV1) => {
           assertCurrent();
@@ -202,6 +215,69 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     const binding = eventBinding(row.id, trigger.id, trigger.revision, trigger.eventRef, trigger.sourceSelectorId);
     return { trigger, binding, definition: openEvent(binding, envelope, current, true) };
   };
+  type ConfiguredEvent = Pick<ReturnType<typeof storedEvent>['definition'], 'sourceInstanceId' | 'sourceConfig'> & Readonly<{
+    eventRef: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>['eventRef'];
+    watcher: PluginMachineMaterializationRefV1 | null;
+  }>;
+  const retainedWatcher = (trigger: ReturnType<typeof storedEvent>['trigger']) =>
+    trigger.observation.kind === 'durablePush' ? null : trigger.observation.watcher;
+  const requestedEvent = (automationId: string, triggerId: string, revision: number,
+    trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1): ConfiguredEvent | null => {
+    if (trigger.kind !== 'pluginEvent') return null;
+    const definition = 'triggerDefinitionEnvelope' in trigger
+      ? openEvent(eventBinding(automationId, triggerId, revision, trigger.eventRef, trigger.sourceSelectorId),
+          trigger.triggerDefinitionEnvelope, current)
+      : trigger;
+    return { eventRef: trigger.eventRef, sourceInstanceId: definition.sourceInstanceId, sourceConfig: definition.sourceConfig,
+      watcher: trigger.observationTransport.kind === 'durablePush' ? null : trigger.observationTransport.watcherMaterializationRef };
+  };
+  // Several Event declarations can observe one native configured source.
+  // A declaration's localId must not give it a competing source configuration.
+  const sameSourcePlugin = (left: ConfiguredEvent['eventRef'], right: ConfiguredEvent['eventRef']) =>
+    left.pluginId === right.pluginId;
+  const assertSourceConfigurations = async (automationId: string, name: string, candidates: readonly ConfiguredEvent[],
+    current: AvailableAutomationAccountEncryptionV1, reuse?: (row: AutomationDefinitionDetail) => boolean) => {
+    if (!candidates.length) return [];
+    const retained: Array<ConfiguredEvent & Readonly<{ automationId: string; name: string }>> = [];
+    const retainedDefinitions: AutomationDefinitionDetail[] = [];
+    let cursor: string | undefined;
+    do {
+      // Source identity/config are private in E2EE Accounts. The existing
+      // Account census has no source selector: inspect public Event refs first,
+      // and open only matching definitions under the current Account material.
+      const page = await params.automations.list({ ...(cursor ? { cursor } : {}) });
+      for (const summary of page.automations) {
+        if (summary.id === automationId || !summary.triggers.some(trigger => trigger.kind === 'pluginEvent'
+          && candidates.some(candidate => sameSourcePlugin(candidate.eventRef, trigger.eventRef)))) continue;
+        const row = await params.automations.get(summary.id);
+        if (!row) continue;
+        retainedDefinitions.push(row);
+        for (const trigger of row.triggers) {
+          if (trigger.kind !== 'pluginEvent' || !candidates.some(candidate => sameSourcePlugin(candidate.eventRef, trigger.eventRef))) continue;
+          const { definition } = storedEvent(row, trigger.id, current);
+          retained.push({ ...definition, eventRef: trigger.eventRef, watcher: retainedWatcher(trigger), automationId: row.id, name: row.name });
+        }
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    // Automatic Environment enrollment replays retain its admitted baseline.
+    // Explicit source edits still pass the shared configuration consistency owner.
+    if (reuse && retainedDefinitions.some(reuse)) return retainedDefinitions;
+    for (const candidate of candidates) {
+      const conflict = retained.find(existing => sameSourcePlugin(existing.eventRef, candidate.eventRef)
+        && existing.sourceInstanceId === candidate.sourceInstanceId
+        && (!pluginJsonValuesEqual(existing.sourceConfig, candidate.sourceConfig)
+          || (existing.watcher !== null && candidate.watcher !== null
+            && !arePluginMachineMaterializationRefsEqual(existing.watcher, candidate.watcher))));
+      if (conflict) throw Object.assign(new Error(
+        `Source configuration conflicts with existing definition "${conflict.name}" (${conflict.automationId}).`,
+      ), { code: 'invalid_input' });
+      // Compare the complete prospective set as well, without comparing a
+      // replacement against its own old revision or ignoring retained siblings.
+      retained.push({ ...candidate, automationId, name });
+    }
+    return retainedDefinitions;
+  };
   const openPullRequest = (binding: AutomationTriggerDefinitionBindingV1, envelope: unknown,
     current: AvailableAutomationAccountEncryptionV1, storedRead = false) => {
     const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
@@ -256,6 +332,62 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           randomBytes: params.randomBytes, binding, definition: { kind: trigger.kind, pullRequest: trigger.pullRequest } })) };
   };
   const isPrivateTrigger = (trigger: { kind: string }) => trigger.kind === 'pluginEvent' || trigger.kind === 'prComment' || trigger.kind === 'ciFailed';
+  const privateTriggerMatches = (row: AutomationDefinitionDetail, retained: AutomationDefinitionDetail['triggers'][number],
+    requested: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1): boolean => {
+    if (retained.kind !== requested.kind || retained.enabled !== requested.enabled || 'triggerDefinitionEnvelope' in requested) return false;
+    if (requested.kind === 'prComment' || requested.kind === 'ciFailed') {
+      return pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,
+        { kind: requested.kind, pullRequest: requested.pullRequest });
+    }
+    if (requested.kind !== 'pluginEvent' || retained.kind !== 'pluginEvent'
+      || !pluginJsonValuesEqual(retained.eventRef, requested.eventRef)
+      || retained.sourceContractVersion !== requested.sourceContractVersion
+      || retained.observation.kind !== requested.observationTransport.kind) return false;
+    const transport = requested.observationTransport;
+    if (transport.kind === 'durablePush') {
+      if (retained.observation.kind !== 'durablePush' || retained.observation.webhookEndpointId !== transport.webhookEndpointId) return false;
+    } else {
+      const watcher = retainedWatcher(retained);
+      if (!watcher || !arePluginMachineMaterializationRefsEqual(watcher, transport.watcherMaterializationRef)) return false;
+    }
+    return pluginJsonValuesEqual(storedEvent(row, retained.id, current).definition,
+      createAutomationPluginEventTriggerDefinitionV1(requested));
+  };
+  const requesterScopes = (row: Readonly<{
+    id: string;
+    enabled: boolean;
+    assignments?: readonly Readonly<{ machineId: string; enabled?: boolean }>[];
+    triggers: readonly Readonly<{ id: string; enabled: boolean }>[];
+  }>) => row.enabled ? (row.assignments ?? []).filter(item => item.enabled !== false).flatMap(assignment =>
+    row.triggers.filter(trigger => trigger.enabled).map(trigger => ({
+      scopeId: trigger.id, machineId: assignment.machineId, automationId: row.id,
+    }))) : [];
+  const retainRequesterScopes = async (scopes: ReturnType<typeof requesterScopes>) => {
+    for (const scope of scopes) await params.workflowRequesterCustody?.retain(scope);
+  };
+  const retireRequesterScopes = async (previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>) => {
+    const active = new Set(next.map(({ scopeId, machineId }) => JSON.stringify([scopeId, machineId])));
+    for (const scope of previous) {
+      if (!active.has(JSON.stringify([scope.scopeId, scope.machineId]))) {
+        await params.workflowRequesterCustody?.retire(scope);
+      }
+    }
+  };
+  const commitRequesterScopes = async (
+    previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>,
+    write: () => Promise<AutomationDefinitionDetail>, beforeWrite?: () => Promise<void>,
+  ) => {
+    try { await retainRequesterScopes(next); await beforeWrite?.(); }
+    catch (error) { await retireRequesterScopes(next, previous); throw error; }
+    let committed: AutomationDefinitionDetail;
+    try { committed = await write(); }
+    catch (error) {
+      if (isConfirmedActionWriteRefusal(error)) await retireRequesterScopes(next, previous);
+      throw error;
+    }
+    await retireRequesterScopes(previous, requesterScopes(committed));
+    return committed;
+  };
   return createWorkflowTriggerActions({
     automations: {
       list: (input) => params.automations.list(input),
@@ -263,23 +395,77 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       get: (automationId) => params.automations.get(automationId),
       create: async (input, beforeWrite) => {
         const current = input.triggers.some((item) => isPrivateTrigger(item.trigger)) ? await params.resolveEncryption() : null;
+        const environment = input.observationOnly?.deploymentEnvironment;
+        const requested = input.triggers.length === 1 ? input.triggers[0]!.trigger : undefined;
+        const reuse = current && environment && requested?.kind === 'pluginEvent' && !('triggerDefinitionEnvelope' in requested)
+          ? (row: AutomationDefinitionDetail) => {
+            const trigger = row.triggers[0];
+            return pluginJsonValuesEqual(row.observationOnly?.deploymentEnvironment, environment)
+              && row.triggers.length === 1 && trigger?.kind === 'pluginEvent'
+              && pluginJsonValuesEqual(trigger.eventRef, requested.eventRef)
+              && trigger.sourceContractVersion === requested.sourceContractVersion
+              && trigger.observation.kind === requested.observationTransport.kind
+              && storedEvent(row, trigger.id, current).definition.sourceInstanceId === requested.sourceInstanceId;
+          } : undefined;
+        const retained = current ? await assertSourceConfigurations(input.automationId, input.name,
+          input.triggers.flatMap(item => {
+            const source = requestedEvent(input.automationId, item.triggerId, 0, item.trigger, current);
+            return source ? [source] : [];
+          }), current, reuse) : [];
+        if (reuse) {
+          const existing = retained.find(reuse);
+          if (existing?.enabled) return existing;
+          if (existing) {
+            const nextScopes = requesterScopes({ ...existing, enabled: true });
+            return commitRequesterScopes(requesterScopes(existing), nextScopes, () => params.automations.reconcile(existing.id, {
+              expectedTemplateVersion: existing.templateVersion, name: existing.name, description: existing.description,
+              enabled: true, assignments: [], removedTriggers: [], triggers: existing.triggers.map(trigger => ({
+                kind: 'existing' as const, triggerId: trigger.id, expectedRevision: trigger.revision,
+              })),
+            }, existing), beforeWrite);
+          }
+        }
         const triggers = input.triggers.map((item) => current ? { ...item,
           trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current) } : item);
-        if (beforeWrite) await beforeWrite();
-        return params.automations.create({ ...input, triggers });
+        const nextScopes = requesterScopes({ ...input, id: input.automationId,
+          triggers: input.triggers.map(item => ({ id: item.triggerId, enabled: item.trigger.enabled })) });
+        return commitRequesterScopes([], nextScopes, () => params.automations.create({ ...input, triggers }), beforeWrite);
       },
       reconcile: async (automationId, input, row, beforeWrite) => {
         if (!row || row.id !== automationId || row.templateVersion !== input.expectedTemplateVersion) unavailable('currentness_conflict');
         const needsPrivateWrite = input.triggers.some((item) => item.kind === 'new'
           ? isPrivateTrigger(item.trigger)
           : (item.trigger !== undefined && isPrivateTrigger(item.trigger)) || (item.enabled !== undefined && row.triggers.some((trigger) => trigger.id === item.triggerId && isPrivateTrigger(trigger))));
-        const current = needsPrivateWrite ? await params.resolveEncryption() : null;
+        const hasRetainedEvent = input.triggers.some(item => item.kind === 'existing'
+          && row.triggers.some(trigger => trigger.id === item.triggerId && trigger.kind === 'pluginEvent'));
+        const current = needsPrivateWrite || hasRetainedEvent ? await params.resolveEncryption() : null;
+        if (current) await assertSourceConfigurations(automationId, input.name,
+          input.triggers.flatMap(item => {
+            if (item.kind === 'new' || item.trigger !== undefined) {
+              const trigger = item.kind === 'new' ? item.trigger : { ...item.trigger!, enabled: item.enabled ?? false };
+              const source = requestedEvent(automationId, item.triggerId,
+                item.kind === 'new' ? 0 : item.expectedRevision + 1, trigger, current);
+              return source ? [source] : [];
+            }
+            const retained = row.triggers.find(trigger => trigger.id === item.triggerId);
+            if (!retained || retained.revision !== item.expectedRevision) unavailable('currentness_conflict');
+            if (retained.kind !== 'pluginEvent') return [];
+            const { definition } = storedEvent(row, retained.id, current);
+            return [{ eventRef: retained.eventRef, sourceInstanceId: definition.sourceInstanceId, sourceConfig: definition.sourceConfig,
+              watcher: retainedWatcher(retained) }];
+          }), current);
         const triggers = input.triggers.map((item) => {
           if (item.kind === 'new') return current ? { ...item,
             trigger: preparePrivateTrigger(automationId, item.triggerId, 0, item.trigger, current) } : item;
           const retained = row.triggers.find((trigger) => trigger.id === item.triggerId);
           if (!retained || retained.revision !== item.expectedRevision) unavailable('currentness_conflict');
           if (!current) return item;
+          if ((item.trigger === undefined && (item.enabled === undefined || item.enabled === retained.enabled)
+            && item.triggerDefinitionEnvelope === undefined)
+            || (item.trigger !== undefined && privateTriggerMatches(row, retained,
+              { ...item.trigger, enabled: item.enabled ?? retained.enabled }, current))) {
+            return { kind: 'existing' as const, triggerId: item.triggerId, expectedRevision: item.expectedRevision };
+          }
           if (item.trigger !== undefined) {
             const previous = retained.kind === 'pluginEvent' ? storedEvent(row, item.triggerId, current) : undefined;
             const { enabled: _enabled, ...trigger } = preparePrivateTrigger(automationId, item.triggerId, item.expectedRevision + 1,
@@ -293,14 +479,26 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
               randomBytes: params.randomBytes, binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 },
               definition: previous.definition })) };
         });
-        if (beforeWrite) await beforeWrite();
-        return params.automations.reconcile(automationId, { ...input, triggers }, row);
+        const nextScopes = requesterScopes({ ...input, id: automationId,
+          triggers: input.triggers.map(item => ({ id: item.triggerId,
+            enabled: item.kind === 'new' ? item.trigger.enabled : item.enabled ?? row.triggers.find(trigger => trigger.id === item.triggerId)!.enabled })) });
+        return commitRequesterScopes(requesterScopes(row), nextScopes,
+          () => params.automations.reconcile(automationId, { ...input, triggers }, row), beforeWrite);
       },
-      delete: (automationId) => params.automations.delete(automationId),
+      delete: async (automationId, current) => {
+        if (!params.workflowRequesterCustody) return params.automations.delete(automationId);
+        const previous = current ?? await params.automations.get(automationId);
+        const result = await params.automations.delete(automationId);
+        if (previous) await retireRequesterScopes(requesterScopes(previous), []);
+        return result;
+      },
       ...(params.automations.runNow ? { runNow: params.automations.runNow } : {}),
     },
     newId: () => params.newId(),
+    ...(params.nativeAccount ? { nativeAccount: params.nativeAccount } : {}),
+    ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
     ...(params.sessionList ? { sessionList: params.sessionList } : {}),
+    ...(params.sessionRead ? { sessionRead: params.sessionRead } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),
@@ -308,6 +506,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
     openPullRequestTrigger: async (row, trigger) => storedPullRequest(row, trigger.id, await params.resolveEncryption()).definition,
+    openPluginEventTrigger: async (row, trigger) => storedEvent(row, trigger.id, await params.resolveEncryption()).definition,
     resolveWorkflow: params.resolveWorkflow,
     ...(params.resolveWorkflowTeamIds ? { resolveWorkflowTeamIds: params.resolveWorkflowTeamIds } : {}),
     openContext: async (row) => {

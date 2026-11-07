@@ -1,6 +1,6 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
+import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
 import { z } from 'zod/mini';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
 import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
@@ -11,13 +11,15 @@ import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchem
   AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationDeploymentTriggerFilterV1Schema, AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { WorkflowProjectTargetV1Schema } from '../workflowWorkspaceV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { TriggerTargetV1Schema } from './triggerTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
-import { AutomationPullRequestTriggerSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationPullRequestTriggerSchema } from '../../automations/pullRequestTrigger.js';
 import { AutomationSessionLifecyclePolicySchema } from '../../automations/automationSessionLifecycle.js';
+import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
+import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
@@ -69,12 +71,13 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
   }
   return result;
 }
-const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true }));
+const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true, deploymentTriggers: true, actionApprovals: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),
   z.strictObject({ managedTarget: AutomationManagedTargetV1Schema }),
   z.strictObject({ scope: z.enum(['account_inline', 'account_all']) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
+  z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
 ]));
 const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workflow: zMini.optional(WorkflowDefinitionRefV1StringSchema),
@@ -83,6 +86,8 @@ const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strict
   observationOnly: z.optional(z.never()),
   ...zMini.partial(ContextFields).shape,
   trigger: AutomationTriggerDefinitionInputSchema,
+  deployment: z.optional(AutomationDeploymentTriggerFilterV1Schema),
+  actionApproval: z.optional(z.enum(['automatic', 'ask'])),
 }).check(z.superRefine((value, ctx) => {
   if ((value.workflow === undefined) === (value.target === undefined)) {
     ctx.addIssue({ code: 'custom', path: ['target'], message: 'Choose exactly one workflow or target' });
@@ -95,6 +100,8 @@ export const WorkflowTriggerAddRequestV1Schema = lazyZodSchema(() => z.union([
   WorkflowTriggerExecutableAddRequestV1Schema,
   z.strictObject({
     observationOnly: z.omit(AutomationObservationOnlyDefinitionV1Schema, { templateVersion: true }),
+    /** Return the retained private Event definition, including when enrollment rejoins an existing source. */
+    includeEventDefinition: z.optional(z.literal(true)),
     name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
     trigger: AutomationTriggerDefinitionInputSchema,
     workflow: z.optional(z.never()), target: z.optional(z.never()), project: z.optional(z.never()),
@@ -111,10 +118,15 @@ export const WorkflowTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strict
     target: zMini.optional(TriggerTargetV1Schema),
     enabled: z.optional(z.boolean()),
     trigger: zMini.optional(AutomationTriggerDefinitionSchema),
+    deployment: z.optional(z.nullable(AutomationDeploymentTriggerFilterV1Schema)),
+    actionApproval: z.optional(z.enum(['automatic', 'ask'])),
   }).check(z.refine((patch) => Object.keys(patch).length > 0, 'A trigger update needs a change')),
 }).check(z.superRefine((value, ctx) => {
   if (value.patch.trigger !== undefined && value.triggerId === undefined) {
     ctx.addIssue({ code: 'custom', path: ['triggerId'], message: 'A trigger definition update needs its trigger id' });
+  }
+  if ((value.patch.deployment !== undefined || value.patch.actionApproval !== undefined) && value.triggerId === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['triggerId'], message: 'Deployment routing requires its trigger id' });
   }
   if (value.patch.target?.kind === 'inline' && value.patch.visibleTeamId !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['patch', 'visibleTeamId'], message: 'Inline triggers are private' });
@@ -140,6 +152,9 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display facts from the already-admitted Account record, not another lookup. */
   name: z.optional(z.string()),
   updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  /** Current saved definition provenance, never an occurrence's accepted source. Display only. */
+  sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
+  sourceSavedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   automationId: asProtocolZod(AutomationIdV1Schema), revision: Revision, enabled: z.boolean(),
   scopeSessionId: zMini.optional(zMini.nullable(asProtocolZod(SessionIdSchema))),
   health: z.enum(['available', 'source_unavailable']),
@@ -160,11 +175,17 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
     OpenedPullRequestTriggerDetailSchema,
   ])),
 }));
-export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({ sets: z.array(WorkflowTriggerSetV1Schema) }));
+const WorkflowTriggerEventDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+  triggerId: AutomationTriggerIdSchema, definition: AutomationEventTriggerDefinitionStoredPayloadV1Schema,
+}));
+export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
+  sets: z.array(WorkflowTriggerSetV1Schema), triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
+}));
 export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictObject({
   set: WorkflowTriggerSetV1Schema,
   triggerId: zMini.optional(AutomationTriggerIdSchema),
   triggerRevision: z.optional(Revision),
+  triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
 }));
 export const WorkflowTriggerRemoveResultV1Schema = lazyZodSchema(() => z.union([
   WorkflowTriggerWriteResultV1Schema,
@@ -179,7 +200,7 @@ export type WorkflowTriggerRunNowRequestV1 = z.infer<typeof WorkflowTriggerRunNo
 export type WorkflowTriggerSetV1 = z.infer<typeof WorkflowTriggerSetV1Schema>;
 
 const SessionId = asProtocolZod(SessionIdSchema);
-const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true }));
+const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, deploymentTriggers: true, actionApprovals: true }));
 const SessionPullRequestTriggerSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(AutomationPullRequestTriggerSchema, {
   pullRequest: zMini.optional(AutomationPullRequestTriggerSchema.shape.pullRequest),
 })));

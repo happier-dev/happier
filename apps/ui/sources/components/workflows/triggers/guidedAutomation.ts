@@ -4,6 +4,9 @@ import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/t
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { z } from 'zod/mini';
+import { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 
 import { t } from '@/text';
 
@@ -112,6 +115,7 @@ export function guidedStarterDraft(
 type GuidedAddRequest = z.input<typeof WorkflowTriggerAddRequestV1Schema> &
   Readonly<{
     target: TriggerTargetV1;
+    project: WorkflowProjectTargetV1;
     approvalProfileId: string;
   }>;
 
@@ -195,6 +199,43 @@ export function buildGuidedAutomationRequest(
     executionTarget: { kind: 'session' },
     inputs: {},
     approvalProfileId: guidedApprovalProfileId(draft),
+  };
+}
+
+export type GuidedAutomationReadBack = Readonly<{
+  wake: NonNullable<ReturnType<typeof buildGuidedAutomationRequest>>['trigger'];
+  project: WorkflowProjectTargetV1;
+  deploymentEnvironment: DeploymentEnvironmentRefV1 | null;
+  /** Presence comes from the Machine owner; null means it has not been read. */
+  controller: Readonly<{ machineId: string; online: boolean | null }> | null;
+  pendingObservation: ReturnType<typeof readDeploymentReceiptEventPendingObservationV1>;
+  approval: ReturnType<typeof readApprovalProfileV1> | null;
+  disclosure: Readonly<{ inbox: true; channelIds: readonly string[] }>;
+}>;
+
+/** Typed review for UI refinements. Inputs also have Action readers: workflow.trigger.list,
+ * deployments.environments.get, machines.list and actions.policy.get ({ profiles: true }).
+ * Unread Account settings do not pretend that a custom profile is missing. */
+export function buildGuidedAutomationReadBack(
+  draft: GuidedAutomationDraft,
+  params: Parameters<typeof buildGuidedAutomationRequest>[1] & Readonly<{
+    deploymentEnvironment?: DeploymentEnvironmentRefV1;
+    controller?: GuidedAutomationReadBack['controller'];
+    approvalSettings?: Parameters<typeof readApprovalProfileV1>[0];
+  }>,
+): GuidedAutomationReadBack | null {
+  const request = buildGuidedAutomationRequest(draft, params);
+  if (!request) return null;
+  return {
+    wake: request.trigger,
+    project: request.project,
+    deploymentEnvironment: params.deploymentEnvironment ?? null,
+    controller: params.controller ?? null,
+    pendingObservation: request.trigger.kind === 'pluginEvent' && 'sourceConfig' in request.trigger
+      ? readDeploymentReceiptEventPendingObservationV1(request.trigger.sourceConfig) : null,
+    approval: params.approvalSettings === undefined ? null
+      : readApprovalProfileV1(params.approvalSettings, request.approvalProfileId),
+    disclosure: { inbox: true, channelIds: draft.channels },
   };
 }
 

@@ -12,6 +12,7 @@ vi.mock('@/text', async () => {
 const { createDefaultWhen } = await import('./sessionTriggerForm');
 const {
   buildGuidedAutomationRequest,
+  buildGuidedAutomationReadBack,
   describeGuidedAutomation,
   guidedApprovalProfileId,
   guidedStarterDraft,
@@ -69,6 +70,46 @@ function blocksOf(request: ReturnType<typeof buildGuidedAutomationRequest>) {
 }
 
 describe('guided automation (four questions)', () => {
+  it('reads the exact Event/filter, scope, controller, pending observation, effective profile and destination independently of notification selection', () => {
+    const receipt = AutomationTriggerDefinitionInputSchema.parse({ ...healthEventTrigger,
+      eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+      sourceConfig: { v: 1, serverId: 'home', environmentId: 'production', targetLinkId: 'platform',
+        observingSince: 1, credentialPrincipal: { kind: 'account', accountId: 'owner',
+          purpose: { consumer: { pluginId: 'example.deploy', localId: 'selection' }, purpose: 'action-account' },
+          target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'account' }, accountId: 'provider-account' } } } },
+      filter: { v: 1, all: [{ op: 'eq', field: '/phase', value: 'build' }] },
+    });
+    if (receipt.kind !== 'pluginEvent' || !('sourceInstanceId' in receipt)) throw new Error('Expected configured Event');
+    const configured = draft({ when: { kind: 'pluginEvent', value: receipt }, mode: 'apply', approvalProfileId: 'deleted-profile' });
+    const facts = { subjectName: 'Production', project,
+      deploymentEnvironment: { serverId: 'home', projectSourceId: 'source-app', environmentId: 'production' },
+      controller: { machineId: 'controller', online: false }, approvalSettings: { approvalProfiles: [] } };
+    const readBack = buildGuidedAutomationReadBack(configured, facts);
+    expect(readBack).toMatchObject({
+      wake: receipt, deploymentEnvironment: facts.deploymentEnvironment, controller: facts.controller,
+      pendingObservation: { periodMs: null },
+      approval: { resolution: { status: 'missing', requestedId: 'deleted-profile', effectiveId: 'builtin:read-propose' } },
+      disclosure: { inbox: true, channelIds: [] },
+    });
+    const notified = buildGuidedAutomationReadBack({ ...configured, channels: ['push'] }, facts);
+    expect(notified?.wake).toEqual(readBack?.wake);
+    expect(notified?.disclosure.channelIds).toEqual(['push']);
+    const config = receipt.sourceConfig;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Expected receipt source configuration');
+    const observed = { ...receipt, sourceConfig: { ...config, periodMs: 300000 } };
+    expect(buildGuidedAutomationReadBack({ ...configured, when: { kind: 'pluginEvent', value: observed } }, facts)
+      ?.pendingObservation).toEqual({ periodMs: 300000 });
+    const rollback = { ...observed, eventRef: { ...observed.eventRef, localId: 'rollback-completed' } };
+    expect(buildGuidedAutomationReadBack({ ...configured, when: { kind: 'pluginEvent', value: rollback } }, facts)
+      ?.pendingObservation).toEqual({ periodMs: 300000 });
+    const local = { ...observed, sourceConfig: { v: 1, serverId: 'home', environmentId: 'production', observingSince: 1, periodMs: 300000 } };
+    expect(buildGuidedAutomationReadBack({ ...configured, when: { kind: 'pluginEvent', value: local } }, facts)
+      ?.pendingObservation).toBeNull();
+    expect(buildGuidedAutomationReadBack({ ...configured, when: healthEvent }, facts)?.pendingObservation).toBeNull();
+    expect(buildGuidedAutomationReadBack(draft(), { subjectName: 'Production', project })).toMatchObject({
+      approval: null, pendingObservation: null, controller: null,
+    });
+  });
   it('writes one ordinary trigger: When, a fresh Session with the answers as its prompt, and the mode as its approval profile', () => {
     const request = buildGuidedAutomationRequest(draft(), {
       subjectName: 'eadc',

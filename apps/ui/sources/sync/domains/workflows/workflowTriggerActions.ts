@@ -2,6 +2,7 @@ import type { z } from 'zod/mini';
 import { SessionTriggerAddRequestV1Schema, SessionTriggerListRequestV1Schema, SessionTriggerListResultV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerUpdateRequestV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/automationEventV1';
 
 import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -52,8 +53,8 @@ function invalidateTriggerListPublications(scope: ServerAccountScope, automation
     requestedWorkflow: string | null) {
     const queries = new Set(['account_all']);
     if (requestedWorkflow) queries.add(`workflow:${requestedWorkflow}`);
-    if (written?.target && !written.scopeSessionId) {
-        queries.add(written.target.kind === 'workflow' ? `workflow:${written.target.ref}` : 'account_inline');
+    if (written && !written.scopeSessionId && (written.target || written.observationOnly)) {
+        queries.add(written.target?.kind === 'workflow' ? `workflow:${written.target.ref}` : 'account_inline');
     }
     const managed = written?.target && readManagedMachineTriggerAction(written.target);
     if (managed) queries.add(workflowTriggerQueryKey({ managedTarget: managed.input }));
@@ -115,8 +116,8 @@ async function callTriggerAction<TResult>(
         const active = getActiveServerAccountScope();
         if (!active || !sameTriggerAccountScope(active, options.accountLifetime.scope)) return result;
     }
-    // A deliberate retained-template review is a private draft, not an Account list observation.
-    if (actionId === 'workflow.trigger.list' && 'review' in request && request.review === true) return result;
+    // A deliberate private review or exact Event read is not an Account list observation.
+    if (actionId === 'workflow.trigger.list' && (('review' in request && request.review === true) || 'triggerId' in request)) return result;
     const sessionId = 'sessionId' in request && typeof request.sessionId === 'string' ? request.sessionId : null;
     const queryKey = actionId.endsWith('.list') && actionId === 'workflow.trigger.list'
         ? workflowTriggerQueryKey(WorkflowTriggerListRequestV1Schema.parse(request))
@@ -135,7 +136,7 @@ async function callTriggerAction<TResult>(
         // memberships rather than guessing that it belongs to Account inline.
         const writtenQueryKey = sessionId || workflow ? queryKey
             : written.target?.kind === 'workflow' ? `workflow:${written.target.ref}`
-                : written.target?.kind === 'inline' ? 'account_inline' : undefined;
+                : written.target?.kind === 'inline' || written.observationOnly ? 'account_inline' : undefined;
         getStorage().getState().upsertWorkflowTriggerSet({
             set: written,
             ...(writtenQueryKey === undefined ? {} : { queryKey: writtenQueryKey }),
@@ -195,6 +196,16 @@ export async function reviewWorkflowTriggerSet(automationId: string, options: Ca
     const set = result.sets.find((candidate) => candidate.automationId === automationId);
     if (!set || result.sets.length !== 1) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
     return set;
+}
+
+/** Open one retained Event on demand through the same Account Action owner as the editor. */
+export async function readWorkflowTriggerEventDefinition(
+    request: Readonly<{ automationId: string; triggerId: string }>, options: CallOptions = {},
+): Promise<AutomationEventTriggerDefinitionStoredPayloadV1> {
+    const result = await callTriggerAction('workflow.trigger.list', WorkflowTriggerListRequestV1Schema.parse(request),
+        value => WorkflowTriggerListResultV1Schema.parse(value), options);
+    if (!result.triggerDefinition) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+    return result.triggerDefinition.definition;
 }
 
 export async function updateWorkflowTrigger(request: z.input<typeof WorkflowTriggerUpdateRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {

@@ -5,13 +5,15 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { selectWorkflowAutomationListFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
-import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowAutomationDetailFixture, selectWorkflowAutomationListFixture, selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, createWorkflowAutomationLastRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
-    WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol';
+import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 // The real Action owner asks for destructive confirmation before removing a set.
 vi.mock('@/modal', async () => {
@@ -67,6 +69,59 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
+    it('opens one exact private Event definition without publishing a partial list census', async () => {
+        const automationId = 'private-event';
+        const triggerId = '00000000-0000-4000-8000-000000000001';
+        const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId, triggerId, triggerRevision: 1,
+            triggerKind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+            sourceSelectorId: '00000000-0000-4000-8000-000000000002' });
+        if (binding.triggerKind !== 'pluginEvent') throw new Error('Expected Event binding');
+        const definition = { v: 1 as const, sourceInstanceId: 'receipt-source', sourceConfig: { periodMs: 600000 },
+            displayLabel: 'Retained receipt source', filter: null, maximumObservationAgeMs: null };
+        const row = AutomationDefinitionDetailSchema.parse({ ...automation(automationId), executionRecipe: undefined, assignments: [], observationOnly: {
+            kind: 'observationOnly', templateVersion: 1,
+            deploymentEnvironment: { serverId: 'home', projectSourceId: 'project', environmentId: 'production' } },
+            triggers: [{ id: triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'pluginEvent',
+                eventRef: binding.eventRef, sourceSelectorId: binding.sourceSelectorId, sourceContractVersion: 1,
+                observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null,
+                triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, definition })) }] });
+        home.answer(serverId, `GET /v3/automations/${automationId}`, { body: row });
+        const before = storage.getState().workflowTriggerSetsById;
+        const beforeQueries = storage.getState().workflowTriggerSetIdsByQuery;
+        const { readWorkflowTriggerEventDefinition } = await import('./workflowTriggerActions');
+        expect(await readWorkflowTriggerEventDefinition({ automationId, triggerId })).toEqual(definition);
+        expect(storage.getState().workflowTriggerSetsById).toBe(before);
+        expect(storage.getState().workflowTriggerSetIdsByQuery).toBe(beforeQueries);
+    });
+    it('opens a cold seventy-row trigger census in one demanded detail page and delivers a changed recipe', async () => {
+        let rows = Array.from({ length: 70 }, (_, index) => {
+            const row = automation(`cold-rule-${index}`);
+            return { ...row, triggers: createWorkflowAutomationDetailFixture({ id: row.id, revision: 1,
+                triggerId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` }).triggers };
+        });
+        home.answer(serverId, '/v3/automations', { select: () => ({ body: {
+            automations: rows.map(listed), nextCursor: null,
+        } }) });
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body: {
+            automations: input && typeof input === 'object' && 'details' in input && input.details === true
+                ? rows : rows.map(listed), nextCursor: null,
+        } }) });
+        for (const row of rows) home.answer(serverId, `GET /v3/automations/${row.id}`, { select: () => ({
+            body: rows.find(current => current.id === row.id),
+        }) });
+        const hook = await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().sets).toHaveLength(70);
+        const details = () => home.requests.filter(request => /^\/v3\/automations\/cold-rule-/.test(request.path));
+        expect(details()).toHaveLength(0);
+        expect(home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(1);
+        rows = rows.map((row, index) => index === 0 ? { ...automation(row.id, 2, false), triggers: row.triggers } : row);
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sets[0]).toMatchObject({ revision: 2, enabled: false }));
+        expect(details()).toHaveLength(0);
+        expect(home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(2);
+    });
+
     it.each([false, true])('selects one managed target without opening a thousand known unrelated definitions (legacy relationship: %s)', async legacyRelationship => {
         const managedTarget = { homeId: 'home-managed', managedId: 'managed-one' };
         const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'action', id: 'stop-managed',
@@ -84,7 +139,8 @@ describe('Account trigger reads through real Action and Automation owners', () =
         }));
         const legacyOther = automation('legacy-other');
         const inventory = [...unrelated, row, legacyOther];
-        const select = (raw: unknown) => ({ body: selectWorkflowAutomationListFixture(inventory, raw) });
+        const select = (raw: unknown) => ({ body: raw && typeof raw === 'object' && 'details' in raw && raw.details === true
+            ? selectWorkflowAutomationDetailsFixture(inventory, raw) : selectWorkflowAutomationListFixture(inventory, raw) });
         home.answer(serverId, 'GET /v3/automations', { select: (_raw, request) => select(Object.fromEntries(new URL(request.url).searchParams)) });
         home.answer(serverId, 'POST /v3/automations/query', { select });
         for (const value of inventory) home.answer(serverId, `GET /v3/automations/${value.id}`, { body: value });
@@ -97,9 +153,9 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(hook.getCurrent().status).toBe('ready');
         expect(hook.getCurrent().sets).toMatchObject([{ automationId: row.id }]);
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations/unrelated-'))).toHaveLength(0);
-        expect(home.requests.filter(request => request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query')).toHaveLength(1);
-        expect(home.requests.filter(request => request.path === `/v3/automations/${row.id}`)).toHaveLength(1);
-        expect(home.requests.filter(request => request.path === '/v3/automations/legacy-other')).toHaveLength(1);
+        expect(home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(1);
+        expect(home.requests.filter(request => request.path === `/v3/automations/${row.id}`)).toHaveLength(0);
+        expect(home.requests.filter(request => request.path === '/v3/automations/legacy-other')).toHaveLength(0);
         const known = hook.getCurrent().sets;
         home.answer(serverId, 'POST /v3/automations/query', { status: 503, body: { error: 'storage_unavailable' } });
         await act(async () => hook.getCurrent().retry());
@@ -109,12 +165,12 @@ describe('Account trigger reads through real Action and Automation owners', () =
         await act(async () => hook.getCurrent().retry());
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
         // A locked unknown candidate cannot prove that this Machine has no rule.
-        home.answer(serverId, 'GET /v3/automations/legacy-other', { body: AutomationDefinitionDetailSchema.parse({ ...legacyOther,
-            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'encrypted', c: 'sealed-fixture' } } }) });
+        inventory[inventory.length - 1] = AutomationDefinitionDetailSchema.parse({ ...legacyOther,
+            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'encrypted', c: 'sealed-fixture' } } });
         await act(async () => hook.getCurrent().retry());
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('failed'));
         expect(hook.getCurrent().sets).toBe(known);
-        home.answer(serverId, 'GET /v3/automations/legacy-other', { body: legacyOther });
+        inventory[inventory.length - 1] = legacyOther;
         await act(async () => hook.getCurrent().retry());
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations')
@@ -258,8 +314,8 @@ describe('Account trigger reads through real Action and Automation owners', () =
 
     it('reads a habit latest result from public summaries without a Run history window', async () => {
         const route = '/v3/automations/runs/workflow-storage';
-        const lastRun = { id: 'habit-run', state: 'failed', workflowCustodyState: null,
-            attentionRequired: true, createdAt: '2026-10-21T03:00:00.000Z' };
+        const lastRun = createWorkflowAutomationLastRunSummaryFixture({ id: 'habit-run', state: 'failed',
+            attentionRequired: true, failureUnseen: true, createdAt: '2026-10-21T03:00:00.000Z' });
         home.answer(serverId, route, { body: {
             automationSummaries: [{ automationId: 'habit', lastRun }], remainingAutomationIds: [],
         } });
@@ -303,5 +359,72 @@ describe('Account trigger reads through real Action and Automation owners', () =
         const before = renders; const reads = home.requests.filter(request => request.path.startsWith('/v3/automations')).length;
         await act(async () => storage.setState({ workflowRunsById: {}, workflowRunInvocationsByRunId: {} }));
         expect(renders).toBe(before); expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toHaveLength(reads);
+    });
+
+    it('keeps addressed trigger demand through unrelated Home wakes and refreshes relevant, unknown and reconnect wakes', async () => {
+        const pending = createDeferred<void>();
+        home.answer(serverId, '/v3/automations', { body: { automations: [], nextCursor: null }, respondAfter: pending.promise });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const hook = await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }, lifetime));
+        const reads = () => home.requests.filter(request => request.path.startsWith('/v3/automations')).length;
+        await waitForHomeGovernance(() => expect(reads()).toBe(1));
+        const baseline = reads();
+        try {
+            for (let cursor = 0; cursor < 12; cursor++) {
+                await act(async () => publishHomeAccountChange(serverId, [`session-${cursor}`], { source: 'socket', changeKinds: ['session'] }));
+            }
+            expect(reads()).toBe(baseline);
+            await act(async () => pending.resolve());
+            await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(reads()).toBe(baseline);
+            // The publisher and subscription must agree on domain relevance. A
+            // foreign Home Automation is the mis-bound routing negative case.
+            await act(async () => publishHomeAccountChange('https://foreign-home.test', ['trigger-a'], { source: 'socket', changeKinds: ['automation'] }));
+            expect(reads()).toBe(baseline);
+            for (const details of [{ source: 'socket', changeKinds: ['automation'] }, {}, { source: 'connected' }] as const) {
+                const previous = reads();
+                await act(async () => publishHomeAccountChange(serverId, ['trigger-a'], details));
+                await waitForHomeGovernance(() => expect(reads()).toBe(previous + 1));
+                await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+            }
+        } finally {
+            pending.resolve();
+            await hook.unmount();
+        }
+    });
+    it('re-reads addressed triggers only for Artifact rows that can be saved workflows', async () => {
+        const { planSyncActionsFromChanges, plannedChangesAffectWorkflowTriggers } = await import('@/sync/runtime/orchestration/changesPlanner');
+        const { publishHomeAccountChangeWake } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { deriveArtifactStoredKindV1 } = await import('@happier-dev/protocol/artifacts/artifactKindV1');
+        home.answer(serverId, '/v3/automations', { body: { automations: [], nextCursor: null } });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const hook = await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }, lifetime));
+        const reads = () => home.requests.filter(request => request.path.startsWith('/v3/automations')).length;
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        const baseline = reads();
+        try {
+            // A busy Account writes Runs, Discussions and documents all the time; a trigger names only saved workflows.
+            const unrelated = ['workflow-run.v1', 'document', 'discussion.v1'].map(kind => deriveArtifactStoredKindV1({ kind }));
+            for (let index = 0; index < 6; index += 1) {
+                const entityId = `artifact-${index}`;
+                const artifactKinds = [unrelated[index % unrelated.length]!];
+                const planned = planSyncActionsFromChanges([{ kind: 'artifact', entityId, cursor: index + 1, changedAt: 1, hint: { artifactKinds } }]);
+                await act(async () => {
+                    publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: [entityId], artifactKinds }, 'socket');
+                    publishHomeAccountChange(serverId, [entityId], { feedPageConsumed: true, changeKinds: ['artifact'],
+                        workflowTriggersAffect: plannedChangesAffectWorkflowTriggers(planned) });
+                });
+                await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+            }
+            expect(reads() - baseline).toBe(0);
+            // A saved workflow changed: a trigger naming it shows it, so the triggers are read again.
+            await act(async () => { publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: ['saved-workflow'],
+                artifactKinds: [deriveArtifactStoredKindV1({ kind: 'workflow-definition.v1' })] }, 'socket'); });
+            await waitForHomeGovernance(() => expect(reads()).toBe(baseline + 1));
+        } finally {
+            await hook.unmount();
+        }
     });
 });
