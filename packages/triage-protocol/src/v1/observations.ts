@@ -14,7 +14,6 @@ import { ScmHostingProviderKindProtocolSchema, type ProtocolScmHostingProviderKi
 import {
     MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-    MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
     TRIAGE_ENTRY_PRESENTATION_STATES_V1,
     TRIAGE_ROW_FACT_IMPORTANCES_V1,
@@ -110,8 +109,7 @@ export type TriageRowFactValueV1 = ReturnType<typeof TriageRowFactValueV1Schema.
  */
 export const TriageRowFactV1Schema = defineProtocolObject({
     // A fact id is a source-local slug beside a list row, so it is bounded as a
-    // row-fact string rather than as a provider identifier: the snapshot carries
-    // `MAX_TRIAGE_ROW_FACTS_V1` of them and every byte here is multiplied.
+    // row-fact string rather than as a provider identifier.
     id: triageRowFactTextV1,
     label: triageRowFactTextV1.optional(),
     importance: defineProtocolUnion([
@@ -166,29 +164,44 @@ export const TriageTaskFieldV1Schema = defineProtocolUnion([
 ]);
 export type TriageTaskFieldV1 = ReturnType<typeof TriageTaskFieldV1Schema.parse>;
 
+const transitionFieldAddress = { id: TriageIdentifierV1ProtocolSchema, label: TriageTextV1ProtocolSchema };
+const transitionFieldOption = defineProtocolObject(transitionFieldAddress, { policy: 'closed' });
+/** Native input requirements, never a provider JSON payload or cached write authority. */
+export const TriageTaskTransitionRequiredFieldV1Schema = defineProtocolUnion([
+    defineProtocolObject({ ...transitionFieldAddress, kind: defineProtocolLiteral('text') }, { policy: 'closed' }),
+    defineProtocolObject({ ...transitionFieldAddress, kind: defineProtocolLiteral('number') }, { policy: 'closed' }),
+    defineProtocolObject({ ...transitionFieldAddress, kind: defineProtocolLiteral('choice'),
+        options: defineProtocolArray(transitionFieldOption) }, { policy: 'closed' }),
+    defineProtocolObject({ ...transitionFieldAddress, kind: defineProtocolLiteral('choices'),
+        options: defineProtocolArray(transitionFieldOption) }, { policy: 'closed' }),
+    // Retain the native transition when its input cannot be represented. The
+    // source can explain/refuse it and the client can offer Open in source.
+    defineProtocolObject({ ...transitionFieldAddress, kind: defineProtocolLiteral('unsupported') }, { policy: 'closed' }),
+]);
+export type TriageTaskTransitionRequiredFieldV1 = ReturnType<typeof TriageTaskTransitionRequiredFieldV1Schema.parse>;
+
 export const TriageTaskTransitionV1Schema = defineProtocolObject({
     id: TriageIdentifierV1ProtocolSchema,
     label: TriageTextV1ProtocolSchema,
     state: TriageEntryStateV1ProtocolSchema,
+    requiredFields: defineProtocolArray(TriageTaskTransitionRequiredFieldV1Schema).optional(),
 }, { policy: 'closed' });
 export const TriageTaskCapabilitiesV1Schema = defineProtocolObject({
     /** The scan role honours completion windows for this task kind. Omission means unknown coverage. */
     completedScan: defineProtocolLiteral(true).optional(),
     createFields: defineProtocolUniqueArray(TriageTaskFieldV1Schema).optional(),
+    /** States accepted at creation, not transitions from an existing task. Omission means unsupported. */
+    initialStatuses: defineProtocolArray(defineProtocolObject({
+        ...transitionFieldAddress, state: TriageEntryStateV1ProtocolSchema,
+        /** This source uses this status when create omits initialStatusId; absent means unknown. */
+        isDefault: triageProtocolTrue.optional(),
+    }, { policy: 'closed' })).optional(),
     editFields: defineProtocolUniqueArray(TriageTaskFieldV1Schema).optional(),
     transitions: defineProtocolArray(TriageTaskTransitionV1Schema).optional(),
-    /** An offered native transition that completes this task in one write. Absent means use the workflow menu. */
+    /** Explicit source opt-in to one-step completion. A completed state alone never implies this; absent means use the workflow menu. */
     completingTransitionId: TriageIdentifierV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 export type TriageTaskCapabilitiesV1 = ReturnType<typeof TriageTaskCapabilitiesV1Schema.parse>;
-
-/** Sources with dynamic workflows declare quick completion only when their offered workflow is unambiguous. */
-export function triageTaskTransitionCapabilitiesV1(
-    transitions: NonNullable<TriageTaskCapabilitiesV1['transitions']>,
-): Pick<TriageTaskCapabilitiesV1, 'transitions' | 'completingTransitionId'> {
-    const completed = transitions.filter(transition => triageTaskStatusCategoryV1(transition.state) === 'completed');
-    return { transitions, ...(completed.length === 1 ? { completingTransitionId: completed[0]!.id } : {}) };
-}
 
 /** Live read facts, not a second relationship store. Omitted facts remain unknown. */
 export const TriageEntryRelationsV1Schema = defineProtocolObject({
@@ -208,7 +221,7 @@ export type TriageEntryRelationsV1 = ReturnType<typeof TriageEntryRelationsV1Sch
  *
  * The outer object is `additive-open/drop` presentation; every known child is
  * closed. `projectionTruncated` is entry-level presentation completeness: it is
- * set when display content was shortened or fact-count bounded, and it never
+ * set when display content was shortened or an optional locator omitted, and it never
  * increments scan `omittedItemCount`. Every identity-valid provider entity
  * still maps to a `present` observation (`CONTRACT.md` §2.1, §4).
  */
@@ -238,6 +251,8 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
      * source with no author for an entry kind (an error group) omits it.
      */
     authorLabel: TriageTextV1ProtocolSchema.optional(),
+    /** Source-owned assignment display only. Null is unassigned; omission is unknown. */
+    assigneeLabel: defineProtocolUnion([TriageTextV1ProtocolSchema, defineProtocolLiteral(null)]).optional(),
     /** Source label names retain their string-array shape; colours are additive. */
     labels: defineProtocolArray(defineProtocolString()).optional(),
     /** Exact source label names plus theme token names, never resolved colour values. */
@@ -260,7 +275,7 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
     relations: TriageEntryRelationsV1Schema.optional(),
     /** Entry-specific workflows may refine the kind's capability declaration. */
     taskCapabilities: TriageTaskCapabilitiesV1Schema.optional(),
-    facts: defineProtocolArray(TriageRowFactV1Schema, { maxItems: MAX_TRIAGE_ROW_FACTS_V1 }),
+    facts: defineProtocolArray(TriageRowFactV1Schema),
     /**
      * Present only for source rows that are pull/merge requests. This carries
      * the one provider read's base/head/native revision; target stamping adds
@@ -471,6 +486,8 @@ export const TriageSourceScanEvidenceV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('partial'),
         reason: TriageIdentifierV1ProtocolSchema,
         omittedItemCount: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+        /** A failed sub-read beside readable observations, preserved for recovery presentation. */
+        failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('moving'),

@@ -11,14 +11,13 @@
  *    being skipped, so an entry the provider is actively changing does not
  *    silently disappear and reappear.
  * 2. **A contract-valid issue is never dropped for being large.** Oversized text
- *    is semantically truncated and the excess fact tail is omitted, both of which
- *    set `projectionTruncated`. That is distinct from malformed-row omission,
+ *    is semantically truncated with `projectionTruncated`; every available fact
+ *    is preserved. That is distinct from malformed-row omission,
  *    which is the only thing that contributes to scan `omittedItemCount`.
  */
 
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
@@ -143,14 +142,8 @@ type FactCandidate = Readonly<{
   value: SentryFactValueV1 | null;
 }>;
 
-function textFact(value: string | null): Readonly<{
-  value: SentryFactValueV1 | null;
-  truncated: boolean;
-}> {
-  if (value === null) return { value: null, truncated: false };
-  const bounded = projectTriageDisplayTextV1(value, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
-  if (bounded.value.length === 0) return { value: null, truncated: false };
-  return { value: { kind: 'text', text: bounded.value }, truncated: bounded.truncated };
+function textFact(value: string | null): SentryFactValueV1 | null {
+  return value === null ? null : { kind: 'text', text: value };
 }
 
 function readAssignee(value: unknown): SentryFactValueV1 | null {
@@ -158,9 +151,30 @@ function readAssignee(value: unknown): SentryFactValueV1 | null {
   const displayName = readString(value.name) ?? readString(value.id);
   if (displayName === null) return null;
   const actorKind = value.type === 'team' ? 'team' : 'user';
-  const bounded = projectTriageDisplayTextV1(displayName, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
-  if (bounded.value.length === 0) return null;
-  return { kind: 'actor', displayName: bounded.value, actorKind };
+  return { kind: 'actor', displayName, actorKind };
+}
+
+/** Every displayed fact uses the published semantic bound, including exact-count text. */
+function projectFactValue(value: SentryFactValueV1): Readonly<{
+  value: SentryFactValueV1 | null;
+  truncated: boolean;
+}> {
+  if (value.kind === 'timestamp' || value.kind === 'detailOnly') return { value, truncated: false };
+  const raw = value.kind === 'text' ? value.text
+    : value.kind === 'status' ? value.label
+      : value.kind === 'actor' ? value.displayName : value.value;
+  const bounded = projectTriageDisplayTextV1(raw, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
+  if (bounded.value.length === 0) return { value: null, truncated: false };
+  switch (value.kind) {
+    case 'text': return { value: { ...value, text: bounded.value }, truncated: bounded.truncated };
+    case 'status': return { value: { ...value, label: bounded.value }, truncated: bounded.truncated };
+    case 'actor': return { value: { ...value, displayName: bounded.value }, truncated: bounded.truncated };
+    case 'number': return {
+      // A shortened count is display text, never an invented smaller numeric count.
+      value: bounded.truncated ? { kind: 'text', text: bounded.value } : value,
+      truncated: bounded.truncated,
+    };
+  }
 }
 
 function readLifetimeCount(
@@ -254,13 +268,9 @@ export function mapSentryIssueForInvokedInstance(
   const projectName = project === null ? null : readString(project.name);
 
   const culprit = textFact(readString(raw.culprit));
-  truncated ||= culprit.truncated;
   const issueCategory = textFact(readString(raw.issueCategory));
-  truncated ||= issueCategory.truncated;
   const issueType = textFact(readString(raw.issueType));
-  truncated ||= issueType.truncated;
   const projectFact = textFact(projectSlug);
-  truncated ||= projectFact.truncated;
 
   const level = readString(raw.level);
   const priority = readString(raw.priority);
@@ -269,11 +279,10 @@ export function mapSentryIssueForInvokedInstance(
   const eventCount = readLifetimeCount(raw, 'count', 'count');
   const userCount = readLifetimeCount(raw, 'userCount', 'userCount');
 
-  // The stable priority order: the lower-priority tail is what a fact-count
-  // overflow omits.
+  // Keep every available fact in the source's stable priority order.
   const candidates: readonly FactCandidate[] = [
-    { id: 'issue-category', importance: 'primary', value: issueCategory.value },
-    { id: 'issue-type', importance: 'secondary', value: issueType.value },
+    { id: 'issue-category', importance: 'primary', value: issueCategory },
+    { id: 'issue-type', importance: 'secondary', value: issueType },
     {
       id: 'level',
       importance: 'primary',
@@ -281,7 +290,7 @@ export function mapSentryIssueForInvokedInstance(
         ? null
         : { kind: 'status', label: level, tone: LEVEL_TONES[level] ?? 'neutral' },
     },
-    { id: 'culprit', importance: 'primary', value: culprit.value },
+    { id: 'culprit', importance: 'primary', value: culprit },
     {
       id: 'unhandled',
       importance: 'primary',
@@ -289,7 +298,7 @@ export function mapSentryIssueForInvokedInstance(
         ? { kind: 'status', label: 'Unhandled', tone: 'warning' }
         : null,
     },
-    { id: 'project', importance: 'secondary', value: projectFact.value },
+    { id: 'project', importance: 'secondary', value: projectFact },
     {
       id: 'events',
       importance: 'secondary',
@@ -331,17 +340,18 @@ export function mapSentryIssueForInvokedInstance(
     { id: 'last-release', importance: 'supplementary', value: { kind: 'detailOnly' } },
   ];
 
-  const present = candidates.filter((candidate): candidate is FactCandidate & {
-    value: SentryFactValueV1;
-  } => candidate.value !== null);
-  const facts: readonly SentryRowFactV1[] = Object.freeze(
-    present.slice(0, MAX_TRIAGE_ROW_FACTS_V1).map((candidate) => Object.freeze({
+  const facts: SentryRowFactV1[] = [];
+  for (const candidate of candidates) {
+    if (candidate.value === null) continue;
+    const projected = projectFactValue(candidate.value);
+    truncated ||= projected.truncated;
+    if (projected.value === null) continue;
+    facts.push(Object.freeze({
       id: candidate.id,
       importance: candidate.importance,
-      value: Object.freeze(candidate.value),
-    })),
-  );
-  truncated ||= present.length > MAX_TRIAGE_ROW_FACTS_V1;
+      value: Object.freeze(projected.value),
+    }));
+  }
 
   const scopeLabel = projectTriageDisplayTextV1(
     projectName ?? projectSlug ?? input.organizationSlug ?? input.configured.organizationId,
@@ -382,7 +392,7 @@ export function mapSentryIssueForInvokedInstance(
       ...(designation === null || designation.value.length === 0 ? {} : { designation: designation.value }),
       state: mapSentryIssueState(raw.status, raw.substatus),
       locator,
-      facts,
+      facts: Object.freeze(facts),
       sourceUpdatedAtMs: lastSeenMs,
       projectionTruncated: truncated,
     }),

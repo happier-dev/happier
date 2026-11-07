@@ -1,6 +1,8 @@
 import {
   MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
+  MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
+  MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+  MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
   TriageSourceDescriptorV1Schema,
   TriageSourceFailureV1Schema,
@@ -8,6 +10,10 @@ import {
   TriageSourceScanObservationV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 
 import {
   AZURE_DEVOPS_TRIAGE_DESCRIPTOR,
@@ -245,9 +251,9 @@ describe('Azure DevOps failure projection', () => {
   });
 
   it('never echoes provider material beyond the bounded non-secret detail', () => {
-    const projected = projectAzureSourceFailure(failure({ detail: 'x'.repeat(4_000) }));
+    const projected = projectAzureSourceFailure(failure({ detail: 'x'.repeat(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 + 1) }));
     expect(TriageSourceFailureV1Schema.parse(projected)).toEqual(projected);
-    expect(new TextEncoder().encode(projected.detail ?? '').length).toBeLessThanOrEqual(1_024);
+    expect(new TextEncoder().encode(projected.detail ?? '').length).toBeLessThanOrEqual(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1);
   });
 });
 
@@ -306,7 +312,7 @@ describe('Azure DevOps present-observation projection', () => {
     }
   });
 
-  it('projects a titleless oversize entry as a bounded, uniquely keyed, truncated row', () => {
+  it('keeps every fact kind and all fitting labels on a titleless entry', () => {
     const facts = [
       { kind: 'mergeStatus', value: 'conflicts', nativeLabel: 'Conflicts' },
       { kind: 'draft' },
@@ -314,18 +320,38 @@ describe('Azure DevOps present-observation projection', () => {
       ...Array.from({ length: 12 }, () => ({ kind: 'label', value: 'release' })),
     ] as AzurePullRequestEntry['facts'];
     const observation = projectAzurePresentObservation({
-      entry: entry({ title: '', facts, projectionTruncated: true }),
+      entry: entry({ title: '', facts }),
       involvement: ['author'],
     });
     expect(TriageSourceScanObservationV1Schema.parse(observation)).toEqual(observation);
     if (observation.kind !== 'present') throw new Error('expected a present observation');
     expect(observation.snapshot.title.length).toBeGreaterThan(0);
-    expect(observation.snapshot.projectionTruncated).toBe(true);
-    expect(observation.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(observation.snapshot.projectionTruncated).not.toBe(true);
+    expect(observation.snapshot.facts.find((fact) => fact.id === 'azure-devops/tags')?.value)
+      .toEqual({ kind: 'text', value: Array.from({ length: 12 }, () => 'release').join(', ') });
     const ids = observation.snapshot.facts.map((fact) => fact.id);
     expect(new Set(ids).size).toBe(ids.length);
     // §6.3.1 rule 3: stored auto-complete is disclosed at read time.
     expect(ids).toContain('azure-devops/auto-complete');
+  });
+
+  it('semantically projects a provider-sized label set within the existing operation envelope', () => {
+    const label = '\\'.repeat(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
+    const rawFact = { kind: 'label' as const, value: label };
+    // Derive the counterexample from the incumbent envelope, not a product label quota.
+    const labelCount = Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES
+      / new TextEncoder().encode(JSON.stringify(rawFact)).byteLength) + 1;
+    const observation = projectAzurePresentObservation({
+      entry: entry({ facts: Array.from({ length: labelCount }, () => rawFact) }),
+      involvement: [],
+    });
+    expect(TriageSourceScanObservationV1Schema.safeParse(observation).success).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1({
+      kind: 'complete', observations: [observation], evidence: { kind: 'walkFinished' },
+    })).toBe(true);
+    if (observation.kind !== 'present') throw new Error('expected a present observation');
+    expect(observation.snapshot.projectionTruncated).toBe(true);
+    expect(observation.localRef.entryId).toBe('17');
   });
 
   it('normalizes provider control characters so one row cannot reject the whole page', () => {
@@ -347,14 +373,14 @@ describe('Azure DevOps present-observation projection', () => {
     expect(observation.snapshot.title).toContain('Fix the parser');
     expect(observation.snapshot.title).toContain('and the printer');
     expect(observation.nativeRevision).toBe('b3f1c0a9d2e4');
-    const label = observation.snapshot.facts.find((fact) => fact.id.startsWith('azure-devops/tag/'));
+    const label = observation.snapshot.facts.find((fact) => fact.id === 'azure-devops/tags');
     expect(label?.value).toEqual({ kind: 'text', value: 'needs rebase' });
   });
 
   it('omits an over-bound web URL instead of truncating it to a wrong destination', () => {
     // §2.1: a location is machine-meaningful, so a source that cannot fit one omits it. The row
     // itself still has to survive — an oversize repository path is not a reason to lose the entry.
-    const longName = 'r'.repeat(512);
+    const longName = 'r'.repeat(MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 + 1);
     const base = entry().locator;
     const observation = projectAzurePresentObservation({
       entry: entry({

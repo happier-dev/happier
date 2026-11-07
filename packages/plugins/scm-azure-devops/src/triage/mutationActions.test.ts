@@ -1,3 +1,7 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { AZURE_DEVOPS_PLUGIN } from '../manifest.js';
+import { activate as activateAccount } from '../accountRuntime.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
@@ -13,6 +17,7 @@ import {
 } from './descriptor.js';
 import { buildAzureCollisionScope } from './identity.js';
 import {
+  AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS,
   abandonAzureDevOpsPullRequest,
   completeAzureDevOpsPullRequest,
   reactivateAzureDevOpsPullRequest,
@@ -375,12 +380,13 @@ describe('Azure DevOps pull-request completion', () => {
   });
 
   it('projects a merge rejection through the result carrier bound without splitting Unicode', async () => {
+    const fittingEmojiCount = Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 4);
     const { context } = harness({
       reads: [
         pullRequest(),
         pullRequest({
           mergeStatus: 'rejectedByPolicy',
-          mergeFailureMessage: '\u{1F680}'.repeat(200),
+          mergeFailureMessage: '\u{1F680}'.repeat(fittingEmojiCount + 1),
         }),
       ],
     });
@@ -390,9 +396,9 @@ describe('Azure DevOps pull-request completion', () => {
     );
 
     if (settled.kind !== 'rejected') throw new Error('a policy rejection is terminal');
-    expect(settled.detail).toBe('\u{1F680}'.repeat(128));
+    expect(settled.detail).toBe('\u{1F680}'.repeat(fittingEmojiCount));
     expect(new TextEncoder().encode(settled.detail ?? '').byteLength)
-      .toBe(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+      .toBe(fittingEmojiCount * 4);
   });
 
   it('refuses to call a completion applied when Azure silently ignored the options we sent', async () => {
@@ -1065,4 +1071,29 @@ describe('Azure DevOps thread status', () => {
     if (settled.kind !== 'unavailable') throw new Error('a non-positive thread id is not a thread');
     expect(requests).toHaveLength(0);
   });
+});
+
+it.each(['effect', 'wrong-account', 'cancelled'] as const)('runs the registered Account abandon effect (%s) without a Machine', async scenario => {
+  const boundary = harness({ reads: [pullRequest(), pullRequest({ status: 'abandoned' })] });
+  const kit = await createPluginTestkit({ manifest: AZURE_DEVOPS_PLUGIN.manifest,
+    module: { activate: AZURE_DEVOPS_PLUGIN.activate, activateAccount }, services: boundary.context.services });
+  const controller = new AbortController();
+  if (scenario === 'cancelled') controller.abort(new DOMException('cancelled', 'AbortError'));
+  const input = abandonInput();
+  const request = scenario === 'wrong-account' ? { ...input, instance: { ...input.instance, binding: {
+    purpose: AZURE_DEVOPS_TRIAGE_PURPOSE, account: accountRef('other'),
+  } } } : input;
+  try {
+    // The fixture crosses the public JSON input boundary; the original handler validates it.
+    const result = await kit.invokeAction(AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.abandon, request as JsonValue, { signal: controller.signal }).catch((error: unknown) => error);
+    if (scenario === 'effect') {
+      expect(result).toMatchObject({ kind: 'applied' });
+      expect(writes(boundary.requests)).toHaveLength(1);
+      expect(boundary.requests).toHaveLength(4);
+      expect(boundary.requests.filter(request => request.url.includes('/_apis/connectionData'))).toHaveLength(1);
+    } else {
+      expect(result).not.toMatchObject({ kind: 'applied' });
+      expect(boundary.requests).toHaveLength(0);
+    }
+  } finally { await kit.dispose(); }
 });

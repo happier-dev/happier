@@ -4,7 +4,6 @@ import {
   MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   normalizeTriageSingleLineV1,
   projectTriageDisplayTextV1,
@@ -238,24 +237,31 @@ function projectRowFacts(facts: readonly AzureRowFact[]): Readonly<{
 }> {
   const projected: TriageRowFactV1[] = [];
   const seen = new Set<string>();
-  let truncated = false;
+  const labels: string[] = [];
 
-  facts.forEach((fact, index) => {
-    const candidate = projectRowFact(fact, index);
-    if (candidate === null) return;
-    if (seen.has(candidate.id)) return;
-    if (projected.length >= MAX_TRIAGE_ROW_FACTS_V1) {
-      truncated = true;
+  facts.forEach((fact) => {
+    if (fact.kind === 'label') {
+      labels.push(fact.value);
       return;
     }
+    const candidate = projectRowFact(fact);
+    if (seen.has(candidate.id)) return;
     seen.add(candidate.id);
     projected.push(candidate);
   });
 
-  return { facts: projected, truncated };
+  // Labels are one semantic row fact, rather than an unbounded fact per label.
+  // Native detail keeps the complete labels; this display uses the incumbent bound.
+  const labelSummary = projectTriageDisplayTextV1(labels.join(', '), MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
+  if (labelSummary.value.length > 0) projected.push({
+    id: 'azure-devops/tags',
+    importance: 'supplementary',
+    value: { kind: 'text', value: labelSummary.value },
+  });
+  return { facts: projected, truncated: labelSummary.truncated };
 }
 
-function projectRowFact(fact: AzureRowFact, index: number): TriageRowFactV1 | null {
+function projectRowFact(fact: Exclude<AzureRowFact, Readonly<{ kind: 'label' }>>): TriageRowFactV1 {
   switch (fact.kind) {
     case 'reviewerVote':
       return {
@@ -295,15 +301,6 @@ function projectRowFact(fact: AzureRowFact, index: number): TriageRowFactV1 | nu
         importance: 'secondary',
         value: { kind: 'status', value: 'Set', tone: 'warning' },
       };
-    case 'label': {
-      const value = boundedFactText(fact.value);
-      if (value.length === 0) return null;
-      return {
-        id: `azure-devops/tag/${index}`,
-        importance: 'supplementary',
-        value: { kind: 'text', value },
-      };
-    }
   }
 }
 

@@ -140,7 +140,7 @@ export function toTriagePresentObservation(
         ...(nativeLabel.value.length === 0 ? {} : { nativeLabel: nativeLabel.value }),
       }),
       facts: Object.freeze(snapshot.facts.map(toTriageFact)),
-      ...(snapshot.projectionTruncated ? { projectionTruncated: true as const } : {}),
+      ...(snapshot.projectionTruncated || nativeLabel.truncated ? { projectionTruncated: true as const } : {}),
     }),
     viewer: Object.freeze({ involvement: Object.freeze([]) }),
     ...(snapshot.sourceUpdatedAtMs === null

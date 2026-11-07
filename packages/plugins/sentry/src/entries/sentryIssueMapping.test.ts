@@ -5,8 +5,9 @@ import issuesListPage1 from '../fixtures/issuesListPage1.json' with { type: 'jso
 import issuesListPage2 from '../fixtures/issuesListPage2.json' with { type: 'json' };
 
 import {
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+  MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+  MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
   TriageSourceEntrySnapshotV1Schema,
   TriageSourceScanObservationV1Schema,
@@ -39,10 +40,7 @@ function factsOf(raw: unknown): Map<string, unknown> {
 }
 
 /**
- * The row-fact bound is smaller than the number of facts a rich Sentry row can
- * supply, so the emitted prefix alone cannot exercise every value projection.
- * Dropping the higher-priority *provider* fields is the honest way to reach the
- * lower-priority ones: a field-by-field omission is a shape the mapper already
+ * A field-by-field omission is a shape the mapper already
  * contracts to handle (`SENTRY.md` §6.3 — a missing value omits its fact, never
  * the row), and every remaining assertion still runs through the real mapper.
  */
@@ -317,33 +315,60 @@ describe('mapSentryIssueForInvokedInstance', () => {
     expect(result.snapshot.projectionTruncated).toBe(true);
     expect(new TextEncoder().encode(result.snapshot.title).byteLength)
       .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
-    expect(result.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(result.snapshot.facts.length).toBeGreaterThan(4);
     expect(result.snapshot.localRef.entryId).toBe('5501001');
     expect(result.snapshot.state.presentation).toBe('active');
   });
 
+  it.each(['count', 'level', 'priority', 'assignee'] as const)(
+    'keeps an oversized %s fact present through strict observation parsing and marks shortening',
+    (field) => {
+      const oversized = '9'.repeat(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 * 2);
+      const raw = {
+        ...issuesListPage1.body[0],
+        ...(field === 'count' ? { lifetime: { count: oversized } }
+          : field === 'assignee' ? { assignedTo: { type: 'user', name: oversized } }
+            : { [field]: oversized }),
+      };
+      const result = map(raw);
+      if (!result.ok) throw new Error('expected a mapped issue');
+      const observation = TriageSourceScanObservationV1Schema.parse(toTriagePresentObservation(result.snapshot));
+      expect(observation).toMatchObject({
+        kind: 'present',
+        localRef: { entryId: raw.id },
+        snapshot: { projectionTruncated: true },
+      });
+      if (observation.kind !== 'present') throw new Error('expected a present issue');
+      const fact = observation.snapshot.facts.find((candidate) => candidate.id === (field === 'count' ? 'events' : field));
+      expect(fact).toBeDefined();
+      if (fact?.value.kind === 'text' || fact?.value.kind === 'status' || fact?.value.kind === 'actor') {
+        expect(new TextEncoder().encode(fact.value.value).byteLength)
+          .toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
+      } else throw new Error('expected a bounded display fact');
+    },
+  );
+
   it('reports projectionTruncated false when nothing was shortened', () => {
-    // A row inside the fact bound with no oversized text: the flag must stay
+    // A row with no oversized text: the flag must stay
     // false so it keeps meaning "this source shortened nothing".
     const result = map(withoutProviderFields(issuesListPage2.body[1], ABOVE_ASSIGNEE));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
     expect(result.snapshot.projectionTruncated).toBe(false);
   });
 
-  it('drops only the lowest-priority fact tail when the fact bound is exceeded', () => {
+  it('preserves supplementary facts beyond the row display density', () => {
     const result = map(issuesListPage1.body[0]);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     const ids = result.snapshot.facts.map((fact) => fact.id);
-    expect(ids.length).toBe(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(ids.length).toBeGreaterThan(4);
     expect(ids[0]).toBe('issue-category');
     expect(ids).toContain('level');
     expect(ids).toContain('culprit');
-    expect(ids).not.toContain('last-release');
-    expect(result.snapshot.projectionTruncated).toBe(true);
+    expect(ids).toContain('last-release');
+    expect(result.snapshot.projectionTruncated).toBe(false);
   });
 
   it('omits only the malformed rows of a mixed page and keeps every valid sibling', () => {
@@ -464,6 +489,25 @@ describe('mapSentryIssueForInvokedInstance', () => {
       toTriagePresentObservation(result.snapshot).snapshot,
     )).not.toThrow();
   });
+
+  it('marks an oversized unknown status as truncated after strict observation parsing', () => {
+    const raw = withoutProviderFields(issuesListPage2.body[1], ABOVE_ASSIGNEE);
+    const result = map({
+      ...raw,
+      status: 's'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1),
+      substatus: null,
+    });
+    if (!result.ok) throw new Error('expected a mapped issue');
+    const observation = TriageSourceScanObservationV1Schema.parse(toTriagePresentObservation(result.snapshot));
+    expect(observation).toMatchObject({
+      kind: 'present',
+      localRef: { entryId: raw.id },
+      snapshot: { projectionTruncated: true, state: { presentation: 'unknown' } },
+    });
+    if (observation.kind !== 'present') throw new Error('expected a present issue');
+    expect(new TextEncoder().encode(observation.snapshot.state.nativeLabel).byteLength)
+      .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  });
 });
 describe('Sentry locator bounds', () => {
   /**
@@ -477,7 +521,8 @@ describe('Sentry locator bounds', () => {
     + '/issues/5501001/events/9f2c4d1e8b7a4c3f9d0e1a2b3c4d5e6f'
     + '/?project=4504991827364554&query=is%3Aunresolved+issue.category%3Aerror'
     + '&referrer=issue-stream&statsPeriod=14d&environment=production-emea-west'
-    + '&sort=freq&groupStatsPeriod=auto&utc=false&cursor=0%3A100%3A0';
+    + '&sort=freq&groupStatsPeriod=auto&utc=false&cursor=0%3A100%3A0'
+    + `&context=${'x'.repeat(MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 + 1)}`;
 
   it('keeps an issue whose provider link exceeds the published location ceiling', () => {
     const result = map({ ...issuesListPage1.body[0], permalink: LONG_PERMALINK });
@@ -514,12 +559,13 @@ describe('Sentry locator bounds', () => {
 
   it('bounds a locator built from provider slugs it does not get to limit', () => {
     const row = issuesListPage1.body[0] as Readonly<Record<string, unknown>>;
+    const oversizedSlug = 'p'.repeat(MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 + 1);
     const result = map({
       ...row,
       permalink: null,
-      project: { ...(row.project as Readonly<Record<string, unknown>>), slug: 'p'.repeat(600) },
-      shortId: `${'P'.repeat(600)}-3F`,
-    }, 'o'.repeat(600));
+      project: { ...(row.project as Readonly<Record<string, unknown>>), slug: oversizedSlug },
+      shortId: `${oversizedSlug}-3F`,
+    }, oversizedSlug);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
