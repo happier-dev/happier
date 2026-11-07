@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import axios from 'axios';
 import { ConnectedServiceBindingsV2IngressSchema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildConnectedServiceCredentialRecord, FeaturesResponseSchema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, sealAccountScopedBlobCiphertext, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, buildProviderAccountUsageRecordId, FeaturesResponseSchema, ProviderAccountUsageSnapshotV1Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, sealAccountScopedBlobCiphertext, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import type { ApiClient } from '@/api/api';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -44,6 +44,7 @@ import { scopeConnectedAccountSessionPurposeBindingLease } from './purposeBindin
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { assertOpenCodeManagedPrompt } from './requestAuth/openCodeManagedPrompt.test-support';
 import { logger } from '@/ui/logger';
+import { createProviderAccountUsageStore } from './accountUsage/store';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 
 // Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
@@ -91,7 +92,7 @@ const purposeOwner = createConnectedAccountPurposeBindingOwner({
 });
 
 beforeEach(() => {
-  // Plugin HTTP uses global fetch after removal of the pinned-network adapter.
+  // Provider responses use the same genuine HTTP boundary for Node and Bun.
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== 'https://auth.openai.com/oauth/token') throw new Error('Unexpected provider transport');
@@ -120,6 +121,40 @@ afterAll(async () => {
 });
 
 describe('qualified first-party spawn credential authority', () => {
+  it('reports a missing requester-selected profile without acquiring another Account credential', async () => {
+    const listing = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [] });
+    const http = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(new URL(String(url)).pathname).toBe('/v4/connect/qualified/accounts');
+      expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      return { status: 200, data: listing };
+    });
+    try {
+      const admission = resolveConnectedServiceAuthForSpawn({ agentId: 'codex',
+        connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'absent-private-profile' },
+        } },
+        materializationKey: 'missing-requester-profile', activeServerDir: directory, baseDir: directory,
+        processEnv: { HOME: directory }, credentials,
+        api: { getAccountEncryptionMode: async () => 'e2ee' } as ApiClient,
+        connectedAccountsOwner: purposeOwner,
+        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'codex', bindings, contributions: lease.registry.contributes }),
+        activateQualifiedPurposeBindings: binding => purposeOwner.activateSessionPurposeBindings({
+          sessionId: 'missing-requester-profile', purposes: binding.purposes, bindings: binding.bindings }),
+      });
+      const result = await admission.catch(error => {
+        expect(error).toMatchObject({ name: 'ConnectedServiceSpawnAuthGroupAuthorityError',
+          code: 'connected_service_auth_group_authority_active_profile_missing' });
+        return buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error });
+      });
+      expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: expect.stringMatching(/select.*profile.*own Account/i),
+        errorDetail: { kind: 'launch_error', code: 'connected_service_auth_group_authority_active_profile_missing',
+          message: expect.stringMatching(/Workflow.*edit|edit.*Workflow/i) } });
+      expect(JSON.stringify(result)).not.toContain('absent-private-profile');
+    } finally { http.mockRestore(); }
+  });
+
   it.each([
     { agentId: 'claude', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, authenticationModeId: 'oauth' } as const,
     { agentId: 'codex', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
@@ -221,27 +256,46 @@ describe('qualified first-party spawn credential authority', () => {
       http.mockRestore(); writes.mockRestore(); healthWrites.mockRestore(); provider.mockRestore();
     }
   });
-  it('reads prepared pool credentials only at required boundaries', async () => {
-    const account = { service, accountId: 'launch-freshness-primary' };
-    const backup = { service, accountId: 'launch-freshness-backup' };
+  it.each([false, true])('uses group quota freshness and reads admitted credentials only at required boundaries (retryable member: %s)', async retryableMember => {
+    const account = { service, accountId: retryableMember ? 'leeroy_bat' : 'launch-freshness-primary' };
+    const backup = { service, accountId: retryableMember ? 'lb_batiplus' : 'launch-freshness-backup' };
+    const members = retryableMember
+      ? [account, backup, ...['leeroy', 'batiplus', 'ai3_bat', 'codex3'].map(accountId => ({ service, accountId }))]
+      : [account, backup];
     const now = Date.now();
+    const observedAtMs = now - 120_000;
     const group = QualifiedConnectedAccountGroupV4Schema.parse({
-      v: 1, ref: { service, groupId: 'launch-freshness' }, incarnation: 'launch-freshness-1',
+      v: 1, ref: { service, groupId: retryableMember ? 'happier' : 'launch-freshness' }, incarnation: 'launch-freshness-1',
       displayName: 'Launch freshness', policy: { v: 1, autoSwitch: true, preTurnProbeMode: 'when_stale' },
       activeConnectedAccountId: account.accountId, generation: 1, runtimeStateRevision: 0,
       state: {}, createdAt: now, updatedAt: now,
-      members: [account, backup].map((ref, index) => ({
+      members: members.map((ref, index) => ({
         v: 1, connectedAccountId: ref.accountId, priority: index + 1, enabled: true,
         state: {}, createdAt: now, updatedAt: now,
       })),
     });
     const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service,
-      accounts: [account, backup].map(ref => ({
-        ref, authenticationModeId: 'oauth', status: 'connected', kind: 'oauth', expiresAt: now + 3_600_000,
+      accounts: members.map(ref => ({
+        ref, authenticationModeId: 'oauth', status: ref.accountId === 'codex3' ? 'refresh_failed_retryable' : 'connected', kind: 'oauth', expiresAt: now + 3_600_000,
         revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true,
         configurationRevision: null, scopes: [],
       })),
     });
+    const usage = createProviderAccountUsageStore();
+    for (const ref of members) {
+      const recordKey = { providerId: 'openai-codex', accountSubjectId: ref.accountId,
+        subjectKind: 'subscription', quotaScope: 'account' } as const;
+      usage.recordSnapshot(ProviderAccountUsageSnapshotV1Schema.parse({
+        v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: recordKey.providerId,
+        accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs, fetchedAtMs: observedAtMs,
+        staleAfterMs: 300_000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'weekly', label: 'Weekly', remainingPct: 80, utilizationPct: 20,
+          used: 20, limit: 100, remaining: 80, usedPct: 20, resetsAt: null, resetAtMs: null,
+          unit: 'credits', status: 'ok', limitScope: 'account', confidence: 'exact',
+          details: { limitCategory: 'usage_limit' } }],
+      }), { sources: [{ serviceId: 'happier.agent.codex/openai-codex', profileId: ref.accountId,
+        bindingKind: 'group_member', groupId: group.ref.groupId, groupGeneration: group.generation }] });
+    }
     const content = sealQualifiedConnectedAccountContentEnvelope({
       kind: 'credential', accountMode: 'e2ee', material: credentials.encryption,
       payload: { v: 1, values: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh',
@@ -252,7 +306,7 @@ describe('qualified first-party spawn credential authority', () => {
       ref: account, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
       credentialRevision: revision, configurationRevision: null, content, metadata: { scopes: [] },
     });
-    // Only Home HTTP is replaced; group selection, purpose
+    // Only Home HTTP is replaced; group freshness, usage projection, purpose
     // admission, envelope opening and plugin materialization remain real.
     const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
@@ -261,8 +315,40 @@ describe('qualified first-party spawn credential authority', () => {
       throw new Error(`Unexpected HTTP read: ${path}`);
     });
     groupActiveAccount = account;
+    const prepare = (probeFreshnessMs: number) => prepareDaemonConnectedServices({
+      options: { directory, connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: group.ref.groupId },
+      } } },
+      normalizedExistingSessionId: '', requestedSessionId: `freshness-${probeFreshnessMs}`,
+      effectiveResume: '', catalogAgentId: 'codex', credentials,
+      api: { getAccountEncryptionMode: async () => 'e2ee' } as ApiClient,
+      qualifiedConnectedAccountApi: {
+        readGroup: async () => QualifiedConnectedAccountGroupV4Schema.parse({ ...group,
+          policy: { ...group.policy, probeIfSnapshotOlderThanMs: probeFreshnessMs } }),
+        listAccounts: async () => accounts,
+      },
+      providerAccountUsageStore: usage, connectedServiceRefreshCoordinator: null,
+      processEnv: { HOME: directory }, activeServerDir: directory,
+      connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
+      pluginRuntimeRegistry: lease.registry, connectedAccountsOwner: purposeOwner,
+      activatePurposeBindings: purposeOwner.activatePurposeBindings,
+    });
+    let fresh: Awaited<ReturnType<typeof prepare>> | undefined;
+    let stale: Awaited<ReturnType<typeof prepare>> | undefined;
     let rotated: Awaited<ReturnType<typeof prepareDaemonConnectedServices>> | undefined;
     try {
+      // The parsed group owns probe freshness. With no probe coordinator, an
+      // observation stale under that policy cannot silently permit launch.
+      fresh = await prepare(300_000);
+      expect(fresh, fresh.ok ? 'fresh launch admitted' : fresh.result.errorMessage).toMatchObject({ ok: true });
+      expect(fresh.ok ? JSON.parse(fresh.auth?.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? 'null') : null)
+        .toEqual([expect.objectContaining({ kind: 'group', groupId: group.ref.groupId, activeProfileId: account.accountId })]);
+      // One acquisition for the selected account, then the required artifact
+      // publication qualification. The unused pool member needs no secret read.
+      expect(http.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v4/connect/qualified/credential'))
+        .toHaveLength(2);
+      stale = await prepare(60_000);
+      expect(stale).toMatchObject({ ok: false });
       const profiles = { ...accounts, accounts: accounts.accounts.map(profile => ({ ...profile,
         status: profile.ref.accountId === account.accountId ? 'needs_reauth' as const : 'connected' as const,
         kind: null, expiresAt: null,
@@ -330,7 +416,7 @@ describe('qualified first-party spawn credential authority', () => {
         expect(reads).toHaveLength(3);
       } finally { diagnostics.mockRestore(); }
     } finally {
-      for (const prepared of [rotated]) {
+      for (const prepared of [fresh, stale, rotated]) {
         if (prepared?.ok) await prepared.auth?.cleanupOnExit?.();
       }
       groupActiveAccount = null;
@@ -356,6 +442,7 @@ describe('qualified first-party spawn credential authority', () => {
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
       qualifiedApi: {
+        listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal }),
         listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
         listGroups: async () => { throw new Error('Unexpected group inventory'); },
         readGroup: async () => { throw new Error('Unexpected group read'); },
@@ -511,7 +598,8 @@ describe('qualified first-party spawn credential authority', () => {
         establishedRuntimeOwner: established, reloadController: pluginReloadController,
         resolveQualifiedConnectedAccountV4Support: () => 'advertised',
         store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
-        qualifiedApi: { listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
+        qualifiedApi: { listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal }),
+          listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
           listGroups: async () => ({ groups: [] }), readGroup: async () => null },
       });
       let requesterCurrent = true;
@@ -817,7 +905,7 @@ describe('qualified first-party spawn credential authority', () => {
     });
     const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<string>(),
-      nowMs: Date.now, quotaFreshnessMs: 60_000, loadState,
+      nowMs: Date.now, loadState,
       // This is the persistent group CAS boundary, not a mocked selector.
       commitSwitch: async (input) => {
         expect(input.expectedGeneration).toBe(group.generation);
@@ -890,6 +978,13 @@ describe('qualified first-party spawn credential authority', () => {
       resolveQualifiedPurposeBindingSnapshot: (bindings) => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId: 'codex', bindings, contributions: lease.registry.contributes }),
       activateQualifiedPurposeBindings: (snapshot) => purposeOwner.activateSessionPurposeBindings({ sessionId: `qualified-${account.accountId}`, purposes: snapshot.purposes, bindings: snapshot.bindings }),
       credentialRefreshService: refreshCoordinator,
+    }).catch(error => {
+      if (refresh && !groupRecovery) {
+        expect(healthPatches).not.toContainEqual(expect.objectContaining({
+          health: expect.objectContaining({ reconnectRequired: true }),
+        }));
+      }
+      throw error;
     });
     expect(result).not.toBeNull();
     expect(result!.targetMaterializedRoot).toBe(result!.env.CODEX_HOME);
