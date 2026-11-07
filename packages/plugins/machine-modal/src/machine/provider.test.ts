@@ -42,27 +42,47 @@ describe('Modal finite Sandbox native provider', () => {
     const { provider } = vendorBoundary(1);
     expect(await provider.acquire(launch)).toMatchObject({ ok: false, code: 'modal_acquisition_unknown' });
   });
-
   it('checks the selected existing App without creating a missing App', async () => {
     const { provider, client } = vendorBoundary();
     await provider.acquire(launch);
     expect(client.apps.fromName).toHaveBeenCalledWith(launch.appReference, { createIfMissing: false });
   });
-
-  it('refuses an unqualified native SDK before lookup or allocation', async () => {
+  it('retains only branded native gRPC status through App checks and uncertain allocation', async () => {
     const { provider, client } = vendorBoundary();
-    vi.mocked(client.version).mockReturnValue('0.10.0');
-    expect(await provider.check({ appReference: 'happier' })).toEqual({ ok: false, code: 'modal_sdk_unsupported' });
-    expect(await provider.acquire(launch)).toEqual({ ok: false, code: 'modal_sdk_unsupported' });
-    expect(client.apps.fromName).not.toHaveBeenCalled();
-    expect(client.sandboxes.create).not.toHaveBeenCalled();
+    const denied = Object.assign(new Error('private credential'), { '@@nice-grpc:ClientError': true, code: 7, details: 'private input' });
+    vi.mocked(client.apps.fromName).mockRejectedValueOnce(denied);
+    expect(await provider.check({ appReference: 'happier' })).toEqual({ ok: false, code: 'modal_check_unavailable', nativeCause: { grpcStatusCode: 7 } });
+    vi.mocked(client.sandboxes.create).mockRejectedValueOnce(Object.assign(new Error('private input'), { '@@nice-grpc:ClientError': true, code: 4 }));
+    expect(await provider.acquire(launch)).toEqual({ ok: false, code: 'modal_acquisition_unknown', nativeCause: { grpcStatusCode: 4 } });
+  });
+  it('keeps documented SDK error classifications but omits arbitrary names and unbranded or invalid status codes', async () => {
+    const { provider, client } = vendorBoundary();
+    for (const error of [Object.assign(new Error('private input'), { name: 'NotFoundError' }),
+      Object.assign(new Error('private input'), { name: 'private credential' }),
+      Object.assign(new Error('private input'), { code: 7 }),
+      Object.assign(new Error('private input'), { '@@nice-grpc:ClientError': true, code: 99 })]) {
+      vi.mocked(client.apps.fromName).mockRejectedValueOnce(error);
+      expect(await provider.acquire(launch)).toEqual({ ok: false, code: 'modal_app_unavailable',
+        ...(error.name === 'NotFoundError' ? { nativeCause: { sdkError: 'NotFoundError' } } : {}) });
+    }
+  });
+  it('uses the worker qualification without repeating SDK admission for native operations', async () => {
+    const { provider, client } = vendorBoundary();
+    expect(await provider.acquire(launch)).toEqual({ ok: true, resource });
+    expect(await provider.reconcile({ appReference: 'happier', managedId: 'managed-1' })).toEqual({ ok: true, resource });
+    expect(client.version).not.toHaveBeenCalled();
+    expect(client.sandboxes.create).toHaveBeenCalledOnce();
   });
 
-  it('refuses CPU encoded as zero while preserving valid fractional native requests', async () => {
+  it('refuses CPU requests the native milli-core encoder would silently change', async () => {
     const { provider, client } = vendorBoundary();
-    expect(await provider.acquire({ ...launch, resources: { ...launch.resources, cpu: 0.0009 } })).toEqual({ ok: false, code: 'modal_launch_invalid' });
+    // modal@0.11.0 uses Math.trunc(1000 * cpu), including binary rounding
+    // (1.001 * 1000 is below 1001), rather than honoring these exact requests.
+    for (const cpu of [0.0009, 0.0019, 1.001]) {
+      expect(await provider.acquire({ ...launch, resources: { ...launch.resources, cpu } })).toEqual({ ok: false, code: 'modal_launch_invalid' });
+    }
     expect(client.sandboxes.create).not.toHaveBeenCalled();
-    for (const cpu of [0.001, 0.0019, 0.125, 1.001]) {
+    for (const cpu of [0.001, 0.125, 1.002]) {
       expect(await provider.acquire({ ...launch, resources: { ...launch.resources, cpu } })).toEqual({ ok: true, resource });
       expect(client.sandboxes.create).toHaveBeenLastCalledWith(app, image, expect.objectContaining({ cpu }));
     }
@@ -174,7 +194,7 @@ describe('Modal finite Sandbox native provider', () => {
     vi.mocked(sandbox.poll).mockRejectedValueOnce(Object.assign(new Error('native lookup failed'), { '@@nice-grpc:ClientError': true, code: 5 }));
     expect(await provider.inspect(resource)).toEqual({ resource, state: 'absent' });
     vi.mocked(sandbox.poll).mockRejectedValueOnce(Object.assign(new Error('native unavailable'), { '@@nice-grpc:ClientError': true, code: 14 }));
-    expect(await provider.inspect(resource)).toEqual({ resource, state: 'unknown', code: 'modal_lookup_unavailable' });
+    expect(await provider.inspect(resource)).toEqual({ resource, state: 'unknown', code: 'modal_lookup_unavailable', nativeCause: { grpcStatusCode: 14 } });
   });
 
   it('refuses a mismatched returned native identity before file or termination effects', async () => {
@@ -200,6 +220,13 @@ describe('Modal finite Sandbox native provider', () => {
     expect(sandbox.terminate).toHaveBeenCalledOnce();
     expect(client.sandboxes.create).not.toHaveBeenCalled();
   });
+  it.each([Object.assign(new Error('private native failure'), { name: 'UnexpectedVendorError' }), 'private native failure'])(
+    'keeps unclassified termination failure distinct from acknowledgment (%s)', async error => {
+    const { provider, sandbox } = vendorBoundary(null);
+    vi.mocked(sandbox.terminate).mockRejectedValue(error);
+    expect(await provider.terminate(resource)).toEqual({ resource, state: 'unknown', code: 'native_intent_unconfirmed' });
+    expect(sandbox.terminate).toHaveBeenCalledOnce();
+  });
 
   it('carries host-supplied private file and argv only into the same live Sandbox', async () => {
     const { provider, sandbox, file, client } = vendorBoundary();
@@ -221,7 +248,6 @@ describe('Modal finite Sandbox native provider', () => {
     const { provider, sandbox, client } = vendorBoundary(124);
     expect(await provider.putFile(resource, { path: '/private/credential', bytes: new Uint8Array([1]), mode: 0o600 })).toEqual({ ok: false, code: 'modal_resource_ended' });
     expect(await provider.exec(resource, { argv: ['happier', 'auth'] })).toEqual({ ok: false, code: 'modal_resource_ended' });
-    expect(await provider.openPrivateProcess(resource, { argv: ['happier', 'auth'] })).toEqual({ ok: false, code: 'modal_resource_ended' });
     expect(sandbox.filesystem.writeBytes).not.toHaveBeenCalled();
     expect(sandbox.exec).not.toHaveBeenCalled();
     expect(client.sandboxes.create).not.toHaveBeenCalled();
@@ -247,30 +273,6 @@ describe('Modal finite Sandbox native provider', () => {
     expect(JSON.stringify(vi.mocked(sandbox.exec).mock.calls)).not.toContain('private-native-input');
   });
 
-  it('opens private binary duplex IO before process completion without buffering enrollment output', async () => {
-    const { provider, sandbox, stdin } = vendorBoundary();
-    const challenge = new Uint8Array([0, 255, 10]);
-    const response = new Uint8Array([255, 0, 13]);
-    let complete: (value: number) => void = () => {};
-    const completion = new Promise<number>(resolve => { complete = resolve; });
-    vi.mocked(stdin.writeBytes).mockImplementation(async () => { complete(0); });
-    vi.mocked(sandbox.exec).mockResolvedValue({
-      stdin, wait: () => completion,
-      stdout: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(challenge); controller.close(); } }),
-      stderr: new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }),
-    });
-    const opened = await provider.openPrivateProcess(resource, { argv: ['happier', 'enroll', '--interactive'] });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) throw new Error('private transport unavailable');
-    const reader = opened.process.stdout.getReader();
-    expect(await reader.read()).toEqual({ done: false, value: challenge });
-    await opened.process.stdin.writeBytes(response);
-    await opened.process.stdin.close();
-    expect(await opened.process.wait()).toBe(0);
-    expect(sandbox.exec).toHaveBeenCalledWith(['happier', 'enroll', '--interactive'], { stdout: 'pipe', stderr: 'pipe', mode: 'binary' });
-    expect(stdin.writeBytes).toHaveBeenCalledWith(response);
-  });
-
   it('buffers binary output alongside private stdin for the base bootstrap carrier', async () => {
     const { provider, sandbox } = vendorBoundary();
     const stdout = new Uint8Array([0, 255, 10]);
@@ -286,13 +288,46 @@ describe('Modal finite Sandbox native provider', () => {
     });
   });
 
-  it('refuses live resource mutation when native App inventory does not contain that Sandbox', async () => {
+  // O-MACH F3: association is qualified at binding; finite IO consumes retained identity.
+  it.each([0, 128])('does not enumerate %s unrelated App entries for repeated retained-target commands', async unrelatedCount => {
+    const { provider, client, sandbox, file } = vendorBoundary();
+    let lists = 0;
+    let visited = 0;
+    vi.mocked(client.sandboxes.list).mockImplementation(async function* () {
+      lists += 1;
+      for (let index = 0; index < unrelatedCount; index += 1) {
+        visited += 1;
+        yield { ...sandbox, sandboxId: `sb-unrelated-${index}` };
+      }
+      visited += 1;
+      yield sandbox;
+    });
+    const acquired = await provider.acquire(launch);
+    expect(acquired).toEqual({ ok: true, resource });
+    if (!acquired.ok) throw new Error('Expected retained Sandbox');
+    lists = 0;
+    visited = 0;
+    for (let index = 0; index < 3; index += 1) {
+      // A real invocation gets a fresh provider in its private SDK worker.
+      expect(await createModalNativeProvider(client).exec(acquired.resource, { argv: ['bootstrap', String(index)] }))
+        .toEqual({ ok: true, exitCode: 0 });
+    }
+    expect({ lists, visited }).toEqual({ lists: 0, visited: 0 });
+    const bytes = new Uint8Array([1, 2, 3]);
+    expect(await createModalNativeProvider(client).putFile(acquired.resource, { path: '/private/bootstrap', bytes, mode: 0o600 }))
+      .toEqual({ ok: true });
+    expect(file.writeBytes).toHaveBeenCalledWith(bytes, '/private/bootstrap');
+    expect({ lists, visited }).toEqual({ lists: 0, visited: 0 });
+  });
+
+  it('keeps exact retained IO and lifecycle observation available when App inventory fails', async () => {
     const { provider, client, sandbox } = vendorBoundary();
-    vi.mocked(client.sandboxes.list).mockImplementation(async function* () {});
-    expect(await provider.terminate(resource)).toEqual({ resource, state: 'unknown', code: 'modal_identity_mismatch' });
-    expect(sandbox.terminate).not.toHaveBeenCalled();
-    expect(await provider.exec(resource, { argv: ['bootstrap'] })).toEqual({ ok: false, code: 'modal_identity_mismatch' });
-    expect(sandbox.exec).not.toHaveBeenCalled();
+    expect(await provider.acquire(launch)).toEqual({ ok: true, resource });
+    vi.mocked(client.sandboxes.list).mockImplementation(async function* () { throw new Error('Inventory unavailable'); });
+    expect(await provider.exec(resource, { argv: ['bootstrap'] })).toEqual({ ok: true, exitCode: 0 });
+    expect(await provider.inspect(resource)).toEqual({ resource, state: 'running' });
+    vi.mocked(sandbox.poll).mockResolvedValueOnce(null).mockResolvedValueOnce(0);
+    expect(await provider.terminate(resource)).toEqual({ resource, state: 'ended', exitCode: 0 });
   });
 
   it('recovers the same managed-tagged Sandbox before purchase after a dropped allocation response', async () => {
@@ -302,17 +337,16 @@ describe('Modal finite Sandbox native provider', () => {
     expect(client.sandboxes.create).not.toHaveBeenCalled();
   });
 
-  it.each(['file', 'exec', 'private process'] as const)('does not invite replay after an uncertain native %s operation', async operation => {
+  it.each(['file', 'exec'] as const)('does not invite replay after an uncertain native %s operation', async operation => {
     const { provider, file, sandbox } = vendorBoundary();
+    const error = Object.assign(new Error('private dropped native response'), { name: 'RemoteError' });
     if (operation === 'file') {
-      vi.mocked(file.writeBytes).mockRejectedValue(new Error('private dropped write response'));
-      expect(await provider.putFile(resource, { path: '/private/credential', bytes: new Uint8Array([1]), mode: 0o600 })).toEqual({ ok: false, code: 'modal_file_outcome_unknown' });
+      vi.mocked(file.writeBytes).mockRejectedValue(error);
+      expect(await provider.putFile(resource, { path: '/private/credential', bytes: new Uint8Array([1]), mode: 0o600 })).toEqual({ ok: false, code: 'modal_file_outcome_unknown', nativeCause: { sdkError: 'RemoteError' } });
     } else {
-      vi.mocked(sandbox.exec).mockRejectedValue(new Error('private dropped exec response'));
-      const result = operation === 'exec'
-        ? await provider.exec(resource, { argv: ['bootstrap'] })
-        : await provider.openPrivateProcess(resource, { argv: ['bootstrap'] });
-      expect(result).toEqual({ ok: false, code: 'modal_exec_outcome_unknown' });
+      vi.mocked(sandbox.exec).mockRejectedValue(error);
+      const result = await provider.exec(resource, { argv: ['bootstrap'] });
+      expect(result).toEqual({ ok: false, code: 'modal_exec_outcome_unknown', nativeCause: { sdkError: 'RemoteError' } });
     }
   });
 });

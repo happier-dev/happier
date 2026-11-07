@@ -7,9 +7,14 @@ export const MODAL_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 // Reference normalization belongs at the native query boundary, not in an
 // unprojectable schema transform. Warm and stored/cold parsers stay identical.
 const reference = defineProtocolString({ minLength: 1, pattern: '\\S' });
-// modal@0.11.0 truncates CPU to milli-cores. Refuse only positive requests
-// encoded as zero; valid native fractional requests retain native quantization.
+// The portable grammar preserves stored requests; native admission additionally
+// checks the SDK encoder below before offering or creating reviewed compute.
 const cpu = defineProtocolNumber({ minimum: 0.001 });
+// modal-client@8f5ea792 js/src/sandbox.ts encodes Math.trunc(1000 * cpu).
+// Refuse requests it changes, including floating-point boundaries like 1.001.
+export function hasExactModalCpuEncoding(cpu: number) {
+  return Math.trunc(1000 * cpu) / 1000 === cpu;
+}
 const memoryMb = defineProtocolNumber({ integer: true, minimum: 1 });
 const timeoutMs = defineProtocolNumber({ integer: true, minimum: 1000, maximum: MODAL_MAX_TIMEOUT_MS, multipleOf: 1000 });
 const closed = { policy: 'closed' } as const;

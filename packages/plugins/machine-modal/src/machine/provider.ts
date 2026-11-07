@@ -1,23 +1,37 @@
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { App, Image } from 'modal';
-import type { ModalNativeClient, ModalPrivateProcessHandle, ModalSandboxHandle } from './nativeClient.js';
-import { MODAL_MAX_TIMEOUT_MS, ModalCheckRequestV1Schema, ModalLaunchV1Schema, ModalResourceV1Schema, ModalNativeOperationV1Schema, type ModalResourceV1 } from './schemas.js';
+import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { ModalNativeClient, ModalSandboxHandle } from './nativeClient.js';
+import { MODAL_MAX_TIMEOUT_MS, ModalCheckRequestV1Schema, ModalLaunchV1Schema, ModalResourceV1Schema, ModalNativeOperationV1Schema, hasExactModalCpuEncoding, type ModalResourceV1 } from './schemas.js';
 
 export { MODAL_MAX_TIMEOUT_MS } from './schemas.js';
 export type { ModalLaunchV1, ModalResourceV1 } from './schemas.js';
 
-type FailureCode = 'modal_resource_invalid' | 'modal_identity_mismatch' | 'modal_lookup_unavailable'
+type FailureCode = 'native_intent_unconfirmed' | 'modal_resource_invalid' | 'modal_identity_mismatch' | 'modal_lookup_unavailable'
   | 'modal_resource_ended' | 'modal_launch_invalid' | 'modal_acquisition_unknown'
   | 'modal_file_invalid' | 'modal_file_permissions_failed' | 'modal_file_outcome_unknown'
   | 'modal_exec_invalid' | 'modal_exec_outcome_unknown' | 'modal_operation_cancelled'
-  | 'modal_check_unavailable' | 'modal_check_invalid' | 'modal_app_unavailable' | 'modal_image_invalid' | 'modal_sdk_unsupported';
+  | 'modal_check_unavailable' | 'modal_check_invalid' | 'modal_app_unavailable' | 'modal_image_invalid';
 type Failure = Readonly<{ ok: false; code: FailureCode; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 type Observation =
-  | Readonly<{ resource: ModalResourceV1; state: 'running' | 'absent' }>
+  | Readonly<{ resource: ModalResourceV1; state: 'running'; nativeCause?: MachineProvisionerNativeCauseV1 }>
+  | Readonly<{ resource: ModalResourceV1; state: 'absent' }>
   | Readonly<{ resource: ModalResourceV1; state: 'ended'; exitCode: number }>
   | Readonly<{ resource: ModalResourceV1; state: 'unknown'; code: FailureCode; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 const privateOutput = { stdout: 'ignore', stderr: 'ignore', mode: 'binary' } as const;
-const failure = (code: FailureCode): Failure => ({ ok: false, code });
+// modal js/v0.11.0 (8f5ea792ad7310e0f76ef96e0418b92529a18063),
+// js/src/{app,sandbox,errors}.ts, inspected 2026-10-25. Native SDK messages,
+// gRPC details and metadata can contain input; retain only the closed cause.
+function nativeCause(error: unknown): MachineProvisionerNativeCauseV1 | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const parsed = MachineProvisionerNativeCauseV1Schema.safeParse(
+    '@@nice-grpc:ClientError' in error && error['@@nice-grpc:ClientError'] === true && 'code' in error
+      ? { grpcStatusCode: error.code } : 'name' in error ? { sdkError: error.name } : undefined);
+  return parsed.success ? parsed.data : undefined;
+}
+const failure = (code: FailureCode, error?: unknown): Failure => {
+  const cause = nativeCause(error);
+  return { ok: false, code, ...(cause ? { nativeCause: cause } : {}) };
+};
 const validArgv = (argv: readonly string[]) => argv.length > 0 && argv.every(arg => !arg.includes('\0'));
 
 // Only Sandbox.poll's native gRPC NOT_FOUND proves absence. The SDK's filesystem
@@ -29,9 +43,6 @@ function isNativeLookupAbsent(error: unknown): boolean {
 }
 
 export function createModalNativeProvider(client: ModalNativeClient) {
-  function supportedSdk(): boolean {
-    try { return client.version() === '0.11.0'; } catch { return false; }
-  }
   async function taggedSandbox(appId: string, managedId: string): Promise<ModalSandboxHandle | null> {
     let match: ModalSandboxHandle | null = null;
     for await (const candidate of client.sandboxes.list({ appId, tags: { 'happier.managed-id': managedId } })) {
@@ -45,8 +56,8 @@ export function createModalNativeProvider(client: ModalNativeClient) {
     try {
       const sandbox = await client.sandboxes.fromId(resource.sandboxId);
       return sandbox.sandboxId === resource.sandboxId ? sandbox : failure('modal_identity_mismatch');
-    } catch {
-      return failure('modal_lookup_unavailable');
+    } catch (error) {
+      return failure('modal_lookup_unavailable', error);
     }
   }
 
@@ -54,15 +65,14 @@ export function createModalNativeProvider(client: ModalNativeClient) {
     try {
       const exitCode = await sandbox.poll();
       if (exitCode !== null) return { resource, state: 'ended', exitCode };
-      // fromId merely constructs a handle. A native App-filtered inventory
-      // binds the live ID to its retained App before any private/mutating IO.
-      for await (const member of client.sandboxes.list({ appId: resource.appId })) {
-        if (member.sandboxId === resource.sandboxId) return { resource, state: 'running' };
-      }
-      return { resource, state: 'unknown', code: 'modal_identity_mismatch' };
+      // App-scoped creation or managed-tag recovery already qualified this
+      // association. Observe the retained Sandbox directly, without inventory.
+      return { resource, state: 'running' };
     } catch (error) {
-      return isNativeLookupAbsent(error) ? { resource, state: 'absent' }
-        : { resource, state: 'unknown', code: 'modal_lookup_unavailable' };
+      if (isNativeLookupAbsent(error)) return { resource, state: 'absent' };
+      const cause = nativeCause(error);
+      return { resource, state: 'unknown', code: 'modal_lookup_unavailable',
+        ...(cause ? { nativeCause: cause } : {}) };
     }
   }
 
@@ -80,25 +90,24 @@ export function createModalNativeProvider(client: ModalNativeClient) {
     if ('ok' in sandbox) return sandbox;
     const observed = await observe(resource, sandbox);
     if (observed.state === 'running') return sandbox;
-    return failure(observed.state === 'unknown' ? observed.code : 'modal_resource_ended');
+    return { ...failure(observed.state === 'unknown' ? observed.code : 'modal_resource_ended'),
+      ...(observed.state === 'unknown' && observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) };
   }
 
   return {
     async reconcile(input: unknown): Promise<Readonly<{ ok: true; resource: ModalResourceV1 }> | Failure> {
       const operation = ModalNativeOperationV1Schema.safeParse(input);
       if (!operation.success) return failure('modal_launch_invalid');
-      if (!supportedSdk()) return failure('modal_sdk_unsupported');
       try {
         const app = await client.apps.fromName(operation.data.appReference.trim(), { createIfMissing: false });
         const retained = await taggedSandbox(app.appId, operation.data.managedId);
         return retained ? { ok: true, resource: { appId: app.appId, sandboxId: retained.sandboxId } }
           : failure('modal_acquisition_unknown');
-      } catch { return failure('modal_acquisition_unknown'); }
+      } catch (error) { return failure('modal_acquisition_unknown', error); }
     },
     async check(input: unknown) {
       const parsed = ModalCheckRequestV1Schema.safeParse(input);
       if (!parsed.success) return failure('modal_check_invalid');
-      if (!supportedSdk()) return failure('modal_sdk_unsupported');
       try {
         // The pinned SDK has no App/Image catalog-list API. This checks only the
         // selected App: registry images remain unverified until native creation.
@@ -120,21 +129,20 @@ export function createModalNativeProvider(client: ModalNativeClient) {
             source: 'https://modal.com/docs/guide/sandbox-resources', observedOn: '2026-10-08',
           },
         };
-      } catch {
-        return failure('modal_check_unavailable');
+      } catch (error) {
+        return failure('modal_check_unavailable', error);
       }
     },
     async acquire(input: unknown, signal?: AbortSignal, managedId?: string): Promise<Readonly<{ ok: true; resource: ModalResourceV1 }> | Failure> {
       if (signal?.aborted) return failure('modal_operation_cancelled');
       const parsed = ModalLaunchV1Schema.safeParse(input);
-      if (!parsed.success) return failure('modal_launch_invalid');
-      if (!supportedSdk()) return failure('modal_sdk_unsupported');
+      if (!parsed.success || !hasExactModalCpuEncoding(parsed.data.resources.cpu)) return failure('modal_launch_invalid');
       const launch = { ...parsed.data, appReference: parsed.data.appReference.trim(), imageReference: parsed.data.imageReference.trim() };
       let app: App;
       try {
         app = await client.apps.fromName(launch.appReference, { createIfMissing: false });
-      } catch {
-        return failure('modal_app_unavailable');
+      } catch (error) {
+        return failure('modal_app_unavailable', error);
       }
       if (signal?.aborted) return failure('modal_operation_cancelled');
       const tags = managedId === undefined ? undefined : { 'happier.managed-id': managedId };
@@ -142,14 +150,14 @@ export function createModalNativeProvider(client: ModalNativeClient) {
         try {
           const existing = await taggedSandbox(app.appId, managedId);
           if (existing) return acquiredSandbox(app.appId, existing);
-        } catch { return failure('modal_acquisition_unknown'); }
+        } catch (error) { return failure('modal_acquisition_unknown', error); }
       }
       if (signal?.aborted) return failure('modal_operation_cancelled');
       let image: Image;
       try {
         image = client.images.fromRegistry(launch.imageReference);
-      } catch {
-        return failure('modal_image_invalid');
+      } catch (error) {
+        return failure('modal_image_invalid', error);
       }
       if (signal?.aborted) return failure('modal_operation_cancelled');
       try {
@@ -160,7 +168,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
         // The native SDK has no per-create AbortSignal. A late cancellation must
         // not erase returned custody or secretly destroy/buy another resource.
         return acquiredSandbox(app.appId, sandbox);
-      } catch {
+      } catch (error) {
         // A dropped allocation response may already have created a paid Sandbox.
         // Native managed tags can recover that exact live resource. A missing
         // inventory result is not failed-allocation proof and cannot buy another.
@@ -170,24 +178,36 @@ export function createModalNativeProvider(client: ModalNativeClient) {
             if (existing) return acquiredSandbox(app.appId, existing);
           } catch { /* Unavailable or ambiguous inventory retains unknown custody. */ }
         }
-        return failure('modal_acquisition_unknown');
+        return failure('modal_acquisition_unknown', error);
       }
     },
     async inspect(resource: ModalResourceV1): Promise<Observation> {
       const sandbox = await exactSandbox(resource);
-      return 'ok' in sandbox ? { resource, state: 'unknown', code: sandbox.code } : observe(resource, sandbox);
+      return 'ok' in sandbox ? { resource, state: 'unknown', code: sandbox.code,
+        ...(sandbox.nativeCause ? { nativeCause: sandbox.nativeCause } : {}) } : observe(resource, sandbox);
     },
     async terminate(resource: ModalResourceV1): Promise<Observation> {
       const sandbox = await exactSandbox(resource);
-      if ('ok' in sandbox) return { resource, state: 'unknown', code: sandbox.code };
+      if ('ok' in sandbox) return { resource, state: 'unknown', code: sandbox.code,
+        ...(sandbox.nativeCause ? { nativeCause: sandbox.nativeCause } : {}) };
       const before = await observe(resource, sandbox);
       if (before.state !== 'running') return before;
+      let terminationAcknowledged = false;
+      let terminationCause: MachineProvisionerNativeCauseV1 | undefined;
       try {
         await sandbox.terminate();
-      } catch {
+        terminationAcknowledged = true;
+      } catch (error) {
         // Even an uncertain terminate response can be reconciled by exact lookup.
+        terminationCause = nativeCause(error);
       }
-      return observe(resource, sandbox);
+      const after = await observe(resource, sandbox);
+      if (after.state === 'absent' || after.state === 'ended') return after;
+      // Closed diagnostic classification may omit an SDK exception. Only a
+      // fulfilled terminate call proves acceptance; a running read cannot.
+      if (!terminationAcknowledged && after.state === 'running') return { resource, state: 'unknown', code: 'native_intent_unconfirmed',
+        ...(terminationCause ? { nativeCause: terminationCause } : {}) };
+      return terminationCause ? { ...after, nativeCause: terminationCause } : after;
     },
     async putFile(resource: ModalResourceV1, input: { path: string; bytes: Uint8Array; mode: number }): Promise<Readonly<{ ok: true }> | Failure> {
       // Numeric chmod modes include the native set-ID/sticky bits (four octal digits).
@@ -199,22 +219,8 @@ export function createModalNativeProvider(client: ModalNativeClient) {
         await sandbox.filesystem.writeBytes(input.bytes, input.path);
         const process = await sandbox.exec(['chmod', input.mode.toString(8), '--', input.path], privateOutput);
         return await process.wait() === 0 ? { ok: true } : failure('modal_file_permissions_failed');
-      } catch {
-        return failure('modal_file_outcome_unknown');
-      }
-    },
-    async openPrivateProcess(resource: ModalResourceV1, input: { argv: readonly string[] }): Promise<Readonly<{ ok: true; process: ModalPrivateProcessHandle }> | Failure> {
-      if (!validArgv(input.argv)) return failure('modal_exec_invalid');
-      const sandbox = await liveSandbox(resource);
-      if ('ok' in sandbox) return sandbox;
-      try {
-        // Private in-process carrier for the host-owned interactive enrollment.
-        // Do not buffer/serialize its output or close stdin before the host handshake.
-        // Read-stream cancellation stops transport reads, not the guest process.
-        const process = await sandbox.exec([...input.argv], { stdout: 'pipe', stderr: 'pipe', mode: 'binary' });
-        return { ok: true, process };
-      } catch {
-        return failure('modal_exec_outcome_unknown');
+      } catch (error) {
+        return failure('modal_file_outcome_unknown', error);
       }
     },
     async exec(resource: ModalResourceV1, input: { argv: readonly string[]; input?: Uint8Array; captureOutput?: boolean; timeoutMs?: number }): Promise<Readonly<{ ok: true; exitCode: number; stdout?: Uint8Array; stderr?: Uint8Array }> | Failure> {
@@ -259,8 +265,8 @@ export function createModalNativeProvider(client: ModalNativeClient) {
           })(),
         ]);
         return { ok: true, exitCode, stdout, stderr };
-      } catch {
-        return failure('modal_exec_outcome_unknown');
+      } catch (error) {
+        return failure('modal_exec_outcome_unknown', error);
       }
     },
   };
