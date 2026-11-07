@@ -39,6 +39,38 @@ const { CapabilityDetailHeader } = await import('@/components/capabilities/detai
 const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 describe('RegistrySourcesView through real registry Actions', () => {
+    it.each([
+        ['http://registry.acme.test/catalog.json', 'httpsRequired'],
+        ['https://fixture-user:fixture-password@registry.acme.test/catalog.json', 'credentialsInLink'],
+    ])('shows the registry URL refusal for %s and recovers with an accepted link', async (refusedUrl, reason) => {
+        const url = 'https://registry.acme.test/catalog.json';
+        const { home } = await createRegistrySourcesUiHome('detect-url-refusal', {
+            external: async candidate => candidate === url
+                ? Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({
+                    source: { id: 'acme', title: 'Acme plugins', kind: 'curated', sourceUrl: url },
+                    freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
+                })) : null,
+        });
+        const screen = await renderScreen(<RegistrySourcesView kind="plugin" initialIntent="add" testID="registries" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:link')).not.toBeNull());
+        const fieldError = () => screen.findAllByTestId('registries:add:link').find(node => 'error' in node.props)?.props.error;
+        async function detect(link: string) {
+            vi.useFakeTimers();
+            try {
+                await React.act(async () => { screen.changeTextByTestId('registries:add:link', link); });
+                await React.act(async () => { await vi.runOnlyPendingTimersAsync(); });
+            } finally { vi.useRealTimers(); }
+        }
+        await detect(refusedUrl);
+        await waitForHomeGovernance(() => expect(fieldError()).toBe(`capabilities.registries.add.${reason}`));
+        expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(true);
+        await detect(url);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(false));
+        expect(fieldError()).toBeNull();
+        await screen.pressByTestIdAsync('registries:add:submit');
+        await waitForHomeGovernance(() => expect(readRegistrySourcesRecordV1(home.read().record.value).sources.some(source => source.url === url)).toBe(true));
+    });
+
     it('keeps a newly added registry selected while the route and source list settle', async () => {
         const url = 'https://registry.acme.test/catalog.json';
         const existingUrl = 'https://registry.acme.test/existing.json';

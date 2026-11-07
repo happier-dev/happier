@@ -79,6 +79,8 @@ export type RegistriesTranslation = Readonly<{
     unknownFormat: string;
     needsToken: (params: Readonly<{ host: string }>) => string;
     tokenRejected: string;
+    httpsRequired: string;
+    credentialsInLink: string;
     unreachable: string;
     alreadyAdded: string;
     failed: string;
@@ -183,6 +185,8 @@ const en: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `This registry asked for a token. It’s sent only to ${host}.`,
     tokenRejected: 'That token was rejected. Choose another.',
+    httpsRequired: 'Use an https:// link',
+    credentialsInLink: 'Remove the username and password from this link',
     unreachable: 'Couldn’t reach this link. Check it and try again.',
     alreadyAdded: 'Already in your registries',
     failed: 'Couldn’t add this registry. Try again.',
@@ -556,6 +560,8 @@ const ca: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Aquest registre ha demanat un token. Només s’enviarà a ${host}.`,
     tokenRejected: 'S’ha rebutjat aquest token. Tria’n un altre.',
+    httpsRequired: 'Fes servir un enllaç https://',
+    credentialsInLink: 'Elimina el nom d’usuari i la contrasenya d’aquest enllaç',
     unreachable: 'No s’ha pogut contactar amb aquest enllaç. Comprova’l i torna-ho a provar.',
     alreadyAdded: 'Ja és als teus registres',
     failed: 'No s’ha pogut afegir aquest registre. Torna-ho a provar.',
@@ -785,6 +791,8 @@ const de: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Diese Registry verlangt ein Token. Es wird nur an ${host} gesendet.`,
     tokenRejected: 'Dieses Token wurde abgelehnt. Wähle ein anderes.',
+    httpsRequired: 'Verwende einen https://-Link',
+    credentialsInLink: 'Entferne Benutzernamen und Passwort aus diesem Link',
     unreachable:
       'Dieser Link ist nicht erreichbar. Prüfe ihn und versuche es erneut.',
     alreadyAdded: 'Schon in deinen Registries',
@@ -1019,6 +1027,8 @@ const es: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Este registro ha pedido un token. Solo se envía a ${host}.`,
     tokenRejected: 'Se ha rechazado ese token. Elige otro.',
+    httpsRequired: 'Usa un enlace https://',
+    credentialsInLink: 'Elimina el nombre de usuario y la contraseña de este enlace',
     unreachable: 'No se pudo acceder a este enlace. Revísalo y vuelve a intentarlo.',
     alreadyAdded: 'Ya está en tus registros',
     failed: 'No se pudo añadir este registro. Vuelve a intentarlo.',
@@ -1251,6 +1261,8 @@ const fr: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Ce registre demande un jeton. Il n’est envoyé qu’à ${host}.`,
     tokenRejected: 'Ce jeton a été refusé. Choisissez-en un autre.',
+    httpsRequired: 'Utilisez un lien https://',
+    credentialsInLink: 'Retirez le nom d’utilisateur et le mot de passe de ce lien',
     unreachable: 'Impossible de joindre ce lien. Vérifiez-le et réessayez.',
     alreadyAdded: 'Déjà dans vos registres',
     failed: 'Impossible d’ajouter ce registre. Réessayez.',
@@ -1479,6 +1491,8 @@ const it: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Questo registro ha richiesto un token. Viene inviato solo a ${host}.`,
     tokenRejected: 'Token rifiutato. Scegline un altro.',
+    httpsRequired: 'Usa un link https://',
+    credentialsInLink: 'Rimuovi il nome utente e la password da questo link',
     unreachable: 'Impossibile raggiungere questo link. Controllalo e riprova.',
     alreadyAdded: 'Già nei tuoi registri',
     failed: 'Impossibile aggiungere questo registro. Riprova.',
@@ -1707,6 +1721,8 @@ const ja: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `このレジストリにはトークンが必要です。${host} にのみ送信されます。`,
     tokenRejected: 'このトークンは拒否されました。別のトークンを選んでください。',
+    httpsRequired: 'https:// のリンクを使用してください',
+    credentialsInLink: 'このリンクからユーザー名とパスワードを削除してください',
     unreachable:
       'このリンクに接続できませんでした。確認してからもう一度お試しください。',
     alreadyAdded: 'すでにレジストリにあります',
@@ -1958,6 +1974,8 @@ const pl: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Ten rejestr wymaga tokenu. Zostanie wysłany tylko do ${host}.`,
     tokenRejected: 'Ten token został odrzucony. Wybierz inny.',
+    httpsRequired: 'Użyj linku https://',
+    credentialsInLink: 'Usuń nazwę użytkownika i hasło z tego linku',
     unreachable:
       'Nie można połączyć się z tym linkiem. Sprawdź go i spróbuj ponownie.',
     alreadyAdded: 'Już w Twoich rejestrach',
@@ -2190,6 +2208,8 @@ const pt: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Este registro pediu um token. Ele é enviado só para ${host}.`,
     tokenRejected: 'Esse token foi recusado. Escolha outro.',
+    httpsRequired: 'Use um link https://',
+    credentialsInLink: 'Remova o nome de usuário e a senha deste link',
     unreachable: 'Não foi possível acessar este link. Confira-o e tente de novo.',
     alreadyAdded: 'Já está nos seus registros',
     failed: 'Não foi possível adicionar este registro. Tente de novo.',
@@ -2446,6 +2466,8 @@ const ru: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `Этому реестру нужен токен. Он отправляется только на ${host}.`,
     tokenRejected: 'Токен отклонён. Выберите другой.',
+    httpsRequired: 'Используйте ссылку https://',
+    credentialsInLink: 'Удалите имя пользователя и пароль из этой ссылки',
     unreachable:
       'Не удалось открыть ссылку. Проверьте её и повторите попытку.',
     alreadyAdded: 'Уже в ваших реестрах',
@@ -2693,6 +2715,8 @@ const zhHans: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `此注册表需要令牌。仅会发送到 ${host}。`,
     tokenRejected: '该令牌被拒绝。请选择另一个。',
+    httpsRequired: '请使用 https:// 链接',
+    credentialsInLink: '请移除此链接中的用户名和密码',
     unreachable: '无法访问此链接。请检查后重试。',
     alreadyAdded: '已在你的注册表中',
     failed: '无法添加此注册表。请重试。',
@@ -2909,6 +2933,8 @@ const zhHant: RegistriesTranslation = {
     needsToken: ({ host }) =>
       `此註冊表需要權杖。僅會傳送到 ${host}。`,
     tokenRejected: '該權杖被拒絕。請選擇另一個。',
+    httpsRequired: '請使用 https:// 連結',
+    credentialsInLink: '請移除此連結中的使用者名稱和密碼',
     unreachable: '無法連線到此連結。請檢查後重試。',
     alreadyAdded: '已在你的註冊表中',
     failed: '無法新增此註冊表。請重試。',

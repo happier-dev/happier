@@ -4,7 +4,25 @@ import { RegistryKindV1Schema,RegistryFormatV1Schema } from './registrySourcesV1
 import { RegistryItemV1Schema,RegistrySkillContentRefV1Schema } from './registryItemsV1.js';
 import { RegistryListPageV1Schema, RegistrySourceStatusV1Schema, RegistryContributionFamilyV1Schema } from './registryListV1.js';
 const identity=()=>z.string().check(z.minLength(1));
-const sourceUrl=()=>z.string().check(z.url(), z.refine(raw=>{const url=new URL(raw);return url.protocol==='https:'&&!url.username&&!url.password;}));
+export type RegistrySourceUrlErrorCodeV1 = 'registry_url_https_required' | 'registry_url_credentials_forbidden';
+const sourceUrl=()=>z.string().check(z.url(), z.check<string>(ctx=>{
+  if(ctx.issues.length)return;
+  const url=new URL(ctx.value);
+  const code:RegistrySourceUrlErrorCodeV1|null=url.protocol!=='https:'?'registry_url_https_required'
+    :url.username||url.password?'registry_url_credentials_forbidden':null;
+  if(code)ctx.issues.push({code:'custom',input:ctx.value,params:{registrySourceUrlErrorCode:code}});
+}));
+
+/** Preserve the URL validator's reason without inferring one from an issue path or message. */
+export function readRegistrySourceUrlErrorCodeV1(error:unknown):RegistrySourceUrlErrorCodeV1|null {
+  if(!(error instanceof z.core.$ZodError))return null;
+  for(const issue of error.issues){
+    if(issue.code!=='custom')continue;
+    const code=issue.params?.registrySourceUrlErrorCode;
+    if(code==='registry_url_https_required'||code==='registry_url_credentials_forbidden')return code;
+  }
+  return null;
+}
 export const RegistryFetchRequestV1Schema=lazyZodSchema(()=>z.discriminatedUnion('op',[
   z.strictObject({op:z.literal('detect'),url:sourceUrl()}),
   z.strictObject({op:z.literal('link'),url:sourceUrl(),ref:z.optional(RegistrySkillContentRefV1Schema)}),

@@ -1,6 +1,16 @@
 import { RegistrySourceStatusV1Schema, type RegistrySourceStatusV1 } from '@happier-dev/protocol/registries';
 import { t } from '@/text';
 
+/** Input refusals come from the URL validator through the Action failure code. */
+export function describeRegistrySourceInputFailure(error: unknown): string {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+    switch (code) {
+        case 'registry_url_https_required': return t('capabilities.registries.add.httpsRequired');
+        case 'registry_url_credentials_forbidden': return t('capabilities.registries.add.credentialsInLink');
+        default: return t('capabilities.registries.add.unreachable');
+    }
+}
+
 /** One status line shared by registry consumers and the Add-modal source failures. */
 export function describeRegistrySourceStatus(status: RegistrySourceStatusV1): string {
     switch (status.state) {

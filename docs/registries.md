@@ -35,6 +35,11 @@ the source using the ref before writing the row; clients delegate that operation
 through the existing authenticated Action transport, not a fetch request carrying
 credentials or a caller-supplied source list.
 
+The registry request validator requires HTTPS links without embedded credentials.
+Its typed input refusal passes through the Action failure projection to the Add
+form's existing registry presenter, so these refusals explain how to correct the
+link separately from a source that could not be reached.
+
 New token bindings require the canonical private-resource reference. Retained
 bare personal ids remain readable for legacy promotion, but cannot become new
 bindings; a legacy catalog selection must be imported first. Normal token-bearing

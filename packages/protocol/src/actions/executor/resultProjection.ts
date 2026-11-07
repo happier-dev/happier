@@ -2,6 +2,7 @@ import { isRpcError } from '../../rpc/errors.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { ApprovalRequestInvalid } from '../../approvals/creation.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
+import { readRegistrySourceUrlErrorCodeV1 } from '../../registries/registryRpcV1.js';
 import { MemoryDocFailureV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import { ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFailureDetailsV1Schema } from '../../prompts/library/promptFolderActionsV1.js';
 import { PromptStackPreparationError } from '../../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
@@ -97,6 +98,8 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
   if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
   if (error instanceof ApprovalRequestInvalid) return { errorCode: error.code, error: error.code, details: error.details };
+  const registrySourceUrlErrorCode = readRegistrySourceUrlErrorCodeV1(error);
+  if (registrySourceUrlErrorCode) return { errorCode: registrySourceUrlErrorCode, error: registrySourceUrlErrorCode };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
     if (status.success && status.data.state !== 'ok') {

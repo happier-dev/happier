@@ -47,7 +47,7 @@ import {
   registryTokenHost,
 } from './registrySourcePresentation';
 import { useRegistryTokenPicker } from './useRegistryTokenPicker';
-import { readRegistryFailureStatus } from './describeRegistrySourceStatus';
+import { describeRegistrySourceInputFailure, readRegistryFailureStatus } from './describeRegistrySourceStatus';
 import { useRegistryItems } from './useRegistryItems';
 import { useRegistrySourceMutations } from './useRegistrySourceMutations';
 import { useRegistrySources } from './useRegistrySources';
@@ -715,7 +715,7 @@ function RegistryAddForm(
     | Readonly<{ state: 'idle' }>
     | Readonly<{ state: 'checking'; url: string }>
     | Readonly<{ state: 'done'; url: string; detected: Detected }>
-    | Readonly<{ state: 'failed'; url: string }>
+    | Readonly<{ state: 'failed'; url: string; failure: unknown }>
   >({ state: 'idle' });
   const [adding, setAdding] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -739,8 +739,8 @@ function RegistryAddForm(
           if ('title' in result.detected && !nameTouched)
             setName(result.detected.title);
         })
-        .catch(() => {
-          if (current) setDetection({ state: 'failed', url });
+        .catch((failure: unknown) => {
+          if (current) setDetection({ state: 'failed', url, failure });
         });
     }, DETECT_SETTLE_MS);
     return () => {
@@ -767,7 +767,7 @@ function RegistryAddForm(
     detected.unsupported === 'needs_token';
   const fieldError =
     detection.state === 'failed'
-      ? t('capabilities.registries.add.unreachable')
+      ? describeRegistrySourceInputFailure(detection.failure)
       : detected !== null && 'unsupported' in detected && !needsToken
         ? unsupportedCopy(detected.unsupported, supportedFormatTitles)
         : detected !== null && supported === null && !needsToken
