@@ -340,8 +340,10 @@ function failureReason(code: string, service: string, machine: string): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Card chrome pads only its header and footer, so the body insets its own sheet to the title's edge (lab `services/exec`).
   body: {
     gap: theme.space.s16,
+    paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s16,
   },
   meta: {

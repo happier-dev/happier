@@ -224,12 +224,9 @@ function MachineServicesList(
         />
       ),
       // An open Environment's services sit one step in under its row (lab `services/exec` list), so they read as its
-      // members rather than as siblings. The list draws one level, so the step is the member row's own leading inset.
-      leadingControl: (item) => item.kind === 'service' && listItemGroup(item) === 'deployed' ? (
-        <View style={{ paddingLeft: theme.space.s20 }}>
-          <Icon name={machineServiceIcon(item.row)} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-        </View>
-      ) : null,
+      // members: the whole member row moves in, its mark-to-title gap unchanged. The list draws one level.
+      wrapItem: (item, content) => item.kind === 'service' && listItemGroup(item) === 'deployed'
+        ? <View style={{ paddingLeft: theme.space.s20 }}>{content}</View> : content,
       // The Environment row's disclosure says whether its services are shown; on a phone its Open environment link
       // ends the byline instead of standing beside the title.
       titleControls: (item) => item.kind !== 'environment' ? null : (
