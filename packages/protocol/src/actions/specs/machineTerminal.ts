@@ -81,7 +81,9 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
       : actionId === 'machines.terminal.restart' ? { confirmVerb: { key: 'localServices.effectReview.restart', fallback: 'Restart' } } : {}),
     // Open/restart also route typed package scripts through the finite Project
     // Action. Interactive observation/control remains a present-person effect.
-    approvalPolicy: { uiConfirmation: actionId === 'machines.terminal.open' || actionId === 'machines.terminal.write' ? 'direct' : 'policy' }, title,
+    // Listing and reading only read the requester's own terminals: a person's app press never confirms them
+    // (opening a Machine page lists its terminals).
+    approvalPolicy: read ? {} : { uiConfirmation: actionId === 'machines.terminal.open' || actionId === 'machines.terminal.write' ? 'direct' : 'policy' }, title,
     // The terminal key is how the daemon finds its terminal and its size is the client's pane; people know the terminal by its folder and Machine.
     approvalPresentation: { summary: (input: unknown, context?: ApprovalPresentationContext) => describeMachineTerminalApprovalSummary(actionId, input, context),
       technicalInputPaths: ['terminalKey', 'cols', 'rows'] },
