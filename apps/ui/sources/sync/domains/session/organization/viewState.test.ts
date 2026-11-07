@@ -55,6 +55,18 @@ function projectOrganizationPins(
 }
 
 describe('buildSessionOrganizationListViewState', () => {
+    it('retains private assignment evidence without projecting an internal membership as a locked tag chip', () => {
+        const value = { kind: 'space_membership', spaceId: 'a', spaceSettingsTarget: { serverId: 'catalog', accountId: 'owner' } };
+        const internal = { tagId: 'private', tagKey: 'private', display: { t: 'plain' as const, v: value },
+            displayState: { status: 'available' as const, value }, sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1 };
+        const projection = { ...projectOrganizationPins('home-a'), tagsById: { private: internal },
+            tagAssignmentsBySessionId: { session: ['private'], empty: [] } };
+        const state = buildSessionOrganizationListViewState({ serverId: 'home-a', projection });
+        const key = buildSessionOrganizationSessionKey('home-a', 'session');
+        expect(state.sessionTagsV1[key]).toEqual([]);
+        expect(state.sessionTagIdsBySessionKey[key]).toBe(projection.tagAssignmentsBySessionId.session);
+        expect(state.sessionTagIdsBySessionKey[buildSessionOrganizationSessionKey('home-a', 'empty')]).toEqual([]);
+    });
     it('retains readable colour-only workspace labels without classifying them as locked', () => {
         const color = { kind: 'custom', hex: '#123456' } as const;
         const value = { color };
@@ -69,6 +81,90 @@ describe('buildSessionOrganizationListViewState', () => {
         expect(state).not.toHaveProperty('workspaceColorsV1.locked');
     });
 
+    it.each([
+        { reason: null, expected: 'Unavailable section' },
+        { reason: 'invalid_stored_display', expected: 'Unavailable section' },
+        { reason: 'content_unreadable', expected: 'Unavailable section' },
+        { reason: 'storage_mode_mismatch', expected: 'Unavailable section' },
+        { reason: 'account_key_unavailable', expected: 'Locked section' },
+    ] as const)('labels an unreadable Section from its admitted display state without inventing a name ($reason)', ({ reason, expected }) => {
+        const folder: UiSessionOrganizationFolder = {
+            folderId: 'retained-section', folderKey: 'retained-section', parentFolderId: null, parentFolderKey: null,
+            sortKey: 'a0', display: reason === null ? null : { t: 'plain', v: { name: 'Do not disclose' } },
+            displayState: reason === null ? { status: 'available', value: null } : { status: 'locked', reason },
+            archivedAt: null, createdAt: 1, updatedAt: 1,
+        };
+        const state = buildSessionOrganizationListViewState({ serverId: 'home-a', projection: {
+            ...projectOrganizationPins('home-a'), foldersById: { [folder.folderId]: folder },
+        } });
+        const section = state.sections[0]!;
+        expect(resolveSessionSectionChoiceLabel(section, { unavailableLabel: 'Unavailable' }).title).toBe(expected);
+        expect(section.display).toEqual({ status: 'locked', reason: reason ?? 'invalid_stored_display' });
+        expect(section.address).toEqual({ serverId: 'home-a', sectionId: folder.folderId });
+        expect(folder.display).toEqual(reason === null ? null : { t: 'plain', v: { name: 'Do not disclose' } });
+    });
+
+    it('retains controlled legacy breadcrumbs and same-name workspace context without disclosing locked ancestors', () => {
+        const legacyFolder = (folderId: string, name: string, rootPath: string, parentFolderId: string | null = null): UiSessionOrganizationFolder => {
+            const value = { name, workspace: { t: 'workspaceScope' as const, serverId: 'home-a', machineId: rootPath, rootPath } };
+            return { folderId, folderKey: folderId, parentFolderId, parentFolderKey: parentFolderId,
+                sortKey: 'a0', display: { t: 'plain', v: value }, displayState: { status: 'available', value },
+                archivedAt: null, createdAt: 1, updatedAt: 1 };
+        };
+        const state = buildSessionOrganizationListViewState({ serverId: 'home-a', projection: {
+            ...projectOrganizationPins('home-a'), foldersById: {
+                first: legacyFolder('first', 'Queue', '/first'),
+                second: legacyFolder('second', 'Queue', '/second'),
+                parent: legacyFolder('parent', 'Reviews', '/first'),
+                nested: legacyFolder('nested', 'Queue', '/first', 'parent'),
+                locked: { ...legacyFolder('locked', 'Do not disclose', '/first'),
+                    displayState: { status: 'locked', reason: 'account_key_unavailable' } },
+                child: legacyFolder('child', 'Queue', '/first', 'locked'),
+            },
+        } });
+        const byId = new Map(state.sections.map(section => [section.address.sectionId, section]));
+        expect(byId.get('first')?.legacyContext?.workspace).toMatchObject({ rootPath: '/first' });
+        expect(byId.get('second')?.legacyContext?.workspace).toMatchObject({ rootPath: '/second' });
+        expect(byId.get('nested')?.legacyContext?.ancestors).toEqual([{
+            address: { serverId: 'home-a', sectionId: 'parent' },
+            display: { status: 'available', value: { name: 'Reviews', icon: null } },
+        }]);
+        expect(byId.get('child')?.legacyContext?.ancestors).toEqual([{
+            address: { serverId: 'home-a', sectionId: 'locked' },
+            display: { status: 'locked', reason: 'account_key_unavailable' },
+        }]);
+        expect(byId.get('locked')?.legacyContext).toBeUndefined();
+        const label = (id: string) => resolveSessionSectionChoiceLabel(byId.get(id)!, { unavailableLabel: 'Unavailable' });
+        expect(label('first')).toEqual({ title: 'Queue', contextLabel: '/first', choiceLabel: 'Queue — /first' });
+        expect(label('second').choiceLabel).toBe('Queue — /second');
+        expect(label('nested').choiceLabel).toBe('Queue — /first · Reviews');
+        expect(label('child').choiceLabel).toBe('Queue — /first · Locked section');
+        expect(label('locked').title).toBe('Locked section');
+        const opaqueWorkspace = { ...byId.get('first')!, legacyContext: {
+            ancestors: [], workspace: { t: 'workspaceRef' as const, serverId: 'home-a', workspaceRefId: 'opaque' },
+        } };
+        expect(resolveSessionSectionChoiceLabel(opaqueWorkspace, { unavailableLabel: 'Unavailable' }).choiceLabel)
+            .toBe('Queue — Unavailable');
+        expect(resolveSessionSectionChoiceLabel(opaqueWorkspace, { unavailableLabel: 'Unavailable',
+            workspaceDisplayByKey: { 'workspaceRef:home-a:opaque': 'Held project name' } }).choiceLabel)
+            .toBe('Queue — Held project name');
+        expect(resolveSessionSectionChoiceLabel(byId.get('first')!, { unavailableLabel: 'Unavailable',
+            workspaceDisplayByKey: { 'workspaceScope:home-a:/first:/first': null } }).choiceLabel)
+            .toBe('Queue — Unavailable');
+        expect(resolveSessionSectionChoiceLabel(opaqueWorkspace, { unavailableLabel: 'Unavailable',
+            workspaceDisplayByKey: { 'workspaceRef:home-a:opaque': ' ' } }).choiceLabel)
+            .toBe('Queue — Unavailable');
+    });
+
+    it('omits predecessor folder mixed-order entries from the current Session order', () => {
+        const state = buildSessionOrganizationListViewState({ serverId: 'home-a', projection: {
+            ...projectOrganizationPins('home-a'), orderEntriesByScopeKey: { group: [
+                { scopeKind: 'group', scopeKey: 'group', itemKind: 'folder', itemKey: 'legacy-folder', sortKey: '0001' },
+                { scopeKind: 'group', scopeKey: 'group', itemKind: 'session', itemKey: 'one', sortKey: '0002' },
+            ] },
+        } });
+        expect(state.sessionListGroupOrderV1.group).toEqual([sessionAddressKey({ serverId: 'home-a', sessionId: 'one' })]);
+    });
     it('projects Account sections with private icons and preserves unloaded assignment membership', () => {
         const projection = projectOrganizationPins('home-a');
         const state = buildSessionOrganizationListViewState({

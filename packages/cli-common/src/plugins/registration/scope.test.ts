@@ -61,7 +61,7 @@ describe('private registration scope', () => {
                     title: this.title, category: 'started' as const, linkedSessions: [],
                 }]));
             },
-            async findLinked(request: PluginWorkItemsFindLinkedRequestV1) { return request.sessionIds.map(id => `item-${id}`); },
+            async findLinked(request: PluginWorkItemsFindLinkedRequestV1) { return { itemIds: request.sessionIds.map(id => `item-${id}`), complete: true }; },
             watch(_request: unknown, onChange: () => void, context: unknown) { watchContext = context; onChange(); return () => { this.title = 'Retired'; }; },
         };
         if (!('workItems' in scope.api)) throw new Error('Expected client registrations');
@@ -80,7 +80,7 @@ describe('private registration scope', () => {
         await expect(captured.resolve!({ serverId: 'home', itemIds: ['one', 'two'] }, context)).resolves.toEqual({
             one: { title: 'Replacement:Updated owner value', category: 'started', linkedSessions: [] }, two: null,
         });
-        await expect(captured.findLinked!({ serverId: 'home', sessionIds: ['session'] }, context)).resolves.toEqual(['item-session']);
+        await expect(captured.findLinked!({ serverId: 'home', sessionIds: ['session'] }, context)).resolves.toEqual({ itemIds: ['item-session'], complete: true });
         let invalidated = false;
         const cleanup = captured.watch!({ serverId: 'home', itemIds: ['one'] }, () => { invalidated = true; }, context);
         expect(watchContext).toBe(context);

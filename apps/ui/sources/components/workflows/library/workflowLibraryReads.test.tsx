@@ -1,7 +1,8 @@
-import { createNearViewportTracker, isSpanNearViewport } from '@/components/widgets/nearViewport';
-import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
+import { createNearViewportTracker, isSpanNearViewport } from '@/components/widgets/nearViewport';
+import { t } from '@/text';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -9,12 +10,16 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
-import { PluginProjectionV2Schema, WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { decodeBase64 } from '@/encryption/base64';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -35,18 +40,20 @@ const { apiSocket } = await import('@/sync/api/session/apiSocket');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { workflowRunRowFromSummary, workflowRunListWindowStoreKey, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
-const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions, updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
 const { ScheduledWorkflowRows } = await import('../triggers/ScheduledWorkflowSection');
 const { projectScheduledWorkflowRows } = await import('../triggers/scheduledWorkflowRows');
 const { listBuiltinWorkflowReferenceOptions, useWorkflowReferenceTitles } = await import('../presentation/workflowReferenceOptions');
-const { useWorkflowDefinitionLibrary, useWorkflowRunWindow, resetWorkflowLibraryReadsForTests } = await import('./workflowLibraryReads');
+const { useWorkflowDefinitionLibrary, useWorkflowPluginSource, useWorkflowRunWindow, refreshRunWindow, resetWorkflowLibraryReadsForTests } = await import('./workflowLibraryReads');
 const { useWorkflowLibraryView } = await import('./useWorkflowLibraryView');
 const { useAccountWorkflowEditor } = await import('../triggers/AccountTriggersSection');
-const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSection');
 const { WorkflowTriggerRunHistory } = await import('../triggers/WorkflowTriggerRunHistory');
 const { WorkflowRunItemBody } = await import('@/components/sessions/shell/row/WorkflowRunItemBody');
 const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('../triggers/workflowTriggerDraft');
+const { useSessionManagedWorkflowRuns } = await import('../run/useContextManagedWorkflowRuns');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 const route = '/v3/automations/runs/workflow-storage';
 const definitionId = '00000000-0000-4000-8000-000000000001';
 const secondId = '00000000-0000-4000-8000-000000000002';
@@ -84,7 +91,11 @@ afterEach(async () => {
 });
 
 async function saved(id = definitionId, title = 'Saved', description?: string) {
-    return await createWorkflowDefinition({ definitionId: id, definition: content, metadata: { title, ...(description ? { description } : {}) } });
+    const result = await createWorkflowDefinition({ definitionId: id, definition: content, metadata: { title, ...(description ? { description } : {}) } });
+    // These reader tests supply the committed-feed input explicitly. The composed
+    // definition-change suite covers the real writer/socket/feed registration.
+    publishHomeAccountChange(serverId, [id], { changeKinds: ['artifact'], feedPageConsumed: true });
+    return result;
 }
 
 async function runPage(runs: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[], nextCursor?: string, destination?: string, title?: string) {
@@ -114,23 +125,6 @@ async function runPage(runs: readonly ReturnType<typeof createWorkflowRunSummary
 
 const run = (id: string, state: 'running' | 'failed' | 'succeeded' = 'running') => createWorkflowRunSummaryFixture({ id, state, ownerAccountId: accountId });
 const waitLoaded = (hook: { getCurrent(): { status: string } }) => waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('loaded'));
-const artifactInventoryReads = () => home.requests.filter(request => request.input === null
-    && new URL(request.path, request.serverUrl).pathname === '/v1/artifacts');
-const artifactHeaderRoute = '/v1/artifacts?limit=500&kinds=%5B%22workflow-definition.v1%22%5D';
-// Freeze or shorten a real filtered HTTP page. Keep the canonical transport
-// envelope instead of answering a kind-selected read with the old raw array.
-async function artifactHeaderPage(selectedIds?: readonly string[]): Promise<unknown> {
-    const response = await home.artifacts(serverId).handle(artifactHeaderRoute);
-    if (!response) throw new Error('Expected the canonical Artifact list boundary');
-    const page: unknown = await response.json();
-    if (selectedIds === undefined) return page;
-    if (!page || typeof page !== 'object' || !('items' in page) || !Array.isArray(page.items)) {
-        throw new Error('Expected a filtered Artifact page');
-    }
-    return { ...page, items: page.items.filter((row: unknown) => row && typeof row === 'object'
-        && 'id' in row && typeof row.id === 'string' && selectedIds.includes(row.id)) };
-}
-
 const runWindowKey = (id: Parameters<typeof workflowRunListWindowStoreKey>[0]) => {
     const scope = storage.getState().profileScope;
     if (!scope) throw new Error('Expected a bound Home');
@@ -158,7 +152,7 @@ it('expands and pages addressed B trigger History while A stays focused, and kee
                 schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
             }] });
         const screen = await renderScreen(<WorkflowAccountLifetimeProvider value={account.accountLifetime}>
-            <WorkflowTriggerSection accountLifetime={account.accountLifetime}
+            <WorkflowTriggerSection accountLifetime={account.accountLifetime} workflowDefinitionId={definitionId}
                 testIDPrefix="addressed-history" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}}
                 status="ready" onRetry={() => {}} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />
         </WorkflowAccountLifetimeProvider>);
@@ -242,7 +236,225 @@ it('windows expensive trigger History rows across appended pages without moving 
     expect(onePage.findByTestId('session-work-trigger-history:one-page-loadMore')).toBeNull();
 });
 
+it('opens the Team-visible trigger History from the canonical shared library without an owned trigger set', async () => {
+    await saved();
+    home.answer(serverId, 'POST /v3/automations/query', { body: {
+        automations: [], nextCursor: null,
+        sharedWorkflowSummaries: [{ workflowDefinitionId: definitionId, nextRunAt: null, triggers: [{
+            automationId: 'team-owner-automation', triggerId: 'team-schedule', kind: 'schedule',
+            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
+        }] }],
+    } });
+    home.answer(serverId, route, { select: input => {
+        const operation = input && typeof input === 'object' && 'operation' in input ? input.operation : null;
+        if (operation !== 'list') throw new Error('Trigger History must use the canonical Run list');
+        return { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } };
+    } });
+    const screen = await renderScreen(<WorkflowTriggerSection workflowDefinitionId={definitionId}
+        testIDPrefix="team-workflow" set={null} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}}
+        status="ready" onRetry={() => {}} stepsUnsaved={false}
+        whereTarget={null} whereSummary={null} inputs={[]} />);
+    const historyId = 'team-workflow-trigger:team-owner-automation:team-schedule-history';
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId(historyId)).not.toBeNull());
+    expect(screen.findByTestId('team-workflow-triggers-manual')).toBeNull();
+    expect(artifactInventoryReads()).toHaveLength(0);
+    expect(home.requestsFor(route)).toHaveLength(0);
+    await screen.pressByTestIdAsync(historyId);
+    await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
+    expect(home.requestsFor(route)[0]?.input).toMatchObject({ operation: 'list', request: { triggerId: 'team-schedule' } });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')));
+});
+
+const artifactInventoryReads = () => home.requests.filter(request => request.input === null
+    && new URL(request.path, request.serverUrl).pathname === '/v1/artifacts');
+const artifactHeaderRoute = '/v1/artifacts?limit=500&kinds=%5B%22workflow-definition.v1%22%5D';
+
+function pluginMachine(id: string, owningAccountId = accountId) {
+    return createMachineFixture({ id, activeAt: Date.now(),
+        access: createPlainMachineRowFixture({ id, accountId: owningAccountId }).access,
+        daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
+}
+
+describe('unified Workflow Library', () => {
+    it.each(['origin', 'destination'] as const)('reads a complete %s Session relation once and derives changing attention from its admitted summaries', async relation => {
+        const sessionId = 'context-session';
+        const summary = createWorkflowRunSummaryFixture({ id: 'context-run', ownerAccountId: accountId,
+            origin: { kind: 'direct', originSessionId: relation === 'origin' ? sessionId : 'other-session' } });
+        storage.setState({ settings: { ...storage.getState().settings, experiments: true,
+            featureToggles: { automations: true } } });
+        const destination = relation === 'destination' ? sessionId : undefined;
+        const serveRelation = async (current: typeof summary) => {
+            const all = await runPage([current], undefined, destination);
+            const empty = await runPage([]);
+            home.answer(serverId, route, { select: input => {
+                const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' ? Reflect.get(input, 'request') : null);
+                return { body: request.attention === 'required' && !current.attentionRequired ? empty : all };
+            } });
+        };
+        await serveRelation(summary);
+        const hook = await renderHook(() => useSessionManagedWorkflowRuns({ sessionId, serverId, relation }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().phase).toBe('loaded'));
+        expect(hook.getCurrent().runs.map(row => row.id)).toEqual([summary.id]);
+        expect([...hook.getCurrent().attentionRunIds]).toEqual([]);
+        expect(home.requestsFor(route)).toHaveLength(1);
+        expect(home.requestsFor(route)[0]?.input).toMatchObject({ request: relation === 'origin'
+            ? { originSessionId: sessionId } : { targetSessionId: sessionId } });
+
+        const changed = { ...summary, revision: summary.revision + 1, attentionRequired: true };
+        await serveRelation(changed);
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().attentionRunIds.has(summary.id)).toBe(true));
+        expect(hook.getCurrent().runs[0]?.revision).toBe(changed.revision);
+        expect(home.requestsFor(route)).toHaveLength(2);
+
+        await serveRelation({ ...changed, revision: changed.revision + 1, attentionRequired: false });
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().attentionRunIds.size).toBe(0));
+        expect(home.requestsFor(route)).toHaveLength(3);
+    });
+
+    it.each([[1, 1], [3, 4]])('joins %i definitions and %i Account Workflows with batch reads and one search', async (definitionCount, triggerCount) => {
+        const [{ AutomationDefinitionDetailSchema}, { AutomationStoredWorkflowDefinitionRecipeV2Schema}] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2')]);
+        const { createWorkflowAutomationLastRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        storage.setState({ settingsVersion: 1 });
+        const { resolveCollectionSpacesV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const defaultSpace = resolveCollectionSpacesV1(storage.getState().settings.collectionSpacesV1, 'workflow')[0]!;
+        expect(await selectCollectionSpace({ serverId, accountId }, 'workflow', defaultSpace.id)).toBeUndefined();
+        const ids = Array.from({ length: definitionCount }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+        for (const [index, id] of ids.entries()) {
+            await saved(id, `Saved ${index}`);
+            const stored = home.artifacts(serverId).read(id)!;
+            home.artifacts(serverId).replaceStoredRow({ ...stored, updatedAt: 10 + index });
+        }
+        const triggers = Array.from({ length: triggerCount }, (_, index) => AutomationDefinitionDetailSchema.parse({
+            id: index === 0 ? ids[0] : `inline-${index}`, name: `Account workflow ${index}`, description: null,
+            enabled: true, workflowDefinitionId: null, scopeSessionId: null, templateVersion: 1,
+            targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 20 + index,
+            assignments: [{ machineId: 'machine-one', enabled: true, priority: 0, updatedAt: 1 }], triggers: [],
+            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: content } }, triggerEvidence: null }),
+        }));
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body: {
+            automations: input && typeof input === 'object' && 'scope' in input && input.scope === 'account_inline' ? triggers : [], nextCursor: null,
+        } }) });
+        const lastRun = createWorkflowAutomationLastRunSummaryFixture({ id: 'account-last-run', state: 'running',
+            attentionRequired: true, invocationAttentionRequired: true });
+        home.answer(serverId, route, { select: input => {
+            const request = input && typeof input === 'object' && 'request' in input ? input.request : null;
+            if (request && typeof request === 'object' && 'automationIds' in request && Array.isArray(request.automationIds)) return { body: {
+                automationSummaries: request.automationIds.map(automationId => ({ automationId, lastRun })), remainingAutomationIds: [],
+            } };
+            return { body: { summaries: ids.map(sourceArtifactId => ({ sourceArtifactId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null })), remainingSourceArtifactIds: [] } };
+        } });
+        const readStart = home.requests.length;
+        const hook = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            // The next renderer consumes this same read; mounting its incumbent editor must not
+            // create another membership/options read or one read per Workflow row.
+            const editor = useAccountWorkflowEditor({ read: view.accountWorkflows });
+            return { ...view, editor };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows).toHaveLength(definitionCount + triggerCount));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows[0]?.lastRunSummary?.lastRun).toMatchObject({ id: 'account-last-run' }));
+        const rows = hook.getCurrent().libraryRows;
+        expect(rows.map(row => row.name)).toEqual([
+            ...[...triggers].reverse().map(row => row.name), ...[...ids].reverse().map((_id, index) => `Saved ${definitionCount - index - 1}`),
+        ]);
+        expect(new Set(rows.map(row => row.key)).size).toBe(rows.length);
+        expect(rows[0]).toMatchObject({ triggerSummary: expect.any(String), openTarget: { kind: 'accountTrigger', automationId: triggers.at(-1)!.id } });
+        expect(rows.at(-1)?.openTarget).toEqual({ kind: 'definition', definitionId: ids[0], href: `/workflows/${ids[0]}` });
+        expect(hook.getCurrent().libraryCount).toBe(definitionCount + triggerCount);
+        expect(hook.getCurrent().editor.popover).toBeNull();
+        const inventories = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts?') || request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query');
+        expect(artifactInventoryReads()).toHaveLength(1);
+        expect(inventories()).toHaveLength(3); // One definition page, its existing enrichment, and the selected Account-inline page.
+        expect(home.requestsFor(route)).toHaveLength(2); // Existing source and Automation summary batches, never per row.
+        const recordReads = home.requests.slice(readStart).filter(request => request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'));
+        // Every record read is counted, so N singleton detail reads cannot hide. The list is
+        // header-only (rows carry `previewSteps`), so it opens no definition bodies.
+        expect(recordReads).toHaveLength(5);
+        expect(recordReads.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
+        const before = home.requests.length;
+        await act(async () => hook.getCurrent().setView('running'));
+        expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount);
+        await act(async () => hook.getCurrent().setView('all'));
+        await act(async () => hook.getCurrent().setSearchQuery('Account workflow'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount));
+        await act(async () => hook.getCurrent().setSearchQuery('Saved'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(definitionCount));
+        expect(home.requests.length).toBe(before);
+        const accountRow = rows.find(row => 'accountTrigger' in row);
+        if (!accountRow || !('accountTrigger' in accountRow)) throw new Error('Expected the admitted Account Workflow');
+        await act(async () => storage.getState().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: {
+            ...accountRow.accountTrigger, name: 'Updated Account Workflow', revision: accountRow.accountTrigger.revision + 1,
+        } }));
+        expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)?.name).toBe('Updated Account Workflow');
+        const unchangedDefinition = rows.find(row => 'definition' in row)!;
+        expect(hook.getCurrent().libraryRows.find(row => row.key === unchangedDefinition.key)).toBe(unchangedDefinition);
+        expect(home.requests.length).toBe(before);
+        const { getPreferredLanguage, setPreferredLanguageFromSettings, preloadTranslations } = await import('@/text/i18n');
+        const { formatTriggerSetSummary } = await import('../triggers/formatTriggerSummary');
+        const language = getPreferredLanguage();
+        const alternate = language === 'fr' ? 'en' : 'fr';
+        const beforeLanguage = hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary;
+        await preloadTranslations(alternate);
+        try {
+            await act(async () => setPreferredLanguageFromSettings(alternate));
+            expect(formatTriggerSetSummary([])).not.toBe(beforeLanguage);
+            expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary).toBe(formatTriggerSetSummary([]));
+            expect(home.requests.length).toBe(before);
+        } finally {
+            await act(async () => setPreferredLanguageFromSettings(language));
+        }
+        await act(async () => { await hook.getCurrent().editor.open(accountRow.openTarget, { current: null }); });
+        expect(hook.getCurrent().editor.popover).not.toBeNull();
+    });
+});
+// Freeze or shorten a real filtered HTTP page. Keep the canonical transport
+// envelope instead of answering a kind-selected read with the old raw array.
+async function artifactHeaderPage(selectedIds?: readonly string[]): Promise<unknown> {
+    const response = await home.artifacts(serverId).handle(artifactHeaderRoute);
+    if (!response) throw new Error('Expected the canonical Artifact list boundary');
+    const page: unknown = await response.json();
+    if (selectedIds === undefined) return page;
+    if (!page || typeof page !== 'object' || !('items' in page) || !Array.isArray(page.items)) {
+        throw new Error('Expected a filtered Artifact page');
+    }
+    return { ...page, items: page.items.filter((row: unknown) => row && typeof row === 'object'
+        && 'id' in row && typeof row.id === 'string' && selectedIds.includes(row.id)) };
+}
+
+function externalWorkflowProjection() {
+    return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+        installedPackagesById: { 'external.recipe': { id: 'external.recipe', displayName: 'Recipe', version: '1.2.3', enabled: true,
+            source: { kind: 'path', locator: '/plugins/external.recipe' } } },
+        familiesById: { workflows: { family: 'workflows', entriesById: { 'external.recipe/review': {
+            id: 'external.recipe/review', pluginId: 'external.recipe', pluginVersion: '1.2.3',
+            definition: { id: 'review', title: 'Exact plugin workflow', definition: content },
+        } } } },
+    }) };
+}
+
 describe('Workflow library reads through real Account Actions and HTTP', () => {
+    it('Retry supersedes a pending definition read and departing demand cancels its replacement', async () => {
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        home.answer(serverId, artifactHeaderRoute, { select: async (_input, request) => {
+            signals.push(request.signal);
+            return { respondAfter: held.promise, body: await artifactHeaderPage() };
+        } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await waitForHomeGovernance(() => expect(signals).toHaveLength(1));
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(signals).toHaveLength(2));
+        expect(signals[0]?.aborted).toBe(true);
+        await hook.unmount();
+        expect(signals[1]?.aborted).toBe(true);
+        await act(async () => held.resolve());
+    });
+
     it('Retry replaces a stuck Run read and late old data cannot replace the fresh rows', async () => {
         const held = createDeferred<void>();
         const signals: (AbortSignal | null | undefined)[] = [];
@@ -324,26 +536,128 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await first.unmount();
     });
 
-    it('does not reload definition inventory for typed Session-only changes, but refreshes Artifact and unknown wakes', async () => {
+    it('opens one external plugin workflow without reading the saved definition library', async () => {
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        await saved();
+        const boundary = home.artifacts(serverId);
+        const template = boundary.read(definitionId)!;
+        for (let index = 1; index <= 2000; index++) {
+            const id = `00000000-0000-4000-8000-${String(index + 10).padStart(12, '0')}`;
+            boundary.replaceStoredRow({ ...template, id, header: encodePlainArtifactStoredContent({
+                kind: 'workflow-definition.v1', definitionId: id, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: `Unrelated saved workflow ${index}` },
+            }) });
+        }
+        storage.getState().applyMachines([pluginMachine('exact-plugin-machine')], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, ['exact-plugin-machine']);
+        machineRpc.mockResolvedValue(externalWorkflowProjection());
+        const before = artifactInventoryReads().length;
+        const hook = await renderHook(() => useWorkflowPluginSource('plugin:external.recipe/review'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().source?.title).toBe('Exact plugin workflow');
+        expect(artifactInventoryReads()).toHaveLength(before);
+    });
+
+    it('settles an unavailable plugin without scanning saved bodies and cancels disabled demand', async () => {
+        await saved();
+        const before = artifactInventoryReads().length;
+        const hook = await renderHook((props: { enabled: boolean }) => useWorkflowPluginSource('plugin:external.recipe/missing', props.enabled),
+            { initialProps: { enabled: false } });
+        expect(hook.getCurrent().status).toBe('idle');
+        expect(artifactInventoryReads()).toHaveLength(before);
+        await hook.rerender({ enabled: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('missing'));
+        expect(artifactInventoryReads()).toHaveLength(before);
+    });
+
+    it.each(['disable', 'account'] as const)('withdraws pending exact plugin demand on %s before its late reply', async change => {
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        storage.getState().applyMachines([pluginMachine('pending-plugin-machine')], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, ['pending-plugin-machine']);
+        const pending = createDeferred<ReturnType<typeof externalWorkflowProjection>>();
+        machineRpc.mockReturnValue(pending.promise);
+        const hook = await renderHook((props: { enabled: boolean }) => useWorkflowPluginSource('plugin:external.recipe/review', props.enabled),
+            { initialProps: { enabled: true } });
+        await waitForHomeGovernance(() => expect(machineRpc).toHaveBeenCalled());
+        if (change === 'disable') await hook.rerender({ enabled: false });
+        else await act(async () => {
+            accountId = 'account-b';
+            await home.switchAccount(serverId, accountId);
+            storage.setState({ profileScope: { serverId, accountId }, machines: {}, machineListByServerId: {} });
+        });
+        await act(async () => pending.resolve(externalWorkflowProjection()));
+        expect(hook.getCurrent().source).toBeNull();
+        expect(hook.getCurrent().status).not.toBe('ready');
+        expect(artifactInventoryReads()).toHaveLength(0);
+    });
+
+    it('does not restart held definition inventory for unrelated Home wakes and still rechecks relevant changes once', async () => {
+        await saved();
+        const session = createSessionFixture({ id: 'session-library-independent', serverId, active: false,
+            metadata: { machineId: 'machine-a', path: '/repo', host: 'test', homeDir: '/home/test' } });
+        storage.getState().applySessions([session]);
+        const pending = createDeferred<void>();
+        const started = createDeferred<AbortSignal | null>();
+        const page = await artifactHeaderPage();
+        home.answer(serverId, 'GET /v1/artifacts', { select: (_input, request) => {
+            started.resolve(request.signal ?? null);
+            return { body: page, respondAfter: pending.promise };
+        } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        try {
+            await waitForHomeGovernance(() => expect(artifactInventoryReads()).toHaveLength(1));
+            const physicalSignal = await started.promise;
+            expect(physicalSignal).not.toBeNull();
+            for (const kind of ['session', 'discussion', 'feed'] as const) {
+                await act(async () => {
+                    storage.getState().applySessions([{ ...session }]);
+                    publishHomeAccountChange(serverId, [session.id], { changeKinds: [kind] });
+                });
+                expect(hook.getCurrent().status).toBe('loading');
+                expect(artifactInventoryReads()).toHaveLength(1);
+                expect(physicalSignal?.aborted).toBe(false);
+            }
+            await act(async () => pending.resolve());
+            await waitLoaded(hook);
+            const initial = artifactInventoryReads().length;
+            expect(initial).toBe(1);
+            const before = hook.getCurrent().definitions;
+            expect(before.map(row => row.definitionId)).toEqual([definitionId]);
+            await act(async () => {
+                publishHomeAccountChange(serverId, ['session:unrelated'], { changeKinds: ['session'] });
+            });
+            await waitLoaded(hook);
+            expect(artifactInventoryReads()).toHaveLength(initial);
+            expect(hook.getCurrent().definitions).toBe(before);
+            await act(async () => {
+                await saved(secondId);
+            });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().definitions.map(row => row.definitionId)).toContain(secondId));
+            expect(artifactInventoryReads()).toHaveLength(initial);
+            await waitLoaded(hook);
+            await act(async () => { publishHomeAccountChange(serverId); });
+            await waitForHomeGovernance(() => expect(artifactInventoryReads()).toHaveLength(initial + 1));
+        } finally {
+            await act(async () => pending.resolve());
+            await hook.unmount();
+        }
+    });
+
+    it('does zero library rechecks for Discussion wakes and reads one real definition change', async () => {
         await saved();
         const hook = await renderHook(() => useWorkflowDefinitionLibrary());
         await waitLoaded(hook);
         const initial = artifactInventoryReads().length;
-        expect(initial).toBeGreaterThan(0);
-        const before = hook.getCurrent().definitions;
         await act(async () => {
-            publishHomeAccountChange(serverId, ['session:unrelated'], { changeKinds: ['session'] });
+            for (const kind of ['discussion', 'feed', 'session'] as const) {
+                publishHomeAccountChange(serverId, ['unrelated-row'], { source: 'socket', changeKinds: [kind] });
+            }
+            await saved(secondId);
         });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('loaded'));
+        // The real writer settles the following relevant refresh. A recheck queued
+        // by an unrelated wake cannot hide behind an unchanged 'loaded' status.
+        await waitForHomeGovernance(() => expect(hook.getCurrent().definitions.map(row => row.definitionId)).toContain(secondId));
         expect(artifactInventoryReads()).toHaveLength(initial);
-        expect(hook.getCurrent().definitions).toBe(before);
-        await act(async () => {
-            publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] });
-        });
-        await waitForHomeGovernance(() => expect(artifactInventoryReads()).toHaveLength(initial + 1));
-        await waitLoaded(hook);
-        await act(async () => { publishHomeAccountChange(serverId); });
-        await waitForHomeGovernance(() => expect(artifactInventoryReads()).toHaveLength(initial + 2));
     });
 
     it('names scheduled rows from admitted Artifact headers without demanding the full library', async () => {
@@ -376,8 +690,8 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
     it('names scheduled plugin rows from the admitted projection without loading unrelated saved bodies', async () => {
         await storage.getState().activateSettingsScope({ serverId, accountId });
         await saved();
-        storage.getState().applyMachines([createMachineFixture({ id: 'title-machine', activeAt: Date.now(),
-            daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } })], true, { sourceServerId: serverId });
+        storage.getState().applyMachines([pluginMachine('title-machine')], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, ['title-machine']);
         machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { 'example.recipe': { id: 'example.recipe', displayName: 'Recipe', version: '1.2.3', enabled: true,
                 source: { kind: 'path', locator: '/plugins/example.recipe' } } },
@@ -402,12 +716,13 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(plugin.title));
         expect(artifactInventoryReads()).toHaveLength(before);
         expect(machineRpc).toHaveBeenCalledTimes(rpcBefore);
-        await act(async () => storage.getState().applyMachines([
-            createMachineFixture({ id: 'title-machine', active: false, activeAt: 0,
-                daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } }),
-            createMachineFixture({ id: 'successor-title-machine', active: true, activeAt: Date.now(),
-                daemonState: { status: 'running', pid: 18, contributionRegistryProjectionRevision: 0 } }),
-        ], true, { sourceServerId: serverId }));
+        await act(async () => {
+            storage.getState().applyMachines([
+                { ...pluginMachine('title-machine'), active: false, activeAt: 0 },
+                pluginMachine('successor-title-machine'),
+            ], true, { sourceServerId: serverId });
+            observeMachinePresenceForTest({ serverId, accountId }, ['title-machine', 'successor-title-machine']);
+        });
         expect(screen.getTextContent()).toContain(plugin.title);
         const successor = storage.getState().machines['successor-title-machine']!;
         const retainedSource = storage.getState().machines['title-machine']!;
@@ -422,6 +737,41 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         });
         await waitForHomeGovernance(() => expect(screen.getTextContent()).not.toContain(plugin.title));
         expect(machineRpc).toHaveBeenCalledTimes(rpcBefore);
+    });
+
+    it('names an addressed closed picker from B admitted plugin projection without inventory or another RPC', async () => {
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        const serverB = await home.addHome({ name: 'B plugin titles', serverUrl: 'https://workflow-plugin-title-b.test',
+            accountId: 'account-b', active: false, currentAccount: true });
+        storage.getState().applyMachines([pluginMachine('b-title-machine', 'account-b')], true, { sourceServerId: serverB });
+        observeMachinePresenceForTest({ serverId: serverB, accountId: 'account-b' }, ['b-title-machine']);
+        machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { 'example.recipe': { id: 'example.recipe', displayName: 'Recipe', version: '1.2.3', enabled: true,
+                source: { kind: 'path', locator: '/plugins/example.recipe' } } },
+            familiesById: { workflows: { family: 'workflows', entriesById: { 'example.recipe/review': {
+                id: 'example.recipe/review', pluginId: 'example.recipe', pluginVersion: '1.2.3',
+                definition: { id: 'review', title: 'B admitted plugin', definition: content },
+            } } } },
+        }) });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverB);
+        try {
+            const ref = 'plugin:example.recipe/review';
+            const admitted = await listWorkflowDefinitions({ workflow: ref, accountLifetime: account.accountLifetime });
+            expect(admitted.pluginWorkflows?.[0]?.title).toBe('B admitted plugin');
+            const { useTriggerThenOptions } = await import('../triggers/useTriggerThenOptions');
+            const sets = [WorkflowTriggerSetV1Schema.parse({ automationId: 'addressed-plugin-habit', revision: 1,
+                enabled: true, health: 'available', target: { kind: 'workflow', ref }, triggers: [] })];
+            const before = artifactInventoryReads().length;
+            const rpcBefore = machineRpc.mock.calls.length;
+            const hook = await renderHook(() => useTriggerThenOptions({ libraryEnabled: false,
+                accountLifetime: account.accountLifetime, sets }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().resolveWorkflowTitle(ref)).toBe('B admitted plugin'));
+            expect(hook.getCurrent().workflowOptions).toEqual([]);
+            expect(artifactInventoryReads()).toHaveLength(before);
+            expect(machineRpc).toHaveBeenCalledTimes(rpcBefore);
+            expect(storage.getState().settingsScope).toEqual({ serverId, accountId: 'account-a' });
+        } finally { account.dispose(); }
     });
 
     it('keeps admitted shared titles on the first cached render and withdraws locked, removed, or foreign-scope facts', async () => {
@@ -470,12 +820,40 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(serverB);
         try {
-            await createWorkflowDefinition({ definitionId, definition: content, metadata: { title: 'B workflow' }, accountLifetime: account.accountLifetime });
+            const bContent = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'b-child',
+                document: { text: 'B child', references: [], attachments: [] } }] });
+            await createWorkflowDefinition({ definitionId, definition: bContent, metadata: { title: 'B workflow' }, accountLifetime: account.accountLifetime });
             const active = await renderHook(() => useWorkflowDefinitionLibrary());
             const addressed = await renderHook(() => useWorkflowDefinitionLibrary({ accountLifetime: account.accountLifetime }));
             await waitLoaded(active); await waitLoaded(addressed);
             expect(active.getCurrent().definitions[0]?.metadata?.title).toBe('A workflow');
             expect(addressed.getCurrent().definitions[0]?.metadata?.title).toBe('B workflow');
+            const { useTriggerThenOptions } = await import('../triggers/useTriggerThenOptions');
+            const sets = [WorkflowTriggerSetV1Schema.parse({ automationId: 'addressed-habit', revision: 1,
+                enabled: true, health: 'available', target: { kind: 'workflow', ref: definitionId }, triggers: [] })];
+            const exactHeaders = () => home.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/artifacts/read'
+                && request.input !== null && typeof request.input === 'object' && 'projection' in request.input
+                && request.input.projection === 'headers');
+            const inventoryBeforeLabels = artifactInventoryReads().length;
+            const headersBeforeLabels = exactHeaders().length;
+            const labels = await renderHook(() => useTriggerThenOptions({ libraryEnabled: false,
+                accountLifetime: account.accountLifetime, sets }));
+            await waitForHomeGovernance(() => expect(exactHeaders()).toHaveLength(headersBeforeLabels + 1));
+            await waitForHomeGovernance(() => expect(labels.getCurrent().resolveWorkflowTitle(definitionId)).toBe('B workflow'));
+            expect(labels.getCurrent().workflowOptions).toEqual([]);
+            expect(artifactInventoryReads()).toHaveLength(inventoryBeforeLabels);
+            expect(exactHeaders()).toHaveLength(headersBeforeLabels + 1);
+            expect(exactHeaders().at(-1)?.input).toMatchObject({ artifactIds: [definitionId], projection: 'headers' });
+            const { WorkflowAccountLifetimeProvider } = await import('../workflowAccountScope');
+            const { useWorkflowFlowChildren } = await import('../flow/useWorkflowFlowChildren');
+            const parent = createWorkflowDefinitionFixture({ blocks: [{ kind: 'workflow', id: 'call', workflowRef: definitionId, input: {} }] });
+            const beforeFlow = artifactInventoryReads().length;
+            const flow = await renderHook(() => useWorkflowFlowChildren(parent, true), {
+                wrapper: ({ children }) => <WorkflowAccountLifetimeProvider value={account.accountLifetime}>{children}</WorkflowAccountLifetimeProvider>,
+            });
+            await waitForHomeGovernance(() => expect(flow.getCurrent().children[definitionId]).toEqual(bContent));
+            expect(flow.getCurrent().problem).toBeNull();
+            expect(artifactInventoryReads()).toHaveLength(beforeFlow);
             expect(storage.getState().profileScope).toEqual({ serverId, accountId: 'account-a' });
         } finally { account.dispose(); }
     });
@@ -488,6 +866,7 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
     });
 
     it('shares visible library demand and preserves row identity and renders on an equal refresh', async () => {
+        await storage.getState().activateSettingsScope({ serverId, accountId });
         await saved();
         const pending = createDeferred<void>();
         home.answer(serverId, 'GET /v1/artifacts', { body: await artifactHeaderPage(), respondAfter: pending.promise });
@@ -500,12 +879,48 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         expect(first.getCurrent().definitions.map(row => row.definitionId)).toEqual([definitionId]);
         expect(second.getCurrent().definitions).toBe(first.getCurrent().definitions);
         const before = first.getCurrent().definitions;
+        const beforeArtifacts = storage.getState().artifacts;
         const settledRenders = renders;
-        await act(async () => first.getCurrent().retry());
-        await waitForHomeGovernance(() => expect(first.getCurrent().loadingMore).toBe(false));
-        expect(first.getCurrent().definitions).toBe(before);
-        expect(second.getCurrent().definitions).toBe(before);
-        expect(renders).toBe(settledRenders);
+        for (let index = 0; index < 3; index++) {
+            await act(async () => first.getCurrent().retry());
+            await waitForHomeGovernance(() => expect(first.getCurrent().loadingMore).toBe(false));
+            expect(first.getCurrent().definitions).toBe(before);
+            expect(second.getCurrent().definitions).toBe(before);
+            expect(storage.getState().artifacts).toBe(beforeArtifacts);
+            expect(renders).toBe(settledRenders);
+        }
+    });
+
+    it('reuses admitted Workflow header content across three current-Account list Actions and observes an edit', async () => {
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        await saved();
+        const before = storage.getState().artifacts;
+        const admitted = before[definitionId];
+        const encodedHeader = admitted?.storageIdentity?.header;
+        if (!admitted || !encodedHeader || admitted.bodyVersion === undefined) throw new Error('Expected admitted stored Workflow header evidence');
+        const expectedRevision = { headerVersion: admitted.headerVersion, bodyVersion: admitted.bodyVersion };
+        const headerJson = new TextDecoder().decode(decodeBase64(encodedHeader));
+        // Observe the real decoder beneath the Account Action, not its retained UI result.
+        const parse = vi.spyOn(JSON, 'parse');
+        try {
+            for (let index = 0; index < 3; index++) {
+                const page = await listWorkflowDefinitions();
+                expect(page.definitions.map(row => row.definitionId)).toContain(definitionId);
+                expect(storage.getState().artifacts).toBe(before);
+            }
+            expect(parse.mock.calls.filter(([text]) => text === headerJson)).toHaveLength(0);
+            await updateWorkflowDefinition({ definitionId, definition: content, metadata: { title: 'Changed saved Workflow' },
+                expectedRevision });
+            const updated = await listWorkflowDefinitions();
+            expect(updated.definitions.find(row => row.definitionId === definitionId)?.metadata?.title).toBe('Changed saved Workflow');
+            const editedHeader = storage.getState().artifacts[definitionId]?.storageIdentity?.header;
+            expect(editedHeader).not.toBe(encodedHeader);
+            if (!editedHeader) throw new Error('Expected acknowledged header evidence');
+            const editedJson = new TextDecoder().decode(decodeBase64(editedHeader));
+            parse.mockClear();
+            await listWorkflowDefinitions();
+            expect(parse.mock.calls.filter(([text]) => text === editedJson)).toHaveLength(0);
+        } finally { parse.mockRestore(); }
     });
 
     it('reads nothing without demand and serves the current Account after enable', async () => {
@@ -518,7 +933,7 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual([definitionId]);
     });
 
-    it('refreshes mounted readers after a definition is created through the real writer', async () => {
+    it('refreshes mounted readers from the committed feed after a definition is created', async () => {
         const hook = await renderHook(() => useWorkflowDefinitionLibrary()); await waitLoaded(hook);
         expect(hook.getCurrent().definitions).toEqual([]);
         await act(async () => { await saved(); });
@@ -537,7 +952,7 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await act(async () => { await saved(secondId, 'Created during read'); });
         await act(async () => firstPage.resolve());
         await waitForHomeGovernance(() => expect(hook.getCurrent().definitions).toHaveLength(2));
-        expect(reads).toBe(2);
+        expect(reads).toBe(1);
         const before = hook.getCurrent().definitions;
         const refresh = createDeferred<void>();
         home.answer(serverId, 'GET /v1/artifacts', { body: await artifactHeaderPage(), respondAfter: refresh.promise });
@@ -606,11 +1021,16 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await act(async () => refresh.resolve());
         await waitForHomeGovernance(() => expect(first.getCurrent().loadingMore).toBe(false));
         expect(first.getCurrent().definitions).toBe(before); expect(second.getCurrent().definitions).toBe(before);
-        // Return an authoritative smaller collection at the actual network leaf.
+        // Both inventory and exact reads agree that the record was deleted.
         home.answer(serverId, `GET ${artifactHeaderRoute}`, { body: await artifactHeaderPage([definitionId]) });
-        await act(async () => first.getCurrent().retry());
-        await waitForHomeGovernance(() => expect(first.getCurrent().definitions.map(row => row.definitionId)).toEqual([definitionId]));
-        expect(first.getCurrent().hasMore).toBe(false);
+        home.answer(serverId, `GET /v1/artifacts/${secondId}`, { status: 404, body: { error: 'not_found' } });
+        // A retained refresh does not toggle loadingMore. The genuine Artifact
+        // wake queues a recheck even if the remount's equal answer is still pending.
+        await act(async () => publishHomeAccountChange(serverId, [secondId], { changeKinds: ['artifact'] }));
+        await waitForHomeGovernance(() => {
+            expect(first.getCurrent().definitions.map(row => row.definitionId)).toEqual([definitionId]);
+            expect(first.getCurrent().hasMore).toBe(false);
+        });
     });
 
     it('clears retired pagination busy state after a failed replacement and allows retry', async () => {
@@ -662,8 +1082,9 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
 
     it('keeps saved rows usable while plugin discovery is pending and retains equal plugin descriptors', async () => {
         await saved();
-        const machine = createMachineFixture({ id: 'library-machine', activeAt: Date.now(), daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
+        const machine = pluginMachine('library-machine');
         storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, [machine.id]);
         const pending = createDeferred<unknown>(); machineRpc.mockReturnValue(pending.promise);
         const hook = await renderHook(() => useWorkflowDefinitionLibrary()); await waitLoaded(hook);
         await waitForHomeGovernance(() => expect(machineRpc).toHaveBeenCalled());
@@ -678,6 +1099,11 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().pluginWorkflows).toHaveLength(1));
         expect(hook.getCurrent().definitions).toBe(savedRows);
         const pluginRows = hook.getCurrent().pluginWorkflows;
+        const beforeExact = artifactInventoryReads().length;
+        const exact = await renderHook(() => useWorkflowPluginSource('plugin:example.recipe/review'));
+        expect(exact.getCurrent().source).toBe(pluginRows[0]);
+        expect(exact.getCurrent().status).toBe('ready');
+        expect(artifactInventoryReads()).toHaveLength(beforeExact);
         const second = await renderHook(() => useWorkflowDefinitionLibrary());
         await waitForHomeGovernance(() => expect(second.getCurrent().loadingMore).toBe(false));
         expect(second.getCurrent().pluginWorkflows).toBe(pluginRows);
@@ -686,8 +1112,9 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
 
     it('accumulates real byte-paged plugin sources by qualified identity without discarding saved rows', async () => {
         await saved();
-        const machine = createMachineFixture({ id: 'paged-plugin-machine', activeAt: Date.now(), daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
+        const machine = pluginMachine('paged-plugin-machine');
         storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, [machine.id]);
         const text = 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2);
         const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait', document: { text, references: [], attachments: [] } }] });
         machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
@@ -703,12 +1130,199 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().pluginWorkflows.map(row => row.workflow)).toEqual(['plugin:example.recipe/check', 'plugin:example.recipe/review']));
         expect(hook.getCurrent().definitions).toBe(savedRows); expect(hook.getCurrent().hasMore).toBe(false);
     });
+
+    it('keeps saved rows for Settings and source-status rows and re-reads only the row an Automation row changes', async () => {
+        const { planSyncActionsFromChanges, plannedChangesAffectWorkflowDefinitions, plannedChangesAffectWorkflowPluginSources,
+            plannedWorkflowDefinitionAutomationIds } = await import('@/sync/runtime/orchestration/changesPlanner');
+        const otherId = '00000000-0000-4000-8000-000000000099';
+        const summaryFor = (scheduleExpr: string) => ({ automations: [], nextCursor: null, sharedWorkflowSummaries: [{
+            workflowDefinitionId: definitionId, nextRunAt: null, triggers: [{ automationId: 'team-owner-automation', triggerId: 'team-schedule',
+                kind: 'schedule', schedule: { kind: 'cron', scheduleExpr, everyMs: null, timezone: 'UTC' } }] }] });
+        home.answer(serverId, 'POST /v3/automations/query', { body: summaryFor('0 9 * * *') });
+        await saved();
+        await saved(otherId, 'Other');
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await waitForHomeGovernance(() => { expect(hook.getCurrent().definitions).toHaveLength(2); expect(hook.getCurrent().loadingMore).toBe(false); });
+        const other = hook.getCurrent().definitions.find(row => row.definitionId === otherId);
+        const inventoryReads = artifactInventoryReads().length;
+        // The feed publisher's decisions, from the canonical planner, for the rows a busy Account writes.
+        const publishFeedPage = async (changes: readonly Readonly<{ kind: 'account' | 'automation'; entityId: string }>[]) => {
+            const planned = planSyncActionsFromChanges(changes.map((change, index) => ({ ...change, cursor: index + 1, changedAt: 1 })));
+            const automationIds = plannedWorkflowDefinitionAutomationIds(planned);
+            await act(async () => { publishHomeAccountChange(serverId, changes.map(change => change.entityId), { feedPageConsumed: true,
+                changeKinds: changes.map(change => change.kind),
+                workflowDefinitionsAffect: plannedChangesAffectWorkflowDefinitions(planned),
+                workflowPluginSourcesAffect: plannedChangesAffectWorkflowPluginSources(planned),
+                ...(automationIds === undefined ? {} : { workflowDefinitionAutomationIds: automationIds }) }); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().loadingMore).toBe(false));
+        };
+        for (let index = 0; index < 5; index += 1) {
+            await publishFeedPage([{ kind: 'account', entityId: 'settings' }]);
+            await publishFeedPage([{ kind: 'automation', entityId: 'automation-source-status' }]);
+        }
+        expect(artifactInventoryReads()).toHaveLength(inventoryReads);
+        // The Team owner edits the schedule: only the row that shows this Automation is re-read.
+        home.answer(serverId, 'POST /v3/automations/query', { body: summaryFor('0 10 * * *') });
+        await publishFeedPage([{ kind: 'automation', entityId: 'team-owner-automation' }]);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().definitions.find(row => row.definitionId === definitionId)?.triggers)
+            .toMatchObject([{ schedule: { scheduleExpr: '0 10 * * *' } }]));
+        expect(artifactInventoryReads()).toHaveLength(inventoryReads);
+        expect(hook.getCurrent().definitions.find(row => row.definitionId === otherId)).toBe(other);
+        await hook.unmount();
+    });
+
+    it('reads no library rows for Artifact rows of other kinds, and still re-reads a changed saved workflow', async () => {
+        const { planSyncActionsFromChanges, plannedArtifactKinds, plannedChangesAffectWorkflowDefinitions, plannedChangesAffectWorkflowPluginSources } =
+            await import('@/sync/runtime/orchestration/changesPlanner');
+        const { publishHomeAccountChangeWake } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { deriveArtifactStoredKindV1 } = await import('@happier-dev/protocol/artifacts/artifactKindV1');
+        await saved();
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await waitForHomeGovernance(() => { expect(hook.getCurrent().definitions).toHaveLength(1); expect(hook.getCurrent().loadingMore).toBe(false); });
+        const savedRows = hook.getCurrent().definitions;
+        const artifactReads = () => home.requests.filter(request => new URL(request.path, request.serverUrl).pathname.startsWith('/v1/artifacts')).length;
+        const before = artifactReads();
+        // A busy Account writes Runs, Discussions and documents all the time. None of them is a saved workflow.
+        const unrelated = ['workflow-run.v1', 'document', 'discussion.v1'].map(kind => deriveArtifactStoredKindV1({ kind }));
+        for (let index = 0; index < 6; index += 1) {
+            const entityId = `00000000-0000-4000-8000-0000000010${String(index).padStart(2, '0')}`;
+            const artifactKinds = [unrelated[index % unrelated.length]!];
+            const planned = planSyncActionsFromChanges([{ kind: 'artifact', entityId, cursor: index + 1, changedAt: 1, hint: { artifactKinds } }]);
+            await act(async () => {
+                publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: [entityId], artifactKinds }, 'socket');
+                publishHomeAccountChange(serverId, [entityId], { feedPageConsumed: true, changeKinds: ['artifact'],
+                    artifactKinds: plannedArtifactKinds(planned),
+                    workflowDefinitionsAffect: plannedChangesAffectWorkflowDefinitions(planned),
+                    workflowPluginSourcesAffect: plannedChangesAffectWorkflowPluginSources(planned) });
+            });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().loadingMore).toBe(false));
+        }
+        expect(artifactReads() - before).toBe(0);
+        expect(hook.getCurrent().definitions).toBe(savedRows);
+        // The saved workflow itself changes: its row is read again.
+        await act(async () => { publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: [definitionId],
+            artifactKinds: [deriveArtifactStoredKindV1({ kind: 'workflow-definition.v1' })] }, 'socket'); });
+        await waitForHomeGovernance(() => expect(artifactReads()).toBeGreaterThan(before));
+        await hook.unmount();
+    });
+
+    it('re-derives only plugin sources for Machine row wakes, never re-listing saved definitions', async () => {
+        await saved();
+        const machine = pluginMachine('machine-wake-machine');
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, [machine.id]);
+        const projection = (ids: readonly string[]) => ({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: ids.length,
+            installedPackagesById: { 'example.recipe': { id: 'example.recipe', displayName: 'Example recipe', version: '1.2.3', enabled: true, source: { kind: 'path', locator: '/plugins/example.recipe' } } },
+            familiesById: { workflows: { family: 'workflows', entriesById: Object.fromEntries(ids.map(id => [`example.recipe/${id}`, {
+                id: `example.recipe/${id}`, pluginId: 'example.recipe', pluginVersion: '1.2.3', definition: { id, title: id, definition: content },
+            }])) } },
+        }) });
+        machineRpc.mockResolvedValue(projection(['review']));
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await waitForHomeGovernance(() => { expect(hook.getCurrent().pluginWorkflows).toHaveLength(1); expect(hook.getCurrent().loadingMore).toBe(false); });
+        const savedRows = hook.getCurrent().definitions;
+        const inventoryReads = artifactInventoryReads().length;
+        // Ten Machine rows (presence, metadata) as the feed delivers them: no saved definition can change.
+        for (let index = 0; index < 10; index += 1) {
+            await act(async () => { publishHomeAccountChange(serverId, [machine.id], { source: 'socket', changeKinds: ['machine'] }); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().loadingMore).toBe(false));
+        }
+        expect(artifactInventoryReads()).toHaveLength(inventoryReads);
+        expect(hook.getCurrent().definitions).toBe(savedRows);
+        // The serving Machine's projection changes: the next Machine wake still brings its new plugin source.
+        machineRpc.mockResolvedValue(projection(['check', 'review']));
+        await act(async () => {
+            publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId }, 'refresh');
+            publishHomeAccountChange(serverId, [machine.id], { source: 'socket', changeKinds: ['machine'] });
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().pluginWorkflows.map(row => row.workflow))
+            .toEqual(['plugin:example.recipe/check', 'plugin:example.recipe/review']));
+        expect(artifactInventoryReads()).toHaveLength(inventoryReads);
+        expect(hook.getCurrent().definitions).toBe(savedRows);
+        await hook.unmount();
+    });
+
+    it('reopens from last-good rows with zero reads and catches up only the definition that changed while closed', async () => {
+        await saved();
+        const definitionReads = () => home.requests.filter(request => request.method === 'GET'
+            && new URL(request.path, request.serverUrl).pathname.startsWith('/v1/artifacts')).length;
+        const first = await renderHook(() => useWorkflowDefinitionLibrary()); await waitLoaded(first);
+        const rows = first.getCurrent().definitions;
+        await first.unmount();
+        const beforeReopen = definitionReads();
+        const reopened = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => {});
+        expect(reopened.getCurrent().status).toBe('loaded');
+        expect(reopened.getCurrent().definitions).toBe(rows);
+        expect(definitionReads() - beforeReopen).toBe(0);
+        await reopened.unmount();
+        // A wake while nothing shows the library reads nothing; the next open reads that one row.
+        await act(async () => { await saved(secondId, 'Created while closed'); });
+        const inventory = artifactInventoryReads().length;
+        const beforeCatchUp = definitionReads();
+        const again = await renderHook(() => useWorkflowDefinitionLibrary());
+        await waitForHomeGovernance(() => expect(again.getCurrent().definitions.map(row => row.definitionId)).toContain(secondId));
+        expect(definitionReads() - beforeCatchUp).toBe(1);
+        expect(artifactInventoryReads()).toHaveLength(inventory);
+        await again.unmount();
+    });
 });
 
 describe('Workflow Run windows through real Account storage', () => {
     const membershipPage = (runs: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[], nextCursor?: string) => ({
         projection: 'membership', runs, acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, ...(nextCursor ? { nextCursor } : {}),
     });
+
+    it.each(['trigger:scheduled-trigger', 'automation:automation-1', 'all', 'active'] as const)(
+        'keeps %s loaded on the first materialized occurrence push and its stopped update', async windowId => {
+            const { refreshWorkflowRunsByIds } = await import('@/sync/engine/workflows/refreshWorkflowRun');
+            home.answer(serverId, route, { body: await runPage([]) });
+            const hook = await renderHook(() => useWorkflowRunWindow(windowId));
+            await waitLoaded(hook);
+            expect(hook.getCurrent().runIds).toEqual([]);
+            const before = home.requestsFor(route).length;
+            for (let index = 0; index < 10; index++) {
+                await act(async () => publishHomeAccountChange(serverId, [`unrelated-${index}`], { changeKinds: ['artifact'] }));
+            }
+            expect(home.requestsFor(route)).toHaveLength(before);
+            const occurrence = createWorkflowRunSummaryFixture({ id: 'first-scheduled-occurrence', ownerAccountId: accountId,
+                state: windowId === 'active' ? 'running' : 'waiting_for_review',
+                origin: { kind: 'automation', automationId: 'automation-1' } });
+            home.answer(serverId, route, { body: await runPage([occurrence]) });
+            await act(async () => {
+                // The feed materializes the summary before publishing this typed wake.
+                await refreshWorkflowRunsByIds([occurrence.id]);
+                publishHomeAccountChange(serverId, [`workflow-run:${occurrence.id}`], { workflowRunsMaterialized: true });
+            });
+            await waitForHomeGovernance(() => {
+                expect(hook.getCurrent().status).toBe('loaded');
+                expect(hook.getCurrent().runIds).toEqual([occurrence.id]);
+            });
+            expect(hook.getCurrent().failure).toBeNull();
+            expect(hook.getCurrent().rows[0]?.summary?.state).toBe(occurrence.state);
+            // One materialization, one selected membership read, one changed-window read.
+            expect(home.requestsFor(route).length - before).toBe(3);
+            const stopped = createWorkflowRunSummaryFixture({ ...occurrence, state: 'cancelled', revision: occurrence.revision + 1 });
+            const stoppedPage = await runPage([stopped]);
+            const emptyPage = await runPage([]);
+            home.answer(serverId, route, { select: input => {
+                const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' ? Reflect.get(input, 'request') : null);
+                return { body: request.states ? emptyPage : stoppedPage };
+            } });
+            const beforeStop = home.requestsFor(route).length;
+            await act(async () => {
+                await refreshWorkflowRunsByIds([stopped.id]);
+                publishHomeAccountChange(serverId, [`workflow-run:${stopped.id}`], { workflowRunsMaterialized: true });
+            });
+            await waitForHomeGovernance(() => {
+                expect(hook.getCurrent().status).toBe('loaded');
+                expect(hook.getCurrent().runIds).toEqual(windowId === 'active' ? [] : [stopped.id]);
+            });
+            expect(hook.getCurrent().failure).toBeNull();
+            if (windowId !== 'active') expect(hook.getCurrent().rows[0]?.summary?.state).toBe('cancelled');
+            expect(home.requestsFor(route).length - beforeStop).toBe(windowId === 'active' ? 3 : windowId === 'all' ? 1 : 2);
+        },
+    );
 
     it.each(['all', 'exact:["selected-run"]'] as const)('ignores 300 unrelated Artifact pushes and targets only changed Runs and referenced sources (%s)', async windowId => {
         await saved();
@@ -853,7 +1467,7 @@ describe('Workflow Run windows through real Account storage', () => {
         expect(home.requestsFor(route)[1]?.input).not.toMatchObject({ request: { limit: expect.anything() } });
         await complete.rerender({ enabled: false });
         const changedHead = { ...head, revision: head.revision + 1 };
-        home.answer(serverId, route, { body: await runPage([changedHead, tail]) });
+        home.answer(serverId, route, { body: await runPage([changedHead]) });
         await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${head.id}`]));
         await waitForHomeGovernance(() => expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(changedHead.revision));
         expect(home.requestsFor(route)).toHaveLength(3);
@@ -1056,6 +1670,9 @@ describe('Workflow Run windows through real Account storage', () => {
         home.answer(serverId, route, { body: await runPage([run('newest')], 'next') });
         const first = await renderHook(() => useWorkflowRunWindow('automation:habit')); await waitLoaded(first);
         const second = await renderHook(() => useWorkflowRunWindow('automation:habit'));
+        // Mounting another reader starts a retained refresh. Finish that same
+        // owner flight before changing the HTTP leaf to the continuation page.
+        await act(async () => { await refreshRunWindow('automation:habit'); });
         home.answer(serverId, route, { body: await runPage([run('older')]) });
         await act(async () => first.getCurrent().loadMore());
         await waitForHomeGovernance(() => expect(second.getCurrent().runIds).toEqual(['newest', 'older']));
@@ -1075,6 +1692,30 @@ describe('Workflow Run windows through real Account storage', () => {
         home.answer(serverId, '/v3/automations/runs', { body: { runs: [createAutomationRunFixture({ id: 'run-2', state: 'failed' })], nextCursor: null } });
         await act(async () => publishHomeAccountChange(serverId, [windowId === 'automationAttention' ? 'automation:automation-1' : 'workflow-run:run-2']));
         await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toContain('run-2'));
+    });
+
+    it('reopens a fixed Run window from the shared store with zero reads and refreshes only a Run that changed while closed', async () => {
+        const selected = run('selected-run'); const other = run('other-run');
+        home.answer(serverId, route, { body: await runPage([selected, other]) });
+        const first = await renderHook(() => useWorkflowRunWindow('all')); await waitLoaded(first);
+        await first.unmount();
+        const before = home.requestsFor(route).length;
+        const reopened = await renderHook(() => useWorkflowRunWindow('all'));
+        await act(async () => {});
+        expect(reopened.getCurrent().status).toBe('loaded');
+        expect(reopened.getCurrent().runIds).toEqual([selected.id, other.id]);
+        expect(home.requestsFor(route).length - before).toBe(0);
+        await reopened.unmount();
+        const changed = { ...selected, state: 'succeeded' as const, revision: selected.revision + 1 };
+        home.answer(serverId, route, { body: await runPage([changed]) });
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${selected.id}`]));
+        expect(home.requestsFor(route).length - before).toBe(0);
+        const again = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(again.getCurrent().rows.find(row => row.id === selected.id)?.revision).toBe(changed.revision));
+        expect(home.requestsFor(route).length - before).toBe(1);
+        expect(home.requestsFor(route).at(-1)?.input).toMatchObject({ request: { runIds: [selected.id] } });
+        expect(again.getCurrent().runIds).toEqual([selected.id, other.id]);
+        await again.unmount();
     });
 
     it('does not restart disabled or unmounted Run windows on retirement and wakes', async () => {
@@ -1150,7 +1791,7 @@ describe('Automation attention through real HTTP and the shared Run store', () =
         home.answer(serverId, '/v3/automations/runs', { select: () => ({ body: pages.shift() }) });
         await act(async () => hook.getCurrent().retry());
         await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual(['run-60', 'run-50', 'run-40', 'run-30', 'run-10', 'run-5']));
-        expect(storage.getState().workflowRunListWindows.automationAttention?.nextCursor).toBe('current-4');
+        expect(storage.getState().workflowRunListWindows[runWindowKey('automationAttention')]?.nextCursor).toBe('current-4');
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations/runs?')).map(request => request.path)).toEqual([
             '/v3/automations/runs?limit=20&attention=required', '/v3/automations/runs?limit=20&cursor=next&attention=required',
             '/v3/automations/runs?limit=20&attention=required', '/v3/automations/runs?limit=20&cursor=current-2&attention=required',
@@ -1186,103 +1827,5 @@ describe('Automation attention through real HTTP and the shared Run store', () =
         await act(async () => { accountId = 'account-b'; await home.switchAccount(serverId, accountId); storage.setState({ profileScope: { serverId, accountId } }); });
         await waitLoaded(hook); await act(async () => pending.resolve());
         expect(hook.getCurrent().rows).toEqual([]); expect(storage.getState().workflowRunsById['foreign-late']).toBeUndefined();
-    });
-
-    it.each([[1, 1], [3, 4]])('joins %i definitions and %i Account Workflows with batch reads and one search', async (definitionCount, triggerCount) => {
-        const [{ AutomationDefinitionDetailSchema}, { AutomationStoredWorkflowDefinitionRecipeV2Schema}] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2')]);
-        const { createWorkflowAutomationLastRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
-        await storage.getState().activateSettingsScope({ serverId, accountId });
-        storage.setState({ settingsVersion: 1 });
-        const { resolveCollectionSpacesV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
-        const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
-        const defaultSpace = resolveCollectionSpacesV1(storage.getState().settings.collectionSpacesV1, 'workflow')[0]!;
-        expect(await writeCollectionSpaceSelectionV1({ scope: { serverId, accountId }, entityKind: 'workflow', spaceId: defaultSpace.id,
-            isCurrent: () => true, readSettings: () => storage.getState().settings })).toEqual({ ok: true });
-        const ids = Array.from({ length: definitionCount }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
-        for (const [index, id] of ids.entries()) {
-            await saved(id, `Saved ${index}`);
-            const stored = home.artifacts(serverId).read(id)!;
-            home.artifacts(serverId).replaceStoredRow({ ...stored, updatedAt: 10 + index });
-        }
-        const triggers = Array.from({ length: triggerCount }, (_, index) => AutomationDefinitionDetailSchema.parse({
-            id: index === 0 ? ids[0] : `inline-${index}`, name: `Account workflow ${index}`, description: null,
-            enabled: true, workflowDefinitionId: null, scopeSessionId: null, templateVersion: 1,
-            targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 20 + index,
-            assignments: [{ machineId: 'machine-one', enabled: true, priority: 0, updatedAt: 1 }], triggers: [],
-            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
-                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: content } }, triggerEvidence: null }),
-        }));
-        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body: {
-            automations: input && typeof input === 'object' && 'scope' in input && input.scope === 'account_inline' ? triggers : [], nextCursor: null,
-        } }) });
-        const lastRun = createWorkflowAutomationLastRunSummaryFixture({ id: 'account-last-run', state: 'running',
-            attentionRequired: true, invocationAttentionRequired: true });
-        home.answer(serverId, route, { select: input => {
-            const request = input && typeof input === 'object' && 'request' in input ? input.request : null;
-            if (request && typeof request === 'object' && 'automationIds' in request && Array.isArray(request.automationIds)) return { body: {
-                automationSummaries: request.automationIds.map(automationId => ({ automationId, lastRun })), remainingAutomationIds: [],
-            } };
-            return { body: { summaries: ids.map(sourceArtifactId => ({ sourceArtifactId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null })), remainingSourceArtifactIds: [] } };
-        } });
-        const readStart = home.requests.length;
-        const hook = await renderHook(() => {
-            const view = useWorkflowLibraryView(true);
-            // The next renderer consumes this same read; mounting its incumbent editor must not
-            // create another membership/options read or one read per Workflow row.
-            const editor = useAccountWorkflowEditor({ read: view.accountWorkflows });
-            return { ...view, editor };
-        });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows).toHaveLength(definitionCount + triggerCount));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows[0]?.lastRunSummary?.lastRun).toMatchObject({ id: 'account-last-run' }));
-        const rows = hook.getCurrent().libraryRows;
-        expect(rows.map(row => row.name)).toEqual([
-            ...[...triggers].reverse().map(row => row.name), ...[...ids].reverse().map((_id, index) => `Saved ${definitionCount - index - 1}`),
-        ]);
-        expect(new Set(rows.map(row => row.key)).size).toBe(rows.length);
-        expect(rows[0]).toMatchObject({ triggerSummary: expect.any(String), openTarget: { kind: 'accountTrigger', automationId: triggers.at(-1)!.id } });
-        expect(rows.at(-1)?.openTarget).toEqual({ kind: 'definition', definitionId: ids[0], href: `/workflows/${ids[0]}` });
-        expect(hook.getCurrent().libraryCount).toBe(definitionCount + triggerCount);
-        expect(hook.getCurrent().editor.popover).toBeNull();
-        const inventories = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts?') || request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query');
-        expect(artifactInventoryReads()).toHaveLength(1);
-        expect(inventories()).toHaveLength(3); // One definition page, its existing enrichment, and the selected Account-inline page.
-        expect(home.requestsFor(route)).toHaveLength(2); // Existing source and Automation summary batches, never per row.
-        const recordReads = home.requests.slice(readStart).filter(request => request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'));
-        expect(recordReads).toHaveLength(6); // Also count the existing body batch, so N singleton detail reads cannot hide.
-        expect(recordReads.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(1);
-        const before = home.requests.length;
-        await act(async () => hook.getCurrent().setView('running'));
-        expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount);
-        await act(async () => hook.getCurrent().setView('all'));
-        await act(async () => hook.getCurrent().setSearchQuery('Account workflow'));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount));
-        await act(async () => hook.getCurrent().setSearchQuery('Saved'));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(definitionCount));
-        expect(home.requests.length).toBe(before);
-        const accountRow = rows.find(row => 'accountTrigger' in row);
-        if (!accountRow || !('accountTrigger' in accountRow)) throw new Error('Expected the admitted Account Workflow');
-        await act(async () => storage.getState().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: {
-            ...accountRow.accountTrigger, name: 'Updated Account Workflow', revision: accountRow.accountTrigger.revision + 1,
-        } }));
-        expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)?.name).toBe('Updated Account Workflow');
-        const unchangedDefinition = rows.find(row => 'definition' in row)!;
-        expect(hook.getCurrent().libraryRows.find(row => row.key === unchangedDefinition.key)).toBe(unchangedDefinition);
-        expect(home.requests.length).toBe(before);
-        const { getPreferredLanguage, setPreferredLanguageFromSettings, preloadTranslations } = await import('@/text/i18n');
-        const { formatTriggerSetSummary } = await import('../triggers/formatTriggerSummary');
-        const language = getPreferredLanguage();
-        const alternate = language === 'fr' ? 'en' : 'fr';
-        const beforeLanguage = hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary;
-        await preloadTranslations(alternate);
-        try {
-            await act(async () => setPreferredLanguageFromSettings(alternate));
-            expect(formatTriggerSetSummary([])).not.toBe(beforeLanguage);
-            expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary).toBe(formatTriggerSetSummary([]));
-            expect(home.requests.length).toBe(before);
-        } finally {
-            await act(async () => setPreferredLanguageFromSettings(language));
-        }
-        await act(async () => { await hook.getCurrent().editor.open(accountRow.openTarget, { current: null }); });
-        expect(hook.getCurrent().editor.popover).not.toBeNull();
     });
 });

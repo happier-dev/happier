@@ -147,6 +147,88 @@ beforeEach(() => {
 });
 
 describe('messages domain: transcript renderable aggregates', () => {
+    it.each(['empty', 'unchanged'] as const)('admits a missing WorkerUpdate projection on an %s owner update', async kind => {
+        const { domain, get } = await createHarness();
+        const notice: NormalizedMessage = { id: 'retained-update', seq: 20, localId: null, createdAt: 20,
+            role: 'event', isSidechain: false, content: { type: 'worker-update', update: {
+                v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'finished',
+                headline: 'Retained result', canInspect: true,
+            } } };
+        domain.applyMessages('s1', [notice]);
+        // An already-materialized transcript from before this optional internal projection existed.
+        get().sessionMessages.s1 = { ...get().sessionMessages.s1, latestWorkerUpdates: undefined };
+        domain.applyMessages('s1', kind === 'empty' ? [] : [notice]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({ headline: 'Retained result' });
+        const admitted = get().sessionMessages.s1.latestWorkerUpdates;
+        domain.applyMessages('s1', []);
+        expect(get().sessionMessages.s1.latestWorkerUpdates).toBe(admitted);
+    });
+
+    it('projects latest WorkerUpdates incrementally and retires them with their transcript', async () => {
+        const { domain, get } = await createHarness();
+        const notice = (id: string, seq: number, headline: string, ownerState: 'settled' | 'failed' = 'settled'): NormalizedMessage => ({
+            id, seq, localId: null, createdAt: seq, role: 'event', isSidechain: false,
+            content: { type: 'worker-update', update: { v: 1, workerKind: 'session', workerId: 'worker',
+                ownerState, wake: ownerState === 'failed' ? 'needs_you' : 'finished', headline, canInspect: true } },
+        });
+        domain.applyMessages('s1', [notice('latest-update', 20, 'Latest result')]);
+        const projection = get().sessionMessages.s1.latestWorkerUpdates;
+        expect(get().sessionMessages.s1.messagesById[projection!.latestMessage!.messageId]).toMatchObject({
+            event: { type: 'worker-update', update: { headline: 'Latest result' } },
+        });
+        expect(projection?.session?.worker).toMatchObject({ headline: 'Latest result',
+            workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'finished' });
+        domain.applyMessages('s1', [notice('older-update', 10, 'Older result')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates).toBe(projection);
+        domain.applyMessages('s1', Array.from({ length: 1_000 }, (_, index) =>
+            agentTextMessage(`text-${index}`, index + 100, 'Streaming content')));
+        expect(get().sessionMessages.s1.latestWorkerUpdates).toBe(projection);
+        // Recap follows the latest delivered notice across worker kinds, never ordinary text.
+        domain.applyMessages('s1', [{ id: 'run-result', seq: 21, localId: null, createdAt: 1,
+            role: 'event', isSidechain: false, content: { type: 'worker-update', update: {
+                v: 1, workerKind: 'execution_run', workerId: 'run', ownerState: 'succeeded', wake: 'finished',
+                headline: 'Background result', result: 'Delivered body', canInspect: true,
+            } } }]);
+        const runMessageId = get().sessionMessages.s1.latestWorkerUpdates!.latestMessage!.messageId;
+        expect(get().sessionMessages.s1.messagesById[runMessageId]).toMatchObject({
+            event: { type: 'worker-update', update: { workerKind: 'execution_run', result: 'Delivered body' } },
+        });
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toBe(projection?.session?.worker);
+        // Another outcome is a new native occurrence; replaying one event id cannot rewrite its content.
+        domain.applyMessages('s1', [notice('failed-outcome', 25, 'Latest result', 'failed')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({
+            headline: 'Latest result', ownerState: 'failed', wake: 'needs_you',
+        });
+        const failedOutcome = get().sessionMessages.s1.latestWorkerUpdates;
+        expect(get().sessionMessages.s1.messagesById[failedOutcome!.latestMessage!.messageId]).toMatchObject({
+            event: { type: 'worker-update', update: { ownerState: 'failed' } },
+        });
+        domain.applyMessages('s1', [notice('failed-outcome', 25, 'Latest result', 'failed')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates).toBe(failedOutcome);
+        domain.applyMessages('s1', [notice('next-update', 30, 'New result')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({ headline: 'New result' });
+        domain.replaceSessionMessages('s1', [notice('older-update', 10, 'Older result'),
+            { id: 'next-update', seq: 30, localId: null, createdAt: 30, role: 'event', isSidechain: false,
+                content: { type: 'ready' } }]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({ headline: 'Older result' });
+        const replacementMessageId = get().sessionMessages.s1.latestWorkerUpdates!.latestMessage!.messageId;
+        expect(get().sessionMessages.s1.messagesById[replacementMessageId]).toMatchObject({
+            event: { type: 'worker-update', update: { headline: 'Older result' } },
+        });
+        domain.replaceSessionMessages('s1', [{ id: 'older-update', seq: 10, localId: null, createdAt: 10,
+            role: 'event', isSidechain: false, content: { type: 'ready' } }]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toBeUndefined();
+        domain.replaceSessionMessages('s1', [notice('replacement', 5, 'Replacement history')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({ headline: 'Replacement history' });
+        domain.resetSessionMessages('s1');
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toBeUndefined();
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.latestMessage).toBeNull();
+        domain.applyMessages('s1', [notice('reopened', 40, 'Reopened result')]);
+        expect(get().sessionMessages.s1.latestWorkerUpdates?.session?.worker).toMatchObject({ headline: 'Reopened result' });
+        domain.evictSessionMessages('s1');
+        expect(get().sessionMessages.s1).toBeUndefined();
+    });
+
     it('maintains one transcript aggregate incrementally across streaming applies', async () => {
         const { domain, get } = await createHarness();
 

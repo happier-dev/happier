@@ -1,10 +1,14 @@
 import type {
-    SessionAttentionStanding,
-    SessionOrganizationDisplayState as ProtocolSessionOrganizationDisplayState,
-    SessionOrganizationOrderEntry,
-    SessionOrganizationPin,
+    SessionAttentionStanding} from '@happier-dev/protocol/sessions/organization/standings';
+import type {
+    SessionOrganizationDisplayState as ProtocolSessionOrganizationDisplayState} from '@happier-dev/protocol/sessions';
+import type {
+    SessionOrganizationOrderEntry} from '@happier-dev/protocol/sessions/organization/ordering';
+import type {
+    SessionOrganizationPin} from '@happier-dev/protocol/sessions/organization/pins';
+import type {
     SessionOrganizationSnapshot,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/snapshot';
 
 import {
     buildSessionOrganizationLabelKey,
@@ -12,7 +16,7 @@ import {
     buildSessionOrganizationSessionKey,
     buildSessionOrganizationServerKey,
     sessionOrganizationTupleKeyBelongsToServer,
-} from '@/sync/domains/session/organization';
+} from '@/sync/domains/session/organization/keys';
 import type {
     SessionOrganizationSnapshotApplyOptions,
     SessionOrganizationDisplayState,
@@ -21,9 +25,9 @@ import type {
     UiSessionOrganizationFolder,
     UiSessionOrganizationLabel,
     UiSessionOrganizationSnapshot,
-    UiSessionOrganizationSessionAppearance,
     UiSessionOrganizationTag,
-} from '@/sync/domains/session/organization';
+    UiSessionOrganizationSessionAppearance,
+} from '@/sync/domains/session/organization/types';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -89,16 +93,12 @@ export type SessionOrganizationDomain = {
     sessionOrganizationTagAssignmentsBySessionKey: Record<string, SessionOrganizationTagAssignmentEntry>;
     sessionOrganizationOrderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]>;
     sessionOrganizationLabelsByLabelKey: Record<string, UiSessionOrganizationLabel>;
-    sessionOrganizationLoadingByServerId: Record<string, boolean>;
-    sessionOrganizationErrorByServerId: Record<string, string | null>;
     sessionOrganizationOptimisticRecords: Record<string, SessionOrganizationOptimisticRecord>;
     applySessionOrganizationSnapshot: (
         serverId: string,
         snapshot: SessionOrganizationSnapshot | UiSessionOrganizationSnapshot,
         options?: SessionOrganizationSnapshotApplyOptions,
     ) => void;
-    setSessionOrganizationLoading: (serverId: string, loading: boolean) => void;
-    setSessionOrganizationError: (serverId: string, error: string | null) => void;
     setSessionPinOptimistic: (serverId: string, sessionId: string, pin: SessionOrganizationPin | null) => string;
     setSessionAttentionStandingOptimistic: (serverId: string, sessionId: string, standing: SessionAttentionStanding | null) => string;
     setSessionAppearanceOptimistic: (serverId: string, sessionId: string, appearance: UiSessionOrganizationSessionAppearance | null) => string;
@@ -111,7 +111,7 @@ export type SessionOrganizationDomain = {
     upsertSessionOrganizationLabelOptimistic: (serverId: string, label: UiSessionOrganizationLabel) => string;
     deleteSessionOrganizationLabelOptimistic: (serverId: string, labelKind: UiSessionOrganizationLabel['labelKind'], scopeKey: string) => string;
     applySessionOrganizationOrderEntriesOptimistic: (serverId: string, entries: readonly SessionOrganizationOrderEntry[]) => string;
-    reconcileSessionOrganizationFolderDelete: (serverId: string, deletedFolderIds: readonly string[], assignmentTargetFolderId: string | null) => void;
+    reconcileSessionOrganizationFolderDelete: (serverId: string, deletedFolderIds: readonly string[], assignmentTargetFolderId: string | null, assignmentTargetFolderKey?: string | null) => void;
     reconcileSessionOrganizationTagDelete: (serverId: string, tagId: string) => void;
     rollbackSessionOrganizationOptimistic: (recordId: string) => void;
     commitSessionOrganizationOptimistic: (recordId: string) => void;
@@ -123,7 +123,6 @@ export type SessionOrganizationDomain = {
     ) => void;
     clearSessionOrganizationForServer: (serverId: string) => void;
     applySessionFolderAssignments: (serverId: string, assignments: readonly SessionFolderAssignment[]) => void;
-    setSessionFolderAssignmentsLoading: (serverId: string, loading: boolean) => void;
     setSessionFolderAssignmentOptimistic: (serverId: string, sessionId: string, folderId: string | null) => string | null;
     rollbackSessionFolderAssignment: (serverId: string, sessionId: string, previousFolderId: string | null) => void;
     clearSessionFolderAssignmentsForServer: (serverId: string) => void;
@@ -733,8 +732,6 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         sessionOrganizationTagAssignmentsBySessionKey: {},
         sessionOrganizationOrderEntriesByScopeKey: {},
         sessionOrganizationLabelsByLabelKey: {},
-        sessionOrganizationLoadingByServerId: {},
-        sessionOrganizationErrorByServerId: {},
         sessionOrganizationOptimisticRecords: {},
         applySessionOrganizationSnapshot: (serverId, snapshot, options) => {
             const uiSnapshot =
@@ -851,20 +848,6 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     sessionOrganizationOrderEntriesByScopeKey: orderEntries,
                     sessionOrganizationLabelsByLabelKey: labels,
                 } as Partial<S>;
-            });
-        },
-        setSessionOrganizationLoading: (serverId, loading) => {
-            set((state) => {
-                const nextLoading = setRecordValue(state.sessionOrganizationLoadingByServerId, serverId, loading);
-                if (nextLoading === state.sessionOrganizationLoadingByServerId) return state;
-                return { sessionOrganizationLoadingByServerId: nextLoading } as Partial<S>;
-            });
-        },
-        setSessionOrganizationError: (serverId, error) => {
-            set((state) => {
-                const errors = setRecordValue(state.sessionOrganizationErrorByServerId, serverId, error);
-                if (errors === state.sessionOrganizationErrorByServerId) return state;
-                return { sessionOrganizationErrorByServerId: errors } as Partial<S>;
             });
         },
         setSessionPinOptimistic: (serverId, sessionId, pin) => {
@@ -1067,23 +1050,38 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
             }) as Partial<S>);
             return record.id;
         },
-        reconcileSessionOrganizationFolderDelete: (serverId, deletedFolderIds, assignmentTargetFolderId) => {
+        reconcileSessionOrganizationFolderDelete: (serverId, deletedFolderIds, assignmentTargetFolderId, assignmentTargetFolderKey) => {
             const deletedFolders = new Set(
                 deletedFolderIds.map((folderId) => String(folderId ?? '').trim()).filter(Boolean),
             );
             if (deletedFolders.size === 0) return;
             set((state) => {
                 const updates: Array<readonly [string, SessionOrganizationFolderAssignmentEntry]> = [];
+                const parentKey = assignmentTargetFolderId === null ? null
+                    : state.sessionOrganizationFoldersByFolderKey[buildSessionOrganizationServerKey(serverId, assignmentTargetFolderId)]?.folderKey
+                        ?? assignmentTargetFolderKey;
+                const folderUpdates: Array<readonly [string, UiSessionOrganizationFolder]> = [];
+                if (parentKey !== undefined) {
+                    for (const [key, folder] of Object.entries(state.sessionOrganizationFoldersByFolderKey)) {
+                        if (key !== buildSessionOrganizationServerKey(serverId, folder.folderId)
+                            || folder.parentFolderId === null || !deletedFolders.has(folder.parentFolderId)) continue;
+                        folderUpdates.push([key, { ...folder, parentFolderId: assignmentTargetFolderId, parentFolderKey: parentKey }]);
+                    }
+                }
                 for (const [key, assignment] of Object.entries(state.sessionOrganizationFolderAssignmentsBySessionKey)) {
                     if (key !== buildSessionOrganizationSessionKey(serverId, assignment.sessionId)
                         || !assignment.folderId
                         || !deletedFolders.has(assignment.folderId)) continue;
                     updates.push([key, { sessionId: assignment.sessionId, folderId: assignmentTargetFolderId }] as const);
                 }
-                if (updates.length === 0) return state;
-                const nextAssignments = mergeRecordEntries(state.sessionOrganizationFolderAssignmentsBySessionKey, updates);
+                if (updates.length === 0 && folderUpdates.length === 0) return state;
                 return {
-                    sessionOrganizationFolderAssignmentsBySessionKey: nextAssignments,
+                    sessionOrganizationFolderAssignmentsBySessionKey: updates.length
+                        ? mergeRecordEntries(state.sessionOrganizationFolderAssignmentsBySessionKey, updates)
+                        : state.sessionOrganizationFolderAssignmentsBySessionKey,
+                    sessionOrganizationFoldersByFolderKey: folderUpdates.length
+                        ? mergeRecordEntries(state.sessionOrganizationFoldersByFolderKey, folderUpdates)
+                        : state.sessionOrganizationFoldersByFolderKey,
                 } as Partial<S>;
             });
         },
@@ -1211,17 +1209,12 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     ),
                     sessionOrganizationOrderEntriesByScopeKey: removeServerRecordEntries(state.sessionOrganizationOrderEntriesByScopeKey, serverId),
                     sessionOrganizationLabelsByLabelKey: removeServerRecordEntries(state.sessionOrganizationLabelsByLabelKey, serverId),
-                    sessionOrganizationLoadingByServerId: removeRecordKeys(state.sessionOrganizationLoadingByServerId, [serverId]),
-                    sessionOrganizationErrorByServerId: removeRecordKeys(state.sessionOrganizationErrorByServerId, [serverId]),
                 };
                 const keys = Object.keys(update) as Array<keyof typeof update>;
                 return keys.every(key => update[key] === state[key]) ? state : update as Partial<S>;
             });
         },
         applySessionFolderAssignments: applyFolderAssignments,
-        setSessionFolderAssignmentsLoading: (serverId, loading) => {
-            get().setSessionOrganizationLoading(serverId, loading);
-        },
         setSessionFolderAssignmentOptimistic: (serverId, sessionId, folderId) => {
             const key = buildSessionOrganizationSessionKey(serverId, sessionId);
             const previous = get().sessionOrganizationFolderAssignmentsBySessionKey[key]?.folderId ?? null;

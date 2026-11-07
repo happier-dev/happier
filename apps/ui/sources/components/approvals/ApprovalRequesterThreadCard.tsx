@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
+import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -14,6 +15,7 @@ import {
 } from '@/components/work/status/workStatusTreatment';
 import type { DiscussionRequesterApproval } from '@/sync/domains/artifacts/approvalArtifacts';
 import { t } from '@/text';
+import { resolveAccountActorName, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { ApprovalInlineDecisionBar, ApprovalInlineFields, useInlineApprovalDecision } from './ApprovalInlineDecision';
 import { ApprovalOperationActorLine } from './ApprovalOperationActorLine';
 import {
@@ -41,6 +43,8 @@ export const ApprovalRequesterThreadCard = React.memo(
       approval: DiscussionRequesterApproval;
       /** The viewer's profile for the Discussion's Home: routes the request page and the decision. */
       serverId: string;
+      /** The enclosing Discussion's server-projected requester on this exact reply. */
+      requesterAccountActor?: SessionMessageAccountActorV1 | null;
       /** Where the request page returns once the confirmed write has run. */
       returnHref?: string;
     }>,
@@ -57,20 +61,31 @@ export const ApprovalRequesterThreadCard = React.memo(
     const state = resolveApprovalRequesterThreadState(parsed, recordedDecision);
     const entitled = useApprovalRequesterViewer(subject, props.serverId);
     const viewerName = t('session.collaboration.discussion.attribution.you');
-    const requester =
-      useApprovalAccountLabel(
-        subject.personaSessionRef.serverId,
+    const knownRequester = useApprovalAccountLabel(
+        props.serverId,
         subject.requesterAccountId,
         'sentence',
-      ) ?? t('session.collaboration.discussion.attribution.anotherPerson');
+      );
+    const projectedRequester = props.requesterAccountActor?.accountId === subject.requesterAccountId
+      ? props.requesterAccountActor : null;
+    const projectedRequesterName = projectedRequester
+      ? projectedRequester.accessibility !== 'former' && entitled
+        ? viewerName
+        : resolveAccountActorName(projectedRequester, false)
+      : null;
+    const requester = projectedRequesterName
+      ?? knownRequester
+      ?? resolveUnknownAccountActorName('sentence');
     const decidingAccountId =
       'decidingAccountId' in state ? state.decidingAccountId : null;
-    const decider =
-      useApprovalAccountLabel(
-        subject.personaSessionRef.serverId,
+    const knownDecider = useApprovalAccountLabel(
+        props.serverId,
         decidingAccountId ?? undefined,
         'sentence',
-      ) ??
+      );
+    const decider = decidingAccountId === subject.requesterAccountId && projectedRequesterName
+      ? projectedRequesterName
+      : knownDecider ??
       (decidingAccountId === null && recordedDecision ? viewerName : requester);
     const titleInput = readApprovalArtifactTitleInput(artifact, parsed, [
       personaSessionId,

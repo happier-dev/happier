@@ -1,8 +1,14 @@
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
+import { parseRecentWorkspaceFiles, recentWorkspaceFilesKey } from '@/sync/domains/workspaces/files/recentWorkspaceFiles';
+import { recentWorkspaceFilesState } from '@/sync/domains/state/filePaneUiState';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
+import Fuse from 'fuse.js';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema, SessionCurrentProjectionRecordV1Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DEFAULT_MEMORY_SETTINGS } from '@happier-dev/protocol/memory/memorySettings';
@@ -10,7 +16,7 @@ import { MemorySearchQueryV1Schema } from '@happier-dev/protocol/memory/memorySe
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 import { QUIET_SESSION_PERSONAL_ATTENTION_V1 } from '@happier-dev/protocol/sessions/personal/attention';
-import { createDeferred, createMachineFixture, createSessionFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen as renderScreenWithTestkit, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createSessionFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen as renderScreenWithTestkit, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -41,6 +47,10 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true, memoizeItems: true });
+});
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { alert: harness.modalAlert } }).module;
@@ -57,12 +67,15 @@ let concurrentFixtureStarted = false;
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { setServerProfileIdentityForUrl, upsertServerProfile, removeServerProfile, listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
 const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { useServerCredentialAccountScopes } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { parseToken } = await import('@/utils/auth/parseToken');
@@ -93,7 +106,7 @@ const fixture = {
     featureEnabled: { search: true, 'memory.search': false } as Record<string, boolean>,
     memoryMachine: null as null | { serverId: string; machine: { id: string; active?: boolean; activeAt?: number } },
     workspaceRefs: [] as WorkspaceRefV1[],
-    sessionListRows: [] as Array<{ serverId: string | null; serverName: string | null; session: { id: string; updatedAt: number; archivedAt?: number | null; metadata: { name: string; path?: string } } }>,
+    sessionListRows: [] as Array<{ serverId: string | null; serverName: string | null; session: { id: string; updatedAt: number; archivedAt?: number | null; metadata: { name: string; path?: string; machineId?: string } } }>,
     sessionOrganizationProjection: null as SessionOrganizationProjection | null,
     portableIdentity: false, singleHome: false,
     scopedPluginProjections: new Map<string, ReturnType<typeof PluginProjectionV2Schema.parse>>(),
@@ -108,7 +121,7 @@ let SelectionList: typeof import('@/components/ui/selectionList')['SelectionList
 const selectionListProps = (): SelectionListProps | null => (mountedSearch?.findByType(SelectionList).props as SelectionListProps | undefined) ?? null;
 const inventoryRequests = () => network.httpRequests.filter(request => new URL(request.url).pathname === '/v2/sessions');
 const homeUrl = (id: string) => id === HOME_A ? 'https://home-a.example.test' : 'https://home-b.example.test';
-function wireSession(id: string, metadata: Readonly<{ name: string; path?: string }> = { name: 'Scoped Session', path: '/repo/b' }, archivedAt: number | null = null, updatedAt = 1) {
+function wireSession(id: string, metadata: Readonly<{ name: string; path?: string; machineId?: string }> = { name: 'Scoped Session', path: '/repo/b' }, archivedAt: number | null = null, updatedAt = 1) {
     const admittedMetadata = MetadataSchema.parse(metadata);
     const session = createSessionFixture({ id, metadata: admittedMetadata, seq: 100, updatedAt, active: archivedAt === null, archivedAt, activeAt: Date.now() });
     return SessionCurrentProjectionRecordV1Schema.parse({ ...session,
@@ -187,7 +200,10 @@ async function prepareControllerFixture() {
         if (url.pathname.startsWith('/v2/sessions/')) {
             if (url.pathname === '/v2/sessions/active') return Response.json({ sessions: [], hasNext: false, nextCursor: null });
             if (url.pathname === '/v2/sessions/archived') return Response.json({ sessions: fixture.sessionListRows.filter(row => row.serverId === serverId && row.session.archivedAt).map(row => wireSession(row.session.id, row.session.metadata, row.session.archivedAt, row.session.updatedAt)), hasNext: false, nextCursor: null });
-            return Response.json({ session: wireSession(decodeURIComponent(url.pathname.slice('/v2/sessions/'.length))) });
+            // A single read returns the same Session the listing did, not a generic stand-in.
+            const id = decodeURIComponent(url.pathname.slice('/v2/sessions/'.length));
+            const row = fixture.sessionListRows.find(candidate => candidate.serverId === serverId && candidate.session.id === id)?.session;
+            return Response.json({ session: row ? wireSession(id, row.metadata, row.archivedAt ?? null, row.updatedAt) : wireSession(id) });
         }
         if (url.pathname === '/v2/sessions') {
             if (init?.signal) fixture.inventorySignals.push(init.signal);
@@ -222,16 +238,26 @@ async function prepareControllerFixture() {
         await waitForHomeGovernance(() => {
             if (!storage.getState().isDataReady) throw new Error('Controller fixture Sync bootstrap is not ready');
         });
-        // The foreign inventory belongs to the actual multi-Home Account runtime,
-        // so a new Search credential binding can validate rather than retire it.
-        await selectedHomes.selectHomes([HOME_A, HOME_B]);
-        const { startConcurrentSessionCacheSync, isConcurrentSessionListQueryHomeOnline } = await import('@/sync/runtime/orchestration/concurrentSessionCache');
-        startConcurrentSessionCacheSync();
-        concurrentFixtureStarted = true;
-        await waitForHomeGovernance(() => {
-            if (!isConcurrentSessionListQueryHomeOnline(HOME_B)) throw new Error('Home B Account runtime is not established');
-            expect(storage.getState().machineListByServerId[HOME_B]?.some(machine => machine.id === 'machine-b')).toBe(true);
-        });
+        if (fixture.singleHome) {
+            await selectedHomes.selectHomes([HOME_B]);
+            await waitForHomeGovernance(() => {
+                expect(storage.getState().profileScope).toEqual({ serverId: HOME_B, accountId: 'account-1' });
+                expect(storage.getState().isDataReady).toBe(true);
+                expect(storage.getState().endpointStatus).toBe('online');
+                expect(storage.getState().machines['machine-b']).toBeDefined();
+            });
+        } else {
+            // Only foreign Homes have a secondary Account runtime; the active Home
+            // is deliberately excluded by concurrentSessionCache.
+            await selectedHomes.selectHomes([HOME_A, HOME_B]);
+            const { startConcurrentSessionCacheSync, isConcurrentSessionListQueryHomeOnline } = await import('@/sync/runtime/orchestration/concurrentSessionCache');
+            startConcurrentSessionCacheSync();
+            concurrentFixtureStarted = true;
+            await waitForHomeGovernance(() => {
+                if (!isConcurrentSessionListQueryHomeOnline(HOME_B)) throw new Error('Home B Account runtime is not established');
+                expect(storage.getState().machineListByServerId[HOME_B]?.some(machine => machine.id === 'machine-b')).toBe(true);
+            });
+        }
     }
     storage.setState({
         isDataReady: true,
@@ -256,6 +282,11 @@ async function prepareControllerFixture() {
 }
 function AmbientPluginProjectionProbe() {
     fixture.observedAmbientProjection = useAppShellPluginUiProjection().pluginUiProjection;
+    return null;
+}
+function SearchCredentialBindingProbe(props: Readonly<{ observe(current: boolean): void }>) {
+    const bindings = useServerCredentialAccountScopes([HOME_B]);
+    props.observe(bindings.get(HOME_B)?.isCurrent() === true);
     return null;
 }
 function DismissibleSearch(props: Readonly<{ element: React.ReactElement<UniversalSearchControllerProps> }>) {
@@ -329,6 +360,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
     standardCleanup(); mountedSearch = undefined;
+    setScreenSharingPrivacyActive(false);
     if (concurrentFixtureStarted) (await import('@/sync/runtime/orchestration/concurrentSessionCache')).stopConcurrentSessionCacheSync();
     concurrentFixtureStarted = false;
     if (controllerConnection) await controllerConnection.dispose();
@@ -357,6 +389,103 @@ function pluginSearchProjection(input: Readonly<{ pluginId: string; title: strin
 }
 
 describe('UniversalSearchController exact Home scope', () => {
+    it.each(['', 'Needle'])('hides tagged cached Session recents/matches for query %j before the recent limit, preserving other Homes', async (query) => {
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery={query}
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const rows = Array.from({ length: 7 }, (_, index) => createSessionListRenderableSessionFixture({
+            id: `cached-${index}`, updatedAt: index, metadata: { name: `Needle ${index}`, path: '/repo', host: 'host' },
+        }));
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { [HOME_B]: ['private'] } },
+                sessionListRowsByServerId: { [HOME_B]: Object.fromEntries(rows.map(row => [row.id, row])) } });
+            storage.getState().setSessionTagAssignmentsOptimistic(HOME_B, 'cached-6', ['private']);
+            storage.getState().setSessionTagAssignmentsOptimistic(HOME_A, 'cached-5', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        const labels = () => {
+            const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'sessions');
+            return section?.kind === 'static' ? section.options.map(option => option.label) : [];
+        };
+        expect(labels()).toEqual(query ? ['Needle 5', 'Needle 4', 'Needle 3', 'Needle 2', 'Needle 1', 'Needle 0'] : ['Needle 5', 'Needle 4', 'Needle 3', 'Needle 2', 'Needle 1']);
+        await act(async () => { setScreenSharingPrivacyActive(false); });
+        expect(labels()[0]).toBe('Needle 6');
+    });
+
+    it('filters initial and progress message hits with fresh privacy state while a resolver is retained', async () => {
+        fixture.featureEnabled['memory.search'] = true;
+        fixture.homeSearch.mockResolvedValue({ v: 1, ok: true, hits: [
+            { sessionId: 'private-message', seqFrom: 7, seqTo: 7, createdAtFromMs: 1, createdAtToMs: 1, summary: 'private snippet', score: 0.5 },
+            { sessionId: 'public-message', seqFrom: 8, seqTo: 8, createdAtFromMs: 1, createdAtToMs: 1, summary: 'public snippet', score: 0.5 },
+        ] });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="needle"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'transcript');
+        if (!section || section.kind !== 'dynamic') throw new Error('Messages section missing');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(JSON.stringify(mountedSearch?.tree.toJSON())).toContain('private snippet');
+        });
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { [HOME_B]: ['private'] } } });
+            storage.getState().setSessionTagAssignmentsOptimistic(HOME_B, 'private-message', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(JSON.stringify(mountedSearch?.tree.toJSON())).not.toContain('private snippet');
+        const pages: string[] = [];
+        const hidden = await section.resolve('needle', new AbortController().signal, page => { pages.push(JSON.stringify(page.options)); });
+        expect(JSON.stringify(hidden.options)).toContain('public snippet');
+        expect(JSON.stringify(hidden.options)).not.toContain('private snippet');
+        expect(pages.length).toBeGreaterThan(0);
+        expect(pages.join('')).not.toContain('private snippet');
+        await act(async () => { setScreenSharingPrivacyActive(false); });
+        const restored = await section.resolve('needle', new AbortController().signal);
+        expect(JSON.stringify(restored.options)).toContain('private snippet');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(JSON.stringify(mountedSearch?.tree.toJSON())).toContain('private snippet');
+        });
+    });
+
+    it.each([
+        { query: '', source: undefined },
+        { query: 'needle', source: 'files' as const },
+        { query: 'needle', source: 'fileContent' as const },
+        { query: 'needle', source: 'symbols' as const },
+    ])('makes no conversation acquisitions without conversation demand (%j)', async ({ query, source }) => {
+        fixture.singleHome = true;
+        fixture.scopedPluginProjections.set(`${HOME_B}:machine-b`, PluginProjectionV2Schema.parse({ v: 2, generation: 1 }));
+        fixture.featureEnabled['memory.search'] = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.daemonRpc.mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return { ...DEFAULT_MEMORY_SETTINGS, enabled: true };
+            throw Object.assign(new Error('Availability transport unavailable'), { rpcErrorCode: 'RPC_REQUEST_TIMEOUT' });
+        });
+        let credentialsCurrent = false;
+        let requestsBeforeOpen = 0;
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery={query} initialSource={source}
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-b', rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />,
+        <SearchCredentialBindingProbe observe={current => { credentialsCurrent = current; }} />, content => {
+            requestsBeforeOpen = network.requests.length;
+            fixture.daemonRpc.mockClear();
+            return content;
+        });
+        await waitForHomeGovernance(() => expect(credentialsCurrent).toBe(true));
+        await act(async () => { await flushHookEffects({ cycles: 4, turns: 2 }); });
+        const acquisitionCount = network.requests.slice(requestsBeforeOpen).filter(request => [
+            RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
+            RPC_METHODS.DAEMON_MEMORY_STATUS,
+            ...(query ? [] : [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE]),
+        ].some(method => method === request.method || request.method.endsWith(`:${method}`))).length;
+        expect(acquisitionCount).toBe(0);
+        if (!query) expect(fixture.daemonRpc).not.toHaveBeenCalled();
+        expect(fixture.homeSearch).not.toHaveBeenCalled();
+    });
     it('renders a known indexed reply before document admission finishes, then adds admitted documents', async () => {
         fixture.featureEnabled = { search: false, 'memory.search': true };
         fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
@@ -399,7 +528,7 @@ describe('UniversalSearchController exact Home scope', () => {
             expect(JSON.stringify(screen.tree.toJSON())).toContain('silver meadow');
         } finally { documents.resolve(); }
     });
-    it('keeps old-daemon Session hits usable with explicit unavailable document coverage', async () => {
+    it('reports unavailable daemon status once without issuing a fallback search', async () => {
         fixture.featureEnabled = { search: false, 'memory.search': true };
         fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
         fixture.daemonRpc.mockImplementation(async (call) => {
@@ -417,16 +546,32 @@ describe('UniversalSearchController exact Home scope', () => {
         const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'transcript');
         if (!section || section.kind !== 'dynamic') throw new Error('Memory search section missing');
         const resolved = await section.resolve('recovery', new AbortController().signal);
-        expect(resolved.options).toHaveLength(1);
-        expect(resolved.resultHint).toContain('Memory document search is unavailable here.');
-        const query = fixture.daemonRpc.mock.calls.find(([call]) => call.method === 'daemon.memory.search')?.[0];
-        expect(query?.payload).not.toHaveProperty('corpora');
-        const option = resolved.options[0]!;
-        await act(async () => {
-            option.onSelect?.();
-            selectionListProps()?.onSelect?.(option.id, option);
-            await vi.waitFor(() => expect(harness.routerNavigate).toHaveBeenCalledWith('/session/session-b?serverId=srv_fsp_controller_b&jumpSeq=9', expect.objectContaining({ dangerouslySingular: expect.any(Function) })));
+        expect(resolved.options).toHaveLength(0);
+        // One cause per line: the outdated machine explains the missing document search too.
+        expect(resolved.resultHint).toBe('Needs an update: machine-b');
+        expect(fixture.daemonRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)).toEqual([]);
+    });
+
+    it('says inside Messages that nothing matched the query, and why the search was incomplete', async () => {
+        fixture.featureEnabled = { search: false, 'memory.search': true };
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.daemonRpc.mockImplementation(async (call) => {
+            if (call.method === 'daemon.memory.settings.get') return DEFAULT_MEMORY_SETTINGS;
+            if (call.method === 'daemon.memory.status') throw Object.assign(new Error('Older daemon'), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            });
+            return { v: 1, ok: true, hits: [] };
         });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="slack water"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'transcript');
+        if (!section || section.kind !== 'dynamic') throw new Error('Memory search section missing');
+        const resolved = await section.resolve('slack water', new AbortController().signal);
+        expect(resolved.options).toHaveLength(0);
+        // A bare coverage line under Messages says neither the query nor that nothing matched (accept-r333 S3).
+        expect(resolved.emptyHint).toBe('No messages match “slack water” · Needs an update: machine-b');
     });
 
     it('keeps mixed memory hits and opens their named topic through the qualified document route', async () => {
@@ -605,6 +750,68 @@ describe('UniversalSearchController exact Home scope', () => {
             if (!sessionSection || sessionSection.kind !== 'static') throw new Error('Sessions section missing');
             expect(sessionSection.options[0]?.searchText).toContain('Urgent');
         });
+    });
+
+    it('projects Session search metadata only when the selected Home inventory changes', async () => {
+        fixture.sessionListRows = Array.from({ length: 1_000 }, (_, index) => ({
+            serverId: HOME_A,
+            serverName: 'Home A',
+            session: { id: `search-session-${index}`, updatedAt: index + 1,
+                metadata: { name: `Needle Session ${index}`, path: `/repo/${index}` } },
+        }));
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="needle"
+            initialScope={{ accountId: 'account-a', serverId: HOME_A, sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const sessionOptions = () => {
+            const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'sessions');
+            if (!section || section.kind !== 'static') throw new Error('Sessions section missing');
+            return section.options;
+        };
+        await vi.waitFor(() => expect(sessionOptions()[0]?.label).toBe('Needle Session 999'));
+        const rows = storage.getState().sessionListRowsByServerId[HOME_A]!;
+        expect(Object.keys(rows)).toHaveLength(1_000);
+        let metadataReads = 0;
+        for (const row of Object.values(rows)) {
+            const metadata = row.metadata;
+            // Observe reads of the real admitted row; internal title/search logic remains real.
+            Object.defineProperty(row, 'metadata', { configurable: true, enumerable: true,
+                get: () => { metadataReads += 1; return metadata; } });
+        }
+        for (const query of ['needle s', 'needle se', 'needle session']) {
+            await act(async () => { selectionListProps()?.onChangeInputValue?.(query); });
+        }
+        expect(metadataReads, 'typing must only match the already-projected search rows').toBe(0);
+
+        const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+        const foreignRow = buildSessionListRenderableFromSession(createSessionFixture({
+            id: 'search-session-999', serverId: HOME_B,
+            metadata: MetadataSchema.parse({ name: 'Foreign Session', path: '/foreign' }),
+        }));
+        await act(async () => {
+            storage.getState().applyServerScopedSessionListRows(HOME_B, [foreignRow], { source: 'rowOnly', mode: 'append' });
+        });
+        expect(storage.getState().sessionListRowsByServerId[HOME_B]?.[foreignRow.id]?.metadata?.name).toBe('Foreign Session');
+        expect(metadataReads, 'foreign Home inventory must not re-project selected Home metadata').toBe(0);
+        expect(sessionOptions()[0]?.label).toBe('Needle Session 999');
+
+        await act(async () => {
+            storage.getState().applyServerScopedSessionListRowPatches(HOME_A, [{
+                sessionId: 'search-session-0',
+                patch: row => ({ updatedAt: 2_000, metadata: { ...row.metadata!, name: 'Needle Session renamed' } }),
+            }]);
+        });
+        expect(metadataReads, 'genuine selected Home metadata replacement must reach search').toBeGreaterThan(0);
+        expect(sessionOptions()[0]?.label).toBe('Needle Session renamed');
+        const beforeQuery = metadataReads;
+        await act(async () => { selectionListProps()?.onChangeInputValue?.('renamed'); });
+        expect(metadataReads).toBe(beforeQuery);
+        expect(sessionOptions()).toHaveLength(1_000);
+        expect(sessionOptions()[0]).toMatchObject({ label: 'Needle Session renamed', searchText: expect.stringContaining('renamed') });
+        const searchInput = mountedSearch?.findByTestId('selection-list:header:input');
+        if (!searchInput) throw new Error('Search input missing');
+        expect(searchInput.props['aria-activedescendant'])
+            .toContain('search-session-0');
     });
 
     it('ensures complete inventory once for the scope lifetime without exposing or restarting a result section', async () => {
@@ -996,6 +1203,41 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(result.options[0]?.subtitle).toBe('Matching transcript excerpt');
     });
 
+    it('searches the Settings catalog once per changed query, never for unrelated result renders', async () => {
+        // Pass-through observation of the real catalog's two Fuse pools; no domain logic is mocked.
+        const searches = vi.spyOn(Fuse.prototype, 'search');
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        try {
+            await renderScreen(<UniversalSearchController commands={[]}
+                initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+                presentation="modal" onRequestClose={vi.fn()} />);
+            await act(async () => { await flushHookEffects({ cycles: 4, turns: 2 }); });
+            const count = (query: string) => searches.mock.calls.filter(([value]) => value === query).length;
+            searches.mockClear();
+            await act(async () => {
+                selectionListProps()?.onChangeInputValue?.('theme');
+                await flushHookEffects({ cycles: 4, turns: 2 });
+            });
+            expect(count('theme')).toBe(2);
+            for (let batch = 0; batch < 3; batch += 1) {
+                await act(async () => {
+                    storage.setState({ machineListStatusByServerId: {
+                        ...storage.getState().machineListStatusByServerId,
+                        [HOME_A]: batch % 2 === 0 ? 'loading' : 'idle',
+                    } });
+                    await flushHookEffects({ cycles: 2, turns: 2 });
+                });
+            }
+            expect(count('theme')).toBe(2);
+            await act(async () => {
+                selectionListProps()?.onChangeInputValue?.('security');
+                await flushHookEffects({ cycles: 4, turns: 2 });
+            });
+            expect(count('security')).toBe(2);
+            expect(mountedSearch?.getTextContent()).toContain('Sign-in & security');
+        } finally { searches.mockRestore(); }
+    });
+
     it('lists settings results as one group, pages first, each row with the path the settings rail shows', async () => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
 
@@ -1068,8 +1310,246 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(scopeFilter.valueLabel).toBe('Home B');
     });
 
+    it('joins Session targets only for an opened scope picker, keeping current exact choices after closed arrivals', async () => {
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        fixture.workspaceRefs = Array.from({ length: 20 }, (_, index) => ({
+            id: `scope-workspace-${index}`, serverId: HOME_B, machineId: 'machine-b',
+            rootPath: `/repo/${index}`, label: `Project ${index}`, createdAtMs: index + 1,
+        }));
+        const scopeModule = await import('./universalSearchScope');
+        const originalBuild = scopeModule.buildUniversalSearchScopeChoices;
+        let targetReads = 0;
+        // Pass-through instrumentation counts actual joins; all admission and scope logic stays real.
+        const build = vi.spyOn(scopeModule, 'buildUniversalSearchScopeChoices').mockImplementation(input => originalBuild({
+            ...input, readMachineTarget: target => { targetReads += 1; return input.readMachineTarget(target); },
+        }));
+        try {
+            const { UniversalSearchController } = await import('./UniversalSearchController');
+            await renderScreen(<UniversalSearchController commands={[]} initialQuery="initial"
+                initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+                activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+            const sessions = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
+                const session = createSessionFixture({ id: `scope-session-${index}`, serverId: HOME_B,
+                    updatedAt: index + 1, metadata: MetadataSchema.parse({ name: `Session ${index}`, machineId: 'machine-b', path: `/repo/${index % 20}` }) });
+                return [session.id, session];
+            }));
+            let inventoryEnumerations = 0;
+            let sortFieldReads = 0;
+            const observedSessions = new Proxy(sessions, {
+                ownKeys: target => { inventoryEnumerations += 1; return Reflect.ownKeys(target); },
+            });
+            for (const session of Object.values(sessions)) {
+                const updatedAt = session.updatedAt;
+                Object.defineProperty(session, 'updatedAt', { enumerable: true, configurable: true,
+                    get: () => { sortFieldReads += 1; return updatedAt; } });
+            }
+            targetReads = 0;
+            await act(async () => { storage.setState({ sessions: observedSessions }); });
+            expect(inventoryEnumerations).toBeGreaterThan(0);
+            expect(sortFieldReads).toBeGreaterThan(0);
+            inventoryEnumerations = 0;
+            sortFieldReads = 0;
+            for (const query of ['typed', 'typed query', 'typed query again']) {
+                await act(async () => { selectionListProps()?.onChangeInputValue?.(query); });
+            }
+            expect(inventoryEnumerations, 'typing must not enumerate the hydrated Session inventory').toBe(0);
+            expect(sortFieldReads, 'typing must not re-sort the hydrated Session inventory').toBe(0);
+            for (let batch = 0; batch < 3; batch += 1) {
+                await act(async () => {
+                    const current = storage.getState().sessions['scope-session-999']!;
+                    storage.setState({ sessions: { ...storage.getState().sessions,
+                        [current.id]: { ...current, seq: current.seq + 1, metadata: { ...current.metadata!, name: `Arriving result ${batch}` } },
+                    } });
+                    selectionListProps()?.onChangeInputValue?.(`result batch ${batch}`);
+                });
+            }
+            expect(targetReads).toBe(0);
+            await act(async () => { selectionListProps()?.filters?.find(filter => filter.id === 'scope')?.onOpenChange?.(true); });
+            expect(targetReads).toBeGreaterThan(0);
+            const filter = selectionListProps()?.filters?.find(item => item.id === 'scope');
+            expect(filter?.options?.slice(-20).map(option => option.label)).toEqual(fixture.workspaceRefs.map(workspace => workspace.label));
+            const project = filter?.options?.find(option => option.label === 'Project 19');
+            expect(project).toBeDefined();
+            await act(async () => { filter?.onChange?.(project!.id); });
+            expect(selectionListProps()?.filters?.find(item => item.id === 'scope')).toMatchObject({
+                valueLabel: 'Project 19', selectedId: project!.id,
+            });
+            expect(project!.id).toContain('scope-session-999');
+            targetReads = 0;
+            const addedWorkspace = { id: 'scope-added', serverId: HOME_B, machineId: 'machine-b',
+                rootPath: '/repo/new', label: 'Added while open', createdAtMs: 21 };
+            await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [...fixture.workspaceRefs, addedWorkspace] }); });
+            expect(targetReads).toBeGreaterThan(0);
+            expect(selectionListProps()?.filters?.find(item => item.id === 'scope')?.options?.at(-1)?.label).toBe('Added while open');
+            await act(async () => { selectionListProps()?.filters?.find(item => item.id === 'scope')?.onOpenChange?.(false); });
+            expect(selectionListProps()?.filters?.find(item => item.id === 'scope')?.valueLabel).toBe('Project 19');
+            await act(async () => {
+                const next = storage.getState().sessions['scope-session-979']!;
+                storage.setState({ sessions: { ...storage.getState().sessions, [next.id]: { ...next, updatedAt: 2_000 } } });
+            });
+            // Preserve the existing full-key fallback when the selected Session is no
+            // longer the first matching Session, rather than silently relabeling it.
+            expect(selectionListProps()?.filters?.find(item => item.id === 'scope')?.valueLabel).toBe('Home B');
+            await act(async () => { selectionListProps()?.filters?.find(item => item.id === 'scope')?.onOpenChange?.(true); });
+            expect(selectionListProps()?.filters?.find(item => item.id === 'scope')?.options
+                ?.find(option => option.label === 'Project 19')?.id).toContain('scope-session-979');
+        } finally {
+            standardCleanup(); mountedSearch = undefined;
+            build.mockRestore();
+            restorePopoverGlobals();
+        }
+    });
+
+    it('keeps its row activation handlers referentially stable when unrelated Account state changes', async () => {
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="initial"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        const before = selectionListProps()!;
+        // Every row receives `onSelect`; a new identity here re-renders each visible row on any controller render.
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [{
+            id: 'unrelated-added', serverId: HOME_B, machineId: 'machine-b', rootPath: '/repo/unrelated', label: 'Unrelated', createdAtMs: 1 }] }); });
+        await act(async () => { storage.setState({ machineListStatusByServerId: { [HOME_A]: 'idle', [HOME_B]: 'loading' } }); });
+        const after = selectionListProps()!;
+        expect(after.onSelect).toBe(before.onSelect);
+        expect(after.onCommandSelect).toBe(before.onCommandSelect);
+        expect(after.onChangeInputValue).toBe(before.onChangeInputValue);
+        expect(after.onRequestClose).toBe(before.onRequestClose);
+    });
+
+    it('does not re-render the open palette when a Session streams without changing what Search shows of it', async () => {
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="initial"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        const session = createSessionFixture({ id: 'streaming', serverId: HOME_B, updatedAt: 5,
+            metadata: MetadataSchema.parse({ name: 'Streaming', machineId: 'machine-b', path: '/repo/stream' }) });
+        await act(async () => { storage.setState({ sessions: { streaming: session } }); });
+        const before = selectionListProps();
+        for (let seq = 1; seq <= 3; seq += 1) {
+            await act(async () => { storage.setState({ sessions: { streaming: { ...session, seq: session.seq + seq, thinking: seq % 2 === 1 } } }); });
+        }
+        // `findByType(...).props` is the element the controller last rendered: the same object means no controller render.
+        expect(selectionListProps()).toBe(before);
+    });
+
     // Find lab G1s: "Text in files" is a removable scope token (× returns to everything), not a
     // two-option dropdown; without it Search shows no source chip at all (G1).
+    it('offers the folder you last worked in first when no folder is in scope, counting its sessions as use', async () => {
+        fixture.workspaceRefs = [
+            { id: 'ws-other', serverId: HOME_B, machineId: 'machine-b', rootPath: '/tmp/other-lane', label: 'other-lane', createdAtMs: 1, lastOpenedAtMs: 2_000 },
+            { id: 'ws-harbour', serverId: HOME_B, machineId: 'machine-b', rootPath: '/home/u/harbour-tides', label: 'harbour-tides', createdAtMs: 1, lastOpenedAtMs: 1_000 },
+        ];
+        fixture.sessionListRows = [{ serverId: HOME_B, serverName: 'Home B', session: { id: 'session-harbour', updatedAt: 5_000,
+            metadata: { name: 'Explain the harbour card', path: '/home/u/harbour-tides', machineId: 'machine-b' } } }];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="tide"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        await vi.waitFor(async () => {
+            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'fileContent');
+            if (!section || section.kind !== 'dynamic') throw new Error('Text in files folders missing');
+            const resolved = await section.resolve('tide', new AbortController().signal);
+            expect(resolved.options.map((option) => option.id)).toEqual(['fileContent:folder:ws-harbour', 'fileContent:folder:ws-other']);
+        });
+    });
+
+    // Same-named projects on same-named Machines read apart, with the suffix the session list header uses.
+    it('tells same-named projects apart by the Machine name that the session list header uses', async () => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.workspaceRefs = [
+            { id: 'ws-one', serverId: HOME_B, machineId: 'machine-aaaa1111', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
+            { id: 'ws-two', serverId: HOME_B, machineId: 'machine-bbbb2222', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
+        ];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]}
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        const named = (id: string) => createMachineFixture({ id, active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Build box', host: 'build-box' } });
+        await act(async () => { storage.setState({
+            machines: { 'machine-aaaa1111': named('machine-aaaa1111'), 'machine-bbbb2222': named('machine-bbbb2222') },
+            machineListByServerId: { [HOME_B]: [named('machine-aaaa1111'), named('machine-bbbb2222')] },
+        }); });
+        await vi.waitFor(() => {
+            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
+            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
+            const subtitles = section.options.map((option) => String(option.subtitle ?? ''));
+            expect(subtitles).toHaveLength(2);
+            expect(subtitles.every((subtitle) => subtitle.includes('Build box · '))).toBe(true);
+            expect(new Set(subtitles).size).toBe(2);
+        });
+        // A Machine still hydrating is left out of the line; the placeholder never reads as its name.
+        const hydrating = createMachineFixture({ id: 'machine-aaaa1111', metadata: null, availability: undefined });
+        await act(async () => { storage.setState({
+            machines: { 'machine-aaaa1111': hydrating, 'machine-bbbb2222': named('machine-bbbb2222') },
+            machineListByServerId: { [HOME_B]: [hydrating, named('machine-bbbb2222')] },
+        }); });
+        await vi.waitFor(() => {
+            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
+            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
+            expect(section.options.map((option) => String(option.subtitle ?? '')).some((subtitle) => subtitle.includes(t('common.loading')))).toBe(false);
+        });
+    });
+
+    // Find lab ST "No folder in scope": opened from the app home or Settings, the Text in files scope
+    // offers the recent folders instead of a false Machine-connection error; choosing one searches it.
+    it('offers recent folders in the Text in files scope with no folder, and choosing one searches it for the typed query', async () => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.workspaceRefs = [{ id: 'ws-tide', serverId: HOME_B, machineId: 'machine-b', rootPath: '/home/leeroy/tidepool', label: 'tidepool', createdAtMs: 1 }];
+        fixture.daemonRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST
+            ? { ok: true, paths: [], truncated: false } : { ok: true, files: [], hasMore: false, coverage: 'complete' });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="highWater" initialSource="fileContent"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        await act(async () => { storage.setState({ machines: {
+            'machine-b': createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now() }),
+        } }); });
+        const textSection = () => {
+            const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'fileContent');
+            if (!section) throw new Error('Missing Text in files section');
+            return section;
+        };
+        // The folders are local rows, offered before anything is typed too; the typed query never filters them.
+        const folders = textSection();
+        if (folders.kind !== 'static') throw new Error('Recent folders should be local rows');
+        expect(selectionListProps()?.rootStep.disableInputFilter).toBe(true);
+        expect(folders.options.map(option => option.id)).toEqual(['fileContent:folder:ws-tide']);
+        expect(folders.options[0]!.label).toBe(t('universalSearch.content.searchInFolder', { name: 'tidepool' }));
+        const searches = () => fixture.daemonRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH);
+        expect(searches()).toHaveLength(0);
+
+        await act(async () => { folders.options[0]!.onSelect?.(); });
+
+        expect(selectionListProps()?.inputValue).toBe('highWater');
+        expect(selectionListProps()?.filters?.find(filter => filter.id === 'source')?.valueLabel).toContain('tidepool');
+        const scopedSection = textSection();
+        if (scopedSection.kind !== 'dynamic') throw new Error('The chosen folder should be searched');
+        const scoped = await scopedSection.resolve('highWater', new AbortController().signal);
+        expect(scoped.emptyHint).toBe(t('universalSearch.content.noTextMatches', { scope: 'tidepool', query: 'highWater' }));
+        expect(searches().map(([call]) => call.payload)).toEqual([
+            expect.objectContaining({ query: 'highWater', rootPath: '/home/leeroy/tidepool' }),
+        ]);
+    });
+
+    // Replace (Alt+Shift+H) opens the same scope; with no folder its review waits for one instead of a false error.
+    it('says how to get a folder when Text in files or Replace has no folder in scope and none is recent', async () => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.workspaceRefs = [];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="highWater" initialSource="fileContent" initialReplace
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        const rootStep = selectionListProps()?.rootStep;
+        expect(rootStep?.sections.some(item => item.id === 'fileContent' || item.id.startsWith('replace:'))).toBe(false);
+        expect(rootStep?.emptyStateLabel).toBe(t('universalSearch.content.noFolder'));
+        expect(fixture.daemonRpc.mock.calls.some(([call]) => call.method === RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)).toBe(false);
+    });
+
     it('shows Text in files as a removable token only while that scope is on', async () => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
         const workspaceScope = { accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-b', rootPath: '/home/leeroy/code/happier' };
@@ -1239,7 +1719,7 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(selectionListProps()?.filters?.some(filter => filter.id === 'source')).toBe(false);
     });
 
-    it.each(['current', 'workspace', 'account', 'retired', 'retired-after-query'] as const)('consumes a supplied unsaved symbol holder only for its current scope and Account (%s)', async (state) => {
+    it.each(['current', 'project-symbol', 'workspace', 'account', 'retired', 'retired-after-query'] as const)('consumes a supplied unsaved symbol holder only for its current scope and Account (%s)', async (state) => {
         fixture.singleHome = true;
         const scope = { accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-offline', rootPath: '/symbol-holder' };
         fixture.workspaceRefs = [{ id: 'ws-symbol-holder', ...scope, label: 'Symbols project', createdAtMs: 1 }];
@@ -1255,22 +1735,30 @@ describe('UniversalSearchController exact Home scope', () => {
             isCurrent: () => true,
             getText: () => { reads += 1; return text; },
             flushPendingChange: () => { text = '// unsaved\nclass LiveSymbol {}'; },
+            ...(state === 'project-symbol' ? { getWorkspaceSymbols: async () => ({ status: 'ok' as const, kind: 'workspaceSymbol' as const,
+                hasMore: false, symbols: [{ serverId: 'ts', path: 'src/other.ts', name: 'LiveSymbol', kind: 5,
+                    range: { start: { line: 11, character: 6 }, end: { line: 11, character: 16 } } }] }) } : {}),
         };
         const { UniversalSearchModal } = await import('./UniversalSearchModal');
         const openWorkspaceFile = vi.fn(async () => true);
-        await renderScreen(<UniversalSearchModal commands={[]} symbols={symbols} initialSource="files" initialQuery="@LiveSymbol"
+        const screen = await renderScreen(<UniversalSearchModal commands={[]} symbols={symbols} initialSource="files" initialQuery="@LiveSymbol"
             initialScope={scope} openWorkspaceFile={openWorkspaceFile} onClose={vi.fn()} />);
         const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'symbols');
         if (!section || section.kind !== 'dynamic') throw new Error('Missing Symbols section');
+        if (state === 'current' || state === 'project-symbol' || state === 'retired-after-query') {
+            // Let the mounted list finish its query before resolving the section
+            // directly: the real symbol owner supersedes overlapping requests.
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('LiveSymbol'));
+        }
         let page!: Awaited<ReturnType<typeof section.resolve>>;
         await act(async () => { page = await section.resolve('LiveSymbol', new AbortController().signal); });
-        if (state !== 'current' && state !== 'retired-after-query') {
+        if (state !== 'current' && state !== 'project-symbol' && state !== 'retired-after-query') {
             expect(page.options).toEqual([]);
             expect(reads).toBe(0);
             return;
         }
         expect(page.options.map(option => option.label)).toEqual(['LiveSymbol']);
-        expect(selectionListProps()?.filters?.find(filter => filter.id === 'source')?.valueLabel).toContain('a.ts');
+        if (state !== 'project-symbol') expect(selectionListProps()?.filters?.find(filter => filter.id === 'source')?.valueLabel).toContain('a.ts');
         const option = page.options[0]!;
         if (state === 'retired-after-query') accountCurrent = false;
         await act(async () => {
@@ -1283,8 +1771,8 @@ describe('UniversalSearchController exact Home scope', () => {
             return;
         }
         await vi.waitFor(() => expect(openWorkspaceFile).toHaveBeenCalledWith({ kind: 'project', workspaceRefId: 'ws-symbol-holder',
-            serverId: scope.serverId, machineId: scope.machineId, rootPath: scope.rootPath, path: 'src/a.ts' },
-            { intent: 'beside', anchor: { kind: 'fileLine', startLine: 2 } }));
+            serverId: scope.serverId, machineId: scope.machineId, rootPath: scope.rootPath, path: state === 'project-symbol' ? 'src/other.ts' : 'src/a.ts' },
+            { intent: 'beside', anchor: { kind: 'fileLine', startLine: state === 'project-symbol' ? 12 : 2 } }));
     });
 
     it.each(['preview', 'beside'] as const)('keeps offline Recent and Changed searchable and opens a remembered file with %s intent without requesting files', async (intent) => {
@@ -1298,9 +1786,9 @@ describe('UniversalSearchController exact Home scope', () => {
         await renderScreen(<UniversalSearchController commands={[]} initialSource="files" initialScope={scope}
             openWorkspaceFile={openWorkspaceFile} activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
         await act(async () => {
-            storage.getState().applyLocalSettings({ recentWorkspaceFilesV1: {
-                [buildWorkspaceCacheKey(scope)]: ['src/settingsRecent.ts', 'settings/unrelated.ts'],
-            } });
+            (replacePersistentUiStateForTest(recentWorkspaceFilesState, parseRecentWorkspaceFiles({
+                [recentWorkspaceFilesKey(scope, buildWorkspaceCacheKey(scope))]: ['src/settingsRecent.ts', 'settings/unrelated.ts'],
+            })), storage.getState().applyLocalSettings({ }));
             storage.getState().updateWorkspaceScmSnapshot(scope, {
                 projectKey: buildWorkspaceCacheKey(scope), fetchedAt: 1,
                 repo: { isRepo: true, rootPath: scope.rootPath },
@@ -1313,11 +1801,13 @@ describe('UniversalSearchController exact Home scope', () => {
                     includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0 },
             });
         });
-        const sections = selectionListProps()?.rootStep.sections ?? [];
-        expect(sections.map(section => section.id)).toEqual(['files:recent', 'files:changed']);
-        const recent = sections[0];
-        if (!recent || recent.kind !== 'static') throw new Error('Missing offline Recent source');
-        expect(recent.resultHint).toBeDefined();
+        const rootStep = selectionListProps()?.rootStep;
+        const emptySource = rootStep?.virtualizedOptionSource;
+        if (!emptySource) throw new Error('Missing offline quick-open source');
+        expect(rootStep?.sections).toEqual([]);
+        expect([emptySource.getHeader(0).id, emptySource.getHeader(1).id]).toEqual(['files:recent', 'files:changed']);
+        expect(emptySource.getHeader(0).resultHint).toBeDefined();
+        expect(emptySource.items.filter(item => item.kind === 'result-hint')).toHaveLength(1);
         await act(async () => { selectionListProps()?.onChangeInputValue?.('settings'); });
         const files = selectionListProps()?.rootStep.sections.find(section => section.id === 'files');
         if (!files || files.kind !== 'dynamic') throw new Error('Missing offline Files source');
@@ -1325,6 +1815,9 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(reply.options.map(option => option.label)).toEqual(['settingsRecent.ts', 'settingsChanged.ts', 'unrelated.ts']);
         expect(reply.resultHint).toBeDefined();
         expect(fixture.daemonRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST)).toBe(false);
+        await act(async () => { selectionListProps()?.onChangeInputValue?.(''); });
+        expect(selectionListProps()?.rootStep.virtualizedOptionSource).toBe(emptySource);
+        await act(async () => { selectionListProps()?.onChangeInputValue?.('settings'); });
         const option = reply.options[0]!;
         await act(async () => {
             option.onSelect?.();
@@ -1348,9 +1841,9 @@ describe('UniversalSearchController exact Home scope', () => {
         await renderScreen(<UniversalSearchController commands={[]} initialSource="files" initialScope={scope}
             openWorkspaceFile={openWorkspaceFile} activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
         await act(async () => {
-            storage.getState().applyLocalSettings({ recentWorkspaceFilesV1: {
-                [buildWorkspaceCacheKey(scope)]: ['src/settings.ts', 'src/settings.ts:23', 'src/SettingsModal.tsx'],
-            } });
+            (replacePersistentUiStateForTest(recentWorkspaceFilesState, parseRecentWorkspaceFiles({
+                [recentWorkspaceFilesKey(scope, buildWorkspaceCacheKey(scope))]: ['src/settings.ts', 'src/settings.ts:23', 'src/SettingsModal.tsx'],
+            })), storage.getState().applyLocalSettings({ }));
             selectionListProps()?.onChangeInputValue?.('src/settings.ts:23');
         });
         const files = selectionListProps()?.rootStep.sections.find(section => section.id === 'files');
@@ -1370,6 +1863,26 @@ describe('UniversalSearchController exact Home scope', () => {
         await vi.waitFor(() => expect(openWorkspaceFile).toHaveBeenCalledWith({ kind: 'project',
             workspaceRefId: 'ws-quick-open-grammar', serverId: scope.serverId, machineId: scope.machineId,
             rootPath: scope.rootPath, path: 'src/SettingsModal.tsx' }, { intent: 'preview', anchor: { kind: 'fileLine', startLine: 23 } }));
+    });
+
+    it.each(['C:\\main.ts', '\\\\host\\share\\x.ts:2'])('treats an absolute path outside the selected root as no file match: %s', async query => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        const scope = { accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-b', rootPath: '/coastal' };
+        fixture.workspaceRefs = [{ id: 'ws-coastal', ...scope, label: 'Coastal', createdAtMs: 1 }];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery={query} initialSource="files"
+            initialScope={scope} activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        await act(async () => { storage.setState({ machines: {
+            'machine-b': createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now() }),
+        } }); });
+        const files = selectionListProps()?.rootStep.sections.find(section => section.id === 'files');
+        if (!files || files.kind !== 'dynamic') throw new Error('Missing Files source');
+        const requestsBefore = fixture.daemonRpc.mock.calls.length;
+        const reply = await files.resolve(query, new AbortController().signal);
+        expect(reply.emptyHint).toBeUndefined();
+        expect(reply.options[0]?.testID).toBe('universal-search:files-no-match');
+        expect(fixture.daemonRpc.mock.calls.length).toBe(requestsBefore);
     });
 
     it('preserves a missing folder outcome in both file search sections', async () => {
@@ -1423,6 +1936,27 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(reply.resultHint).toBeUndefined();
     });
 
+    // Find lab ST "No text matches": the line lives inside the group and names the query and the folder.
+    it('says a partial search with no text matches inside its group, naming the query and the folder', async () => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.workspaceRefs = [{ id: 'ws-tide', serverId: HOME_B, machineId: 'machine-b', rootPath: '/home/leeroy/tidepool', label: 'tidepool', createdAtMs: 1 }];
+        fixture.daemonRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST
+            ? { ok: true, paths: [], truncated: false } : { ok: true, files: [], hasMore: false, coverage: 'partial' });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="highWater" initialSource="fileContent"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-b', rootPath: '/home/leeroy/tidepool' }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        await act(async () => { storage.setState({ machines: {
+            'machine-b': createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now() }),
+        } }); });
+        const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'fileContent');
+        if (!section || section.kind !== 'dynamic') throw new Error('Missing Text in files section');
+        const reply = await section.resolve('highWater', new AbortController().signal);
+        expect(reply.options).toHaveLength(0);
+        expect(reply.emptyHint).toBe(t('universalSearch.content.noTextMatchesPartial', { scope: 'tidepool', query: 'highWater' }));
+    });
+
     // Find lab ST "Machine offline": one line, under Text in files, not the same sentence in every group.
     it('says once that the folder\'s machine is offline', async () => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
@@ -1444,45 +1978,6 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(ids).toContain('fileContent');
         expect(ids).not.toContain('files');
         expect(ids).not.toContain('commits');
-    });
-
-    // Same-named projects on same-named Machines read apart, with the suffix the session list header uses.
-    it('tells same-named projects apart by the Machine name that the session list header uses', async () => {
-        fixture.singleHome = true;
-        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
-        fixture.workspaceRefs = [
-            { id: 'ws-one', serverId: HOME_B, machineId: 'machine-aaaa1111', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
-            { id: 'ws-two', serverId: HOME_B, machineId: 'machine-bbbb2222', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
-        ];
-        const { UniversalSearchController } = await import('./UniversalSearchController');
-        await renderScreen(<UniversalSearchController commands={[]}
-            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
-            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
-        const named = (id: string) => createMachineFixture({ id, active: true, activeAt: Date.now(),
-            metadata: { ...createMachineFixture().metadata!, displayName: 'Build box', host: 'build-box' } });
-        await act(async () => { storage.setState({
-            machines: { 'machine-aaaa1111': named('machine-aaaa1111'), 'machine-bbbb2222': named('machine-bbbb2222') },
-            machineListByServerId: { [HOME_B]: [named('machine-aaaa1111'), named('machine-bbbb2222')] },
-        }); });
-        await vi.waitFor(() => {
-            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
-            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
-            const subtitles = section.options.map((option) => String(option.subtitle ?? ''));
-            expect(subtitles).toHaveLength(2);
-            expect(subtitles.every((subtitle) => subtitle.includes('Build box · '))).toBe(true);
-            expect(new Set(subtitles).size).toBe(2);
-        });
-        // A Machine still hydrating is left out of the line; the placeholder never reads as its name.
-        const hydrating = createMachineFixture({ id: 'machine-aaaa1111', metadata: null, availability: undefined });
-        await act(async () => { storage.setState({
-            machines: { 'machine-aaaa1111': hydrating, 'machine-bbbb2222': named('machine-bbbb2222') },
-            machineListByServerId: { [HOME_B]: [hydrating, named('machine-bbbb2222')] },
-        }); });
-        await vi.waitFor(() => {
-            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
-            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
-            expect(section.options.map((option) => String(option.subtitle ?? '')).some((subtitle) => subtitle.includes(t('common.loading')))).toBe(false);
-        });
     });
 
     it('keeps the result query when the scope filter changes the Home', async () => {

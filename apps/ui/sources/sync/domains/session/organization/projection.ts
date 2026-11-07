@@ -14,10 +14,12 @@ import type {
 } from './types';
 import { readSessionAppearanceColorFromDisplay, type SessionAppearanceColor } from './appearanceColor';
 import type {
-    SessionAttentionStanding,
-    SessionOrganizationOrderEntry,
+    SessionAttentionStanding} from '@happier-dev/protocol/sessions/organization/standings';
+import type {
+    SessionOrganizationOrderEntry} from '@happier-dev/protocol/sessions/organization/ordering';
+import type {
     SessionOrganizationPin,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/pins';
 
 function compareNullableSortKey(a: string | null, b: string | null): number {
     if (a && b) return a.localeCompare(b);

@@ -1,8 +1,8 @@
-import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { deleteSessionOrganizationLabel as deleteSessionOrganizationLabelApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { DeleteSessionOrganizationLabelRequest } from '@happier-dev/protocol';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
+import type { DeleteSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 
 export async function deleteSessionLabel(params: Readonly<{
     credentials: AuthCredentials;

@@ -1,12 +1,13 @@
 import * as React from 'react';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useKnownAccountActor } from '@/components/account/useKnownAccountActor';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorPresentation, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
@@ -44,17 +45,23 @@ export function useApprovalAccountLabel(
   accountId: string | undefined,
   /** The viewer named inside a sentence ("confirmed by you") instead of as a row value ("You"). */
   form: 'value' | 'sentence' = 'value',
+  /** The resource owner's relationship-qualified actor wins over an unrelated profile-cache miss. */
+  resourceAccountActor?: TranscriptAccountActor | null,
 ): string | null {
   const { viewerScope, actor } = useKnownAccountActor(serverId, accountId);
   if (!accountId) return null;
   if (viewerScope?.accountId === accountId) {
     return form === 'sentence' ? t('session.collaboration.discussion.attribution.you') : t('message.accountActorYou');
   }
-  return actor
-    ? resolveAccountActorPresentation(actor, viewerScope).name
-    : form === 'sentence'
-      ? t('session.collaboration.discussion.attribution.anotherPerson')
-      : t('detailPages.approval.requester.anotherPerson');
+  const resourceActor = resourceAccountActor?.accountId === accountId
+    ? resourceAccountActor
+    : null;
+  const effectiveActor = resourceActor
+    ? { ...resourceActor, profile: resourceActor.profile ?? actor?.profile ?? null }
+    : actor;
+  return effectiveActor
+    ? resolveAccountActorPresentation(effectiveActor, viewerScope).name
+    : null;
 }
 
 /**
@@ -69,6 +76,8 @@ export const ApprovalRequesterConfirmationSection = React.memo(
       subject: ApprovalRequesterConfirmationV1;
       /** This device's resolved profile id for the approval Home. */
       serverId: string | null;
+      requesterAccountActor?: TranscriptAccountActor | null;
+      decidingAccountActor?: TranscriptAccountActor | null;
       open: boolean;
       decision: Readonly<{
         kind: 'approve' | 'reject';
@@ -83,13 +92,16 @@ export const ApprovalRequesterConfirmationSection = React.memo(
     const requester = useApprovalAccountLabel(
       serverId,
       props.subject.requesterAccountId,
+      'value',
+      props.requesterAccountActor,
     );
     const decider = useApprovalAccountLabel(
       serverId,
       props.decision?.decidingAccountId,
+      'value',
+      props.decidingAccountActor,
     );
-    const requesterName =
-      requester ?? t('detailPages.approval.requester.anotherPerson');
+    const requesterName = requester ?? resolveUnknownAccountActorName('value');
     const description = !props.open
       ? undefined
       : entitled

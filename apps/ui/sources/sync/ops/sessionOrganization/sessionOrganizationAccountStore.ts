@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { isHomeCredentialCurrent } from '@/sync/domains/scope/homeAccountRetirement';
+import { isHomeCredentialCurrent } from '@/sync/runtime/orchestration/homeAccountChange';
 
 /**
  * Every Organization operation reaches the store through the credentials it was issued with. A write

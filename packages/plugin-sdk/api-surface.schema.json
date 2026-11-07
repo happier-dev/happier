@@ -95,8 +95,7 @@
         },
         "visibility": {
           "enum": [
-            "author",
-            "host"
+            "author"
           ]
         },
         "realm": {
@@ -122,78 +121,8 @@
             "properties": {
               "specifier": {
                 "not": {
-                  "pattern": "^\\./(?:experimental|internal|host)(?:/|$)"
+                  "pattern": "^\\./(?:experimental|internal|host|first-party)(?:/|$)"
                 }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "visibility": {
-                "const": "host"
-              }
-            },
-            "required": [
-              "visibility"
-            ]
-          },
-          "then": {
-            "properties": {
-              "specifier": {
-                "enum": [
-                  "./host/registration",
-                  "./host/fs/json-owner-file-lock"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "visibility": {
-                "const": "host"
-              },
-              "specifier": {
-                "const": "./host/registration"
-              }
-            },
-            "required": [
-              "visibility",
-              "specifier"
-            ]
-          },
-          "then": {
-            "properties": {
-              "realm": {
-                "const": "any"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "visibility": {
-                "const": "host"
-              },
-              "specifier": {
-                "enum": [
-                  "./host/fs/json-owner-file-lock"
-                ]
-              }
-            },
-            "required": [
-              "visibility",
-              "specifier"
-            ]
-          },
-          "then": {
-            "properties": {
-              "realm": {
-                "const": "daemon"
               }
             }
           }

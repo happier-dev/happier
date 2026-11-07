@@ -61,13 +61,13 @@ function workItem(item: WorkItem) {
         open: item.open };
 }
 
-function inboxItem(item: InboxWorkItem, scope: ServerAccountScope) {
+function inboxItem(item: InboxWorkItem) {
     if (item.kind === 'workflow_run') return { kind: item.kind, key: item.key, runId: item.runId };
     if (item.kind === 'automation_run') return { kind: item.kind, key: item.key, runId: item.row.id };
     if (item.kind === 'approval') return { kind: item.kind, key: item.key, artifactId: item.artifact.id };
     const serverId = item.kind === 'session'
         ? item.entry.candidate.address?.serverId ?? item.entry.candidate.serverId : item.session.serverId;
-    if (!serverId || !areServerProfileIdentifiersEquivalent(serverId, scope.serverId)) return null;
+    if (!serverId) return null;
     if (item.kind === 'session') {
         const { candidate } = item.entry;
         return { kind: item.kind, key: item.key, serverId, sessionId: candidate.sessionId, title: candidate.title,
@@ -83,13 +83,12 @@ function inboxItem(item: InboxWorkItem, scope: ServerAccountScope) {
 }
 
 function canonicalInboxItem(item: InboxItem, scope: ServerAccountScope) {
-    if (!areServerProfileIdentifiersEquivalent(item.source.serverId, scope.serverId)
-        || !areServerProfileIdentifiersEquivalent(item.focus.serverId, scope.serverId)) return null;
+    if (!areServerProfileIdentifiersEquivalent(item.source.serverId, item.focus.serverId)) return null;
     if (item.discussion && (item.discussion.accountId !== scope.accountId
         || item.focus.kind !== 'discussion'
         || item.discussion.messageRef.messageId !== item.focus.messageId
         || item.discussion.messageRef.discussion.discussionId !== item.source.id
-        || !areServerProfileIdentifiersEquivalent(item.discussion.messageRef.discussion.serverId, scope.serverId))) return null;
+        || !areServerProfileIdentifiersEquivalent(item.discussion.messageRef.discussion.serverId, item.source.serverId))) return null;
     return projectInboxReadItemV1(item);
 }
 
@@ -125,10 +124,11 @@ export const invokeMountedWorkRead: NonNullable<ActionExecutorDeps['appShellActi
     if (!owner) return { status: 'unavailable' };
     const model = owner.read();
     if (!owner.isCurrent()) return { status: 'unavailable' };
+    // Each source admits its own rows. Incomplete Artifact coverage must not hide
+    // current work from the other owners, or certify an empty Inbox as caught up.
     if (!model.hasContent && !model.showCaughtUp) return { status: model.isLoading ? 'loading' : 'unavailable' };
-    // A mixed-Home model is not an exact-Home projection. Do not manufacture another grouping or
-    // quietly describe filtered foreign content as an empty Inbox. A missing lead is valid on one Home.
-    if (model.spansHomes) return { status: 'unavailable' };
+    // The captured Home/Account addresses this mounted owner, not every row's source.
+    // Preserve the owner's admitted multi-Home rows and their exact navigation addresses.
     const audienceScope = model.source.audienceScopes?.get(scope.serverId);
     if (audienceScope && !areServerAccountScopesEqual(audienceScope, scope)) return { status: 'unavailable' };
     if (model.discussionAttention.source && !areServerAccountScopesEqual(model.discussionAttention.source.scope, scope)) {
@@ -143,27 +143,29 @@ export const invokeMountedWorkRead: NonNullable<ActionExecutorDeps['appShellActi
         || !areServerProfileIdentifiersEquivalent(model.automationAttention.serverId, scope.serverId))) return { status: 'unavailable' };
     const readySessions = model.sessionPresentation.readySessions.map(candidate => {
         const serverId = candidate.address?.serverId ?? candidate.serverId;
-        return serverId && areServerProfileIdentifiersEquivalent(serverId, scope.serverId)
-            ? { serverId, sessionId: candidate.sessionId } : null;
+        return serverId ? { serverId, sessionId: candidate.sessionId } : null;
     });
     if (readySessions.some(value => value === null)) return { status: 'unavailable' };
     // Preserve the mounted owner's grouping, membership and order; only serialize selected fields.
     const groups = model.workGroups.map(group => {
-        if (group.root.kind === 'lead' && group.root.session?.serverId
-            && !areServerProfileIdentifiersEquivalent(group.root.session.serverId, scope.serverId)) return null;
-        if (group.root.kind === 'automation'
-            && !areServerProfileIdentifiersEquivalent(group.root.serverId, scope.serverId)) return null;
-        const items = group.items.map(item => inboxItem(item, scope));
+        if (group.root.kind === 'lead' && !group.root.serverId) return null;
+        const items = group.items.map(inboxItem);
         if (items.some(value => value === null)) return null;
-        const root = group.root.kind === 'lead' ? { kind: group.root.kind, sessionId: group.root.sessionId }
+        const root = group.root.kind === 'lead' ? { kind: group.root.kind, serverId: group.root.serverId, sessionId: group.root.sessionId }
             : group.root.kind === 'run' ? { kind: group.root.kind, runId: group.root.runId }
             : group.root.kind === 'automation' ? { kind: group.root.kind, automationId: group.root.automationId,
                 serverId: group.root.serverId, runId: group.root.runId } : { kind: group.root.kind };
         return { key: group.key, root, items };
     });
     if (groups.some(value => value === null)) return { status: 'unavailable' };
-    const result = AppShellActionOutputSchemas[actionId].parse({ status: 'ready', groups, items,
-        coverage: { discussions: model.discussionAttention.coverage },
+    const artifactCurrent = model.artifactSource.phase === 'current';
+    const artifactFailed = model.artifactSource.phase === 'partial' || model.artifactSource.phase === 'failed';
+    const runSourceFailed = model.executionRunAttention.failed;
+    const result = AppShellActionOutputSchemas[actionId].parse({ status: artifactCurrent && !runSourceFailed ? 'ready' : 'partial', groups, items,
+        coverage: { discussions: model.discussionAttention.coverage,
+            sources: [{ source: 'notices', status: artifactCurrent ? 'complete' : 'partial',
+                ...(artifactFailed ? { reason: 'content_unavailable' } : {}) },
+                ...(runSourceFailed ? [{ source: 'live_items', status: 'partial', reason: 'content_unavailable' }] : [])] },
         approvalIds: model.openApprovals.map(artifact => artifact.id),
         usageNoticeIds: model.openUsageNotices.map(entry => entry.artifact.id),
         accountNoticeIds: model.openAccountNotices.map(entry => entry.artifact.id),
@@ -175,7 +177,7 @@ export const invokeMountedWorkRead: NonNullable<ActionExecutorDeps['appShellActi
                 && areServerProfileIdentifiersEquivalent(operation.serverId, scope.serverId)
                 ? [{ serverId: operation.serverId, operationId: operation.snapshot.operationId, reason }] : []),
         isLoading: model.isLoading,
-        refreshFailed: model.workflowAttention.refreshFailed || model.automationAttention.refreshFailed,
+        refreshFailed: artifactFailed || model.workflowAttention.refreshFailed || model.automationAttention.refreshFailed || model.executionRunAttention.failed,
     });
     context.signal?.throwIfAborted();
     return owner.isCurrent() ? result : { status: 'unavailable' };

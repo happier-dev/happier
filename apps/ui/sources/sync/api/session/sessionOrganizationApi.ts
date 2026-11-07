@@ -242,12 +242,14 @@ export async function setSessionAppearance(params: Readonly<{
 export async function setSessionAttentionStanding(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     sessionId: string;
     request: SetSessionAttentionStandingRequest;
 }>): Promise<SetSessionAttentionStandingResponse> {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
+        requestAtEndpoint: params.requestAtEndpoint,
         path: `${SESSION_ORGANIZATION_ROUTE}/attention-standings/${encodeURIComponent(params.sessionId)}`,
         init: {
             method: 'PUT',

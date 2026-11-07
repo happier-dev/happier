@@ -7,12 +7,12 @@ import { storage } from '@/sync/domains/state/storage';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
 import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { Encryption } from '@/sync/encryption/encryption';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { buildMachineActivityPlaceholder, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -26,7 +26,9 @@ import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { subscribeActivityLocalNotifications } from '@/activity/notifications/runtime/activityLocalNotificationBus';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { isAccountFollowConfigurationChangeRelevant, isSessionFollowAccountChangeRelevant } from '@/components/sessions/follow/sessionFollowAccountChange';
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
 import { isMachineOnlineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
@@ -47,6 +49,31 @@ describe('Machine work-summary socket facts', () => {
     });
 });
 describe('committed usage source wake', () => {
+    it('keeps Follow configuration and corpus readers asleep for Usage while preserving relevant wakes', async () => {
+        let configurationReads = 0;
+        let corpusReads = 0;
+        let usageReads = 0;
+        const release = subscribeHomeAccountChange(event => {
+            if (isAccountFollowConfigurationChangeRelevant(event)) configurationReads += 1;
+            if (isSessionFollowAccountChangeRelevant(event)) corpusReads += 1;
+            if (event.usageQueryAffects === true) usageReads += 1;
+        });
+        try {
+            for (let index = 0; index < 20; index += 1) {
+                for (const update of [
+                    { type: 'usage', id: 'source', key: 'codex:model', tokens: { total: index + 1 }, cost: { total: 0 }, timestamp: index + 1 },
+                    { type: 'usage-sources-invalidated', machineId: 'machine', installationId: 'installation' },
+                ]) await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-b', update }));
+            }
+            expect({ configurationReads, corpusReads, usageReads }).toEqual({ configurationReads: 0, corpusReads: 0, usageReads: 40 });
+            publishHomeAccountChange('home-b', [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] });
+            expect({ configurationReads, corpusReads }).toEqual({ configurationReads: 1, corpusReads: 1 });
+            publishHomeAccountChange('home-b', ['new-source'], { changeKinds: ['session'], sessionListQueryAffects: true });
+            expect({ configurationReads, corpusReads }).toEqual({ configurationReads: 1, corpusReads: 2 });
+            publishHomeAccountChange('home-b', undefined, { source: 'connected' });
+            expect({ configurationReads, corpusReads }).toEqual({ configurationReads: 2, corpusReads: 3 });
+        } finally { release(); }
+    });
     it('invalidates source readers after a content-free harvest settlement and rejects retired ingress', async () => {
         const homes: string[] = [];
         const release = subscribeHomeAccountChange(event => homes.push(event.serverId));
@@ -138,7 +165,6 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         invalidateSessions: vi.fn(),
         invalidateArtifacts: vi.fn(),
         invalidateFriends: vi.fn(),
-        invalidateFriendRequests: vi.fn(),
         invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(),
         invalidateTodos: vi.fn(),
@@ -321,7 +347,6 @@ describe('socket update handling: new-machine', () => {
         expect(isMachineOnlineV1(machine!, 160_001)).toBe(true);
         expect(isMachineOnlineV1({ ...machine!, active: false }, 100_001)).toBe(false);
     });
-
 
     it('rejects a legacy Plain marker when the owning Account is E2EE', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(17));
@@ -740,9 +765,37 @@ describe('socket update handling: update-machine (missing encryption)', () => {
         expect(storage.getState().machines[machine.id]).toBe(machine);
     });
 
-    it('still applies freshness fields before invalidating machines sync', async () => {
+    it('applies plaintext content pushes without invalidating the whole Machine census', async () => {
+        const fleet = Array.from({ length: 137 }, (_, index) => createMachineFixture({
+            id: `plain-${index}`, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        }));
+        storage.getState().applyMachines(fleet);
+        const unaffected = storage.getState().machines[fleet[1]!.id];
         const invalidateMachines = vi.fn();
-        const params = buildBaseParams({ invalidateMachines });
+        const params = buildBaseParams({ encryption: null, invalidateMachines, readAccountMode: async () => 'plain' });
+        for (let version = 2; version <= 21; version += 1) {
+            await handleUpdateContainer({ ...params, updateData: {
+                id: `plain-content-${version}`, seq: version, createdAt: version,
+                body: { t: 'update-machine', machineId: fleet[0]!.id,
+                    metadata: { version, value: encodePlainMachineStoredContent({ ...fleet[0]!.metadata!, host: `host-${version}` }) },
+                },
+            } });
+        }
+        expect(storage.getState().machines[fleet[0]!.id]).toMatchObject({
+            metadataVersion: 21, metadata: { host: 'host-21' }, availability: { kind: 'available' },
+        });
+        expect(storage.getState().machines[fleet[1]!.id]).toBe(unaffected);
+        expect(invalidateMachines).not.toHaveBeenCalled();
+    });
+
+    it.each(['unknown', 'encrypted', 'unopened-plain', 'locked-plain'] as const)('still applies freshness fields before invalidating machines sync for %s content', async (kind) => {
+        const invalidateMachines = vi.fn();
+        const params = buildBaseParams({ encryption: machineContextOwner, invalidateMachines });
+        if (kind !== 'unknown') storage.getState().applyMachines([createMachineFixture({
+            id: 'm_missing_enc', metadata: null, daemonState: null,
+            ...(kind === 'unopened-plain' || kind === 'locked-plain' ? { storageMode: 'plain' } : {}),
+            ...(kind === 'locked-plain' ? { availability: { kind: 'locked', reason: 'encryption_material_unavailable' } } : {}),
+        })]);
 
         const updateData: ApiUpdateContainer = {
             id: 'u_machine_up_1',
@@ -753,7 +806,7 @@ describe('socket update handling: update-machine (missing encryption)', () => {
                 machineId: 'm_missing_enc',
                 active: true,
                 activeAt: 200,
-                metadata: { version: 2, value: 'cipher' },
+                ...(kind === 'unopened-plain' || kind === 'locked-plain' ? {} : { metadata: { version: 2, value: 'cipher' } }),
             },
         } as ApiUpdateContainer;
 
@@ -1192,6 +1245,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
                 createdAt: 1_000,
                 body: {
                     t: 'new-message',
+                    delivery: 'full' as const,
                     sid: sessionId,
                     message: {
                         id: 'durable-message-1',

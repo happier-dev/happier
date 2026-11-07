@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     setSessionOrganizationPin: vi.fn(),
     upsertSessionOrganizationFolder: vi.fn(),
     upsertSessionOrganizationLabel: vi.fn(),
+    reorderSessionOrganization: vi.fn(),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
@@ -42,6 +43,7 @@ vi.mock('@/sync/api/session/sessionOrganizationApi', async (importOriginal) => {
         setSessionPin: mocks.setSessionOrganizationPin,
         upsertSessionOrganizationFolder: mocks.upsertSessionOrganizationFolder,
         upsertSessionOrganizationLabel: mocks.upsertSessionOrganizationLabel,
+        reorderSessionOrganization: mocks.reorderSessionOrganization,
     };
 });
 
@@ -177,6 +179,26 @@ describe('sessionOrganizationMutationOwner', () => {
         mocks.setSessionOrganizationPin.mockReset();
         mocks.upsertSessionOrganizationFolder.mockReset();
         mocks.upsertSessionOrganizationLabel.mockReset();
+        mocks.reorderSessionOrganization.mockReset();
+    });
+
+    it('writes canonical Project keys on an explicit reorder while retaining unseen saved groups', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeSessionOrganizationWorkspaceOrder } = await import('./sessionOrganizationMutationOwner');
+        const { buildSessionWorkspaceOrderScopeKey } = await import('@/sync/domains/session/listing/sessionWorkspaceOrderStateV1');
+        const scope = { serverId: 'project-order-home', accountId: 'account-a' };
+        storage.setState({ profileScope: scope });
+        storage.getState().activateProjectAccountRowsScope(scope);
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [{ id: 'checkout', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 }],
+            organizations: [], relationships: [], revisionsByPhysicalKey: {} });
+        mocks.reorderSessionOrganization.mockResolvedValue({ orderEntries: [] });
+        const unseen = JSON.stringify(['project', scope.serverId, 'unseen']);
+        await writeSessionOrganizationWorkspaceOrder({ scope: { credentials, serverId: scope.serverId, serverIdAliases: [], serverUrl: 'https://home.example' },
+            next: { [buildSessionWorkspaceOrderScopeKey(scope.serverId)]: [JSON.stringify([scope.serverId, 'machine', '/repo']), unseen] } });
+        expect(mocks.reorderSessionOrganization).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+            entries: [expect.objectContaining({ itemKey: JSON.stringify(['project', scope.serverId, 'anchor']) }), expect.objectContaining({ itemKey: unseen })],
+        }) }));
     });
 
     it('keeps the established Home identity canonical when a conflicting identity is rejected', async () => {

@@ -10,7 +10,7 @@ import {
 } from "./encryptor";
 import { encodeHex } from "@/encryption/hex";
 import { EncryptionCache } from "./encryptionCache";
-import { DataKeyOpenings } from './dataKeyOpenings';
+import { DataKeyOpeningCancelledError, DataKeyOpenings } from './dataKeyOpenings';
 import { createUiAccountKvCipher } from './accountKvCipher';
 import { mapCryptoBatchWithYield } from "./cryptoBatchYield";
 import { SessionEncryption } from "./sessionEncryption";
@@ -24,6 +24,7 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { ENCRYPTED_DATA_KEY_V1_BYTES, openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { decodePlainMachineStoredContent, isMachineDataEncryptionKeyTransferableV1, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { admitMachineRowPlainMode, type AccountE2eeCustody } from '@happier-dev/sync-client';
 import { MachineContentKeyPreparationErrorV1, prepareMachineContentKeyV1, type MachinePublishedRowV1, type MachineContentKeyTransitionInputV1, type MachineContentKeyTransitionResultV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema, type AutomationEncryptedTriggerDefinitionEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -61,6 +62,11 @@ import {
 export type EncryptionScopeInput = Readonly<{
     accountId?: string;
     serverId?: string | null;
+    /**
+     * Names one Session for a generation capture: that Session's key replacement, rebind or
+     * removal also ends the captured scope. Openings and native work ignore it.
+     */
+    sessionId?: string;
     signal?: AbortSignal;
     shouldContinue?: () => boolean;
     /** Explicit control demand must not wait for inventory envelope hydration. */
@@ -98,6 +104,9 @@ export type EncryptionGenerationScope = Readonly<{
     accountId: string;
     serverId: string | null;
     generation: number;
+    /** Present when captured for one Session (`EncryptionScopeInput.sessionId`). */
+    sessionId?: string;
+    sessionGeneration?: number;
 }>;
 
 /**
@@ -243,6 +252,9 @@ export class Encryption {
     private nativeCryptoWorkerServerId: string | null = null;
     private nativeCryptoWorkerGenerations = new Map<string, number>();
     private sessionEncryptionScopes = new Map<string, ResolvedEncryptionScope>();
+    // Per-Session reader generation. Kept (never deleted) so a removed-then-reinstalled
+    // Session cannot return to a generation an earlier capture still holds.
+    private sessionReaderGenerations = new Map<string, number>();
 
     private constructor(
         anonID: string,
@@ -402,7 +414,13 @@ export class Encryption {
     }
 
     getCurrentEncryptionGenerationScope(scope: EncryptionScopeInput = {}): EncryptionGenerationScope {
-        return this.getCurrentNativeCryptoWorkerScope(scope);
+        const current = this.getCurrentNativeCryptoWorkerScope(scope);
+        if (scope.sessionId === undefined) return current;
+        return {
+            ...current,
+            sessionId: scope.sessionId,
+            sessionGeneration: this.sessionReaderGenerations.get(scope.sessionId) ?? 0,
+        };
     }
 
     isCurrentNativeCryptoWorkerScope(scope: CryptoWorkerScope): boolean {
@@ -417,15 +435,20 @@ export class Encryption {
     }
 
     isCurrentEncryptionGenerationScope(scope: EncryptionGenerationScope): boolean {
-        return this.isCurrentNativeCryptoWorkerScope(scope);
+        if (!this.isCurrentNativeCryptoWorkerScope(scope)) return false;
+        return scope.sessionId === undefined
+            || (this.sessionReaderGenerations.get(scope.sessionId) ?? 0) === scope.sessionGeneration;
     }
 
-    private createNativeJsonDecryptWorkerBinding(scopeInput: EncryptionScopeInput = {}) {
+    private createNativeJsonDecryptWorkerBinding(
+        scopeInput: EncryptionScopeInput = {},
+        isReaderCurrent: () => boolean = () => true,
+    ) {
         return {
             getWorker: () => this.nativeCryptoWorker,
             getRouting: () => this.nativeCryptoWorkerRouting,
             getScope: () => this.getCurrentNativeCryptoWorkerScope(scopeInput),
-            isScopeCurrent: (scope: CryptoWorkerScope) => this.isCurrentNativeCryptoWorkerScope(scope),
+            isScopeCurrent: (scope: CryptoWorkerScope) => this.isCurrentNativeCryptoWorkerScope(scope) && isReaderCurrent(),
         };
     }
 
@@ -433,13 +456,22 @@ export class Encryption {
     // Core encryption opening
     //
 
-    async openEncryption(dataEncryptionKey: Uint8Array | null, scopeInput: EncryptionScopeInput = {}): Promise<Encryptor & Decryptor> {
+    /**
+     * `isReaderCurrent` narrows the encryptor's native work to its own reader: a Session
+     * encryptor stops when that Session's reader is replaced or removed, without moving
+     * the Account generation that every other reader shares.
+     */
+    async openEncryption(
+        dataEncryptionKey: Uint8Array | null,
+        scopeInput: EncryptionScopeInput = {},
+        isReaderCurrent?: () => boolean,
+    ): Promise<Encryptor & Decryptor> {
         if (!dataEncryptionKey) {
             return this.fallbackEncryption;
         }
         return new AES256Encryption(dataEncryptionKey, {
             batchConcurrencyLimit: this.aesBatchConcurrencyLimit,
-            nativeCryptoWorker: this.createNativeJsonDecryptWorkerBinding(scopeInput),
+            nativeCryptoWorker: this.createNativeJsonDecryptWorkerBinding(scopeInput, isReaderCurrent),
         });
     }
 
@@ -465,6 +497,7 @@ export class Encryption {
             dataKey: Uint8Array | null;
             fingerprint: string;
             encryptor: Encryptor & Decryptor;
+            reader: { current: SessionEncryption | null };
         }>> = [];
         for (const [sessionId, dataKey] of sessions) {
             if (!shouldContinue()) return null;
@@ -481,8 +514,13 @@ export class Encryption {
                 continue;
             }
 
-            // Create appropriate encryptor based on data key
-            const encryptor = await this.openEncryption(dataKey, scope);
+            // The encryptor's native work lives exactly as long as the reader installed below.
+            const reader: { current: SessionEncryption | null } = { current: null };
+            const encryptor = await this.openEncryption(
+                dataKey,
+                scope,
+                () => reader.current !== null && this.sessionEncryptions.get(sessionId) === reader.current,
+            );
             if (!shouldContinue()) return null;
 
             pending.push({
@@ -490,34 +528,25 @@ export class Encryption {
                 dataKey,
                 fingerprint,
                 encryptor,
+                reader,
             });
         }
 
         // Opening may yield, so currentness is checked above before any mutation. Apply the
-        // prepared replacements synchronously after that check: a key change intentionally
-        // advances the owning generation, but must not cancel the same guarded replacement that
-        // caused the advance. The returned post-commit scope lets callers keep guarding later
-        // cache publication without mistaking this owner-authored advance for an Account switch.
+        // prepared replacements synchronously after that check. Installing, replacing or
+        // rebinding a Session key changes no Account material, so it never moves the Account
+        // generation: the replaced reader retires on its own (`SessionEncryption` currentness
+        // and its encryptor's native work), and unrelated pending work (pure data-key openings,
+        // other Sessions) keeps running. Only that Session's reader generation advances, which
+        // ends captures taken for it (`sessionId`). The returned post-commit scope lets the caller
+        // that caused the advance adopt it.
         for (const entry of pending) {
             if (scopeInput.isSessionCurrent?.(entry.sessionId) === false) continue;
             // Another initializer may have committed while this entry's encryptor was opening.
-            // Re-read the owner and key at the synchronous commit boundary so displacing that
-            // initializer invalidates the scope it actually installed, not only the pre-await view.
+            // Re-read the installed reader at the synchronous commit boundary.
             const currentExisting = this.sessionEncryptions.get(entry.sessionId);
-            const currentFingerprint = this.sessionKeyFingerprints.get(entry.sessionId);
-            const currentScope = this.sessionEncryptionScopes.get(entry.sessionId);
-            const currentScopeChanged = currentScope
-                ? currentScope.accountId !== scope.accountId || currentScope.serverId !== scope.serverId
-                : false;
-            if (currentScopeChanged && currentScope) {
-                this.bumpGenerationForScope(currentScope);
-            }
-
-            if (
-                currentExisting
-                && currentFingerprint !== entry.fingerprint
-            ) {
-                this.bumpGenerationForScope(scope);
+            if (currentExisting) {
+                this.sessionReaderGenerations.set(entry.sessionId, (this.sessionReaderGenerations.get(entry.sessionId) ?? 0) + 1);
             }
 
             // Create and cache session encryption
@@ -532,6 +561,7 @@ export class Encryption {
                 // when an already-running platform decrypt completes.
                 () => this.sessionEncryptions.get(entry.sessionId) === sessionEnc,
             );
+            entry.reader.current = sessionEnc;
             this.sessionEncryptions.set(entry.sessionId, sessionEnc);
             this.sessionKeyFingerprints.set(entry.sessionId, entry.fingerprint);
             this.sessionEncryptionScopes.set(entry.sessionId, scope);
@@ -544,7 +574,7 @@ export class Encryption {
                 this.cache.clearSessionCache(entry.sessionId);
             }
         }
-        return this.getCurrentEncryptionGenerationScope(scope);
+        return this.getCurrentEncryptionGenerationScope({ ...scope, sessionId: scopeInput.sessionId });
     }
 
     /**
@@ -559,24 +589,23 @@ export class Encryption {
      * Remove session encryption from memory when a Session is deleted or its key
      * stops opening.
      *
-     * Symmetric with `initializeSessions`: clearing a live reader intentionally
-     * advances the owning generation, and the post-commit scope is returned so the
-     * caller that *caused* the advance can adopt it instead of reading its own
-     * clear as another writer's Account switch. `null` means nothing was removed
-     * and no generation moved.
+     * Symmetric with `initializeSessions`: the removed reader retires on its own, only this
+     * Session's reader generation advances, and the Account generation does not move. Returns
+     * the post-commit scope for this Session so the caller that caused the advance can adopt
+     * it; `null` when no reader was removed.
      */
     removeSessionEncryption(sessionId: string): EncryptionGenerationScope | null {
         const existing = this.sessionEncryptions.get(sessionId);
         const scope = this.sessionEncryptionScopes.get(sessionId);
-        if (existing && scope) {
-            this.bumpGenerationForScope(scope);
+        if (existing) {
+            this.sessionReaderGenerations.set(sessionId, (this.sessionReaderGenerations.get(sessionId) ?? 0) + 1);
         }
         this.sessionEncryptions.delete(sessionId);
         this.sessionKeyFingerprints.delete(sessionId);
         this.sessionEncryptionScopes.delete(sessionId);
         // Also clear any cached data for this session
         this.cache.clearSessionCache(sessionId);
-        return existing && scope ? this.getCurrentEncryptionGenerationScope(scope) : null;
+        return existing && scope ? this.getCurrentEncryptionGenerationScope({ ...scope, sessionId }) : null;
     }
 
     //
@@ -782,6 +811,7 @@ export class Encryption {
     // Data Encryption Key decryption
     //
 
+    /** Same outcomes as `decryptEncryptionKeys`: null is a refusal, cancellation rejects. */
     async decryptEncryptionKey(encrypted: string, scope?: EncryptionScopeInput) {
         const [decrypted] = await this.decryptEncryptionKeys([encrypted], scope);
         return decrypted ?? null;
@@ -800,6 +830,8 @@ export class Encryption {
         custodianAccountId: string;
         /** Only predecessor rows without explicit resource mode need Account mode. */
         readAccountMode: () => Promise<'plain' | 'e2ee'>;
+        /** This device's custody of the Account keys; an own row's plain mode is admitted with it. */
+        accountE2eeCustody: AccountE2eeCustody;
         observe: (signal?: AbortSignal) => Promise<MachinePublishedRowV1>;
         transition: (input: MachineContentKeyTransitionInputV1, signal?: AbortSignal) => Promise<MachineContentKeyTransitionResultV1<MachinePublishedRowV1>>;
         isCurrent: () => boolean;
@@ -820,6 +852,13 @@ export class Encryption {
                 const resolution = resolvePublishedMachineDataEncryptionKeyV1({ machine: row, openedDataEncryptionKey: openedKey,
                     expectedAccountMode: row.access?.resourceMode ?? row.storageMode ?? await params.readAccountMode(), viewerAccountId: params.custodianAccountId });
                 if (resolution.status === 'unavailable') throw new MachineContentKeyPreparationErrorV1('encryption_material_unavailable');
+                if (resolution.status === 'plain') {
+                    try {
+                        admitMachineRowPlainMode({ access: row.access, viewerAccountId: params.custodianAccountId, custody: params.accountE2eeCustody });
+                    } catch {
+                        throw new MachineContentKeyPreparationErrorV1('encryption_material_unavailable');
+                    }
+                }
                 const opened: Opened = resolution.status === 'plain' ? { row, encryptionMode: 'plain' }
                     : { row, encryptionMode: 'e2ee', encryptionKey: resolution.status === 'e2ee' ? resolution.dataKey
                         : this.accountScopedCryptoMaterial.type === 'dataKey' ? this.accountScopedCryptoMaterial.machineKey : this.accountScopedCryptoMaterial.secret,
@@ -833,6 +872,13 @@ export class Encryption {
         });
     }
 
+    /**
+     * Opens data-key envelopes. Three distinct outcomes: a key; `null` for a completed
+     * cryptographic refusal (this recipient cannot open it); and a rejection. A stopped
+     * opening (caller signal or currentness, generation, recipient or Account material
+     * change) rejects with `DataKeyOpeningCancelledError`, so it is never read as a
+     * refusal; any other rejection is a runtime failure.
+     */
     async decryptEncryptionKeys(encryptedValues: readonly string[], scopeInput: EncryptionScopeInput = {}): Promise<Array<Uint8Array | null>> {
         if (encryptedValues.length === 0) return [];
         if (this.dataKeyOpeningRecipient.length !== this.contentKeyPair.privateKey.length
@@ -976,8 +1022,10 @@ export class Encryption {
                     isScopeCurrent: () => capturedScope !== null && this.isCurrentNativeCryptoWorkerScope(capturedScope),
                     signal: scopeInput.signal,
                 });
-                if (result.status !== 'ok') {
-                    return encryptedValues.map(() => null);
+                // A stopped batch (cancelled, stale scope, or a borrower that stopped while its
+                // dispatch returned placeholder items) opened nothing: it is not a refusal.
+                if (result.status !== 'ok' || scopeInput.shouldContinue?.() === false || scopeInput.signal?.aborted === true) {
+                    throw new DataKeyOpeningCancelledError();
                 }
                 return result.items.map((value) => {
                     if (!value) return null;

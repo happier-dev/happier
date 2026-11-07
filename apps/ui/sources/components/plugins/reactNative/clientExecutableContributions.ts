@@ -4,6 +4,7 @@ import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginR
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { derivePluginAccountContributionRegistrationRights, derivePluginClientContributionRegistrationRights, type PluginContributionClientPlatform, type PluginContributionRegistrationRight } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginProjectedActionV2, PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginAccountApi, PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import type { PluginUiResourceProjection, PluginUiConnectedAccountDescriptorProjection } from '@/sync/domains/plugins/ui/projection';
@@ -73,6 +74,8 @@ export type PluginUiClientExecutableRegistration = Readonly<{
     executionOrigin: PluginMachineExecutionOriginV1 | null;
     /** Process-local admitted plugin slot currentness. */
     occurrenceId: string;
+    /** Admitted bytes for UI sharing, never executable currentness or custody. */
+    artifactDigest?: PluginUiArtifactDigestV1;
     /** Exact installed package identity supplied by the activated projection. */
     pluginVersion?: string;
     accountLifetime?: ActiveServerAccountScopeLifetime;
@@ -195,6 +198,8 @@ type PluginUiClientExecutableRegistrationScopeInput = Readonly<{
         target: PluginUiClientExecutableTarget;
         executionOrigin: PluginMachineExecutionOriginV1 | null;
         occurrenceId: string;
+        /** Admitted bytes for the existing UI shared-scope identity. */
+        artifactDigest?: PluginUiArtifactDigestV1;
         /** Optional for non-Action client families; Actions fail closed without it. */
         pluginVersion?: string;
         accountLifetime?: ActiveServerAccountScopeLifetime;
@@ -535,6 +540,7 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                             target: exact.target,
                             executionOrigin: exact.executionOrigin,
                             occurrenceId: input.occurrenceId,
+                            ...(input.artifactDigest === undefined ? {} : { artifactDigest: input.artifactDigest }),
                             ...(exact.pluginVersion === undefined
                                 ? {}
                                 : { pluginVersion: exact.pluginVersion }),
@@ -792,8 +798,9 @@ function isClientExecutableActivationCoherent(
     return activation.identity.pluginId === activation.pluginId
         && activation.identity.platform === activation.target.platform
         && activation.moduleReference.exportName === activation.target.exportName
-        && (activation.target.realm === 'account' ? 'kind' in activation.authority && activation.executionOrigin === null
-            && activation.occurrenceId === activation.authority.custodyId : !('kind' in activation.authority))
+        && (activation.target.realm !== 'account' || 'kind' in activation.authority)
+        && (!('kind' in activation.authority) || (activation.executionOrigin === null
+            && activation.occurrenceId === activation.authority.custodyId))
         && (activation.executionOrigin === null || (
             !('kind' in activation.authority) &&
             activation.authority.machineId === getPluginMachineExecutionOriginRef(activation.executionOrigin).machineId
@@ -1080,6 +1087,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                         target: activation.target,
                         executionOrigin: activation.executionOrigin,
                         occurrenceId: activation.occurrenceId,
+                        artifactDigest: activation.identity.artifactDigest,
                         ...(activation.pluginVersion === undefined
                             ? {}
                             : { pluginVersion: activation.pluginVersion }),
@@ -1278,8 +1286,8 @@ function resolvePluginUiClientActionAddress(input: Readonly<{
     ) {
         return null;
     }
-    const accountOrigin = action.execution.target === 'account' ? readPluginUiAccountExecutableOrigin(action) : null;
-    const producer = action.execution.target === 'account'
+    const accountOrigin = readPluginUiAccountExecutableOrigin(action);
+    const producer = action.execution.target === 'account' || 'hostAccountOrigin' in action
         ? accountOrigin && action.occurrenceId === accountOrigin.custodyId ? { origin: null } : null
         : readProjectedClientRegistrationOrigin(action);
     if (!producer) return null;
@@ -1290,7 +1298,7 @@ function resolvePluginUiClientActionAddress(input: Readonly<{
         pluginId: action.pluginId,
         localId: action.id,
         target: freezeTarget({
-            ...(accountOrigin ? { realm: 'account' as const } : {}),
+            ...(action.execution.target === 'account' ? { realm: 'account' as const } : {}),
             artifactId: executable.artifactId,
             exportName: executable.exportName,
             platform,

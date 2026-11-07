@@ -1,4 +1,3 @@
-import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from './hostApiRequests.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
@@ -14,9 +13,12 @@ import {
   PluginUiFocusComposerRequestV1Schema,
   PluginUiInspectComposerContentRequestV1Schema,
   PluginUiReadComposerRequestV1Schema,
+  PluginUiReadMachineDisplayNameRequestV1Schema,
+  PluginUiReadMachineDisplayNameResultV1Schema,
   PluginUiPickComposerMediaRequestV1Schema,
   PluginUiReleaseComposerContentRequestV1Schema,
   PluginUiSetComposerDecorationsRequestV1Schema,
+  PluginUiSetUnsavedChangesRequestV1Schema,
   PluginUiWatchComposerRequestV1Schema,
   PluginUiDeclarativeOpenSurfaceSelectorV1Schema,
   PluginUiExecuteActionRequestV1Schema,
@@ -45,6 +47,16 @@ import type {
 } from './hostApiRequests.js';
 import type { SessionServerStartSpawnDraftV1 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 
+it('selects a saved Session placement without requiring an Agent recipe or admitting raw paths', () => {
+  const candidate = { projectKey: { id: 'project-a' }, serverId: 'server-a', machineId: 'machine-a',
+    rootPath: '/workspace', reachable: true, worktrees: [] };
+  expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+    hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' }, candidates: [candidate],
+  }).success).toBe(true);
+  expect(PluginUiSelectActionInputResultV1Schema.safeParse({ kind: 'sessionPlacement', candidate }).success).toBe(true);
+  expect(PluginUiSelectActionInputResultV1Schema.safeParse({ kind: 'sessionPlacement', candidate: { directory: '/guessed' } }).success).toBe(false);
+});
+
 const surface = {
   pluginId: 'acme.preview',
   contributionId: 'preview-web',
@@ -54,6 +66,31 @@ const surface = {
   platform: 'web',
   channel: 'internal',
 } as const;
+
+describe('mounted page unsaved changes', () => {
+  it('admits only the dirty boolean, without author navigation or target authority', () => {
+    expect(PluginUiSetUnsavedChangesRequestV1Schema.parse({ isDirty: true })).toEqual({ isDirty: true });
+    expect(PluginUiSetUnsavedChangesRequestV1Schema.parse({ isDirty: false })).toEqual({ isDirty: false });
+    for (const payload of [{}, { isDirty: 'true' }, { isDirty: true, target: 'other' }, { isDirty: false, onLeave: 'callback' }]) {
+      expect(PluginUiSetUnsavedChangesRequestV1Schema.safeParse(payload).success).toBe(false);
+    }
+  });
+});
+
+describe('qualified Machine display read', () => {
+  it('keeps the identity and disclosure envelopes closed and unknown Machines unavailable', () => {
+    const request = { serverId: 'home-a', machineId: 'machine-a' };
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.parse(request)).toEqual(request);
+    expect(PluginUiHostMethodV1Schema.parse('readMachineDisplayName')).toBe('readMachineDisplayName');
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ machineId: 'machine-a' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ ...request, accountId: 'forged' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'ready', displayName: 'Studio' }))
+      .toEqual({ status: 'ready', displayName: 'Studio' });
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'unavailable' })).toEqual({ status: 'unavailable' });
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'unavailable', displayName: 'secret' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'ready', displayName: 'Studio', metadata: {} }).success).toBe(false);
+  });
+});
 
 describe('qualified Project new-Session origin', () => {
   it('accepts closed ordinary dashboard/file/companion provenance and projects stored extras without granting route authority', () => {
@@ -158,6 +195,27 @@ function nestedJson(depth: number): unknown {
 }
 
 describe('plugin UI diagnostic bounds', () => {
+  it('admits Action data beyond the surface launch budget without relaxing strict JSON or launch admission', () => {
+    const input = { entries: Array.from({ length: 100 }, (_, index) => ({
+      entryRef: { source: { pluginId: 'acme.forge', localId: 'forge' }, kindId: 'pull-request',
+        collisionScope: 'acme/repository', entryId: String(index) },
+    })) };
+    expect(new TextEncoder().encode(JSON.stringify(input)).byteLength).toBeGreaterThan(PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1);
+    expect(PluginUiExecuteActionRequestV1Schema.safeParse({ action: 'sessions/read-links', input }).success).toBe(true);
+    expect(PluginUiLaunchInputV1Schema.safeParse(input).success).toBe(false);
+    expect(PluginUiExecuteActionRequestV1Schema.safeParse({ action: 'sessions/read-links',
+      input: { entries: undefined } }).success).toBe(false);
+  });
+  it('carries only an exact Session address beside ordinary strict Action input', () => {
+    const request = { action: 'session.message.send', input: { sessionId: 'reviewed', text: 'Repair' },
+      sessionAddress: { serverId: 'reviewed-home', sessionId: 'reviewed' } };
+    expect(PluginUiExecuteActionRequestV1Schema.parse(request)).toEqual(request);
+    expect(PluginUiExecuteActionRequestV1Schema.parse({ action: 'plugins.list' })).toEqual({ action: 'plugins.list' });
+    for (const sessionAddress of [{ selector: 'manager' }, { serverId: 'home', sessionId: 'reviewed', extra: true }]) {
+      expect(PluginUiExecuteActionRequestV1Schema.safeParse({ ...request, sessionAddress }).success).toBe(false);
+    }
+  });
+
   it('rejects deep oversized details without entering recursive JSON.stringify', () => {
     expect(() => PluginUiHostApiDiagnosticV1Schema.safeParse({
       code: 'deep-diagnostic',
@@ -394,6 +452,17 @@ describe('plugin UI open and Action components', () => {
     expect(isValidPluginJsonSchemaValue(validate, {
       blob: 'a'.repeat(PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1),
     })).toBe(false);
+  });
+    it('selects an exact Session address without accepting a caller Home, inventory or execution authority', () => {
+    const request = { hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } };
+    expect(PluginUiSelectActionInputRequestV1Schema.parse(request)).toEqual(request);
+    for (const extra of [{ serverId: 'another-home' }, { sessionId: 'picked-by-plugin' }, { draft: {} }, { candidates: [] }]) {
+      expect(PluginUiSelectActionInputRequestV1Schema.safeParse({ ...request, ...extra }).success).toBe(false);
+    }
+    const selected = { kind: 'sessionAddress', session: { serverId: 'home', sessionId: 'selected-session' } };
+    expect(PluginUiSelectActionInputResultV1Schema.parse(selected)).toEqual(selected);
+    expect(PluginUiSelectActionInputResultV1Schema.safeParse({ ...selected, action: admittedOperation.action }).success).toBe(false);
+    expect(PluginUiSelectActionInputResultV1Schema.safeParse({ ...selected, session: { ...selected.session, recursive: true } }).success).toBe(false);
   });
     it('accepts only one exact mounted admitted operation and keeps its result closed', () => {
     expect(PluginUiSelectActionInputRequestV1Schema.parse({
@@ -809,6 +878,7 @@ describe('plugin UI open and Action components', () => {
       input: { itemId: 'review-1' },
       subPath: '/activity/recent/',
       instanceKey: 'review-1',
+      presentation: 'window',
     });
     const crossPlugin = PluginUiOpenSurfaceRequestV1Schema.parse({
       destination: { pluginId: 'acme.provider', localId: 'repair' },
@@ -816,6 +886,7 @@ describe('plugin UI open and Action components', () => {
 
     expect(samePlugin.destination).toEqual({ pluginId: 'acme.review', localId: 'details' });
     expect(samePlugin.subPath).toBe('activity/recent');
+    expect(samePlugin.presentation).toBe('window');
     expect(crossPlugin.destination).toEqual({ pluginId: 'acme.provider', localId: 'repair' });
     expect(PluginUiOpenSurfaceRequestV1Schema.safeParse({ destination: 'details' }).success).toBe(false);
   });
@@ -961,20 +1032,5 @@ describe('plugin UI app-page location replacement', () => {
       backLocation: 'b',
     }).success).toBe(false);
     expect(PluginUiReplacePageLocationResultV1Schema.safeParse({}).success).toBe(false);
-  });
-});
-
-describe('qualified Machine display read', () => {
-  it('keeps the identity and disclosure envelopes closed and unknown Machines unavailable', () => {
-    const request = { serverId: 'home-a', machineId: 'machine-a' };
-    expect(PluginUiReadMachineDisplayNameRequestV1Schema.parse(request)).toEqual(request);
-    expect(PluginUiHostMethodV1Schema.parse('readMachineDisplayName')).toBe('readMachineDisplayName');
-    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ machineId: 'machine-a' }).success).toBe(false);
-    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ ...request, accountId: 'forged' }).success).toBe(false);
-    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'ready', displayName: 'Studio' }))
-      .toEqual({ status: 'ready', displayName: 'Studio' });
-    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'unavailable' })).toEqual({ status: 'unavailable' });
-    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'unavailable', displayName: 'secret' }).success).toBe(false);
-    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'ready', displayName: 'Studio', metadata: {} }).success).toBe(false);
   });
 });

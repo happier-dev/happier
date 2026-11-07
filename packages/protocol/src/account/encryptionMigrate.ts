@@ -106,6 +106,7 @@ import {
   AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
 } from '../automations/automationTemplateEnvelope.js';
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/accountSettingsStoredContentEnvelope.js';
+import { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema, type AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from './settings/savedSecretResourceActionsV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -455,12 +456,17 @@ export type AccountEncryptionMigrateMachinesDirective = z.infer<
   typeof AccountEncryptionMigrateMachinesDirectiveSchema
 >;
 
-const AccountEncryptionMigrateTodoItemSchema = lazyZodSchema(() => z.strictObject({
+const AccountEncryptionMigrateJsonKvItemSchema = lazyZodSchema(() => z.strictObject({
     key: z
       .string().check(z.minLength(1), z.maxLength(512), z.refine((key) => classifyAccountJsonKvKey(key) === 'todo', { message: 'Todo migration keys must use the Todo namespace' })),
     expectedVersion: NonNegativeSafeIntegerSchema,
     value: z.string().check(z.minLength(1), z.maxLength(2_000_000)),
   }));
+const AccountEncryptionMigrateTodoItemSchema = lazyZodSchema(() => z.strictObject({
+  ...AccountEncryptionMigrateJsonKvItemSchema.shape,
+  // Resource-managed tasks include their owner in the complete target key census.
+  recipientKeyEnvelopes: z.optional(ResourceRecipientKeyEnvelopesV1Schema),
+}));
 
 export const AccountEncryptionMigrateTodosDirectiveSchema =
   lazyZodSchema(() => z.discriminatedUnion('action', [
@@ -474,16 +480,27 @@ export type AccountEncryptionMigrateTodosDirective = z.infer<
   typeof AccountEncryptionMigrateTodosDirectiveSchema
 >;
 
-/** Workspace replacements share the KV CAS and whole-request transport bound. */
+/** Complete owner-only Todo census; raw bytes retain legacy and invalid rows. */
+export const AccountEncryptionMigrateTodosInventoryResponseSchema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    key: z.string().check(z.minLength(1)),
+    version: NonNegativeSafeIntegerSchema,
+    value: z.string(),
+    resource: z.optional(ResourceAccessRecipientCensusV1Schema),
+  })),
+}));
+export type AccountEncryptionMigrateTodosInventoryResponse = z.infer<typeof AccountEncryptionMigrateTodosInventoryResponseSchema>;
+
+/** Account JSON KV replacements share the KV CAS and whole-request transport bound. */
 export const AccountEncryptionMigrateWorkspaceDirectiveSchema = lazyZodSchema(() => z.discriminatedUnion('action', [
-  z.strictObject({ action: z.literal('assert_empty') }),
-  z.strictObject({
-    action: z.literal('migrate'),
-    items: z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountEncryptionMigrateTodoItemSchema, {
-      key: z.string().check(z.minLength(1), z.maxLength(512), z.refine(key => classifyAccountJsonKvKey(key) === 'workspace', { message: 'Workspace migration keys must use the Workspace namespace' })),
-    }))),
-  }),
-]));
+    z.strictObject({ action: z.literal('assert_empty') }),
+    z.strictObject({
+      action: z.literal('migrate'),
+      items: z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountEncryptionMigrateJsonKvItemSchema, {
+        key: z.string().check(z.minLength(1), z.maxLength(512), z.refine(key => classifyAccountJsonKvKey(key) === 'workspace', { message: 'Migration keys must use the declared Account JSON KV namespace' })),
+      }))),
+    }),
+  ]));
 export type AccountEncryptionMigrateWorkspaceDirective = z.infer<typeof AccountEncryptionMigrateWorkspaceDirectiveSchema>;
 
 const AccountEncryptionMigrateArtifactItemSchema = lazyZodSchema(() => z.strictObject({
@@ -691,6 +708,7 @@ function refineAccountEncryptionMigrateRequest(
     acpCatalog?: AccountEncryptionMigrateAcpCatalogDirectiveV1;
     connectedConfigurations?: AccountEncryptionMigrateConnectedConfigurationsDirectiveV1;
     connectedPurposes?: AccountEncryptionMigrateConnectedPurposesDirectiveV1;
+    savedSecretResources?: AccountEncryptionMigrateSavedSecretResourcesDirectiveV1;
     reviewComments?: {
       action: string;
       items?: Array<{
@@ -785,6 +803,10 @@ function refineAccountEncryptionMigrateRequest(
     request.promptLibrary?.items.forEach((item, index) => {
       if (item.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
         path: ['promptLibrary', 'items', index, 'content'], message: 'Prompt catalog replacement must match the target Account mode' });
+    });
+    request.savedSecretResources?.items.forEach((item, index) => {
+      if (item.storedContent.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: ['savedSecretResources', 'items', index, 'storedContent'], message: 'Saved Secret reseal must match the target Account mode' });
     });
     if (request.artifacts?.action === 'migrate' && request.artifacts.items) {
       request.artifacts.items.forEach((item, index) => item.blobs.forEach((blob, blobIndex) => {
@@ -1581,6 +1603,36 @@ export const AccountEncryptionMigrateProjectTrustDirectiveSchema = lazyZodSchema
 })));
 export type AccountEncryptionMigrateProjectTrustDirective = z.infer<typeof AccountEncryptionMigrateProjectTrustDirectiveSchema>;
 
+/** Historical Settings use the same atomic request and Account cipher as current Settings. */
+export const AccountEncryptionMigrateSettingsHistoryDirectiveSchema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    version: NonNegativeSafeIntegerSchema,
+    expectedContent: zMini.nullable(AccountSettingsStoredContentEnvelopeSchema),
+    content: zMini.nullable(AccountSettingsStoredContentEnvelopeSchema),
+  })),
+}).check(z.superRefine((value, context) => {
+  const versions = new Set<number>();
+  value.items.forEach((item, index) => {
+    if (versions.has(item.version)) context.addIssue({
+      code: 'custom', path: ['items', index, 'version'],
+      message: 'Account migration cannot replace the same Settings snapshot twice',
+    });
+    versions.add(item.version);
+  });
+})));
+export type AccountEncryptionMigrateSettingsHistoryDirective = z.infer<typeof AccountEncryptionMigrateSettingsHistoryDirectiveSchema>;
+
+export const AccountEncryptionMigrateSettingsHistoryInventoryPageSchema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    version: NonNegativeSafeIntegerSchema,
+    createdAt: z.string().check(z.iso.datetime()),
+    encryptionMode: AccountEncryptionMigrateToModeSchema,
+    content: zMini.nullable(AccountSettingsStoredContentEnvelopeSchema),
+  })).check(z.maxLength(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS)),
+  nextBeforeVersion: z.nullable(NonNegativeSafeIntegerSchema),
+}));
+export type AccountEncryptionMigrateSettingsHistoryInventoryPage = z.infer<typeof AccountEncryptionMigrateSettingsHistoryInventoryPageSchema>;
+
 const AccountEncryptionMigrateCurrentRequestShape = {
   toMode: AccountEncryptionMigrateToModeSchema,
   expectedAccountVersion: NonNegativeSafeIntegerSchema,
@@ -1591,6 +1643,7 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   expectedSettingsVersion: NonNegativeSafeIntegerSchema,
   settingsContent:
     zMini.nullable(AccountSettingsStoredContentEnvelopeSchema),
+  settingsHistory: z.optional(AccountEncryptionMigrateSettingsHistoryDirectiveSchema),
   connectedServices:
     AccountEncryptionMigrateConnectedServicesDirectiveSchema,
   automations: AccountEncryptionMigrateAutomationsDirectiveSchema,
@@ -1617,6 +1670,7 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   acpCatalog: zMini.optional(AccountEncryptionMigrateAcpCatalogDirectiveV1Schema),
   connectedConfigurations: zMini.optional(AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema),
   connectedPurposes: zMini.optional(AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema),
+  savedSecretResources: zMini.optional(AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema),
   profileRows: zMini.optional(AccountEncryptionMigrateProfileRowsDirectiveSchema),
   workspaceExecutionConfig: z.optional(AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema),
   projectRows: z.optional(AccountEncryptionMigrateProjectRowsDirectiveSchema),

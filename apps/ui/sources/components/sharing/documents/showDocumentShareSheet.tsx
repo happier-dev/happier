@@ -1,14 +1,16 @@
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
-import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { classifyArtifactBrowserKind } from '@/components/artifacts/artifactBrowserModel';
 import { artifactKindLabel } from '@/components/artifacts/artifactKindPresentation';
 import { useWorkBoard } from '@/components/boards/model/useWorkBoards';
+import { describeBoardItemCount } from '@/components/boards/model/boardCards';
 import { useBoardLiveSummary } from '@/components/boards/model/useBoardContent';
 import type { WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import { DocumentShareSheet, type DocumentShareSheetProps } from './DocumentShareSheet';
+import { DocumentSignedInLinkSection } from './DocumentSignedInLinkSection';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type DocumentShareModalProps = CustomModalInjectedProps & Omit<DocumentShareSheetProps, 'onRequestClose' | 'presentation'>;
 
@@ -19,7 +21,8 @@ function DocumentShareModal(props: DocumentShareModalProps): React.ReactElement 
 
 function LoadedBoardShareIdentity(props: Readonly<{ board: WorkBoardV1; kindLabel: string }>): React.ReactElement {
     const summary = useBoardLiveSummary(props.board);
-    return <>{props.kindLabel} · {t('boards.meta.items', { count: summary.itemCount })}</>;
+    if (summary.itemCount === null) return <>{props.kindLabel}</>;
+    return <>{props.kindLabel} · {describeBoardItemCount(summary.itemCount, summary.undetermined)}</>;
 }
 
 /** The open sheet mounts the existing Board membership/count owner, not a saved preview count. */
@@ -34,28 +37,29 @@ function BoardShareIdentity(props: Readonly<{ artifactId: string; kindLabel: str
  */
 export function showDocumentShareSheet(params: Omit<DocumentShareSheetProps, 'onRequestClose' | 'presentation'> & Readonly<{
     name: string;
-    /** Context only, for example "6 steps". The sheet owns the localized kind prefix. */
+    /** The item's owner can name a kind outside the Artifacts browser vocabulary. */
+    kindLabel?: string;
+    /** Context only, for example "6 steps". */
     subtitle?: string;
+    /** The Share control (or ⋯) it came from; the sheet hangs from it on wide layouts. */
+    anchor?: ShareSheetAnchor;
 }>): void {
-    const { name, subtitle, ...sheet } = params;
+    const { name, kindLabel: ownerKindLabel, subtitle, anchor, ...sheet } = params;
     const kind = classifyArtifactBrowserKind({ id: sheet.artifactId, header: { kind: sheet.kind } }) ?? 'document';
-    const kindLabel = artifactKindLabel(kind);
+    const kindLabel = ownerKindLabel ?? artifactKindLabel(kind);
     const identity = kind === 'board' ? <BoardShareIdentity artifactId={sheet.artifactId} kindLabel={kindLabel} />
         : [kindLabel, subtitle?.trim()].filter(Boolean).join(' · ');
-    Modal.show({
-        component: DocumentShareModal,
-        props: sheet,
-        chrome: {
-            kind: 'card',
-            phonePresentation: 'sheet',
-            testID: 'document-share-modal',
-            title: t('shareSheet.documents.shareTitle', { name }),
-            subtitle: identity,
-            // Content-sized card chrome; the sheet's SelectionList owns its rows, not a body ScrollView.
-            scrollHost: 'bounded',
-            bodyScroll: 'none',
-            dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92, size: 'md' },
-        },
-        closeOnBackdrop: true,
-    });
+    presentShareSheet({ component: DocumentShareModal, props: sheet, testID: 'document-share-modal',
+        title: t('shareSheet.documents.shareTitle', { name }), subtitle: identity, ...(anchor ? { anchor } : {}) });
+}
+
+function IssuedSignedInLinkModal(props: CustomModalInjectedProps & Readonly<{ shareUrl: string; scope: ServerAccountScope }>) {
+    return <DocumentSignedInLinkSection value disabled onChange={() => {}} shareUrl={props.shareUrl}
+        scope={props.scope} idPrefix="" />;
+}
+
+/** Agent replies retain only the release receipt; the answering App receives the capability privately. */
+export function showIssuedDocumentSignedInLink(params: Readonly<{ shareUrl: string; scope: ServerAccountScope }>): void {
+    presentShareSheet({ component: IssuedSignedInLinkModal, props: params, title: t('botTemplates.signedInLink'),
+        testID: 'document-issued-signed-in-link' });
 }

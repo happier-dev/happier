@@ -1,12 +1,17 @@
 import { vi } from 'vitest';
 import {
-    ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, materializeWorkflowAcceptedSnapshotV1,
-    sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
-    WorkflowRunRecipientCensusResponseV1Schema,
+    ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import {
+    sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
     type WorkflowRunSummaryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -14,8 +19,8 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export const RUN_STORAGE_PATH = '/v3/automations/runs/workflow-storage';
-export const ARTIFACT_LIST_PATH = '/v1/artifacts?limit=500&includeBody=true';
-export const AUTOMATION_LIST_PATH = '/v3/automations?limit=100';
+export const ARTIFACT_LIST_PATH = `/v1/artifacts?${new URLSearchParams({ limit: '500', kinds: JSON.stringify(['workflow-definition.v1']) })}`;
+export const AUTOMATION_QUERY_PATH = '/v3/automations/query';
 
 /** Board library tests stop at HTTP, credentials and Socket.IO, leaving Account ownership real. */
 export function installBoardLibraryTestHarness() {
@@ -44,6 +49,22 @@ export function installBoardLibraryTestHarness() {
     };
     return {
         home,
+        /** Keep definition tests at the HTTP boundary while exact-kind headers and batch bodies stay real. */
+        answerDefinitions(serverId: string, answer: Readonly<{
+            body?: readonly Artifact[];
+            respondAfter?: PromiseLike<void>;
+            dispatchThenFail?: boolean;
+        }>) {
+            if (answer.body) {
+                const artifacts = home.artifacts(serverId);
+                artifacts.clear();
+                for (const artifact of answer.body) artifacts.replaceStoredRow(artifact);
+            }
+            home.answer(serverId, `GET ${ARTIFACT_LIST_PATH}`, { select: async (_input, request) => {
+                const response = createArtifactListHttpResponse(new URL(request.url), home.artifacts(serverId).list());
+                return { ...answer, body: await response.json(), status: response.status };
+            } });
+        },
         async connect(serverUrl: string, accountId = 'account-a') {
             await home.reset();
             installHomeGovernanceBoundaries(home);
@@ -52,7 +73,7 @@ export function installBoardLibraryTestHarness() {
             executorLoader = await installRealActionExecutorModuleLoader();
             const serverId = await home.addHome({ name: 'Board Home', serverUrl, accountId });
             home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-            home.answer(serverId, AUTOMATION_LIST_PATH, { body: { automations: [], nextCursor: null } });
+            home.answer(serverId, `POST ${AUTOMATION_QUERY_PATH}`, { body: { automations: [], nextCursor: null } });
             await restore(serverUrl, accountId);
             return serverId;
         },
@@ -77,7 +98,8 @@ export function boardDefinitionArtifact(id: string, title: string, accountId = '
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
     } });
     return {
-        id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+        id, ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+        kind: 'other', kindHint: 'workflow-definition.v1',
         header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: id,
             revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title } }),
         body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition }) }),

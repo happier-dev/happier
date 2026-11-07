@@ -1,15 +1,21 @@
+import type {
+    SessionAttentionStanding} from '@happier-dev/protocol/sessions/organization/standings';
+import type {
+    SessionOrganizationFolder} from '@happier-dev/protocol/sessions/organization/folders';
+import type {
+    SessionOrganizationLabel,
+    SessionOrganizationOrderEntry} from '@happier-dev/protocol/sessions/organization/ordering';
+import type {
+    SessionOrganizationPin} from '@happier-dev/protocol/sessions/organization/pins';
+import type {
+    SessionOrganizationSnapshot,
+    SessionOrganizationSnapshotRequest} from '@happier-dev/protocol/sessions/organization/snapshot';
+import type {
+    SessionOrganizationTag,
+} from '@happier-dev/protocol/sessions/organization/tags';
+import type { SessionOrganizationOpenedDisplayStateV1 } from '@happier-dev/protocol/sessions/organization/folders';
 import type { SessionOrganizationSessionAppearance } from '@happier-dev/protocol/sessions/organization/appearances';
 import type { SessionAppearanceColor } from './appearanceColor';
-import type {
-    SessionAttentionStanding,
-    SessionOrganizationFolder,
-    SessionOrganizationLabel,
-    SessionOrganizationOrderEntry,
-    SessionOrganizationPin,
-    SessionOrganizationSnapshot,
-    SessionOrganizationSnapshotRequest,
-    SessionOrganizationTag,
-} from '@happier-dev/protocol';
 
 export type SessionOrganizationFolderAssignmentValue = string | null;
 export type SessionOrganizationFolderAssignmentEntry = Readonly<{
@@ -21,19 +27,7 @@ export type SessionOrganizationTagAssignmentEntry = Readonly<{
     tagIds: readonly string[];
 }>;
 
-export type SessionOrganizationDisplayState =
-    | Readonly<{
-        status: 'available';
-        value: unknown | null;
-    }>
-    | Readonly<{
-        status: 'locked';
-        reason:
-            | 'account_key_unavailable'
-            | 'content_unreadable'
-            | 'invalid_stored_display'
-            | 'storage_mode_mismatch';
-    }>;
+export type SessionOrganizationDisplayState = SessionOrganizationOpenedDisplayStateV1;
 
 export type UiSessionOrganizationFolder = Omit<SessionOrganizationFolder, 'displayState'> & Readonly<{
     displayState: SessionOrganizationDisplayState;

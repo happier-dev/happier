@@ -3,10 +3,10 @@ import type {
     UiSessionOrganizationFolder,
     UiSessionOrganizationTag,
 } from '@/sync/domains/session/organization';
+import type { SessionOrganizationContentEnvelope } from '@happier-dev/protocol/sessions';
 import type {
-    SessionOrganizationContentEnvelope,
     SessionOrganizationOrderEntry,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/ordering';
 import { SessionOrganizationSnapshotSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 
 type SessionOrganizationJsonValue = Extract<

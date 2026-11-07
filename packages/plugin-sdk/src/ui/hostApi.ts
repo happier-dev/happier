@@ -1,14 +1,23 @@
+import type { EntityDragItemV1 } from '../entityDragDrop.js';
 export type {
+    PluginUiDownloadFileRequestV1,
+    PluginUiOpenManagedMachineConfigurationRequestV1,
     PluginUiRevealSessionInputRequestV1,
     PluginUiReadMachineDisplayNameRequestV1,
     PluginUiReadMachineDisplayNameResultV1,
+    PluginUiReadAuthorityReferenceV1,
 } from '@happier-dev/protocol/plugins/ui/client';
+import type { ActionExecutionOptions } from '../actions/service.js';
+import type { FileDownloadResultV1 } from '../protocol/index.js';
+/** Contributed Action and input only; the host holds the receiving destination. */
+export type DownloadFileRequest = import('@happier-dev/protocol/plugins/ui/client').PluginUiDownloadFileRequestV1;
+/** A source-neutral seed for the incumbent Automation Event editor. */
+import type { PluginUiOpenAutomationEventRequestV1 } from './publicContract.js';
+export type OpenAutomationEventRequest = PluginUiOpenAutomationEventRequestV1;
+export type OpenManagedMachineConfigurationRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenManagedMachineConfigurationRequestV1>;
 export type RevealSessionInputRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiRevealSessionInputRequestV1>;
 export type ReadMachineDisplayNameRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameRequestV1>;
 export type ReadMachineDisplayNameResult = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameResultV1>;
-import type { PluginUiOpenAutomationEventRequestV1 } from './publicContract.js';
-export type OpenAutomationEventRequest = PluginUiOpenAutomationEventRequestV1;
-import type { EntityDragItemV1 } from '../entityDragDrop.js';
 import { PluginUiLaunchInputV1Schema as canonicalPluginUiLaunchInputV1Schema } from '@happier-dev/protocol/plugins/ui/semanticCommands';
 import type { PluginUiJsonValueV1 } from './publicContract.js';
 import type { WidgetSizeV1 as ProtocolWidgetSizeV1, WidgetSizeFootprintV1 as ProtocolWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
@@ -80,6 +89,7 @@ import type {
     PluginUiActionControlExecution,
     PluginUiActionControlPreparation,
     PluginUiActionControlPresentation,
+    ResourceContent,
 } from '@happier-dev/cli-common/plugins/ui';
 export type {
     PluginUiActionControl,
@@ -87,6 +97,7 @@ export type {
     PluginUiActionControlExecution,
     PluginUiActionControlPreparation,
     PluginUiActionControlPresentation,
+    ResourceContent,
 } from '@happier-dev/cli-common/plugins/ui';
 import type { StoredImageRefV1, PluginUiReadStoredImageResultV1 } from './publicContract.js';
 import type { PluginLiveStreamReferenceV1 } from './publicContract.js';
@@ -98,6 +109,9 @@ import type { PluginUiHostReadReferenceV1 as ProtocolPluginUiHostReadReferenceV1
 /** Host reads share Resource lifecycle while retaining the Action's caller policy. */
 export type PluginUiHostReadReference = ProtocolPluginUiHostReadReferenceV1;
 export type PluginUiResourceReference = PluginReference | PluginUiHostReadReference;
+/** Exact Action operands and purpose; observing grants no selection or execution authority. */
+export type PluginUiReadAuthorityReference = import('@happier-dev/protocol/plugins/ui/client').PluginUiReadAuthorityReferenceV1;
+export type PluginUiResourceWatchReference = PluginUiResourceReference | PluginUiReadAuthorityReference;
 import type { InteractionSeverity } from '../interactionContracts.js';
 import type {
     ComposerAttachmentAuthorValueV1,
@@ -378,11 +392,6 @@ export type PluginUiThemeV1 = PluginUiHostApiSurfaceThemeV1;
  */
 export type SurfaceContext = PluginUiHostApiSurfaceContextV1;
 
-export type ResourceContent = Readonly<{
-    contentType: string;
-    digest: string;
-    bytes: Uint8Array;
-}>;
 
 /**
  * A host-created, mount-bound reference to a workspace file. It is opaque to
@@ -421,7 +430,7 @@ export type EphemeralInputSettlement = PluginUiEphemeralInputSettlementV1;
  * The exact target-scoped settlement an outer contributed Action may consume.
  * It is transient host-selection data, never part of the Action input payload.
  */
-export type PluginUiActionExecutionOptions = PluginCancellationOptions & Readonly<{
+export type PluginUiActionExecutionOptions = ActionExecutionOptions & Readonly<{
     selectedActionInput?: PluginUiSelectedActionInputCarrierV1;
 }>;
 
@@ -449,12 +458,14 @@ export type OpenNewSessionOptions = PluginCancellationOptions & Readonly<{
  * pushes a real host history entry, so the user's back/forward walks the
  * page's own navigation, and re-entering the page restores that location.
  *
- * It is ignored by destinations that are not pages: a right-sidebar tab has no
- * location under it. `''` and an absent value both mean the page root; `.`/`..`
+ * Non-page destinations reject it: a right-sidebar tab has no location under
+ * it. `''` and an absent value both mean the page root; `.`/`..`
  * segments and an over-long value are rejected as a typed error rather than
  * normalized into some other location.
  */
 export type OpenSurfaceOptions = PluginCancellationOptions & Readonly<{
+    /** Open in a supported desktop window; unsupported hosts reject the request. */
+    presentation?: import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenSurfaceRequestV1['presentation'];
     subPath?: string;
     /**
      * Optional opaque instance identity for a same-plugin destination. The
@@ -488,7 +499,6 @@ export interface PluginUiHostApi {
         controller: PluginUiActionControlController,
         options?: PluginCancellationOptions,
     ): Promise<PluginUiActionControl>;
-
     /**
      * Native/declarative page areas use this shared host binding; the host stamps identity and
      * delegates to canonical widget Actions. Hosted HTML cannot embed host areas: this method is
@@ -514,6 +524,8 @@ export interface PluginUiHostApi {
      * supply data only and receive no callback or routing authority.
      */
     publishCurrentUiContext(enrichment: PluginUiContextEnrichmentV1 | null): void;
+    /** Publish outer page Tabs for this mount; null withdraws it. Controlled Tabs remains the selection owner. */
+    setPageNavigation(navigation: import('./publicContract.js').PluginUiPageNavigationV1 | null, options?: PluginCancellationOptions): Promise<void>;
     context(options?: PluginCancellationOptions): Promise<SurfaceContext>;
     /**
      * Observe surface-context changes (§3.6).
@@ -542,6 +554,8 @@ export interface PluginUiHostApi {
         input?: NoInfer<PluginUiActionInputFor<TAction>>,
         options?: PluginUiActionExecutionOptions,
     ): Promise<PluginUiActionResultFor<TAction>>;
+    /** Execute the ordinary contributed Action and receive its admitted bytes on this device. */
+    downloadFile(request: DownloadFileRequest, options?: PluginCancellationOptions): Promise<FileDownloadResultV1>;
     selectActionInput(
         request: SelectActionInputRequest,
         options?: PluginCancellationOptions,
@@ -589,6 +603,15 @@ export interface PluginUiHostApi {
      */
     openSurface(view: PluginReference, input?: JsonValue, options?: OpenSurfaceOptions): Promise<void>;
     /**
+     * Open the existing managed-Machine draft/review for an exact provisioner.
+     * Available only on a current admitted Machine mount. The host derives
+     * Home/controller from its target; opening performs no native acquisition.
+     */
+    openManagedMachineConfiguration(
+        request: OpenManagedMachineConfigurationRequest,
+        options?: PluginCancellationOptions,
+    ): Promise<void>;
+    /**
      * Open Happier's canonical Connected Accounts UI, optionally focused on an
      * exact service or qualified account. The host owns routing and admission;
      * plugins never receive credentials or an internal route.
@@ -625,8 +648,25 @@ export interface PluginUiHostApi {
      */
     replacePageLocation(
         subPath: string,
-        options?: PluginCancellationOptions & Readonly<{ backLocation?: string }>,
+        options?: PluginCancellationOptions & Readonly<{
+            backLocation?: string;
+            /** Same-editor native/RNW layout change, including its Back step; retains dirty protection. Hosted document replacement cannot preserve it. */
+            preserveUnsavedChanges?: boolean;
+            /**
+             * Another of this plugin's declared pages that this location presents, when one page shows several of
+             * its declared views a lens apart. The host titles its chrome with that view; absent means this page.
+             */
+            view?: string;
+        }>,
     ): Promise<Readonly<{ subPath: string }>>;
+    /**
+     * Declare this mounted appPage's unsaved edits. The host asks Keep editing / Discard
+     * before Back, close or a changed page location. Publish false after saving.
+     * Consume replacePageLocation's settled location before retiring a selected editor.
+     * This stores no draft and grants no navigation callback. Account/credential
+     * retirement clears private state immediately. Unsupported outside a page.
+     */
+    setUnsavedChanges(isDirty: boolean, options?: PluginCancellationOptions): Promise<void>;
     /**
      * Ordinary plugin-local feedback, delegated to Happier's own presentation
      * owner (§3.4). It is not an approval bypass and does not change ActionSpec
@@ -671,19 +711,26 @@ export interface PluginUiHostApi {
      * `readResource` remains the single snapshot authority, so an observer
      * re-reads after an `invalidated` event rather than receiving bytes here.
      *
-     * A **packaged** resource is immutable within its generation, so a host
-     * serving only packaged resources and no observable host reads never advertises this method and calling
-     * it rejects with `unsupported_method`. A **dynamic** resource is backed by
-     * the plugin's registered producer and is genuinely watchable.
+     * A **packaged** resource is immutable within its generation and does not
+     * produce invalidations. A **dynamic** resource is backed by the plugin's
+     * registered producer. Hosts can also advertise this method for observable
+     * host reads or admitted read authority without a Resource declaration.
+     *
+     * A `readAuthority` target admits that exact read Action/input and observes
+     * only its declared Connected Account purpose. It runs no read handler and
+     * returns no digest. `expired_resource` withdraws authority; dispose retained
+     * bytes and reacquire cold, including after a transport gap. Older hosts
+     * reject this target rather than qualifying it from display metadata.
      */
     watchResource(
-        resource: PluginUiResourceReference,
+        resource: PluginUiResourceWatchReference,
         listener: (event: ResourceSubscriptionEvent) => void,
         options?: PluginCancellationOptions,
     ): Promise<Disposable>;
     /**
-     * Resolve the host's currently focused Composer reference, if this mount
-     * can truthfully address one. Ordinary absence is `null`, not an error.
+     * A Composer surface resolves its host-bound opener while that mounted
+     * document remains current, even when focus moves into the surface. Other
+     * mounts resolve the currently focused Composer. Ordinary absence is `null`.
      */
     activeComposer(options?: PluginCancellationOptions): Promise<ComposerRefV1 | null>;
     /** Read one exact Composer scope through the canonical document owner. */
@@ -805,6 +852,8 @@ export interface PluginUiHostApi {
     readClipboard(options?: PluginCancellationOptions): Promise<string>;
     writeClipboard(value: string, options?: PluginCancellationOptions): Promise<void>;
     openExternalLink(url: string, options?: PluginCancellationOptions): Promise<void>;
+    /** Open an exact integration resource using the Account's preferred destination. */
+    openResource(resource: import('../protocol/resourceIntent.js').PluginUiResourceIntentV1, options?: PluginCancellationOptions): Promise<void>;
 }
 
 export type PluginUiHostApiVersion = ReturnType<PluginUiHostApi['version']>;
@@ -841,6 +890,8 @@ export interface RenderContext {
      * already-selected surface is reopened with new input.
      */
     readonly launchInput?: JsonValue;
+    /** One staged explicit open for this mount, even without input; absent on layout restore or reload. */
+    readonly launch?: Readonly<{ kind: 'explicit'; input?: JsonValue }>;
     /**
      * The plugin-local location inside a full-page destination (`appPage`) —
      * the remainder of the host-generated route after the page root, `''` at the

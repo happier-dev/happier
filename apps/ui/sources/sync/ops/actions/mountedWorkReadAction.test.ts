@@ -10,13 +10,18 @@ import { createActionOperationStore } from '@/sync/domains/actionOperations/acti
 import { createActionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { registerMountedWorkReadOwner, invokeMountedWorkRead } from './mountedWorkReadAction';
 import { registerMountedInboxReadOwner } from './mountedWorkReadAction';
-import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
 import { createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createInboxAttentionFixture } from '@/dev/testkit/fixtures/inboxFixtures';
 import { workflowRunRowFromAutomationRun } from '@/sync/store/domains/workflowRuns';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
+import { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
+import { createFrontDoorActionExecute as createFixtureActionExecute } from './frontDoorRuntimeActionExecutor';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
 import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -66,9 +71,12 @@ it('reads approval and Automation rows from the canonical Inbox grouping without
         header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), sessions: ['step'],
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true };
     const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [],
-        automationRuns: [workflowRunRowFromAutomationRun(run)], automationServerId: serverId, openApprovals: [approval],
+        automationRuns: [workflowRunRowFromAutomationRun(run)], automationServerId: serverId, openApprovals: [readOpenApprovalInboxEntry(approval)!],
         stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
     const model: InboxModel = {
+        noticeInvestigation: createAccountNoticeInvestigation({ scope: { serverId, accountId: 'session-account' },
+            isCurrent: () => false, execute: createFixtureActionExecute() }),
+        invokePluginSessionControl: async () => ({ kind: 'unavailable' }),
         source: { isDataReady: true, sessionsById: {}, sessionListRowsByServerId: {},
             ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} },
         ...createInboxAttentionFixture(serverId),
@@ -77,6 +85,7 @@ it('reads approval and Automation rows from the canonical Inbox grouping without
         openApprovals: [approval], openUsageNotices: [], friendRequests: [],
         sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
         workGroups: groups, targetBySessionAddress: new Map(), actionOperationEntries: [], pendingReadKeys: new Set(),
+        readUnavailableReasonBySessionAddress: new Map(), markAllReadUnavailableReason: null,
         markAllPending: false, isLoading: false, hasPrimaryAttention: true, hasContent: true, showCaughtUp: false, spansHomes: false,
         dismissUsageNotice: async () => {}, markRead: async () => {}, resolveActionOperation: () => {},
         settle: async () => {}, setReminder: async () => {},
@@ -105,7 +114,9 @@ it('reads approval and Automation rows from the canonical Inbox grouping without
             context: { ...context, runtimeAccountId: 'different-account' } })).toEqual({ status: 'unavailable' });
         snapshot = { ...model, workGroups: [{ ...groups[0]!, root: { kind: 'automation', serverId: 'home-b',
             automationId: run.automationId, runId: run.id } }] };
-        expect(await execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        expect(await execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+            { root: { kind: 'automation', serverId: 'home-b', automationId: run.automationId, runId: run.id } },
+        ] } });
         snapshot = model;
         current = false;
         expect(await invokeMountedWorkRead({ actionId: 'inbox.get', input: {}, context })).toEqual({ status: 'unavailable' });
@@ -173,7 +184,9 @@ describe('mounted canonical Work reads', () => {
             actionOperations: createActionOperationSelectors().selectForSession(operations.getSnapshot(),
                 { serverId: 'home-a', accountId: 'account-a', sessionId: 'lead' }),
             describeOperationStatus: () => 'Running',
-            managedRuns: [{ run: { id: 'run-a', state: 'running', workflowCustodyState: null }, title: 'Review', word: 'Running', needsAttention: true }],
+            managedRuns: [{ run: { id: 'run-a', state: 'running', workflowCustodyState: null,
+                attentionRequired: true, invocationAttentionRequired: true, failureUnseen: false },
+                title: 'Review', word: 'Running' }],
             ownTriggerRunIds: new Set(), describeAgentStatus: () => '', describeProgress: () => '',
         });
         const remove = registerMountedWorkReadOwner({

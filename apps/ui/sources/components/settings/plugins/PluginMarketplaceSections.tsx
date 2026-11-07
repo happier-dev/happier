@@ -1,7 +1,8 @@
+import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import * as React from 'react';
-import { usePathname } from '@/components/appShell/workspace/destinationRoute';
-import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
+import { formatAgentNameListFolded } from '@/components/capabilities/identity/agentNameList';
+import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute, resolvePluginsSurfaceHost } from './model/pluginsSurfaceRoutes';
 import { Status, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { ScrollView, View } from 'react-native';
@@ -23,6 +24,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Text } from '@/components/ui/text/Text';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -47,19 +49,24 @@ import type {
     PluginMarketplaceNonInstallableListing,
 } from './readPluginMarketplaceCatalog';
 import { Icon } from '@/components/ui/icons/Icon';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { readApprovalArtifactTitleInput, useApprovalRequestTitle } from '@/components/approvals/approvalRequestTitle';
+import { executeWorkspaceUiAction } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { InboxArtifactSourceBoundary, useInboxArtifactBodyDemand, useInboxArtifactItems, useInboxArtifactSource } from '@/hooks/inbox/useInboxArtifactSource';
+import { listOpenPluginApprovalArtifactsForMachine } from '@/sync/domains/artifacts/approvalArtifacts';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { InstalledPluginActionId, PluginRoutineOperationSettlement } from './model/usePluginSettingsScreenState';
 import {
     catalogReviewStatusLabel,
     projectBrowseShelves,
-    formatPendingPluginChangeSubtitle,
-    formatPendingPluginChangeTitle,
     projectDevelopmentPluginPresentation,
     projectInstalledPluginLifecycleCapabilities,
     projectInstalledPluginPresentation,
     installedPluginVersionLabel,
     isPluginIncludedWithHappier,
     partitionInstalledPlugins,
-    readPendingPluginChangeListingId,
     type DevelopmentPluginEntry,
     type DiscoverShelf,
     type InstalledPluginEntry,
@@ -68,6 +75,7 @@ import {
 } from './model/pluginMarketplaceModel';
 import type { DevelopmentStartUnavailableReason } from './development/developmentStartAvailability';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import type { RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 
 /** Grid (cards, the default) or List (rows) — the Plugins page's two presentations of one collection. */
 export type PluginsCollectionPresentation = 'grid' | 'list';
@@ -258,9 +266,11 @@ function installedInvite(onDiscover: () => void, maxWidthStyle: ReturnType<typeo
                 title={nothingAdded ? t('settingsPlugins.surfaces.nothingAddedTitle') : t('settingsPlugins.surfaces.emptyTitle')}
                 subtitle={t('settingsPlugins.surfaces.emptyBody')}
                 action={(
+                    // The page header's Add is the page's one primary; the invitation's way in stays secondary.
                     <RoundButton
                         testID="settings.plugins.marketplace.installed.empty.browse"
                         size="normal"
+                        display="secondary"
                         title={t('settingsPlugins.surfaces.browsePlugins')}
                         onPress={onDiscover}
                     />
@@ -299,6 +309,8 @@ type InstalledPluginShelfKey = 'added' | 'included' | PluginKindShelfKey;
 
 const INCLUDED_SHELF = 'included';
 const INCLUDED_REST_SHELF = 'includedRest';
+/** Names the closed included line shows before "and N more" when no kinds are known. */
+const INCLUDED_NAMES_SHOWN = 3;
 
 /**
  * What the user added, then one quiet line for what ships with Happier, named by the kinds it holds. Opened,
@@ -315,7 +327,11 @@ function buildInstalledPluginShelves(rows: readonly InstalledPluginRow[], includ
         axis.push({
             key: INCLUDED_SHELF,
             title: t('settingsPlugins.rowSource.bundled'),
-            ...(kindShelves.length > 0 ? { description: kindShelves.map(pluginKindShelfTitle).join(' · ') } : {}),
+            // Closed, the line still says what it holds: its kinds, or (none known yet) the first few by name.
+            description: kindShelves.length > 0
+                ? kindShelves.map(pluginKindShelfTitle).join(' · ')
+                : formatAgentNameListFolded(rows.filter((row) => row.group === 'included')
+                    .sort(orderInstalledPluginRows).map((row) => row.entry.title), INCLUDED_NAMES_SHOWN),
         });
     }
     if (includedOpen) {
@@ -433,9 +449,9 @@ function projectInstalledPluginRows(
 function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsById | undefined, machineId: string | null | undefined, serverId: string | null | undefined, presentation: PluginsCollectionPresentation): CollectionAnatomy<InstalledPluginRow> {
     const host = resolvePluginsSurfaceHost(usePathname());
     return React.useMemo(() => ({
-        wrapItem: (row, content) => <WorkspaceDestinationRow href={buildPluginsHomeRoute(host, {
+        destination: (row) => ({ href: buildPluginsHomeRoute(host, {
             view: 'installed', open: { kind: 'installed', pluginId: row.entry.pluginId },
-        })}>{content}</WorkspaceDestinationRow>,
+        }) }),
         glyph: (row) => (
             <PluginMark title={row.entry.title} pluginId={row.entry.pluginId} iconAgentId={projectionByPluginId?.[row.entry.pluginId]?.iconAgentId ?? null}
                 installedPackage={projectionByPluginId?.[row.entry.pluginId]?.installedPackage} machineId={machineId} serverId={serverId} />
@@ -450,7 +466,7 @@ function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsBy
             ? <Status label={row.statusLabel} tone={row.statusTone === 'quiet' ? 'secondary' : row.statusTone}
                 presentation="inline" indicator={row.statusTone !== 'quiet'} />
             : null),
-        // A card's control sits in its footer; a list row's is its row action (`useInstalledPluginRowActions`),
+        // A card's control uses the shared action slot; a list row's is its row action (`useInstalledPluginRowActions`),
         // which the Collection draws in every list geometry, so the list does not draw it a second time.
         ...(presentation === 'grid' ? { action: (row: InstalledPluginRow) => row.control } : {}),
         accessibilityLabel: (row) => buildActionRowAccessibilityLabel([row.entry.title, t('common.details')]) ?? row.entry.title,
@@ -487,24 +503,68 @@ function PluginsNoMatch(props: Readonly<{
     );
 }
 
-/**
- * The decisions this machine's daemon is holding for the present user.
- *
- * This is the app half of the agent-authored plugin loop: an Agent can prepare
- * a plugin change but cannot approve source-root or package trust, so without
- * this section its change is invisible and expires unanswered. The section is
- * rendered only when something is actually waiting, as one tinted notice at
- * the top of the page, so it reads as attention rather than as furniture.
- */
+/** Ordinary Inbox reviews and daemon-owned applying facts for the selected Machine. */
 export function PendingPluginChangesSection(props: Readonly<{
     pendingChanges: readonly PendingPluginChangeListing[];
-    canRunActions: boolean;
-    isPluginActionInFlight: (pendingChangeId: string) => boolean;
-    onDecide: (pendingChangeId: string, decision: 'approve' | 'reject') => void;
+    active: boolean;
+    target: Readonly<{ serverId: string; machineId: string }> | null;
 }>) {
-    const { theme } = useUnistyles();
-    const styles = sectionStylesheet;
-    if (props.pendingChanges.length === 0) return null;
+    const activeScope = useActiveServerAccountScope();
+    const currentTarget = React.useRef(props.target);
+    currentTarget.current = props.active ? props.target : null;
+    React.useEffect(() => {
+        currentTarget.current = props.active ? props.target : null;
+        return () => { currentTarget.current = null; };
+    }, [props.active, props.target?.serverId, props.target?.machineId]);
+    if (!props.active || !props.target) return null;
+    const target = props.target;
+    const scope = selectActiveServerAccountScopeForServer(activeScope, target.serverId);
+    // The existing Inbox inventory belongs to the active Account; foreign targets
+    // retain daemon applying facts without introducing another approval source.
+    if (!scope) return <PendingPluginChangesRows pendingChanges={props.pendingChanges} approvalRows={[]} sourceUnavailable={false} />;
+    return <InboxArtifactSourceBoundary>
+        <PendingPluginChangesContent pendingChanges={props.pendingChanges} scope={scope} target={target}
+            isCurrentTarget={() => currentTarget.current?.serverId === target.serverId
+                && currentTarget.current?.machineId === target.machineId} />
+    </InboxArtifactSourceBoundary>;
+}
+
+function PendingPluginChangesContent(props: Readonly<{
+    pendingChanges: readonly PendingPluginChangeListing[];
+    scope: ServerAccountScope;
+    target: Readonly<{ serverId: string; machineId: string }>;
+    isCurrentTarget: () => boolean;
+}>) {
+    const router = useRouter();
+    // Plugin approvals are matched by their request body.
+    useInboxArtifactBodyDemand();
+    const { openApprovals } = useInboxArtifactItems();
+    const source = useInboxArtifactSource();
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const approvals = listOpenPluginApprovalArtifactsForMachine(openApprovals, {
+        ...props.scope, machineId: props.target.machineId,
+    });
+    const approvalRows = approvals.map(entry => ({ id: entry.artifact.id, entry,
+        onReview: async () => {
+            if (!props.isCurrentTarget() || !lifetime?.isCurrent()) return;
+            await executeWorkspaceUiAction({ actionId: 'workspace.tabs.open',
+                input: { href: buildApprovalHref(entry.artifact.id, props.target.serverId) } }, router.push);
+        } }));
+    return <PendingPluginChangesRows serverId={props.target.serverId} pendingChanges={props.pendingChanges} approvalRows={approvalRows}
+        sourceUnavailable={source.phase === 'failed' || source.phase === 'partial'} onRetry={source.retry} />;
+}
+
+type PendingPluginApproval = ReturnType<typeof listOpenPluginApprovalArtifactsForMachine>[number];
+
+function PendingPluginChangesRows(props: Readonly<{
+    serverId?: string;
+    pendingChanges: readonly PendingPluginChangeListing[];
+    approvalRows: readonly Readonly<{ id: string; entry: PendingPluginApproval; onReview: () => Promise<void> }>[];
+    sourceUnavailable: boolean;
+    onRetry?: () => void;
+}>) {
+    const applying = props.pendingChanges.flatMap(entry => entry.kind === 'applying' ? [entry.pendingChangeId] : []);
+    if (props.approvalRows.length === 0 && applying.length === 0 && !props.sourceUnavailable) return null;
     return (
         <View
             testID="settings.plugins.management.pendingChanges"
@@ -513,74 +573,77 @@ export function PendingPluginChangesSection(props: Readonly<{
             <ItemGroup
                 title={t('settingsPlugins.pendingChangesTitle')}
                 description={t('settingsPlugins.pendingChangesFooter')}
-                containerStyle={styles.pendingNotice}
             >
-                {props.pendingChanges.map((entry) => {
-                    const pendingChangeId = readPendingPluginChangeListingId(entry);
-                    const busy = props.isPluginActionInFlight(pendingChangeId);
-                    // Local flight suppresses duplicate interaction only. The
-                    // daemon listing is the sole owner of apply state.
-                    const applying = entry.kind === 'applying';
-                    const decidable = !applying;
-                    return (
-                        <Item
-                            key={pendingChangeId}
-                            testID={`settings.plugins.management.pendingChanges.${pendingChangeId}`}
-                            title={formatPendingPluginChangeTitle(entry)}
-                            subtitle={entry.kind === 'applying'
-                                ? undefined
-                                : formatPendingPluginChangeSubtitle(entry)}
-                            subtitleLines={0}
-                            icon={<Icon
-                                name="shield-check"
-                                size={20}
-                                color={applying ? theme.colors.text.secondary : theme.colors.state.info.foreground}
-                            />}
-                            showChevron={false}
-                            loading={applying}
-                            mode="info"
-                            accessoryLayout="adaptive"
-                            rightElementOutsidePressable
-                            rightElement={decidable ? (
-                                // The row action opens the full install-and-trust
-                                // review (or, for a source-root change, the folder
-                                // trust confirmation) before anything is decided;
-                                // nothing has been approved yet, so the label says
-                                // Review, and the reject action — which discards
-                                // without ever opening the review — does not claim
-                                // that it shows one.
-                                <ItemRowActions
-                                    title={formatPendingPluginChangeTitle(entry)}
-                                    compactActionIds={['review', 'reject']}
-                                    overflowTriggerTestID={`settings.plugins.management.pendingChanges.${pendingChangeId}.actions.overflow`}
-                                    actions={[
-                                        {
-                                            id: 'review',
-                                            title: t('settingsPlugins.pendingChangeReviewAction'),
-                                            subtitle: t('settingsPlugins.pendingChangesReviewHint'),
-                                            icon: 'eye',
-                                            inlineTestID: `settings.plugins.management.pendingChanges.${pendingChangeId}.action.review`,
-                                            disabled: !props.canRunActions || busy,
-                                            onPress: () => props.onDecide(pendingChangeId, 'approve'),
-                                        },
-                                        {
-                                            id: 'reject',
-                                            title: t('approvals.reject'),
-                                            subtitle: t('settingsPlugins.pendingChangeRejectHint'),
-                                            icon: 'x-circle',
-                                            destructive: true,
-                                            inlineTestID: `settings.plugins.management.pendingChanges.${pendingChangeId}.action.reject`,
-                                            disabled: !props.canRunActions || busy,
-                                            onPress: () => props.onDecide(pendingChangeId, 'reject'),
-                                        },
-                                    ]}
-                                />
-                            ) : undefined}
-                        />
-                    );
-                })}
+                {/* The Inbox's own words for a partial source: retained rows stay at full strength under the line. */}
+                {props.sourceUnavailable ? (props.approvalRows.length > 0 || applying.length > 0 ? <SurfaceFreshnessOnSheetProvider><SurfaceFreshnessLine
+                    testID="settings.plugins.management.pendingChanges.approvalsUnavailable"
+                    reason={t('inbox.work.stale.sources')}
+                    action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined} /></SurfaceFreshnessOnSheetProvider> : <SurfaceStateCard
+                    testID="settings.plugins.management.pendingChanges.approvalsUnavailable"
+                    size="line" kind="unavailable" title={t('inbox.work.stale.sources')}
+                    action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined} />) : null}
+                {props.approvalRows.map((row) => (
+                    <PendingPluginApprovalRow key={`approval:${row.id}`} id={row.id} entry={row.entry}
+                        serverId={props.serverId ?? null} onReview={row.onReview} />
+                ))}
+                {applying.map((id) => (
+                    <PendingPluginChangeRow key={`applying:${id}`} id={id} title={t('settingsPlugins.pendingChangeApplying')} />
+                ))}
             </ItemGroup>
         </View>
+    );
+}
+
+/** Named by the approval's one title owner, the same words as its Inbox row and page. */
+function PendingPluginApprovalRow(props: Readonly<{
+    id: string;
+    entry: PendingPluginApproval;
+    serverId: string | null;
+    onReview: () => Promise<void>;
+    showDivider?: boolean;
+}>) {
+    const { title } = useApprovalRequestTitle(readApprovalArtifactTitleInput(
+        { header: props.entry.artifact.header, title: null },
+        { family: 'built_in', request: props.entry.approval },
+    ), props.serverId);
+    return <PendingPluginChangeRow id={props.id} title={title} onReview={props.onReview} showDivider={props.showDivider} />;
+}
+
+/** A waiting change speaks in the attention amber; one being applied is already out of the person's hands. */
+function PendingPluginChangeRow(props: Readonly<{
+    id: string;
+    title: string;
+    onReview?: () => Promise<void>;
+    showDivider?: boolean;
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <Item
+            testID={`settings.plugins.management.pendingChanges.${props.id}`}
+            title={props.title}
+            icon={<Icon
+                name="shield-check"
+                size={20}
+                color={props.onReview ? theme.colors.state.attention.foreground : theme.colors.text.secondary}
+            />}
+            showChevron={false}
+            showDivider={props.showDivider}
+            loading={!props.onReview}
+            mode="info"
+            // A row's one action stays at its end on a phone; beneath the title it became a full-width bar per row.
+            accessoryLayout="inline"
+            rightElementOutsidePressable
+            rightElement={props.onReview ? (
+                <RoundButton
+                    testID={`settings.plugins.management.pendingChanges.${props.id}.action.review`}
+                    size="small"
+                    display="secondary"
+                    title={t('settingsPlugins.pendingChangeReviewAction')}
+                    accessibilityHint={t('settingsPlugins.pendingChangesReviewHint')}
+                    onPress={props.onReview}
+                />
+            ) : undefined}
+        />
     );
 }
 
@@ -603,7 +666,10 @@ export function PluginRoutineOperationSettlementRow(props: Readonly<{
                     title={props.settlement.message}
                     subtitle={props.settlement.detail}
                     subtitleLines={0}
-                    icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={props.settlement.outcome === 'withdrawn'
+                        // Nothing changed: a quiet mark, never the success check.
+                        ? <Icon name="info" size={29} color={theme.colors.text.secondary} />
+                        : <Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -653,6 +719,7 @@ export function DevelopmentPluginsSection(props: Readonly<{
     onCreateWithAgentFromCreated: (created: Readonly<{ pluginId: string; sourceRootPath: string }>) => void;
     onDevelopSourceRoot: () => void;
     onEditWithAgent: (pluginId: string) => void;
+    onPublish?: (sourceRootPath: string) => void;
     onRunAction: (action: 'test' | 'pack' | 'unregister', sourceRootPath: string) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -830,6 +897,14 @@ export function DevelopmentPluginsSection(props: Readonly<{
                                         disabled: !props.canRunActions || !entry.actions.test || busy,
                                         onPress: () => props.onRunAction('test', sourceRootPath),
                                     },
+                                    ...(props.onPublish ? [{
+                                        id: 'publish',
+                                        title: t('settingsPlugins.publish.title'),
+                                        icon: 'upload' as const,
+                                        inlineTestID: `settings.plugins.management.development.${rowId}.action.publish`,
+                                        disabled: !props.canRunActions || busy,
+                                        onPress: () => props.onPublish?.(sourceRootPath),
+                                    }] : []),
                                     {
                                         id: 'pack',
                                         title: t('settingsPlugins.developmentPack'),
@@ -925,6 +1000,8 @@ export function PluginDiagnosticsSnapshotSection(props: Readonly<{
 export function DiscoverStatusSummary(props: Readonly<{
     loading: boolean;
     error: string | null;
+    failureStatus?: RegistryFailureStatus | null;
+    sources?: readonly Readonly<{ title: string }>[];
     stale: boolean;
     entryCount: number;
     sourceStatuses: readonly PluginMarketplaceDiscoverSourceStatus[];
@@ -949,10 +1026,14 @@ export function DiscoverStatusSummary(props: Readonly<{
     const waitingForQuery = props.searchText === null && !props.loading && props.error === null && !props.noTarget;
     // One issue per source (and one for the index), however many ways the daemon reported it.
     const issues = React.useMemo(
-        () => buildPluginMarketplaceDiscoverIssues({ sourceStatuses: props.sourceStatuses, diagnostics: props.diagnostics }),
-        [props.diagnostics, props.sourceStatuses],
+        () => buildPluginMarketplaceDiscoverIssues({ sourceStatuses: props.sourceStatuses, diagnostics: props.diagnostics,
+            ...(props.error !== null && !props.loading ? { readFailure: { status: props.failureStatus ?? null,
+                sourceTitle: props.selectedSourceTitle ?? (props.sources?.map(source => source.title).join(', ') || null) } } : {}) }),
+        [props.diagnostics, props.sourceStatuses, props.error, props.loading, props.failureStatus, props.selectedSourceTitle, props.sources],
     );
     const sourceIssueCount = issues.filter((issue) => issue.sourceId !== null).length;
+    const unreachableIssues = issues.filter((issue) => issue.sourceId !== null && !issue.reachable);
+    const attentionIssues = issues.filter((issue) => issue.sourceId === null || issue.reachable);
     // Unanswered sources cannot establish an empty catalog or a no-match search.
     // With no retained rows, the source notices own the cause and recovery.
     const sourceFailureWithoutResults = issues.length > 0 && props.entryCount === 0
@@ -967,9 +1048,7 @@ export function DiscoverStatusSummary(props: Readonly<{
         ? props.selectedSourceTitle === null
             ? t('settingsPlugins.discover.status.loading')
             : t('settingsPlugins.discover.status.loadingSource', { source: props.selectedSourceTitle })
-        : props.error !== null
-            ? t('settingsPlugins.discover.status.errorTitle')
-            : props.entryCount === 0 && props.nonInstallable.length > 0
+        : props.entryCount === 0 && props.nonInstallable.length > 0
                 ? t('settingsPlugins.discover.status.nonInstallable', { count: props.nonInstallable.length })
                 : props.entryCount === 0
                     ? searched
@@ -982,7 +1061,6 @@ export function DiscoverStatusSummary(props: Readonly<{
     // Qualifiers, in the order a reader needs them: what they are looking at is
     // out of date, then what was missing, then what could not be acted on.
     const qualifiers = [
-        ...(props.error !== null && !props.loading ? [props.error] : []),
         ...(props.stale && !props.loading ? [t('settingsPlugins.discover.status.stale')] : []),
         ...(sourceIssueCount > 0
             ? [t('settingsPlugins.discover.status.partial', { count: sourceIssueCount })]
@@ -1027,15 +1105,28 @@ export function DiscoverStatusSummary(props: Readonly<{
                     ) : null}
                 </View>
             </View>)}
-            {issues.map((issue) => (
+            {/* A catalog that didn't answer doesn't need the person: the one quiet outage line every Store page uses. */}
+            <RegistrySourcesUnavailable
+                testID="settings.plugins.marketplace.discover.sources"
+                size={sourceFailureWithoutResults ? 'page' : 'line'}
+                failures={unreachableIssues.map((issue) => {
+                    const source = issue.sourceTitle ?? issue.sourceId!;
+                    const reason = t('settingsPlugins.discover.diagnostic.unreachableTitle', { source });
+                    return { key: issue.id, message: issue.summary ?? reason,
+                        details: issue.details.flatMap((detail) => [
+                            detail.message,
+                            t('settingsPlugins.diagnosticsTechnicalCode', { code: detail.code }),
+                        ]),
+                        onRetry: props.onRetry ?? (() => {}) };
+                })}
+            />
+            {attentionIssues.map((issue) => (
                 <AttentionBanner
                     key={issue.id}
                     testID={`settings.plugins.marketplace.discover.issue.${issue.sourceId ?? 'index'}`}
-                    title={issue.sourceId === null
+                    title={issue.summary ?? (issue.sourceId === null
                         ? t('settingsPlugins.discover.diagnostic.indexTitle')
-                        : issue.reachable
-                            ? t('settingsPlugins.discover.diagnostic.behindTitle', { source: issue.sourceTitle ?? issue.sourceId })
-                            : t('settingsPlugins.discover.diagnostic.unreachableTitle', { source: issue.sourceTitle ?? issue.sourceId })}
+                        : t('settingsPlugins.discover.diagnostic.behindTitle', { source: issue.sourceTitle ?? issue.sourceId }))}
                     description={issue.sourceId === null || props.entryCount === 0
                         ? undefined : t('settingsPlugins.discover.diagnostic.otherSourcesShown')}
                     action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : null}
@@ -1286,9 +1377,10 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
     const host = resolvePluginsSurfaceHost(usePathname());
     const { installedPluginById, projectionByPluginId } = props;
     return React.useMemo(() => ({
-        wrapItem: ({ entry }, content) => <WorkspaceDestinationRow href={buildPluginsHomeRoute(host, {
-            view: 'browse', open: { kind: 'listing', sourceId: entry.sourceId, pluginId: entry.id },
-        })}>{content}</WorkspaceDestinationRow>,
+        destination: ({ entry }) => ({ href: buildPluginsHomeRoute(host, {
+            view: 'browse', open: { kind: 'listing', sourceId: entry.sourceId, pluginId: entry.id,
+                ...(entry.itemId ? { itemId: entry.itemId } : {}), ...(entry.version ? { version: entry.version } : {}) },
+        }) }),
         glyph: ({ entry }) => (
             <PluginMark title={entry.title} pluginId={entry.id} iconAgentId={projectionByPluginId?.[entry.id]?.iconAgentId ?? null}
                 installedPackage={projectionByPluginId?.[entry.id]?.installedPackage} machineId={props.machineId} serverId={props.serverId} />
@@ -1298,9 +1390,8 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         // takes the byline's place until the listing is installed.
         where: ({ entry }) => (!installedPluginById.has(entry.id) && entry.registrySelectionOrigin !== null
             ? t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })
-            : `${entry.publisher.displayName} · ${entry.sourceTitle}`),
-        // The grid-only slot keeps its two-line place without inventing unavailable catalog copy.
-        description: ({ entry }) => entry.description ?? '',
+            : [entry.publisher.displayName, entry.sourceTitle].filter(Boolean).join(' · ')),
+        description: ({ entry }) => entry.description || null,
         reason: ({ entry }) => (installedPluginById.has(entry.id) && entry.warning !== 'withdrawn' ? (
             <Status
                 testID={`settings.plugins.marketplace.installedStatus.${entry.sourceId}.${entry.id}`}
@@ -1342,10 +1433,6 @@ const sectionStylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
         maxWidth: 140,
-    },
-    pendingNotice: {
-        backgroundColor: theme.colors.state.info.background,
-        borderColor: theme.colors.state.info.border,
     },
     statusLine: {
         width: '100%',

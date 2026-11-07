@@ -1,13 +1,73 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import {
     notifyExecutionRunActivity,
     notifyExecutionRunActivityFromUpdate,
     notifyExecutionRunActivityReconnect,
+    readRunningExecutionRunRosterSnapshot,
+    refreshRunningExecutionRunRoster,
     subscribeExecutionRunActivity,
+    subscribeRunningExecutionRunRoster,
 } from './executionRunActivityBus';
 
 describe('executionRunActivityBus', () => {
+    it('keeps settled refreshes quiet while publishing changed runs, failures and recovery', async () => {
+        const address = { serverId: 'home-a', sessionId: 'settled-roster' };
+        const run = ExecutionRunPublicStateSchema.parse({
+            runId: 'run-one', callId: 'call-one', sidechainId: 'sidechain-one', intent: 'review',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            status: 'running', startedAtMs: 123,
+        });
+        let response = Promise.resolve<readonly typeof run[] | null>([run]);
+        const publications = vi.fn();
+        const unsubscribe = subscribeRunningExecutionRunRoster(address, publications, () => response);
+        try {
+            expect(readRunningExecutionRunRosterSnapshot(address).loading).toBe(true);
+            await response;
+            const settled = readRunningExecutionRunRosterSnapshot(address);
+            expect(settled).toMatchObject({ loading: false, failed: false, runs: [run] });
+            publications.mockClear();
+            for (let index = 0; index < 3; index++) {
+                response = Promise.resolve([{ ...run }]);
+                refreshRunningExecutionRunRoster(address);
+                expect.soft(readRunningExecutionRunRosterSnapshot(address)).toBe(settled);
+                await response;
+            }
+            expect.soft(publications).toHaveBeenCalledTimes(0);
+            expect(readRunningExecutionRunRosterSnapshot(address)).toBe(settled);
+
+            response = Promise.resolve([run, { ...run, runId: 'run-two' }]);
+            refreshRunningExecutionRunRoster(address);
+            expect.soft(readRunningExecutionRunRosterSnapshot(address).loading).toBe(false);
+            await response;
+            const changed = readRunningExecutionRunRosterSnapshot(address);
+            expect(changed.runs.map(item => item.runId)).toEqual(['run-one', 'run-two']);
+            expect(changed.runs[0]).toBe(settled.runs[0]);
+            publications.mockClear();
+
+            response = Promise.resolve(null);
+            refreshRunningExecutionRunRoster(address);
+            await response;
+            const failed = readRunningExecutionRunRosterSnapshot(address);
+            expect(failed).toMatchObject({ loading: false, failed: true });
+            expect(failed.runs).toBe(changed.runs);
+            expect.soft(publications).toHaveBeenCalledTimes(1);
+            publications.mockClear();
+            refreshRunningExecutionRunRoster(address);
+            expect.soft(readRunningExecutionRunRosterSnapshot(address)).toBe(failed);
+            await response;
+            expect.soft(publications).toHaveBeenCalledTimes(0);
+
+            response = Promise.resolve(changed.runs);
+            notifyExecutionRunActivityReconnect(address.serverId);
+            await response;
+            expect(readRunningExecutionRunRosterSnapshot(address)).toMatchObject({ loading: false, failed: false });
+            expect.soft(publications).toHaveBeenCalledTimes(1);
+        } finally { unsubscribe(); }
+    });
+
     it('wakes only the exact Machine demand and catches it up on its Home reconnect', () => {
         const own = vi.fn();
         const otherHome = vi.fn();

@@ -1,12 +1,15 @@
-import * as executableRegistrations from './clientExecutableContributions';
 import { describe, expect, it, vi } from 'vitest';
 import {
-    PluginContributesV2Schema,
-    type PluginMachineExecutionOriginV1,
+    PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
+    type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import {
     type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createWorkItemsAccountFixture } from '@/dev/testkit/fixtures/workItemsPlugin';
+import { createBoardTaskActionContext } from '@/components/boards/model/boardTaskActionContext';
 
 import { createPluginReactNativeBundleCache } from './bundleCache';
 import { createPluginUiCommonJsLoaderBackend } from './commonJsLoaderBackend';
@@ -15,6 +18,7 @@ import {
     createPluginUiClientExecutableRegistrationIndex,
     getPluginUiClientExecutableTargetAddressKey,
     resolvePluginUiClientActionRegistration,
+    resolvePluginUiAccountResourceRegistration,
     resolvePluginUiClientDragSourceRegistration,
     resolvePluginUiClientDropTargetRegistration,
     resolvePluginUiClientWorkItemsRegistration,
@@ -29,6 +33,38 @@ import type {
 } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import * as executableRegistrations from './clientExecutableContributions';
+
+const pluginId = 'acme.preview';
+    const target = Object.freeze({
+    artifactId: 'client-runtime',
+    exportName: 'activate',
+    platform: 'web' as const,
+});
+const occurrenceId = 'preview-occurrence-12';
+const hostUiApiRange = '^1.0.0';
+const executionOrigin = Object.freeze({
+    serverIdentityId: 'srv_server1',
+    materializationRef: Object.freeze({
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId,
+    }),
+}) satisfies PluginMachineExecutionOriginV1;
+const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
+    pluginId,
+    contributionId: target.artifactId,
+    artifactId: target.artifactId,
+    artifactDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    platform: 'web',
+});
+const authority = Object.freeze({
+    serverId: 'server-1',
+    machineId: 'machine-1',
+});
+const moduleReference = Object.freeze({
+    exportName: target.exportName,
+});
 
 it('prepares the selected Account authentication registration and does not expose another Account custody', async () => {
     const accountAuthority = { kind: 'account' as const, serverId: 'home', accountId: 'account', custodyId: 'auth-release' };
@@ -72,35 +108,24 @@ it('prepares the selected Account authentication registration and does not expos
     } finally { await scope.unwind(); }
 });
 
-const pluginId = 'acme.preview';
-    const target = Object.freeze({
-    artifactId: 'client-runtime',
-    exportName: 'activate',
-    platform: 'web' as const,
-});
-const occurrenceId = 'preview-occurrence-12';
-const hostUiApiRange = '^1.0.0';
-const executionOrigin = Object.freeze({
-    serverIdentityId: 'srv_server1',
-    materializationRef: Object.freeze({
-        machineId: 'machine-1',
-        materializationId: 'materialization-1',
-        pluginId,
-    }),
-}) satisfies PluginMachineExecutionOriginV1;
-const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
-    pluginId,
-    contributionId: target.artifactId,
-    artifactId: target.artifactId,
-    artifactDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    platform: 'web',
-});
-const authority = Object.freeze({
-    serverId: 'server-1',
-    machineId: 'machine-1',
-});
-const moduleReference = Object.freeze({
-    exportName: target.exportName,
+it('publishes an Account Resource through the generic registration transaction and withdraws it on retirement', async () => {
+    const accountAuthority = { kind: 'account' as const, serverId: 'home', accountId: 'account', custodyId: 'release-resource' };
+    const hostAccountOrigin = { ...accountAuthority, sourceCustody: { kind: 'bundled_first_party' as const,
+        packagedRuntime: { kind: 'source_declaration' as const, packageName: '@acme/preview' } } };
+    const resource = { id: 'status', pluginId, occurrenceId: accountAuthority.custodyId, source: 'dynamic' as const,
+        resourceKind: 'config' as const, scope: 'session' as const, contentType: 'application/json',
+        execution: { target: 'account' as const, account: { artifactId: target.artifactId, exportName: target.exportName } }, hostAccountOrigin };
+    const index = createPluginUiClientExecutableRegistrationIndex();
+    const scope = index.createScope({ pluginId, contributes: { resources: [resource] }, target: { ...target, realm: 'account' },
+        executionOrigin: null, occurrenceId: accountAuthority.custodyId, pluginVersion: '1.0.0',
+        authority: accountAuthority, lifecycle: { signal: new AbortController().signal, isCurrent: () => true } });
+    const runtime = { read: () => '{}', observe: () => ({ dispose() {} }) };
+    scope.api.resources.registerDynamicResource('status', runtime);
+    scope.commit();
+    expect(resolvePluginUiAccountResourceRegistration({ resource, platform: 'web', reader: index })).not.toBeNull();
+    expect(resolvePluginUiAccountResourceRegistration({ resource: { ...resource, occurrenceId: 'old' }, platform: 'web', reader: index })).toBeNull();
+    await scope.unwind();
+    expect(resolvePluginUiAccountResourceRegistration({ resource, platform: 'web', reader: index })).toBeNull();
 });
 
 it('activates separately authored Account code through the existing host and retires its registration', async () => {
@@ -426,33 +451,44 @@ describe('generic client executable contribution registration', () => {
     it('resolves external work items only for the current plugin occurrence and retires its read authority', async () => {
         const index = createPluginUiClientExecutableRegistrationIndex();
         const contributes = PluginContributesV2Schema.parse({ workItems: [{ id: 'work-items', client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }] });
-        const source = { id: `${pluginId}/work-items`, pluginId, pluginVersion: '1.0.0', occurrenceId, definition: contributes.workItems[0]!, executionOrigin };
-        const scope = index.createScope({ pluginId, contributes, target, executionOrigin, occurrenceId, pluginVersion: '1.0.0', authority, lifecycle: createLifecycle() });
+        const visit = new AbortController();
+        const account = createWorkItemsAccountFixture(authority.serverId!, visit.signal);
+        const source = { id: `${pluginId}/work-items`, pluginId, pluginVersion: '1.0.0', occurrenceId,
+            definition: contributes.workItems[0]!, executionOrigin };
+        const scope = index.createScope({ pluginId, contributes, target, executionOrigin, occurrenceId, pluginVersion: '1.0.0',
+            accountLifetime: account.accountLifetime, authority, lifecycle: createLifecycle() });
         let invalidation: (() => void) | undefined;
         let cleanupCount = 0;
+        let watchSignal: AbortSignal | undefined;
         scope.api.workItems.register('work-items', {
             resolve: async ({ itemIds }) => Object.fromEntries(itemIds.map(id => [id, id === 'known' ? { title: 'Live issue', category: 'started', linkedSessions: [] } : null])),
-            watch: (_request, onChange) => { invalidation = onChange; return () => { cleanupCount++; }; },
+            watch: (_request, onChange, context) => { watchSignal = context.signal; invalidation = onChange; return () => { cleanupCount++; }; },
         });
         expect(resolvePluginUiClientWorkItemsRegistration({ source, platform: 'web', reader: index })).toBeNull();
         scope.commit();
         const resolved = resolvePluginUiClientWorkItemsRegistration({ source, platform: 'web', reader: index });
+        if (!resolved) throw new Error('Expected committed Work Items registration');
+        const owner = createBoardTaskActionContext({ source, registration: resolved.registration, signal: visit.signal });
         let changes = 0;
-        const stop = resolved?.runtime.watch?.({ serverId: authority.serverId, itemIds: ['known'] }, () => { changes++; });
+        const stop = resolved.runtime.watch?.({ serverId: authority.serverId, itemIds: ['known'] }, () => { changes++; }, owner.context);
         invalidation?.();
         expect(changes).toBe(1);
-        expect(await resolved?.runtime.resolve({ serverId: authority.serverId, itemIds: ['known', 'unknown'] }, { signal: new AbortController().signal })).toEqual({ known: { title: 'Live issue', category: 'started', linkedSessions: [] }, unknown: null });
-        await expect(resolved?.runtime.resolve({ serverId: 'foreign-home', itemIds: ['known'] }, { signal: new AbortController().signal })).rejects.toThrow();
+        expect(await resolved.runtime.resolve({ serverId: authority.serverId, itemIds: ['known', 'unknown'] }, owner.context)).toEqual({ known: { title: 'Live issue', category: 'started', linkedSessions: [] }, unknown: null });
+        await expect(resolved.runtime.resolve({ serverId: 'foreign-home', itemIds: ['known'] }, owner.context)).rejects.toThrow();
         expect(resolvePluginUiClientWorkItemsRegistration({ source: { ...source, id: 'unknown.plugin/work-items', pluginId: 'unknown.plugin' }, platform: 'web', reader: index })).toBeNull();
         expect(resolvePluginUiClientWorkItemsRegistration({ source: { ...source, occurrenceId: 'retired' }, platform: 'web', reader: index })).toBeNull();
         expect(resolvePluginUiClientWorkItemsRegistration({ source, platform: 'ios', reader: index })).toBeNull();
+        stop?.();
+        expect(watchSignal?.aborted).toBe(true);
         const retiring = scope.unwind();
         invalidation?.();
         stop?.();
         expect(changes).toBe(1);
         expect(cleanupCount).toBe(1);
+        expect(watchSignal?.aborted).toBe(true);
         expect(resolvePluginUiClientWorkItemsRegistration({ source, platform: 'web', reader: index })).toBeNull();
-        await expect(resolved?.runtime.resolve({ serverId: authority.serverId, itemIds: ['known'] }, { signal: new AbortController().signal })).rejects.toThrow();
+        await expect(resolved.runtime.resolve({ serverId: authority.serverId, itemIds: ['known'] }, owner.context)).rejects.toThrow();
+        owner.dispose(); visit.abort();
         await retiring;
     });
     it('resolves synchronous entity callbacks only for committed exact occurrences and withdraws on retirement', async () => {

@@ -4,17 +4,20 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
-import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { readApprovalArtifactAutomationOrigin, type ListedOpenApproval } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { comparePendingRequestsByAge, selectOldestPendingRequest } from '@happier-dev/session-core/pending';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { shallow } from 'zustand/shallow';
+import { areSessionAppearanceColorsEqual } from '@/sync/domains/session/organization/appearanceColor';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 /**
  * FIN's session↔PR link read projection (`sessionPullRequestLink`, FIN PLAN U10 / 08 §5A), as this
  * Inbox consumes it. State and observation time come from the qualified Channel binding.
  */
 export type InboxPullRequestLink = Readonly<{
-    sessionId: string;
+    sessionId?: string;
     serverId?: string | null;
     number: number;
     title?: string | null;
@@ -23,12 +26,27 @@ export type InboxPullRequestLink = Readonly<{
     observedAt?: number;
 }>;
 
+/** What a held Run's named step needs from the person; a review hold is the Run's `heldStep`. */
+export type InboxHeldStepNeed = 'review' | 'approval';
+
+/**
+ * The step a Run waits on, read from its own summary: the list host's review hold, otherwise the first
+ * Writer step last observed waiting for approval. A step with no authored name is never guessed.
+ */
+function readHeldStep(summary: WorkflowRunRow['summary']): Readonly<{ label: string; laneLabel: string | null; need: InboxHeldStepNeed }> | null {
+    const held = summary?.heldStep;
+    if (held) return { label: held.label, laneLabel: held.laneLabel ?? null, need: 'review' };
+    const approval = summary?.stepProgress?.destinations?.find(destination =>
+        destination.observation?.lifecycle === 'waiting_for_approval' && destination.name);
+    return approval?.name ? { label: approval.name, laneLabel: null, need: 'approval' } : null;
+}
+
 export type InboxWorkItem =
     /** A session that needs the person (permission, question, failure, …); `foldedUnderRunId` for a step session. */
     | Readonly<{ kind: 'session'; key: string; entry: InboxSessionAttentionEntry; foldedUnderRunId: string | null }>
     /** A workflow run in 03's attention window (a hold, an approval, an interrupted run). */
     | Readonly<{ kind: 'workflow_run'; key: string; runId: string; row: WorkflowRunRow;
-        heldStepLabel: string | null; heldStepLaneLabel: string | null }>
+        heldStepLabel: string | null; heldStepLaneLabel: string | null; heldStepNeed: InboxHeldStepNeed | null }>
     /** A worker whose machine went offline while its turn was in flight. */
     | Readonly<{ kind: 'stalled'; key: string; session: Session }>
     /** A session with a retained PR link, waiting for the person to land and settle it. */
@@ -36,10 +54,13 @@ export type InboxWorkItem =
     /** A session the person snoozed until `remindAt`; it stays in place, quietly. */
     | Readonly<{ kind: 'snoozed'; key: string; session: Session; remindAt: number }>
     | Readonly<{ kind: 'automation_run'; key: string; row: WorkflowRunRow }>
-    | Readonly<{ kind: 'approval'; key: string; artifact: DecryptedArtifact }>;
+    | Readonly<{ kind: 'approval'; key: string; artifact: DecryptedArtifact; approval: InboxApprovalListing }>;
+
+/** What grouping and Inbox rows read of an open request: its Artifact header and source. */
+export type InboxApprovalListing = Pick<ListedOpenApproval, 'artifact' | 'source'>;
 
 export type InboxWorkGroupRoot =
-    | Readonly<{ kind: 'lead'; sessionId: string; session: SessionPresentationRecord | null }>
+    | Readonly<{ kind: 'lead'; serverId: string | null; sessionId: string; session: SessionPresentationRecord | null }>
     | Readonly<{ kind: 'run'; runId: string; row: WorkflowRunRow }>
     | Readonly<{ kind: 'automation'; automationId: string; serverId: string; runId: string }>
     | Readonly<{ kind: 'other' }>;
@@ -55,15 +76,22 @@ export type InboxWorkGroupsInput = Readonly<{
     sessionEntries: readonly InboxSessionAttentionEntry[];
     /** 03's attention window, in server order. */
     workflowRuns: readonly WorkflowRunRow[];
+    /** The attention window's Home; unknown scope cannot identify a Session origin or fold a step. */
+    workflowServerId?: string | null;
     /** Automation attention-window rows and open approval Artifacts from this Account. */
     automationRuns: readonly WorkflowRunRow[];
     automationServerId: string | null;
-    openApprovals: readonly DecryptedArtifact[];
+    /** Listed from header facts; a row presents (and reads) its own body. */
+    openApprovals: readonly InboxApprovalListing[];
     stalledSessions: readonly Session[];
     landings: readonly Readonly<{ session: SessionPresentationRecord; link: InboxPullRequestLink }>[];
     snoozed: readonly Readonly<{ session: Session; remindAt: number }>[];
-    /** Store lookup used to walk `manager`; an unknown id stops the walk. */
-    resolveSession: (sessionId: string) => SessionPresentationRecord | null | undefined;
+    /**
+     * Store lookup used to walk `manager`; an unknown id stops the walk. A candidate's Home is passed so a
+     * Session known only to a background Home's list projection resolves there; a manager lives in its
+     * report's Home. No Home means the lookup's own default scope.
+     */
+    resolveSession: (sessionId: string, serverId?: string | null) => SessionPresentationRecord | null | undefined;
     /**
      * The server origin link of a step session (ORC §3.1 `originRunId`, awareness `origin.runId`).
      * Absent until U4's awareness projection lands; then a step request folds under its run.
@@ -86,6 +114,10 @@ function normalizeId(value: string | null | undefined): string | null {
     return trimmed ? trimmed : null;
 }
 
+function qualifiedSessionKey(sessionId: string, serverId: string | null | undefined): string {
+    return sessionAddressKey({ serverId: serverId ?? '', sessionId });
+}
+
 function hasReports(session: SessionPresentationRecord | null | undefined): boolean {
     return (session?.managedSessions?.total ?? 0) > 0;
 }
@@ -94,12 +126,14 @@ function hasReports(session: SessionPresentationRecord | null | undefined): bool
  * The work root of a session: the top of its `manager` chain, or the session itself when it leads
  * others, or null for a loose session. The walk visits each id once, so a transiently cyclic store
  * (an edge seen before its reparent landed) cannot loop, and an unreadable lead stops it there.
+ * `serverId` is the Home of `sessionId`; the whole chain is read from that Home.
  */
 export function resolveInboxWorkRoot(
     sessionId: string,
     resolveSession: InboxWorkGroupsInput['resolveSession'],
+    serverId?: string | null,
 ): string | null {
-    const start = resolveSession(sessionId) ?? null;
+    const start = resolveSession(sessionId, serverId) ?? null;
     let parent = normalizeId(readSessionManagerSessionIdV1(start));
     if (!parent) return hasReports(start) ? sessionId : null;
     const visited = new Set<string>([sessionId]);
@@ -107,7 +141,7 @@ export function resolveInboxWorkRoot(
     while (parent && !visited.has(parent)) {
         visited.add(parent);
         current = parent;
-        parent = normalizeId(readSessionManagerSessionIdV1(resolveSession(current)));
+        parent = normalizeId(readSessionManagerSessionIdV1(resolveSession(current, serverId)));
     }
     return current;
 }
@@ -131,20 +165,22 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput, previous?: rea
     const stepsByRunId = new Map<string, InboxWorkItem[]>();
     // One row per session: a session already listed for what it needs is not listed again as
     // stalled, landing or snoozed.
-    const listedSessionIds = new Set<string>();
+    const listedSessionKeys = new Set<string>();
 
-    const leadGroup = (rootSessionId: string) => {
-        const key = `lead:${rootSessionId}`;
+    const leadGroup = (rootSessionId: string, serverId?: string | null) => {
+        const home = serverId ?? input.resolveSession(rootSessionId)?.serverId ?? null;
+        const key = `lead:${qualifiedSessionKey(rootSessionId, home)}`;
         let group = groups.get(key);
         if (!group) {
-            group = { root: { kind: 'lead', sessionId: rootSessionId, session: input.resolveSession(rootSessionId) ?? null }, items: [] };
+            const session = input.resolveSession(rootSessionId, home) ?? null;
+            group = { root: { kind: 'lead', serverId: home, sessionId: rootSessionId, session }, items: [] };
             groups.set(key, group);
         }
         return group.items;
     };
-    const placeSession = (sessionId: string, item: InboxWorkItem) => {
-        const root = resolveInboxWorkRoot(sessionId, input.resolveSession);
-        (root ? leadGroup(root) : other).push(item);
+    const placeSession = (sessionId: string, serverId: string | null | undefined, item: InboxWorkItem) => {
+        const root = resolveInboxWorkRoot(sessionId, input.resolveSession, serverId);
+        (root ? leadGroup(root, serverId) : other).push(item);
     };
     const automationGroup = (serverId: string, automationId: string, runId: string) => {
         const key = `automation:${serverId}:${automationId}`;
@@ -157,30 +193,34 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput, previous?: rea
     };
 
     for (const entry of input.sessionEntries) {
-        listedSessionIds.add(entry.candidate.sessionId);
+        const serverId = entry.candidate.address?.serverId ?? entry.candidate.serverId;
+        listedSessionKeys.add(qualifiedSessionKey(entry.candidate.sessionId, serverId));
         const originRunId = normalizeId(input.resolveOriginRunId(entry));
         const key = `session:${entry.candidate.address?.serverId ?? entry.candidate.serverId ?? ''}:${entry.candidate.sessionId}`;
-        if (originRunId && listedRunIds.has(originRunId)) {
+        if (originRunId && listedRunIds.has(originRunId) && input.workflowServerId
+            && areServerProfileIdentifiersEquivalent(serverId, input.workflowServerId)) {
             const steps = stepsByRunId.get(originRunId) ?? [];
             steps.push({ kind: 'session', key, entry, foldedUnderRunId: originRunId });
             stepsByRunId.set(originRunId, steps);
             continue;
         }
-        placeSession(entry.candidate.sessionId, { kind: 'session', key, entry, foldedUnderRunId: null });
+        placeSession(entry.candidate.sessionId, entry.candidate.address?.serverId ?? entry.candidate.serverId,
+            { kind: 'session', key, entry, foldedUnderRunId: null });
     }
 
     for (const row of input.workflowRuns) {
+        const held = readHeldStep(row.summary);
         const runItems: InboxWorkItem[] = [
             { kind: 'workflow_run', key: `run:${row.id}`, runId: row.id, row,
-                heldStepLabel: row.summary?.heldStep?.label ?? null,
-                heldStepLaneLabel: row.summary?.heldStep?.laneLabel ?? null },
+                heldStepLabel: held?.label ?? null, heldStepLaneLabel: held?.laneLabel ?? null, heldStepNeed: held?.need ?? null },
             ...(stepsByRunId.get(row.id) ?? []),
         ];
         const origin = row.summary?.origin;
         const originSessionId = normalizeId(origin?.kind === 'direct' ? origin.originSessionId : null);
-        const root = originSessionId ? resolveInboxWorkRoot(originSessionId, input.resolveSession) : null;
+        const root = originSessionId && input.workflowServerId
+            ? resolveInboxWorkRoot(originSessionId, input.resolveSession, input.workflowServerId) : null;
         if (root) {
-            leadGroup(root).push(...runItems);
+            leadGroup(root, input.workflowServerId).push(...runItems);
             continue;
         }
         groups.set(`run:${row.id}`, { root: { kind: 'run', runId: row.id, row }, items: runItems });
@@ -194,32 +234,33 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput, previous?: rea
         });
     }
 
-    for (const artifact of input.openApprovals) {
-        const item: InboxWorkItem = { kind: 'approval', key: `approval:${artifact.id}`, artifact };
-        const matched = artifact.header && typeof artifact.body === 'string'
-            ? approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body) : null;
-        const origin = matched?.family === 'built_in' && matched.request.v === 2 && matched.request.status === 'open'
-            ? matched.request.executionOriginV1 : null;
-        if (origin?.caller.kind === 'automationRun') {
-            automationGroup(origin.serverId, origin.caller.automationId, origin.caller.runId).push(item);
+    for (const entry of input.openApprovals) {
+        const { artifact } = entry;
+        const automation = readApprovalArtifactAutomationOrigin(artifact);
+        const item: InboxWorkItem = { kind: 'approval', key: `approval:${artifact.id}`, artifact, approval: entry };
+        // The writer's header list fact (verified against the body when read); the origin Home is the header's.
+        const serverId = typeof entry.source.serverId === 'string' ? entry.source.serverId : null;
+        if (automation && serverId) {
+            automationGroup(serverId, automation.automationId, automation.runId).push(item);
         } else {
             other.push(item);
         }
     }
 
-    const placeOnce = (session: Pick<Session, 'id'>, item: InboxWorkItem) => {
-        if (listedSessionIds.has(session.id)) return;
-        listedSessionIds.add(session.id);
-        placeSession(session.id, item);
+    const placeOnce = (session: Pick<Session, 'id' | 'serverId'>, item: InboxWorkItem) => {
+        const key = qualifiedSessionKey(session.id, session.serverId);
+        if (listedSessionKeys.has(key)) return;
+        listedSessionKeys.add(key);
+        placeSession(session.id, session.serverId, item);
     };
     for (const session of input.stalledSessions) {
-        placeOnce(session, { kind: 'stalled', key: `stalled:${session.id}`, session });
+        placeOnce(session, { kind: 'stalled', key: `stalled:${qualifiedSessionKey(session.id, session.serverId)}`, session });
     }
     for (const landing of input.landings) {
-        placeOnce(landing.session, { kind: 'landing', key: `landing:${landing.session.id}`, ...landing });
+        placeOnce(landing.session, { kind: 'landing', key: `landing:${qualifiedSessionKey(landing.session.id, landing.session.serverId)}`, ...landing });
     }
     for (const snoozed of input.snoozed) {
-        placeOnce(snoozed.session, { kind: 'snoozed', key: `snoozed:${snoozed.session.id}`, ...snoozed });
+        placeOnce(snoozed.session, { kind: 'snoozed', key: `snoozed:${qualifiedSessionKey(snoozed.session.id, snoozed.session.serverId)}`, ...snoozed });
     }
 
     const ordered: InboxWorkGroup[] = [];
@@ -244,6 +285,7 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput, previous?: rea
 function areInboxWorkItemsEqual(a: InboxWorkItem, b: InboxWorkItem): boolean {
     if (a.kind !== 'session' || b.kind !== 'session') return shallow(a, b);
     if (a.foldedUnderRunId !== b.foldedUnderRunId || a.entry.candidate.session !== b.entry.candidate.session) return false;
+    if (!areSessionAppearanceColorsEqual(a.entry.appearanceColor, b.entry.appearanceColor)) return false;
     const candidate = a.entry.candidate;
     const oldCandidate = b.entry.candidate;
     // Session identity is store-owned: compare only the small derived facts, never its transcript.

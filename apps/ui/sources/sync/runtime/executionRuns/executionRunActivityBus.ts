@@ -3,7 +3,7 @@ import {
     sessionAddressKey,
     type SessionAddress,
 } from '@/sync/domains/session/sessionAddress';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunMachineActivityEphemeralV1Schema } from '@happier-dev/protocol/execution/runs/activityV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -86,7 +86,6 @@ function refreshRoster(key: string, roster: Roster): void {
     const request = {};
     roster.request = request;
     roster.invalidated = false;
-    publishRoster(roster, { loading: true, failed: false });
     void (async () => {
         try {
             const runs = await roster.read();
@@ -144,7 +143,7 @@ export function subscribeRunningExecutionRunRoster(
             // when live Run ephemerals are correctly suppressed for the reader.
             if (event.entityIds !== undefined && !event.entityIds.includes(address.sessionId)) return;
             if (areServerProfileIdentifiersEquivalent(event.serverId, address.serverId)) refreshRoster(key, created);
-        });
+        }, { reconnect: 'refresh' });
         const unsubscribeCredentials = subscribeHomeCredentialChange((event) => {
             if (!areServerProfileIdentifiersEquivalent(event.serverId, address.serverId)) return;
             // The existing credential owner retires Account data synchronously.

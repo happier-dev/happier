@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWorkBoardV1 } from '@happier-dev/protocol';
+import { createWorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
 import { storage } from '@/sync/domains/state/storageStore';

@@ -1,4 +1,4 @@
-import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_PINNED_SESSIONS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
+import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
 import { SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES } from '@happier-dev/protocol/sessions/organization/constants';
@@ -306,10 +306,10 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
         // Update only this membership. The row write keeps a concurrent other-surface
         // change intact, and clearing a missing row must never recreate a saved choice.
         const updated = await tx.sessionPin.updateMany({
-            where: { accountId: params.accountId, sessionId: params.sessionId },
+            where: { accountId: params.accountId, sessionId: params.sessionId,
+                ...(surface === "rail" ? { railPinned: true } : { listPinned: true }) },
             data: membership,
         });
-        if (updated.count === 0) return { pin: null };
         const retained = await tx.sessionPin.findUnique({
             where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
             select,
@@ -318,6 +318,9 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
             await tx.sessionPin.deleteMany({
                 where: { accountId: params.accountId, sessionId: params.sessionId, listPinned: false, railPinned: false },
             });
+        }
+        if (updated.count === 0) {
+            return { pin: retained && (retained.listPinned || retained.railPinned) ? mapSessionOrganizationPin(retained) : null };
         }
         await markSessionOrganizationChanged(tx, {
             accountId: params.accountId,
@@ -338,18 +341,10 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
 
     const existingPin = await tx.sessionPin.findUnique({
         where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
-        select: { id: true },
+        select,
     });
-    if (!existingPin) {
-        const pinnedCount = await tx.sessionPin.count({
-            where: {
-                accountId: params.accountId,
-                session: await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication),
-            },
-        });
-        if (pinnedCount >= SESSION_ORGANIZATION_MAX_PINNED_SESSIONS) {
-            return { error: "session-pin-limit-exceeded" };
-        }
+    if (existingPin?.[surface === "rail" ? "railPinned" : "listPinned"]) {
+        return { pin: mapSessionOrganizationPin(existingPin) };
     }
 
     const pin = await tx.sessionPin.upsert({

@@ -113,7 +113,6 @@ async function follows(
     : { direction, receiver: { kind: 'session' as const, sessionId: base.sessionId } };
   const selected: ActionSessionAddress[] = [];
   const listedRules = new Map<string, OpenedSessionFollowRuleV1>();
-  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (;;) {
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
@@ -134,8 +133,6 @@ async function follows(
       if (page.coverage !== 'complete') return unavailable('incomplete_follow_corpus');
       break;
     }
-    if (seenCursors.has(page.continuation)) return unavailable('incomplete_follow_corpus');
-    seenCursors.add(page.continuation);
     cursor = page.continuation;
   }
   let rules = [...listedRules.values()];
@@ -295,7 +292,15 @@ export function replaceActionSessionTargetField(
 
 /** Bind only reviewed, declared slots. This same proof fences approval replay. */
 export function bindActionSessionTargetOperands(input: Readonly<Record<string, unknown>>, snapshot: ActionResolvedSessionTargetsV1,
-  requireConcrete = false): Readonly<Record<string, unknown>> | null {
+  declaration: ActionSessionTargetDeclarationV1, requireConcrete = false): Readonly<Record<string, unknown>> | null {
+  if (snapshot.field !== declaration.field) return null;
+  if (!declaration.field.includes('*')) {
+    if (snapshot.operands || declaration.cardinality === 'one' && snapshot.targets.length !== 1) return null;
+    if (declaration.cardinality !== 'one') return input;
+    const target = snapshot.targets[0];
+    if (requireConcrete && readActionSessionTargetField(input, snapshot.field) !== target.sessionId) return null;
+    return replaceActionSessionTargetField(input, snapshot.field, target.sessionId);
+  }
   const fields = readActionSessionTargetOperands(input, snapshot.field);
   if (!snapshot.operands || fields.length !== snapshot.operands.length) return null;
   const addresses = new Map<string, ActionSessionAddress>();
@@ -322,7 +327,15 @@ async function readActionSessionTargets(
   let target;
   try { target = normalizeSessionTargetV1(raw); }
   catch { return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }; }
-  if (typeof target === 'string') return null; // Existing exact-ID result and transport fast path.
+  if (typeof target === 'string') {
+    // Omitted routing options retain host Actions' existing exact-ID fast path.
+    // Exact routing and contributed operands need the canonical resolved tuple.
+    if (actionId !== 'action.invoke' && !context.expectedSessionAddress) return null;
+    const resolved = await resolveActionSessionAddress(deps, { sessionId: target }, context, actionId, true);
+    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    if (resolved.kind !== 'unique') return unavailable(resolved.kind === 'ambiguous' ? 'session_id_ambiguous' : 'session_context_unavailable');
+    return { actionId, field: declaration.field, targets: [resolved.address], selector: false };
+  }
   const baseId = target.of ?? id(context.defaultSessionId);
   if (!baseId && target.selector !== 'discussion' && (target.selector !== 'matching' || !target.filter.homeServerIds.length)) return unavailable('session_context_unavailable');
   const base = baseId ? await resolveActionSessionAddress(deps, { sessionId: baseId }, context, actionId,

@@ -1,7 +1,7 @@
-import { countStoreNotifications } from '@/dev/testkit';
 import { describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
-import type { SessionOrganizationSnapshot } from '@happier-dev/protocol';
+import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { countStoreNotifications } from '@/dev/testkit';
 
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 
@@ -197,17 +197,13 @@ describe('createSessionOrganizationDomain', () => {
         expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey[key]).toEqual(latest);
     });
 
-    it('does not publish unchanged loading, error, assignment, or ignored reconciliation state', () => {
+    it('does not publish unchanged assignment or ignored reconciliation state', () => {
         const harness = createHarness();
-        harness.get().setSessionOrganizationLoading('srv-a', false);
-        harness.get().setSessionOrganizationError('srv-a', null);
         harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 2 }));
         harness.get().applySessionFolderAssignments('srv-a', [{ sessionId: 's1', folderId: null }]);
         const before = harness.get();
         let notifications = 0;
         const unsubscribe = harness.subscribe(() => { notifications += 1; });
-        harness.get().setSessionFolderAssignmentsLoading('srv-a', false);
-        harness.get().setSessionOrganizationError('srv-a', null);
         harness.get().applySessionFolderAssignments('srv-a', [{ sessionId: 's1', folderId: null }]);
         harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 1 }));
         harness.get().reconcileSessionOrganizationFolderDelete('srv-a', ['missing'], null);
@@ -216,10 +212,6 @@ describe('createSessionOrganizationDomain', () => {
         harness.get().commitSessionOrganizationOptimistic('missing');
         expect(harness.get()).toBe(before);
         expect(notifications).toBe(0);
-
-        harness.get().setSessionOrganizationLoading('srv-a', true);
-        expect(harness.get().sessionOrganizationLoadingByServerId['srv-a']).toBe(true);
-        expect(notifications).toBe(1);
         unsubscribe();
     });
 
@@ -355,6 +347,38 @@ describe('createSessionOrganizationDomain', () => {
             [buildSessionOrganizationSessionKey('srv-a', 's1')]: { sessionId: 's1', folderId: null },
             [buildSessionOrganizationSessionKey('srv-a', 's2')]: { sessionId: 's2', folderId: 'kept-folder' },
         });
+    });
+
+    it('reparents only direct legacy children on an acknowledged section removal without refetching', () => {
+        const harness = createHarness();
+        const folder = (folderId: string, parentFolderId: string | null) => ({
+            folderId, folderKey: `${folderId}-key`, parentFolderId,
+            parentFolderKey: parentFolderId ? `${parentFolderId}-key` : null,
+            sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1,
+            display: { t: 'plain' as const, v: { name: folderId } },
+        });
+        const snapshot = emptySnapshot({
+            folders: [folder('parent', null), folder('removed', 'parent'), folder('child', 'removed'), folder('grandchild', 'child')],
+            folderAssignments: [{ sessionId: 'own', folderId: 'removed' }, { sessionId: 'child-member', folderId: 'child' }],
+        });
+        harness.get().applySessionOrganizationSnapshot('srv-a', snapshot, { includeAllFolderAssignments: true });
+        harness.get().applySessionOrganizationSnapshot('srv-b', snapshot, { includeAllFolderAssignments: true });
+        const before = harness.get();
+        const removed = harness.get().deleteSessionOrganizationFolderOptimistic('srv-a', 'removed');
+        harness.get().commitSessionOrganizationOptimistic(removed);
+        harness.get().reconcileSessionOrganizationFolderDelete('srv-a', ['removed'], 'parent');
+        const state = harness.get();
+        expect(state.sessionOrganizationFoldersByFolderKey['["srv-a","child"]']).toMatchObject({
+            parentFolderId: 'parent', parentFolderKey: 'parent-key',
+        });
+        expect(state.sessionOrganizationFoldersByFolderKey['["srv-a","grandchild"]'])
+            .toBe(before.sessionOrganizationFoldersByFolderKey['["srv-a","grandchild"]']);
+        expect(state.sessionOrganizationFoldersByFolderKey['["srv-b","child"]'])
+            .toBe(before.sessionOrganizationFoldersByFolderKey['["srv-b","child"]']);
+        expect(state.sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('srv-a', 'own')])
+            .toMatchObject({ folderId: 'parent' });
+        expect(state.sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('srv-a', 'child-member')])
+            .toBe(before.sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('srv-a', 'child-member')]);
     });
 
     it('rebases later optimistic tag-assignment writes when rolling back an earlier write', () => {

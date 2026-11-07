@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol';
+import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { PersonalFollowOnceOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { Message } from '@happier-dev/session-core/messages';
 import { createReducer } from '@happier-dev/session-core/reducer';
@@ -43,6 +43,17 @@ function candidate(
 }
 
 describe('buildInboxSessionPresentation', () => {
+    it('carries the canonical effective colour for exact-Home Inbox sessions', () => {
+        const first = candidate('same-id', ['permission_required'], 'a');
+        const second = candidate('same-id', ['permission_required'], 'b');
+        const color = { kind: 'accent', key: 'purple' } as const;
+        const result = buildInboxSessionPresentation({
+            overview: buildActivityOverviewFromCandidates([first, second]),
+            appearanceColorsBySessionKey: new Map([[sessionAddressKey({ serverId: 'a', sessionId: 'same-id' }), color]]),
+        });
+        expect(result.sessionsNeedingAttention.find(entry => entry.candidate.serverId === 'a')).toHaveProperty('appearanceColor', color);
+        expect(result.sessionsNeedingAttention.find(entry => entry.candidate.serverId === 'b')).toHaveProperty('appearanceColor', null);
+    });
     it('does not publish a request type when the candidate has no admitted Inbox section', () => {
         const permission = candidate('quiet-permission', ['permission_required']);
         expect(classifyInboxSessionCandidate({ ...permission, hasAttention: false }))

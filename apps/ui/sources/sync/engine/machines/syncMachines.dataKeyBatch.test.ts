@@ -7,11 +7,13 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storage';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
-    encodePlainMachineStoredContent,
-    encodeBase64,
-    MACHINE_PLAIN_DATA_KEY_MARKER,
     signRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
+import {
+    encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
 
 const legacyCredentials = {
     token: `e30.${btoa(JSON.stringify({ sub: 'account-1' }))}.signature`,
@@ -395,6 +397,46 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
 
 
 describe('fetchAndApplyMachines real selected-envelope hydration', () => {
+    it.each(['use', 'manage'] as const)('keeps a shared %s Machine visible in list/detail with readable or locked E2EE content', async role => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { fetchAndApplyMachines } = await import('./syncMachines');
+        const { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } =
+            await import('@/sync/store/domains/machines/resolveMachinesForActiveServerFromState');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const key = new Uint8Array(32).fill(29);
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+        const metadata = createMachineFixture().metadata!;
+        const codec = await encryption.openEncryption(key);
+        const ciphertext = encodeBase64((await codec.encrypt([metadata]))[0]!, 'base64');
+        const access = { custodian: { accountId: 'another-account', displayName: 'Custodian' },
+            role, resourceMode: 'e2ee', accessState: 'ready' };
+        const rows = [
+            { ...machineRow('shared-readable', envelope), metadata: ciphertext, storageMode: 'e2ee', access },
+            { ...machineRow('shared-locked', null), metadata: ciphertext, storageMode: 'e2ee', access },
+        ];
+        const initialState = storage.getState();
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        try {
+            await fetchAndApplyMachines({ credentials: legacyCredentials, sourceServerId: 'home-1', expectedAccountMode: 'e2ee',
+                encryption, machineDataKeys: new Map(), getMachineSnapshot: () => storage.getState().machines,
+                getExistingMachine: id => storage.getState().machines[id], request: async () => jsonResponse(rows),
+                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
+                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            });
+            await vi.waitFor(() => expect(storage.getState().machines['shared-readable']).toMatchObject({ metadata,
+                isShared: true, access, availability: { kind: 'available' } }));
+            const state = storage.getState();
+            expect(resolveVisibleMachinesForActiveServerFromState(state).map(machine => machine.id).sort())
+                .toEqual(['shared-locked', 'shared-readable']);
+            expect(resolveMachineForActiveServerFromState(state, 'shared-locked'))
+                .toMatchObject({ metadata: null, isShared: true, access, availability: { kind: 'locked' } });
+            expect(resolveMachineForActiveServerFromState(state, 'shared-readable'))
+                .toMatchObject({ metadata, isShared: true, access });
+        } finally { storage.setState(initialState, true); }
+    });
+
     it.each([
         { phase: 'request', initial: 'locked' }, { phase: 'hydration', initial: 'locked' },
         { phase: 'request', initial: 'absent' }, { phase: 'hydration', initial: 'absent' },

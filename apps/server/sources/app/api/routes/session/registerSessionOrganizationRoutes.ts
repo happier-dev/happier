@@ -364,7 +364,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
 
     folderRoutes.put("/v2/session-organization/folder-assignments/:sessionId", {
         preHandler: app.authenticate,
-        config: { apiTokenSessionAction: 'session.folder.set',
+        config: { apiTokenSessionAction: 'session.section.set',
             restrictedCredentialBinding: { scope: 'session', session: 'params.sessionId', allowSessionRuntime: false } },
         schema: {
             params: sessionIdParamsSchema,

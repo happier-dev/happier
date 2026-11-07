@@ -32,6 +32,197 @@ describe('Sync mounted Artifact inventory demand', () => {
     beforeEach(async () => { fixture = await createArtifactInventoryDemandHarness(); });
     afterEach(async () => { await fixture?.dispose(); vi.restoreAllMocks(); });
 
+    it.each(['closed', 'open'] as const)('keeps mounted Discussion attention demand out of 42856 retained receipts at 43399 approval scale with %s Inbox', async presentation => {
+        const { storage } = await import('./domains/state/storage');
+        const { decryptArtifactListItems } = await import('./engine/artifacts/syncArtifacts');
+        const { useDiscussionListRows } = await import('./ops/discussions/useDiscussionListRows');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const { InboxModelProvider, useInboxModel } = await import('@/hooks/inbox/useInboxModel');
+        const scope = storage.getState().profileScope!;
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'Attention demand' });
+        const closed = ApprovalRequestV1Schema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
+            decision: { kind: 'reject', decidedAtMs: 2 } });
+        const wire = (value: typeof request): Artifact => {
+            const header = buildApprovalRequestArtifactHeaderV1(value, { legacyServerId: scope.serverId });
+            return { ...fixture.inventory[0]!, kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn,
+                ...deriveApprovalArtifactQueryHintsV1(header), header: encodePlainArtifactStoredContent(header),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(value) }) };
+        };
+        const settledWire = wire(closed), openWire = wire(request);
+        const prototype = (await decryptArtifactListItems({ artifacts: [settledWire], encryption: null, artifactDataKeys: new Map() }))[0]!;
+        const retained = Array.from({ length: 42_856 }, (_, index) => ({ ...prototype,
+            id: `11111111-1111-4111-8111-8${String(index).padStart(11, '0')}` }));
+        storage.getState().applyArtifacts(retained);
+        fixture.inventory = [...retained.map(row => ({ ...settledWire, id: row.id })),
+            ...Array.from({ length: 543 }, (_, index) => ({ ...openWire,
+                id: `11111111-1111-4111-8111-9${String(index).padStart(11, '0')}` }))];
+        const counts = { header: 0, rawHeader: 0, body: 0 };
+        for (const row of retained) for (const field of ['header', 'rawHeader', 'body'] as const) {
+            const value = row[field];
+            Object.defineProperty(row, field, { configurable: true, enumerable: true, get() { counts[field]++; return value; } });
+        }
+        fixture.pages.length = 0; fixture.bodyReads.length = 0; fixture.headerReads.length = 0;
+        let summary!: InboxSummary;
+        const items: readonly import('@happier-dev/protocol/discussions/actions').DiscussionOpenedSummaryV1[] = [];
+        function Attention() { useDiscussionListRows(scope, items); summary = useSharedInboxSummary(); return null; }
+        function Model() { useInboxModel(); return null; }
+        const screen = await renderScreen(<InboxSummaryProvider><Attention />
+            {presentation === 'open' && <InboxModelProvider><Model /></InboxModelProvider>}
+        </InboxSummaryProvider>);
+        try {
+            await vi.waitFor(() => expect(summary.count).toBe(543));
+            await fixture.settleInventory();
+            console.log('R43t mounted Discussion demand counts', JSON.stringify({ counts,
+                returnedHeaders: fixture.pages.reduce((sum, page) => sum + page.headers, 0), pages: fixture.pages,
+                bodyIds: fixture.bodyReads.flat().length }));
+            expect(counts).toEqual({ header: 0, rawHeader: 0, body: 0 });
+            expect(fixture.pages.every(page => page.headers <= 543)).toBe(true);
+            expect(fixture.bodyReads.flat().every(id => id.startsWith('11111111-1111-4111-8111-9'))).toBe(true);
+            const changed = fixture.inventory.at(-1)!;
+            const unaffectedOpenReads = { header: 0, rawHeader: 0, body: 0 };
+            for (const wire of fixture.inventory.slice(-543, -1)) {
+                const row = storage.getState().artifacts[wire.id]!;
+                for (const field of ['header', 'rawHeader', 'body'] as const) {
+                    const value = row[field];
+                    Object.defineProperty(row, field, { configurable: true, enumerable: true,
+                        get() { unaffectedOpenReads[field]++; return value; } });
+                }
+            }
+            const settled = { ...settledWire, id: changed.id, headerVersion: changed.headerVersion + 1,
+                bodyVersion: changed.bodyVersion! + 1 };
+            const decoded = (await decryptArtifactListItems({ artifacts: [settled], encryption: null, artifactDataKeys: new Map() }))[0]!;
+            fixture.pages.length = 0; fixture.headerReads.length = 0; fixture.bodyReads.length = 0;
+            await act(async () => storage.getState().updateArtifact(decoded));
+            await vi.waitFor(() => expect(summary.count).toBe(542));
+            console.log('R43t settlement unaffected open reads', JSON.stringify({ reads: unaffectedOpenReads,
+                pages: fixture.pages.length, headers: fixture.headerReads, bodies: fixture.bodyReads }));
+            expect(unaffectedOpenReads).toEqual({ header: 0, rawHeader: 0, body: 0 });
+            expect(fixture.pages).toEqual([]);
+            expect(fixture.headerReads).toEqual([]);
+            expect(fixture.bodyReads).toEqual([]);
+        } finally { await screen.unmount(); }
+    }, 120_000);
+
+    it('reconciles a Post settlement census without revisiting 43331 retained approvals or opening their bodies', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const { decryptArtifactListItems } = await import('./engine/artifacts/syncArtifacts');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const scope = storage.getState().profileScope!;
+        const open = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'post-session' }, requestedSurface: 'agent',
+            actionId: 'session.list', actionArgs: {}, summary: 'Post cost control' });
+        const rejected = ApprovalRequestV1Schema.parse({ ...open, status: 'rejected', updatedAtMs: 2,
+            decision: { kind: 'reject', decidedAtMs: 2 } });
+        const header = buildApprovalRequestArtifactHeaderV1({ ...rejected, createdBy: { surface: 'agent' } },
+            { legacyServerId: scope.serverId });
+        const prototype = (await decryptArtifactListItems({ artifacts: [{ ...fixture.inventory[0]!,
+            kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn, header: encodePlainArtifactStoredContent(header),
+        }], encryption: null, artifactDataKeys: new Map() }))[0]!;
+        const retained = Array.from({ length: 43_331 }, (_, index) => ({ ...prototype,
+            id: `11111111-1111-4111-8111-8${String(index).padStart(11, '0')}` }));
+        storage.getState().applyArtifacts(retained);
+        const selectedId = '11111111-1111-4111-8111-900000000000';
+        const selected = (request: typeof open): Artifact => {
+            const selectedHeader = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: scope.serverId });
+            return { ...fixture.inventory[0]!, id: selectedId, kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn,
+                ...deriveApprovalArtifactQueryHintsV1(selectedHeader), header: encodePlainArtifactStoredContent(selectedHeader),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+                headerVersion: request.status === 'open' ? 1 : 2, bodyVersion: request.status === 'open' ? 1 : 2 };
+        };
+        fixture.inventory = [selected(open)];
+        let summary!: InboxSummary;
+        function Summary() { summary = useSharedInboxSummary(); return null; }
+        const screen = await renderScreen(<InboxSummaryProvider><Summary /></InboxSummaryProvider>);
+        try {
+            await vi.waitFor(() => expect(summary.count).toBe(1));
+            await fixture.settleInventory();
+            const counts = { header: 0, rawHeader: 0, body: 0 };
+            const stacks = new Map<string, number>();
+            // Transparent property counters observe the real owner's reads, not a mocked selector.
+            for (const row of retained) for (const field of ['header', 'rawHeader', 'body'] as const) {
+                const value = row[field];
+                Object.defineProperty(row, field, { configurable: true, enumerable: true, get() {
+                    counts[field]++;
+                    if (row === retained[0]) {
+                        const stack = `${field}: ${new Error().stack?.split('\n').slice(2, 7).join(' | ')}`;
+                        stacks.set(stack, (stacks.get(stack) ?? 0) + 1);
+                    }
+                    return value;
+                } });
+            }
+            fixture.pages.length = 0; fixture.bodyReads.length = 0; fixture.headerReads.length = 0;
+            // The Post changes one request. Its next open-membership response omits
+            // the settled id; the query owner must reconcile that exact id, not history.
+            fixture.inventory = [selected(rejected)];
+            await act(async () => { await sync.fetchArtifactsList({ selection: 'inboxOpen' }); });
+            await fixture.settleInventory();
+            await vi.waitFor(() => expect(summary.count).toBe(0));
+            expect(storage.getState().artifacts[selectedId]?.header?.approvalStatus).toBe('rejected');
+            expect(Object.keys(storage.getState().artifacts)).toHaveLength(43_332);
+            console.log('R43q Post census retained-property counts', JSON.stringify({ counts,
+                pages: fixture.pages.length, headers: fixture.headerReads, bodies: fixture.bodyReads, stacks: [...stacks] }));
+            expect(counts).toEqual({ header: 0, rawHeader: 0, body: 0 });
+            expect(fixture.pages).toHaveLength(1);
+            expect(fixture.headerReads).toEqual([[selectedId]]);
+            expect(fixture.bodyReads).toEqual([]);
+        } finally { await screen.unmount(); }
+    }, 120_000);
+
+    it('does no Inbox classification or hydration work for unrelated admitted Artifact arrivals, closed or open', async () => {
+        const { storage } = await import('./domains/state/storage');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const { InboxModelProvider, useInboxModel } = await import('@/hooks/inbox/useInboxModel');
+        const inbox = await import('./domains/artifacts/inboxArtifacts');
+        const notices = await import('./domains/artifacts/usageNoticeArtifacts');
+        const scope = storage.getState().profileScope!;
+        const notice = createAccountNoticeArtifactFixture({ id: '11111111-1111-4111-8111-999999999750', ownerAccountId: scope.accountId });
+        fixture.inventory = [createPlainArtifactHttpFixture(notice, scope.accountId)];
+        const unrelated = Array.from({ length: 3500 }, (_, index) => ({ ...notice, id: `unrelated-${index}`,
+            header: { kind: 'markdown', title: 'Document' }, rawHeader: { kind: 'markdown', title: 'Document' }, body: 'Document' }));
+        storage.getState().applyArtifacts(unrelated);
+        let summary!: InboxSummary, model!: InboxModel;
+        let setOpen!: React.Dispatch<React.SetStateAction<boolean>>;
+        function Summary() { summary = useSharedInboxSummary(); return null; }
+        function Model() { model = useInboxModel(); return null; }
+        function Surface() {
+            const [open, updateOpen] = React.useState(false);
+            setOpen = updateOpen;
+            return <InboxSummaryProvider><Summary />{open && <InboxModelProvider><Model /></InboxModelProvider>}</InboxSummaryProvider>;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await vi.waitFor(() => expect(summary).toEqual({ count: 1, hasContent: true }));
+            await fixture.settleInventory();
+            const hydration = vi.spyOn(inbox, 'listInboxArtifactBodyHydrationRequests');
+            const completeness = vi.spyOn(inbox, 'isInboxArtifactBodyAdmissionComplete');
+            const classification = vi.spyOn(notices, 'readAccountNoticeArtifactHeader');
+            for (const open of [false, true]) {
+                await act(async () => setOpen(open));
+                const before = summary;
+                const beforeModel = open ? model : null;
+                const reads = fixture.network.httpRequests.length;
+                hydration.mockClear(); completeness.mockClear(); classification.mockClear();
+                for (const document of unrelated.slice(0, 10)) {
+                    await act(async () => storage.getState().updateArtifact({ ...document, bodyVersion: open ? 3 : 2, body: 'Changed document' }));
+                }
+                expect({ hydrationRows: hydration.mock.calls.reduce((sum, [rows]) => sum + rows.length, 0),
+                    completenessRows: completeness.mock.calls.reduce((sum, [rows]) => sum + rows.length, 0),
+                    classifications: classification.mock.calls.length }).toEqual({ hydrationRows: 0, completenessRows: 0, classifications: 0 });
+                expect(summary).toBe(before);
+                if (open) expect(model).toBe(beforeModel);
+                expect(fixture.network.httpRequests).toHaveLength(reads);
+            }
+            await act(async () => storage.getState().addArtifact({ ...notice, id: 'new-notice' }));
+            await vi.waitFor(() => expect(summary.count).toBe(2));
+            expect(model.openAccountNotices.map(entry => entry.artifact.id).sort()).toEqual([notice.id, 'new-notice'].sort());
+            await act(async () => storage.getState().deleteArtifact('new-notice'));
+            expect(summary.count).toBe(1);
+            expect(model.openAccountNotices.map(entry => entry.artifact.id)).toEqual([notice.id]);
+        } finally { await screen.unmount(); }
+    });
+
     it('retains mounted Inbox demand across Account binding before bootstrap publishes inventory readiness', async () => {
         const { storage } = await import('./domains/state/storage');
         const { sync, syncSwitchServer } = await import('./sync');
@@ -80,7 +271,8 @@ describe('Sync mounted Artifact inventory demand', () => {
             const lists = fixture.network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/artifacts');
             expect(lists).toHaveLength(1);
             expect(new URL(lists[0]!.url).searchParams.get('approvalStates')).toBe(JSON.stringify(['open']));
-            expect(new URL(lists[0]!.url).searchParams.get('kinds')).toBe(JSON.stringify(['approval_request.v1']));
+            expect(new URL(lists[0]!.url).searchParams.get('kinds'))
+                .toBe(JSON.stringify([APPROVAL_ARTIFACT_KINDS_V1.builtIn, APPROVAL_ARTIFACT_KINDS_V1.targetAction]));
             const reads = fixture.network.httpRequests.length;
             const selected = hook.getCurrent();
             const approvals = await import('./domains/artifacts/approvalArtifacts');
@@ -187,6 +379,17 @@ describe('Sync mounted Artifact inventory demand', () => {
                 ? t('artifacts.countPlural', { count: 3 }) : t('artifacts.browser.countSoFar', { count: 4 }));
             if (opaqueKind === 'private') expect(screen.findByTestId('artifacts:pending')).toBeNull();
             expect(fixture.bodyReads).toEqual([]);
+            let visitedRows = 0;
+            const displayed = storage.getState().artifacts[listed[0]!.id]!;
+            if (!displayed.isDecrypted) throw new Error('Expected the displayed browser fixture to be readable');
+            await act(async () => storage.getState().updateArtifact({ ...displayed, headerVersion: displayed.headerVersion + 1,
+                get draft() { visitedRows++; return false; },
+            }));
+            visitedRows = 0;
+            await act(async () => storage.getState().addArtifact({
+                ...createAccountNoticeArtifactFixture(), id: 'unrelated-private-notice',
+            }));
+            expect(visitedRows).toBe(0);
         } finally { await screen.unmount(); }
     });
 
@@ -204,6 +407,141 @@ describe('Sync mounted Artifact inventory demand', () => {
             expect(storage.getState().artifactBrowserLoaded).toBe(false);
             expect(outcome).toBe('failed');
         } finally { closeBrowser(); }
+    });
+
+    it('counts a cold shell badge from the first Inbox census page and reads the rest only while Inbox rows are shown', async () => {
+        const { storage } = await import('./domains/state/storage');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const { InboxModelProvider, useInboxModel } = await import('@/hooks/inbox/useInboxModel');
+        const scope = storage.getState().profileScope!;
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'Badge' });
+        const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: scope.serverId });
+        const base = fixture.inventory[0]!;
+        // 1,600 open requests: four Inbox census pages (500, 500, 500, 100). The badge shows at most 99+.
+        fixture.inventory = Array.from({ length: 1600 }, (_, index): Artifact => ({ ...base,
+            id: `11111111-1111-4111-8111-9${String(index).padStart(11, '0')}`, updatedAt: index,
+            kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn, ...deriveApprovalArtifactQueryHintsV1(header),
+            header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }) }));
+        fixture.network.httpRequests.length = 0;
+        const censusPages = () => fixture.network.httpRequests.map(entry => new URL(entry.url))
+            .filter(url => url.pathname === '/v1/artifacts' && url.searchParams.get('kinds') === JSON.stringify(INBOX_ARTIFACT_KINDS));
+        let summary!: InboxSummary, model: InboxModel | null = null;
+        let openInbox!: (open: boolean) => void;
+        function Summary() { summary = useSharedInboxSummary(); return null; }
+        function Model() { model = useInboxModel(); return null; }
+        function Shell() {
+            const [open, setOpen] = React.useState(false);
+            openInbox = setOpen;
+            return <InboxSummaryProvider><Summary />{open ? <InboxModelProvider><Model /></InboxModelProvider> : null}</InboxSummaryProvider>;
+        }
+        const screen = await renderScreen(<Shell />);
+        try {
+            await vi.waitFor(() => expect(summary.count).not.toBeNull());
+            await fixture.settleInventory();
+            const cold = { pages: censusPages().length, headers: Object.keys(storage.getState().artifacts).length, count: summary.count };
+            await act(async () => { openInbox(true); });
+            await vi.waitFor(() => expect(model?.artifactSource.phase).toBe('current'));
+            await fixture.settleInventory();
+            const pages = censusPages();
+            const opened = { pages: pages.length, firstPages: pages.filter(url => !url.searchParams.get('cursor')).length,
+                rows: (model as InboxModel | null)?.openApprovals.length, count: summary.count };
+            console.log('INBOX3 badge census counts', JSON.stringify({ cold, opened }));
+            expect(cold.pages).toBe(1);
+            expect(cold.count).toBeGreaterThan(99);
+            expect(opened).toEqual({ pages: 5, firstPages: 2, rows: 1600, count: 1600 });
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps one Inbox census when its row consumer remounts while the census is unfinished', async () => {
+        const { storage } = await import('./domains/state/storage');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const { InboxModelProvider, useInboxModel } = await import('@/hooks/inbox/useInboxModel');
+        const scope = storage.getState().profileScope!;
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'Remount' });
+        const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: scope.serverId });
+        const base = fixture.inventory[0]!;
+        fixture.inventory = Array.from({ length: 1600 }, (_, index): Artifact => ({ ...base,
+            id: `11111111-1111-4111-8111-9${String(index).padStart(11, '0')}`, updatedAt: index,
+            kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn, ...deriveApprovalArtifactQueryHintsV1(header),
+            header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }) }));
+        let summary!: InboxSummary, model: InboxModel | null = null;
+        let openInbox!: (open: boolean) => void;
+        function Summary() { summary = useSharedInboxSummary(); return null; }
+        function Model() { model = useInboxModel(); return null; }
+        function Shell() {
+            const [open, setOpen] = React.useState(false);
+            openInbox = setOpen;
+            return <InboxSummaryProvider><Summary />{open ? <InboxModelProvider><Model /></InboxModelProvider> : null}</InboxSummaryProvider>;
+        }
+        const screen = await renderScreen(<Shell />);
+        const release = createDeferred<void>(), held = createDeferred<void>();
+        try {
+            await vi.waitFor(() => expect(summary.count).not.toBeNull());
+            await fixture.settleInventory();
+            fixture.network.httpRequests.length = 0;
+            fixture.holdList = async (_signal, url) => {
+                if (url?.searchParams.get('cursor')) { held.resolve(); await release.promise; }
+            };
+            await act(async () => { openInbox(true); });
+            await held.promise;
+            // The Inbox row consumer unmounts and mounts again (a route or loading remount) mid-census.
+            await act(async () => { openInbox(false); });
+            await act(async () => { openInbox(true); });
+            fixture.holdList = null;
+            release.resolve();
+            await vi.waitFor(() => expect(model?.artifactSource.phase).toBe('current'));
+            await fixture.settleInventory();
+            const census = fixture.network.httpRequests.map(entry => new URL(entry.url))
+                .filter(url => url.pathname === '/v1/artifacts' && url.searchParams.get('kinds') === JSON.stringify(INBOX_ARTIFACT_KINDS));
+            const counts = { pages: census.length, firstPages: census.filter(url => !url.searchParams.get('cursor')).length,
+                rows: (model as InboxModel | null)?.openApprovals.length };
+            console.log('INBOX3 remount census counts', JSON.stringify(counts));
+            expect(counts).toEqual({ pages: 4, firstPages: 1, rows: 1600 });
+        } finally { fixture.holdList = null; release.resolve(); await screen.unmount(); }
+    });
+
+    it('admits a Session approval consumer during an unfinished Inbox census without restarting the census', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const { InboxSummaryProvider, useSharedInboxSummary } = await import('@/hooks/inbox/useInboxSummary');
+        const { InboxModelProvider, useInboxModel } = await import('@/hooks/inbox/useInboxModel');
+        const scope = storage.getState().profileScope!;
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'Census' });
+        const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: scope.serverId });
+        const base = fixture.inventory[0]!;
+        // 1,600 open requests: four Inbox census pages (500, 500, 500, 100).
+        fixture.inventory = Array.from({ length: 1600 }, (_, index): Artifact => ({ ...base,
+            id: `11111111-1111-4111-8111-9${String(index).padStart(11, '0')}`, updatedAt: index,
+            kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn, ...deriveApprovalArtifactQueryHintsV1(header),
+            header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }) }));
+        fixture.network.httpRequests.length = 0;
+        const secondPage = createDeferred<void>(), release = createDeferred<void>();
+        let listed = 0;
+        fixture.holdList = async () => { if (++listed === 2) { secondPage.resolve(); await release.promise; } };
+        let summary!: InboxSummary;
+        function Summary() { summary = useSharedInboxSummary(); return null; }
+        function Model() { useInboxModel(); return null; }
+        // The open Inbox shows rows, so it reads the whole census.
+        const screen = await renderScreen(<InboxSummaryProvider><Summary /><InboxModelProvider><Model /></InboxModelProvider></InboxSummaryProvider>);
+        let close: (() => void) | undefined;
+        try {
+            await secondPage.promise;
+            // A Session surface (composer, transcript) opens while the census is on its second page.
+            close = sync.observeArtifactInventory(scope, { approvalSessionIds: ['census-session'] }, { refreshOnAdmission: true });
+            await new Promise(resolve => setTimeout(resolve, 50));
+            release.resolve();
+            await vi.waitFor(() => expect(summary.count).toBe(1600));
+            await fixture.settleInventory();
+            const lists = fixture.network.httpRequests.map(entry => new URL(entry.url)).filter(url => url.pathname === '/v1/artifacts');
+            const census = lists.filter(url => url.searchParams.get('kinds') === JSON.stringify(INBOX_ARTIFACT_KINDS));
+            const counts = { censusPages: census.length, censusFirstPages: census.filter(url => !url.searchParams.get('cursor')).length,
+                sessionPages: lists.filter(url => url.searchParams.get('approvalSessionIds') !== null).length };
+            console.log('INBOX3 census restart counts', JSON.stringify(counts));
+            expect(counts).toEqual({ censusPages: 4, censusFirstPages: 1, sessionPages: 1 });
+        } finally { fixture.holdList = null; release.resolve(); close?.(); await screen.unmount(); }
     });
 
     it('withdraws browser recovery without aborting or restarting the still-demanded Inbox selection', async () => {
@@ -231,7 +569,19 @@ describe('Sync mounted Artifact inventory demand', () => {
         const closeInbox = sync.observeArtifactInventory(scope, INBOX_ARTIFACT_KINDS);
         const recovery = fixture.recoverSnapshot();
         try {
-            const [browserSignal, inboxSignal] = await Promise.all([browserStarted.promise, inboxStarted.promise]);
+            const [browserSignal, inboxSignal] = await Promise.race([
+                Promise.all([browserStarted.promise, inboxStarted.promise]),
+                recovery.then(() => {
+                    const routes = new Map<string, number>();
+                    for (const request of fixture.network.httpRequests) {
+                        const path = new URL(request.url).pathname;
+                        routes.set(path, (routes.get(path) ?? 0) + 1);
+                    }
+                    throw new Error(`Snapshot recovery finished before its mounted Artifact selections started: ${JSON.stringify({
+                        pages: fixture.pages, routes: [...routes],
+                    })}`);
+                }),
+            ]);
             closeBrowser();
             closeBrowser = undefined;
             expect(browserSignal?.aborted).toBe(true);
@@ -436,7 +786,9 @@ describe('Sync mounted Artifact inventory demand', () => {
             expect(await readInbox()).toMatchObject({ status: 'ready' });
             expect(screen.findByTestId('inbox.popover.count')?.props.children).toBe('3');
             fixture.listFailure = 403;
-            await act(async () => { await fixture.recoverSnapshot(); });
+            await act(async () => { await expect(fixture.recoverSnapshot()).rejects.toMatchObject({
+                name: 'HappyError', status: 403, canTryAgain: false,
+            }); });
             // Retained rows stay visible, but neither the shell nor its Action certifies a total.
             await vi.waitFor(async () => expect({ total: screen.findByTestId('inbox.popover.count')?.props.children ?? null,
                 action: await readInbox(), summary, phase: model?.artifactSource.phase }).toMatchObject({
@@ -481,7 +833,9 @@ describe('Sync mounted Artifact inventory demand', () => {
             expect({ persisted: cursorState.persisted, live: cursorState.live }, JSON.stringify(cursorState))
                 .toEqual({ persisted: '200', live: '200' });
             fixture.listFailure = 403;
-            await act(async () => { await fixture.recoverSnapshot(); });
+            await act(async () => { await expect(fixture.recoverSnapshot()).rejects.toMatchObject({
+                name: 'HappyError', status: 403, canTryAgain: false,
+            }); });
             await vi.waitFor(() => expect(model?.artifactSource?.phase).toBe('failed'));
             expect(summary).toEqual({ count: null, hasContent: null });
             expect(model?.showCaughtUp).toBe(false);
@@ -597,7 +951,9 @@ describe('Sync mounted Artifact inventory demand', () => {
             await fixture.settleInventory();
             expect(fixture.pages).toEqual([{ kinds: JSON.stringify(kinds), headers: 0 }]);
             fixture.listFailure = 403;
-            await act(async () => { await fixture.recoverSnapshot(); });
+            await act(async () => { await expect(fixture.recoverSnapshot()).rejects.toMatchObject({
+                name: 'HappyError', status: 403, canTryAgain: false,
+            }); });
             await vi.waitFor(() => expect(consumer.getCurrent().failed).toBe(true));
         } finally { releaseNext.resolve(); fixture.holdList = null; await consumer.unmount(); }
     }, 120_000);

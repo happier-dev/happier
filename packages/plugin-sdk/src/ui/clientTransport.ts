@@ -1,18 +1,22 @@
-import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { PluginUiOpenConnectedAccountsResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { ComposerDecorationResultV1Schema, ComposerFocusResultV1Schema, ComposerReadResultV1Schema, ComposerSnapshotV1Schema, ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import { ComposerContentHandleV1Schema, ComposerContentInspectWireResultV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { OpenableContentReadResultV1Schema, OpenableContentStatResultV1Schema } from '@happier-dev/protocol/plugins/openableContent';
 import type { PluginUiHostApiWireEnvelopeV1, PluginUiHostApiWireIdentityV1, PluginUiHostMethodV1 as ProtocolPluginUiHostMethodV1, PluginUiSelectActionInputResultV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiSetPageNavigationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiActionControlRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { createPluginUiActionControlBinding } from '@happier-dev/cli-common/plugins/ui';
 
 import { PluginError } from '../errors.js';
+import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiDownloadFileRequestV1Schema, FilesystemDownloadOutputSchema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenConnectedAccountsResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
     decodePluginUiClipboardReadResult,
     decodePluginUiConfirmResult,
@@ -222,18 +226,19 @@ function isAdvertisableHostMethod(
 function asJsonReference(reference: PluginReference): JsonValue {
     return typeof reference === 'string' ? reference : { pluginId: reference.pluginId, localId: reference.localId };
 }
-function asJsonResourceReference(reference: PluginUiResourceReference): JsonValue {
+function asJsonResourceReference(reference: Parameters<PluginUiHostApi['watchResource']>[0]): JsonValue {
     const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(reference);
     if (!parsed.success) throw new PluginUiHostApiClientError('invalid_payload', 'Resource reference is invalid.');
     return parsed.data;
 }
-function createExecuteActionRequest(action: PluginReference, input?: JsonValue) {
+function createExecuteActionRequest(action: PluginReference, input?: JsonValue, sessionAddress?: PluginUiActionExecutionOptions['sessionAddress']) {
     const parsed = PluginUiExecuteActionRequestV1Schema.safeParse({
         // Preserve the author-provided runtime shape for the strict Protocol
         // owner. Projecting first would silently drop unknown object fields and
         // create a second, weaker Action grammar at this transport boundary.
         action,
         ...(input === undefined ? {} : { input }),
+        ...(sessionAddress === undefined ? {} : { sessionAddress }),
     });
     if (!parsed.success) {
         throw new PluginUiHostApiClientError('invalid_payload', 'executeAction request is invalid.');
@@ -882,13 +887,20 @@ export async function createPluginUiHostApiClientFromTransport(
             }
             return (await request(
                 'executeAction',
-                createExecuteActionRequest(action, input),
+                createExecuteActionRequest(action, input, requestOptions?.sessionAddress),
                 requestOptions?.signal,
                 selectedActionInput,
                 consumeSelectedActionInput ? true : undefined,
             )) ?? null;
         }
         ) as PluginUiHostApi['executeAction'],
+        downloadFile: async (download, requestOptions) => {
+            const payload = PluginUiDownloadFileRequestV1Schema.safeParse(download);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Download request is invalid.');
+            const result = FilesystemDownloadOutputSchema.safeParse(await request('downloadFile', payload.data, requestOptions?.signal));
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Download result is invalid.');
+            return result.data;
+        },
         selectActionInput: async (selectionRequest, requestOptions) => {
             const payload = PluginUiSelectActionInputRequestV1Schema.safeParse(selectionRequest);
             if (!payload.success) {
@@ -940,11 +952,6 @@ export async function createPluginUiHostApiClientFromTransport(
             }
             return result.data;
         },
-        openAutomationEvent: async (openRequest, requestOptions) => {
-            const payload = PluginUiOpenAutomationEventRequestV1Schema.safeParse(openRequest);
-            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Automation Event seed is invalid.');
-            await request('openAutomationEvent', payload.data, requestOptions?.signal);
-        },
         openNewSession: async (openRequest, requestOptions) => {
             const payload = PluginUiOpenNewSessionRequestV1Schema.safeParse(openRequest);
             if (!payload.success) {
@@ -975,6 +982,11 @@ export async function createPluginUiHostApiClientFromTransport(
                 selected?.success ? selected.data : undefined,
                 selected?.success ? true : undefined,
             );
+        },
+        openAutomationEvent: async (openRequest, requestOptions) => {
+            const payload = PluginUiOpenAutomationEventRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Automation Event seed is invalid.');
+            await request('openAutomationEvent', payload.data, requestOptions?.signal);
         },
         revealSessionInput: async (input, requestOptions) => {
             const payload = PluginUiRevealSessionInputRequestV1Schema.safeParse(input);
@@ -1299,7 +1311,13 @@ export async function createPluginUiHostApiClientFromTransport(
                 ...(input === undefined ? {} : { input }),
                 ...(requestOptions?.subPath === undefined ? {} : { subPath: requestOptions.subPath }),
                 ...(requestOptions?.instanceKey === undefined ? {} : { instanceKey: requestOptions.instanceKey }),
+                ...(requestOptions?.presentation === undefined ? {} : { presentation: requestOptions.presentation }),
             }, requestOptions?.signal);
+        },
+        openManagedMachineConfiguration: async (openRequest, requestOptions) => {
+            const payload = PluginUiOpenManagedMachineConfigurationRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload');
+            await request('openManagedMachineConfiguration', payload.data, requestOptions?.signal);
         },
         openConnectedAccounts: async (openRequest = {}, requestOptions) => {
             const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(openRequest);
@@ -1325,6 +1343,8 @@ export async function createPluginUiHostApiClientFromTransport(
                 ...(replaceOptions?.backLocation === undefined
                     ? {}
                     : { backLocation: replaceOptions.backLocation }),
+                ...(replaceOptions?.preserveUnsavedChanges === undefined ? {} : { preserveUnsavedChanges: replaceOptions.preserveUnsavedChanges }),
+                ...(replaceOptions?.view === undefined ? {} : { view: replaceOptions.view }),
             });
             if (!payload.success) {
                 throw new PluginUiHostApiClientError(
@@ -1342,6 +1362,15 @@ export async function createPluginUiHostApiClientFromTransport(
                 );
             }
             return Object.freeze(settled.data);
+        },
+        setPageNavigation: async (navigation, options) => {
+            const payload = PluginUiSetPageNavigationRequestV1Schema.parse({ navigation });
+            await request('setPageNavigation', payload, options?.signal);
+        },
+        setUnsavedChanges: async (isDirty, options) => {
+            const payload = PluginUiSetUnsavedChangesRequestV1Schema.safeParse({ isDirty });
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Unsaved changes must be a boolean.');
+            await request('setUnsavedChanges', payload.data, options?.signal);
         },
         admitAction: async (action, input, options) => {
             const payload = PluginUiExecuteActionRequestV1Schema.safeParse({ action, ...(input === undefined ? {} : { input }) });
@@ -1369,6 +1398,7 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         writeClipboard: async (value, requestOptions) => { await request('writeClipboard', { value }, requestOptions?.signal); },
         openExternalLink: async (url, requestOptions) => { await request('openExternalLink', { url }, requestOptions?.signal); },
+        openResource: async (resource, requestOptions) => { await request('openResource', resource, requestOptions?.signal); },
     } satisfies PluginUiHostApi;
     return api;
 }

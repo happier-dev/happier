@@ -1,4 +1,5 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createSessionFixture,
   createSessionListRenderableSessionFixture,
+  createRootLayoutFeaturesResponse,
   flushHookEffects,
   renderScreen,
   standardCleanup,
@@ -23,7 +25,9 @@ import {
   buildSessionOrganizationSessionKey,
 } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { AppRailSurface } from './AppRail';
 import { buildAppRailEntries } from './appRailModel';
@@ -46,23 +50,26 @@ vi.mock(
   async () =>
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
 );
+vi.mock('socket.io-client', async (importOriginal) =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal),
+);
+installDisconnectedServerSocketBoundary();
 // Portal measurement is a platform boundary; the popover owner, the rail and the roster stay real.
-vi.mock('@/components/ui/popover', () => ({
-  Popover: (props: {
-    children: (layout: {
-      maxHeight: number;
-      maxWidth: number;
-    }) => React.ReactNode;
-  }) => <>{props.children({ maxHeight: 600, maxWidth: 400 })}</>,
-}));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+  const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+  return createInlinePopoverModuleMock(importOriginal, { maxHeight: 600, maxWidth: 400, placement: 'bottom' });
+});
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 const initialStorageState = getStorage().getState();
-afterEach(() => {
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+afterEach(async () => {
   standardCleanup();
   vi.useRealTimers();
+  await connection?.dispose();
+  connection = undefined;
   getStorage().setState(initialStorageState, true);
 });
 
@@ -109,6 +116,7 @@ function railWithPinnedBot() {
         inbox: true,
         workflows: true,
         friends: true,
+        bots: true,
         botsRoster: true,
       },
       pages: [],
@@ -175,7 +183,17 @@ describe('AppRail Bots', () => {
   });
 
   it('keeps Bot attention contextual without another global numeric badge', async () => {
-    const serverId = getActiveServerSnapshot().serverId;
+    const accountId = 'rail-bots-account';
+    const home = createHomeHubArtifactHttpBoundary(accountId);
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://rail-bots.test', accountId,
+      request: (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/features') return Promise.resolve(Response.json(createRootLayoutFeaturesResponse()));
+        return Promise.resolve(createEmptyAccountBootstrapHttpResponse(path, init) ?? home.request(url, init));
+      },
+    });
+    await flushHookEffects({ cycles: 3 });
+    const serverId = connection.serverId;
     const bot = createSessionListRenderableSessionFixture({
       id: 'approval-bot',
       metadata: { path: '/repo', host: 'host', bot: { kind: 'bot' } },
@@ -184,14 +202,12 @@ describe('AppRail Bots', () => {
       hasPendingPermissionRequests: true,
       pendingRequestObservedAt: Date.now(),
     });
-    getStorage().setState({
-      isDataReady: true,
-      sessionListRowsByServerId: { [serverId]: { [bot.id]: bot } },
-      ordinarySessionListMembershipByServerId: { [serverId]: [bot.id] },
-    });
+    // The Session-list publisher admits both ordinary membership and the Bot-only summary input.
+    getStorage().getState().applyServerScopedSessionListRows(serverId, [bot], { source: 'ordinary', mode: 'replace' });
+    getStorage().getState().applyReady();
     const screen = await renderScreen(
       <BotsRosterRuntimeProvider>
-        <InjectedAuthProvider credentials={null}>
+        <InjectedAuthProvider credentials={connection.credentials}>
           <InboxSummaryProvider>
             <AppRailSurface entries={railWithPinnedBot()} activeId={null} onOpen={() => {}}
               renderFooter={(item) => <View testID={item.id} />} />

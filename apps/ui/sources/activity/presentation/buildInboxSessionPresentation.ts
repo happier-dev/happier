@@ -1,7 +1,8 @@
 import { resolvePersonalFollowOnceAttentionV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveSessionInboxAttentionV1, type SessionInboxAttentionClassificationV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import type { Message } from "@happier-dev/session-core/messages";
 import { comparePendingRequestsByAge } from '@happier-dev/session-core/pending';
 import type {
@@ -19,6 +20,7 @@ import {
 } from '@/utils/sessions/sessionUtils';
 
 export type InboxSessionAttentionEntry = Readonly<{
+    appearanceColor?: SessionAppearanceColor | null;
     candidate: SessionActivityAttention;
     pendingPermissions: readonly PendingPermissionRequest[];
     pendingUserActions: readonly PendingPermissionRequest[];
@@ -26,7 +28,7 @@ export type InboxSessionAttentionEntry = Readonly<{
 
 export type InboxSessionPresentation = Readonly<{
     sessionsNeedingAttention: readonly InboxSessionAttentionEntry[];
-    readySessions: readonly SessionActivityAttention[];
+    readySessions: readonly (SessionActivityAttention & Readonly<{ appearanceColor?: SessionAppearanceColor | null }>)[];
     markAllReadTargets: readonly SessionBulkActionTarget[];
     pendingRequestHydrationTargets: readonly SessionAddress[];
 }>;
@@ -58,11 +60,12 @@ export function classifyInboxSessionCandidate(
  * section and builds action targets, but never decides whether attention exists.
  */
 export function buildInboxSessionPresentation(params: Readonly<{
+    appearanceColorsBySessionKey?: ReadonlyMap<string, SessionAppearanceColor>;
     overview: ActivityOverviewSnapshot;
     resolveMessages?: (candidate: SessionActivityAttention) => readonly Message[] | undefined;
 }>): InboxSessionPresentation {
     const sessionsNeedingAttention: InboxSessionAttentionEntry[] = [];
-    const readySessions: SessionActivityAttention[] = [];
+    const readySessions: (SessionActivityAttention & Readonly<{ appearanceColor?: SessionAppearanceColor | null }>)[] = [];
     const markAllReadTargets: SessionBulkActionTarget[] = [];
     const pendingRequestHydrationTargets: SessionAddress[] = [];
 
@@ -73,6 +76,7 @@ export function buildInboxSessionPresentation(params: Readonly<{
         const reasons = candidate.personalAttention.reasons;
         const interaction = { active: candidate.presentationSource?.lifecycle.active ?? candidate.session.active, access: candidate.session.access };
         const serverId = candidate.address?.serverId ?? candidate.serverId ?? null;
+        const appearanceColor = serverId ? params.appearanceColorsBySessionKey?.get(sessionAddressKey({ serverId, sessionId: candidate.sessionId })) ?? null : null;
 
         // The Inbox follows the Session list's attention lanes: streaming
         // transcript progress remains a server-owned unread fact, but it is not
@@ -84,6 +88,7 @@ export function buildInboxSessionPresentation(params: Readonly<{
             // Missing exact-Home data must not fall back to the ambient same-id transcript.
             const messages = mayShowDetails ? params.resolveMessages?.(candidate) ?? [] : [];
             const entry: InboxSessionAttentionEntry = {
+                appearanceColor,
                 candidate,
                 pendingPermissions: mayShowDetails && reasons.includes('permission_required')
                     ? (candidate.presentationSource ? listSessionListPresentationPermissionRequests(candidate.presentationSource, messages)
@@ -110,7 +115,7 @@ export function buildInboxSessionPresentation(params: Readonly<{
         }
 
         if (classification.section === 'ready') {
-            readySessions.push(candidate);
+            readySessions.push(params.appearanceColorsBySessionKey ? { ...candidate, appearanceColor } : candidate);
             markAllReadTargets.push({
                 key: buildServerScopedSessionKey(candidate.sessionId, serverId),
                 sessionId: candidate.sessionId,

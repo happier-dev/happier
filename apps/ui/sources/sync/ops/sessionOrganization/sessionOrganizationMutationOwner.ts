@@ -33,6 +33,7 @@ import { readSessionOrganizationDisplayRecord } from '@/sync/domains/session/org
 import { setSessionTagLabels } from './setSessionTagLabels';
 import { upsertSessionFolder } from './upsertSessionFolder';
 import { upsertSessionLabel } from './upsertSessionLabel';
+import type { SessionTagActionExecute } from './upsertSessionTag';
 
 export type SessionOrganizationMutationScope = Readonly<{
     credentials: AuthCredentials;
@@ -190,11 +191,13 @@ export async function writeSessionOrganizationTagLabels(params: Readonly<{
     scope: SessionOrganizationMutationScope;
     sessionId: string;
     tags: readonly string[];
+    executeAction?: SessionTagActionExecute;
 }>): Promise<void> {
     await setSessionTagLabels({
         ...params.scope,
         sessionId: params.sessionId,
         tags: normalizeStringArray(params.tags),
+        executeAction: params.executeAction,
     });
 }
 

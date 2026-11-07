@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 
-import { PluginUiExecuteActionRequestV1Schema, PluginUiHostApiSurfaceContextV1Schema, PluginUiSelectActionInputResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PLUGIN_UI_HOST_METHODS_V1, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiSurfaceContextV1Schema, PluginUiSelectActionInputResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { getActionSpec } from '@happier-dev/protocol';
 import {
     type PluginUiHostApiSurfaceContextV1,
@@ -52,7 +52,208 @@ describe('Host API negotiation admission', () => {
     });
 });
 
+describe('qualified Machine display name', () => {
+    it('negotiates the exact read and validates disclosure', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        let result: unknown = { status: 'ready', displayName: 'Studio' };
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
+                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result }); }
+            },
+        } });
+        const request = { serverId: 'home-a', machineId: 'machine-1' };
+        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
+        expect(requests).toEqual([expect.objectContaining({ method: 'readMachineDisplayName', payload: request })]);
+        result = { status: 'unavailable' };
+        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
+        result = { status: 'ready', displayName: 'Studio', metadata: { homeDir: '/private' } };
+        await expect(api.readMachineDisplayName(request)).rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.readMachineDisplayName({ ...request, accountId: 'forged' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(requests).toHaveLength(3);
+        const cancelled = new AbortController(); cancelled.abort();
+        await expect(api.readMachineDisplayName(request, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
+    });
+    it('refuses an older host that does not advertise the Machine read', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'] });
+                if (message.kind === 'request') requests.push(message);
+            },
+        } });
+        await expect(api.readMachineDisplayName({ serverId: 'home', machineId: 'machine' }))
+            .rejects.toMatchObject({ code: 'unsupported_method' });
+        expect(requests).toEqual([]);
+    });
+});
+
+describe('managed Machine configuration handoff', () => {
+    it.each([true, false])('requires advertised support and carries only the provisioner (advertised=%s)', async advertised => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: advertised ? ['openManagedMachineConfiguration'] : ['context'] });
+                if (message.kind === 'request') {
+                    requests.push(message);
+                    receive?.({ wireVersion: 1, kind: 'result', identity,
+                        requestId: message.requestId, method: message.method, result: null });
+                }
+            },
+        } });
+        const request = { provisioner: { pluginId: 'com.acme.compute', localId: 'sandbox' } };
+        if (advertised) {
+            await expect(api.openManagedMachineConfiguration(request)).resolves.toBeUndefined();
+            expect(requests).toEqual([expect.objectContaining({ method: 'openManagedMachineConfiguration', payload: request })]);
+            const spoofed = { ...request, serverId: 'other-home', machineId: 'other-controller', href: '/arbitrary' };
+            await expect(api.openManagedMachineConfiguration(spoofed)).rejects.toMatchObject({ code: 'invalid_payload' });
+            expect(requests).toHaveLength(1);
+        } else {
+            await expect(api.openManagedMachineConfiguration(request)).rejects.toMatchObject({ code: 'unsupported_method' });
+            expect(requests).toEqual([]);
+        }
+    });
+});
+
+describe('exact Session Action addressing', () => {
+    it('serializes the reviewed address separately from strict Action input on the hosted wire', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
+                if (message.kind === 'request') { sent.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result: { status: 'accepted' } }); }
+            },
+        } });
+        const input = { sessionId: 'reviewed', message: 'Repair', idempotencyKey: 'reviewed-message' };
+        const sessionAddress = { serverId: 'reviewed-home', sessionId: 'reviewed' };
+        await api.executeAction('session.message.send', input, { sessionAddress });
+        expect(sent).toEqual([expect.objectContaining({ method: 'executeAction', payload: {
+            action: 'session.message.send', input, sessionAddress,
+        } })]);
+    });
+});
+
+describe('host-owned contributed file download', () => {
+    it('transports strict Action input without author destination authority and validates settlement', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        let result: unknown = { success: false, status: 'unknown', error: 'Acknowledgement unavailable', errorCode: 'indeterminate' };
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
+                if (message.kind === 'request') { sent.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result }); }
+            },
+        } });
+        const request = { action: { pluginId: 'com.acme.source', localId: 'download' }, input: { artifactId: 'original' } };
+        await expect(api.downloadFile(request)).resolves.toEqual(result);
+        expect(sent).toEqual([expect.objectContaining({ method: 'downloadFile', payload: request })]);
+        await expect(api.downloadFile({ ...request, destination: { path: '/tmp/other' } } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.downloadFile({ ...request, input: { destination: { destinationId: 'forged' } } })).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(sent).toHaveLength(1);
+        result = { success: true, status: 'completed', url: 'https://not-a-receipt.test' };
+        await expect(api.downloadFile(request)).rejects.toMatchObject({ code: 'invalid_payload' });
+        const cancellation = new AbortController(); cancellation.abort();
+        await expect(api.downloadFile(request, { signal: cancellation.signal })).rejects.toMatchObject({ code: 'aborted' });
+        expect(sent).toHaveLength(2);
+    });
+});
+
+describe('exact Session input reveal', () => {
+    it.each([true, false])('uses negotiated exact-input navigation and refuses unsupported or author routing authority: %s', async supported => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: supported ? PLUGIN_UI_HOST_METHODS_V1 : ['context'] });
+                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1,
+                    kind: 'result', identity, requestId: message.requestId, method: message.method, result: null }); }
+            },
+        } });
+        const input = { sessionId: 'exact-session', localId: '  opaque/local:input  ' };
+        if (!supported) {
+            await expect(api.revealSessionInput(input)).rejects.toMatchObject({ code: 'unsupported_method' });
+            expect(requests).toEqual([]);
+            return;
+        }
+        await expect(api.revealSessionInput(input)).resolves.toBeUndefined();
+        expect(requests).toEqual([expect.objectContaining({ method: 'revealSessionInput', payload: input })]);
+        await expect(api.revealSessionInput({ ...input, serverId: 'author-home' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.revealSessionInput({ ...input, localId: ' ' })).rejects.toMatchObject({ code: 'invalid_payload' });
+        const cancelled = new AbortController(); cancelled.abort();
+        await expect(api.revealSessionInput(input, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
+        expect(requests).toHaveLength(1);
+    });
+});
+
+describe('Automation Event authoring navigation', () => {
+    it.each([[true, true], [true, false], [false, true], [false, false]])('opens a complete or partial editor seed without executing setup and rejects unknown routing fields: %s/%s', async (knownAccount, knownMachine) => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
+                if (message.kind === 'request') {
+                    requests.push(message);
+                    receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+                        method: message.method, result: null });
+                }
+            },
+        } });
+        const seed = { eventRef: { pluginId: 'com.acme.source', localId: 'deployment-review' },
+            ...(knownMachine ? { monitoringMachineId: 'machine-1' } : {}), ...(knownAccount ? { connectedAccount: {
+                service: { pluginId: 'com.acme.source', localId: 'account' }, accountId: 'account-1',
+            } } : {}), setupInput: { repository: 'acme/widgets' } };
+        await expect(api.openAutomationEvent(seed)).resolves.toBeUndefined();
+        expect(requests).toEqual([expect.objectContaining({ method: 'openAutomationEvent', payload: seed })]);
+        await expect(api.openAutomationEvent({ ...seed, href: '/elsewhere' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(requests).toHaveLength(1);
+    });
+});
+
 describe('linked Session activity over the hosted transport', () => {
+    it('returns only a chosen exact Session address from the no-invoke native picker', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const methods: string[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['selectActionInput'] });
+                if (message.kind === 'request') {
+                    methods.push(message.method);
+                    expect(message.payload).toEqual({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } });
+                    receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+                        method: message.method, result: { kind: 'sessionAddress', session: { serverId: 'home', sessionId: 'chosen' } } });
+                }
+            },
+        } });
+        expect(await api.selectActionInput({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } }))
+            .toEqual({ kind: 'sessionAddress', session: { serverId: 'home', sessionId: 'chosen' } });
+        expect(methods).toEqual(['selectActionInput']);
+    });
     it('carries activity and unread and rejects an unrecognized nested disclosure', async () => {
         let receive: ((message: unknown) => void) | undefined;
         let extra: Record<string, unknown> = {};
@@ -391,14 +592,22 @@ describe('plugin UI domain client transport adapter', () => {
         }));
     });
 
-    it('keeps the Protocol surface context mutually assignable through direct and watched reads', async () => {
+    it.each([
+        { kind: 'app' },
+        { kind: 'machine', serverId: 'addressed-home', machineId: 'addressed-machine' },
+        { kind: 'project', projectKey: 'logical-project',
+            checkout: { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo',
+                createdAtMs: 1, label: null, lastOpenedAtMs: null },
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' }, branch: 'main' },
+    ] satisfies readonly PluginUiHostApiSurfaceContextV1['target'][])(
+        'keeps the $kind Protocol surface context mutually assignable through direct and watched reads', async (target) => {
         const protocolSurface: PluginUiHostApiSurfaceContextV1 = createSurfaceContextFixture({
             mount: {
                 kind: 'destination',
                 destination: { pluginId: 'com.acme.fixture', localId: 'inbox' },
                 container: 'appPage',
             },
-            target: { kind: 'app' },
+            target,
             page: { columnVisible: true },
             requesterExecutionReady: false,
         });
@@ -1838,7 +2047,7 @@ describe('plugin UI domain client transport adapter', () => {
         });
         receive?.({ wireVersion: 1, kind: 'disconnected', identity, reason: 'daemon_offline' });
 
-        await expect(action).rejects.toMatchObject({ code: 'daemon_offline' });
+        await expect(action).rejects.toMatchObject({ code: 'daemon_offline', details: { layer: 'transport', phase: 'settlement' }, retryable: false });
         await expect(api.context()).rejects.toBeInstanceOf(PluginUiHostApiClientError);
         expect(transportDisposals).toBe(1);
     });
@@ -2572,6 +2781,7 @@ describe('plugin UI domain client transport adapter', () => {
         await api.openSurface('detail', { itemId: 'item-7' }, {
             subPath: 'nested/detail',
             instanceKey: 'detail-7',
+            presentation: 'window',
         });
         expect(sent.at(-1)).toMatchObject({
             kind: 'request',
@@ -2581,6 +2791,7 @@ describe('plugin UI domain client transport adapter', () => {
                 input: { itemId: 'item-7' },
                 subPath: 'nested/detail',
                 instanceKey: 'detail-7',
+                presentation: 'window',
             },
         });
 
@@ -3043,78 +3254,5 @@ describe('plugin UI domain client transport adapter', () => {
         void api.watchContext(() => undefined).catch(() => undefined);
         await expect(api.watchContext(() => undefined)).rejects.toMatchObject({ code: 'duplicate_subscription_id' });
         expect(sent.filter((message) => message.kind === 'subscribe')).toHaveLength(1);
-    });
-});
-
-describe('qualified Machine display name', () => {
-    it('negotiates the exact read and validates disclosure', async () => {
-        let receive: ((message: unknown) => void) | undefined;
-        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
-        let result: unknown = { status: 'ready', displayName: 'Studio' };
-        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
-            subscribe(listener) { receive = listener; return { dispose() {} }; },
-            send(message) {
-                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
-                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
-                    requestId: message.requestId, method: message.method, result }); }
-            },
-        } });
-        const request = { serverId: 'home-a', machineId: 'machine-1' };
-        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
-        expect(requests).toEqual([expect.objectContaining({ method: 'readMachineDisplayName', payload: request })]);
-        result = { status: 'unavailable' };
-        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
-        result = { status: 'ready', displayName: 'Studio', metadata: { homeDir: '/private' } };
-        await expect(api.readMachineDisplayName(request)).rejects.toMatchObject({ code: 'invalid_payload' });
-        await expect(api.readMachineDisplayName({ ...request, accountId: 'forged' } as never))
-            .rejects.toMatchObject({ code: 'invalid_payload' });
-        expect(requests).toHaveLength(3);
-        const cancelled = new AbortController(); cancelled.abort();
-        await expect(api.readMachineDisplayName(request, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
-    });
-    it('refuses an older host that does not advertise the Machine read', async () => {
-        let receive: ((message: unknown) => void) | undefined;
-        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
-        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
-            subscribe(listener) { receive = listener; return { dispose() {} }; },
-            send(message) {
-                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'] });
-                if (message.kind === 'request') requests.push(message);
-            },
-        } });
-        await expect(api.readMachineDisplayName({ serverId: 'home', machineId: 'machine' }))
-            .rejects.toMatchObject({ code: 'unsupported_method' });
-        expect(requests).toEqual([]);
-    });
-});
-
-describe('exact Session input reveal', () => {
-    it.each([true, false])('uses negotiated exact-input navigation and refuses unsupported or author routing authority: %s', async supported => {
-        let receive: ((message: unknown) => void) | undefined;
-        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
-        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
-            subscribe(listener) { receive = listener; return { dispose() {} }; },
-            send(message) {
-                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
-                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: supported ? PLUGIN_UI_HOST_METHODS_V1 : ['context'] });
-                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1,
-                    kind: 'result', identity, requestId: message.requestId, method: message.method, result: null }); }
-            },
-        } });
-        const input = { sessionId: 'exact-session', localId: '  opaque/local:input  ' };
-        if (!supported) {
-            await expect(api.revealSessionInput(input)).rejects.toMatchObject({ code: 'unsupported_method' });
-            expect(requests).toEqual([]);
-            return;
-        }
-        await expect(api.revealSessionInput(input)).resolves.toBeUndefined();
-        expect(requests).toEqual([expect.objectContaining({ method: 'revealSessionInput', payload: input })]);
-        await expect(api.revealSessionInput({ ...input, serverId: 'author-home' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
-        await expect(api.revealSessionInput({ ...input, localId: ' ' })).rejects.toMatchObject({ code: 'invalid_payload' });
-        const cancelled = new AbortController(); cancelled.abort();
-        await expect(api.revealSessionInput(input, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
-        expect(requests).toHaveLength(1);
     });
 });

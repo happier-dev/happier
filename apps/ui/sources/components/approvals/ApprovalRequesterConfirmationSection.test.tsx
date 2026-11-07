@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { qualifyTranscriptAccountActor } from '@happier-dev/session-core/messages';
 
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -54,6 +55,69 @@ function subject() {
 const decision = { kind: 'approve', decidingAccountId: 'bob' } as const;
 
 describe('ApprovalRequesterConfirmationSection operation actor', () => {
+  it('uses the resource-scoped Account actor when the global profile cache has no requester', async () => {
+    const approvalSubject = subject();
+    const requesterAccountActor = qualifyTranscriptAccountActor({
+      v: 1,
+      accountId: approvalSubject.requesterAccountId,
+      accessibility: 'current',
+      profile: {
+        name: 'QA N3 Bob',
+        firstName: null,
+        lastName: null,
+        username: 'qa-n3b',
+        avatarUrl: null,
+      },
+    }, 'server-1');
+    if (!requesterAccountActor) throw new Error('Expected a qualified Account actor');
+
+    const screen = await renderScreen(
+      <ApprovalRequesterConfirmationSection
+        subject={approvalSubject}
+        serverId="server-1"
+        requesterAccountActor={requesterAccountActor}
+        decidingAccountActor={requesterAccountActor}
+        open={false}
+        decision={{ kind: 'approve', decidingAccountId: approvalSubject.requesterAccountId }}
+      />,
+    );
+
+    expect(screen.getTextContent()).toContain('QA N3 Bob');
+    expect(screen.getTextContent()).not.toContain(
+      'detailPages.approval.requester.anotherPerson',
+    );
+  });
+
+  it('lets the canonical presenter replace a retained profile with Former member', async () => {
+    const approvalSubject = subject();
+    const requesterAccountActor = qualifyTranscriptAccountActor({
+      v: 1,
+      accountId: approvalSubject.requesterAccountId,
+      accessibility: 'former',
+      profile: {
+        name: 'Retained Bob',
+        firstName: null,
+        lastName: null,
+        username: 'qa-n3b',
+        avatarUrl: null,
+      },
+    }, 'server-1');
+    if (!requesterAccountActor) throw new Error('Expected a qualified Account actor');
+
+    const screen = await renderScreen(
+      <ApprovalRequesterConfirmationSection
+        subject={approvalSubject}
+        serverId="server-1"
+        requesterAccountActor={requesterAccountActor}
+        open={false}
+        decision={null}
+      />,
+    );
+
+    expect(screen.getTextContent()).toContain('message.accountActorFormerMember');
+    expect(screen.getTextContent()).not.toContain('Retained Bob');
+  });
+
   it('names the admitted credential through the one operation-actor line, not the execution Account', async () => {
     const screen = await renderScreen(
       <ApprovalRequesterConfirmationSection

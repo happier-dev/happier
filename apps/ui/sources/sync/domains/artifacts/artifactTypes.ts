@@ -1,12 +1,14 @@
-import type { ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactBodyEnvelopeV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
+import type { ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactBodyEnvelopeV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { ArtifactOrganizationHeaderV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
 import type { ArtifactPublicAudienceV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import type { ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import type { ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 
-/** Opened private bytes stay separate from the Home's isolated shell location. */
-export type ArtifactHtmlPreview = Readonly<{ url: string; bundle: ArtifactHtmlBundleV1 }>;
+/** Authorized opened bytes for the opaque local frame. */
+export type ArtifactHtmlPreview = Readonly<{ bundle: ArtifactHtmlBundleV1 }>;
 
 export type ArtifactBodyInput = ArtifactBodyV1 | null | Readonly<{ bytes: Uint8Array; mime: string }>;
 
@@ -21,10 +23,10 @@ export interface Artifact {
     /** Authenticated sharing and owner Account-mode projection from HTTP. */
     ownerAccountId: string;
     ownerDisplayName?: string | null;
-    sharedTeamIds?: readonly string[];
     access: 'owner' | 'view' | 'edit' | 'admin';
     encryptionMode: 'plain' | 'e2ee';
     publicAudience?: ArtifactPublicAudienceV1;
+    sharedTeamIds?: readonly string[];
     header: string;  // Base64 encoded encrypted JSON { "title": string | null }
     headerVersion: number;
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
@@ -146,6 +148,9 @@ export type DecryptedArtifact =
  * Request to create a new artifact
  */
 export interface ArtifactCreateRequest {
+    idScope?: ArtifactIdScopeV1;
+    approvalState?: ApprovalArtifactStateV1 | null;
+    approvalSessionId?: string | null;
     /** Stored write hint (legacy coarse or tagged exact), not the served Artifact.kind projection. */
     kind?: string;
     memoryDecisionSource?: CoordinationMessageRefV1;
@@ -162,6 +167,9 @@ export interface ArtifactCreateRequest {
  * Request to update an existing artifact
  */
 export interface ArtifactUpdateRequest {
+    transcriptVisualPublication?: import('@happier-dev/protocol/sessions/messages/transcriptObservationV1').ApprovalTranscriptVisualPublicationV1;
+    approvalState?: ApprovalArtifactStateV1 | null;
+    approvalSessionId?: string | null;
     /** Stored write hint; served rows project coarse kind and separate kindHint. */
     kind?: string;
     memoryDecisionSource?: CoordinationMessageRefV1;
