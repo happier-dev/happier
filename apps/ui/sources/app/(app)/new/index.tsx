@@ -1,7 +1,11 @@
 import React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import {
+    readNewSessionStartedNotice,
+    subscribeNewSessionStartedNotice,
+} from '@/components/sessions/new/modules/newSessionStartedNotice';
 
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance';
@@ -61,8 +65,14 @@ function NewSessionScreenInner(props: Readonly<{
     onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
+    onStartAnother: () => void;
+    focusComposerOnMount: boolean;
 }>) {
-    const model = useNewSessionScreenModel({ draftId: props.draftId, onDraftRemoved: props.onDraftRemoved });
+    const model = useNewSessionScreenModel({
+        draftId: props.draftId,
+        onDraftRemoved: props.onDraftRemoved,
+        onStartAnother: props.onStartAnother,
+    });
 
     if (model.variant === 'simple') {
         return (
@@ -71,6 +81,8 @@ function NewSessionScreenInner(props: Readonly<{
                 composerTopContent={props.composerTopContent}
                 statusBadges={props.statusBadges}
                 statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: model.simpleProps.isCreating })}
+                newSessionAfterSendMode={model.newSessionAfterSendMode}
+                focusOnMount={props.focusComposerOnMount}
             />
         );
     }
@@ -89,6 +101,8 @@ function NewSessionScreenInner(props: Readonly<{
             composerTopContent={props.composerTopContent}
             statusBadges={props.statusBadges}
             statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: footer?.isCreating ?? false })}
+            newSessionAfterSendMode={model.newSessionAfterSendMode}
+            focusOnMount={props.focusComposerOnMount}
         />
     );
 }
@@ -100,6 +114,8 @@ function NewSessionContent(props: Readonly<{
     onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
+    onStartAnother: () => void;
+    focusComposerOnMount: boolean;
 }>) {
     const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
 
@@ -123,7 +139,8 @@ function NewSessionContent(props: Readonly<{
 function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
     const router = useRouter();
     const resolveOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
-    const { dataId, machineId, directory, draftOrigin } = useLocalSearchParams<{
+    const { dataId, machineId, directory, draftOrigin, focusComposer } = useLocalSearchParams<{
+        focusComposer?: string;
         dataId?: string;
         spawnServerId?: string;
         machineId?: string;
@@ -154,9 +171,14 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
         const next = resolveOrdinaryEntryRoute({ forceFresh: true });
         router.replace({
             pathname: '/new',
-            params: { draftId: next.draftId, draftOrigin: next.draftOrigin },
+            params: { draftId: next.draftId, draftOrigin: next.draftOrigin, focusComposer: '1' },
         });
     }, [resolveOrdinaryEntryRoute, router]);
+    const startedNotice = React.useSyncExternalStore(
+        subscribeNewSessionStartedNotice,
+        readNewSessionStartedNotice,
+        readNewSessionStartedNotice,
+    );
     const deleteDraft = React.useCallback(async () => {
         if (!draftScope || hasUnresolvedLaunch) return;
         const deleted = await deleteNewSessionDraftAfterConfirmation({
@@ -226,7 +248,13 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
     const statusBadges = React.useMemo(() => [
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
-    ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
+        ...(startedNotice ? [{
+            key: 'new-session-started',
+            label: t('sessionDrafts.startedOpen'),
+            testID: 'new-session-started-open',
+            onPress: () => router.replace(startedNotice.href as Href, { dangerouslySingular: () => 'session' }),
+        } satisfies AgentInputStatusBadge] : []),
+    ], [draftConflictBanner.statusBadge, draftSyncStatusBadge, router, startedNotice]);
     const showDraftActions = Boolean(draftScope && draftSnapshot?.materialized);
     const renderStatusTrailingActions = React.useCallback((state: Readonly<{ isCreating: boolean }>) => (
         showDraftActions ? (
@@ -242,6 +270,8 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
             allowBlockingGuidance={!hasSeededDraftIntent && !hasSeededRouteIntent}
             draftId={props.draftId}
             onDraftRemoved={startAnother}
+            onStartAnother={startAnother}
+            focusComposerOnMount={focusComposer === '1'}
             composerTopContent={composerTopContent}
             statusBadges={statusBadges}
             renderStatusTrailingActions={renderStatusTrailingActions}

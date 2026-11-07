@@ -189,7 +189,7 @@ function setNavigationParams(navigation: unknown, params: Record<string, unknown
     return true;
 }
 
-export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; onDraftRemoved?: () => void }>): NewSessionScreenModel {
+export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; onDraftRemoved?: () => void; onStartAnother?: () => void }>): NewSessionScreenModel {
     const { theme, rt } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
@@ -1820,6 +1820,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
 
     const { handleCreateSession, resumePersistedLaunchKey } = useCreateNewSession({
         router,
+        onStartAnother: params?.onStartAnother,
         selectedMachineId,
         selectedPath,
         getRequestedPath,
@@ -2141,7 +2142,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         resumePersistedLaunchKey,
     });
 
-    return buildNewSessionScreenVariantModel({
+    const variantModel = buildNewSessionScreenVariantModel({
         useEnhancedSessionWizard,
         popoverBoundaryRef,
         simplePanelProps,
@@ -2150,4 +2151,9 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         wizardProfilesProps,
         wizardSections,
     });
+    return {
+        ...variantModel,
+        // An automation draft creates an automation, not a Session that could keep starting behind a new draft.
+        newSessionAfterSendMode: currentAuthoringDraft?.automation?.enabled === true ? undefined : settings.newSessionAfterSendV1,
+    };
 }

@@ -13,6 +13,7 @@ const multiTextInputHandleMocks = vi.hoisted(() => ({
     setSelection: vi.fn(),
     setTextAndSelection: vi.fn(),
 }));
+const localSettingOverrides = vi.hoisted(() => ({} as Record<string, unknown>));
 const useActiveSuggestionsMock = vi.hoisted(() => vi.fn(() => [[], -1, () => {}, () => {}] as const));
 
 // The Agent mark is a rendering boundary that reaches the generated Agent
@@ -34,6 +35,10 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 }));
 
 installAgentInputCommonModuleMocks({
+    storeHooks: async (importOriginal) => ({
+        ...(await importOriginal()) as Record<string, unknown>,
+        useLocalSetting: (key: string) => localSettingOverrides[key] ?? null,
+    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -340,6 +345,7 @@ describe('AgentInput (send button accessibility)', () => {
     );
 
     afterEach(() => {
+        delete localSettingOverrides.composerKeepFocusAfterSend;
         translateOverride.fn = null;
         featureEnabledState.voice = true;
         vi.clearAllMocks();
@@ -1157,6 +1163,65 @@ describe('AgentInput (send button accessibility)', () => {
 
         expect(multiTextInputHandleMocks.blur).toHaveBeenCalledTimes(1);
 
+        await screen.unmount();
+    });
+
+    it('keeps the session composer focused after sending when the person asked for that', async () => {
+        localSettingOverrides.composerKeepFocusAfterSend = true;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        screen.pressByTestId('session-composer-send');
+
+        expect(multiTextInputHandleMocks.blur).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it('offers Send and start another from the new-session send menu, and sends with that choice', async () => {
+        const onSend = vi.fn();
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={onSend}
+            newSessionAfterSendMode="open"
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        const send = screen.findByTestId('new-session-composer-send');
+        await act(async () => { send?.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }); });
+        await screen.pressByTestIdAsync('agent-input-send-option-startAnother');
+
+        expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ afterSend: 'startAnother' }));
+        await screen.unmount();
+    });
+
+    it('focuses the composer on mount when it was opened to keep writing', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            value=""
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            focusOnMount
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        expect(multiTextInputHandleMocks.focus).toHaveBeenCalled();
         await screen.unmount();
     });
 

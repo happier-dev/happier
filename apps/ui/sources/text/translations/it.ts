@@ -627,6 +627,7 @@ export const it: TranslationStructure = {
             composerFocus: 'Metti a fuoco il compositore',
             composerSendImmediate: 'Invio alternativo (coda / indirizza)',
             composerSendInterrupt: 'Interrompi e invia',
+            composerSendAlternateAfterSend: "Invia e iniziane un’altra / apri",
             composerSendPending: 'Invia alla coda in sospeso',
             commandPaletteOpen: 'Apri palette comandi',
             modeCycle: 'Cambia modalità',
@@ -6915,7 +6916,7 @@ export const it: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra',
+    sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra', startedOpen: "Sessione avviata · Apri",
     status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', startInterrupted: 'Avvio interrotto' },
     new: { action: 'Nuova bozza' }, delete: { action: 'Elimina bozza', confirmTitle: 'Eliminare la bozza?', confirmDescription: 'Questa bozza verrà rimossa dai tuoi dispositivi.' },
     conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
@@ -7309,8 +7310,12 @@ export const it: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "Tieni aperta la tastiera dopo l’invio" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} di ${total}`,
       sendOptions: {
           title: "Opzioni di invio",
+          sendAndStartAnother: "Invia e iniziane un’altra",
+          sendAndOpen: "Invia e apri la sessione",
           queue: "Accoda",
           hint: "Tieni premuto per scegliere come inviare",
       },
@@ -8683,6 +8688,7 @@ export const it: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Host terminale per le nuove sessioni',
     terminalHostNone: 'Nessun host terminale',
+    newSessionAfterSend: { title: "Dopo l’invio", footer: "Scegli cosa succede quando invii dall’editor di nuova sessione. Tieni premuto Invia per scegliere l’altra opzione per un solo messaggio.", openTitle: "Apri la sessione", openSubtitle: "Vai alla sessione appena si avvia.", startAnotherTitle: "Resta e iniziane un’altra", startAnotherSubtitle: "Continua l’avvio in background e apri una nuova bozza." },
     newSessionDraftEntry: {
         title: 'Bozze di nuova sessione',
         footer: 'Scegli se Nuova sessione continua la bozza di questo dispositivo o ne apre una nuova.',
@@ -8856,6 +8862,8 @@ settingsSession: {
           resetHiddenSubtitle: 'Cancella i banner nascosti su questo dispositivo.',
       },
       inputBehavior: {
+          keepFocusTitle: "Mantieni l’editor attivo dopo l’invio",
+          keepFocusSubtitle: "Resta nel campo del messaggio per scrivere subito il successivo.",
           title: 'Comportamento dell\'immissione',
           footer: 'Configura Invio con Enter e il comportamento della cronologia dei messaggi.',
           enterToSendEnabledNativeSubtitle: 'Premi Invio per inviare',

@@ -445,6 +445,7 @@ export const de: TranslationStructure = {
             composerFocus: 'Composer fokussieren',
             composerSendImmediate: 'Alternativ senden (Warteschlange / steuern)',
             composerSendInterrupt: 'Unterbrechen und senden',
+            composerSendAlternateAfterSend: "Senden und weitere starten / öffnen",
             composerSendPending: 'An die Warteschlange senden',
             commandPaletteOpen: 'Befehlspalette öffnen',
             modeCycle: 'Modus wechseln',
@@ -6201,7 +6202,7 @@ export const de: TranslationStructure = {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen',
+        sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen', startedOpen: "Sitzung gestartet · Öffnen",
         status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
         new: { action: 'Neuer Entwurf' }, delete: { action: 'Entwurf löschen', confirmTitle: 'Entwurf löschen?', confirmDescription: 'Dieser Entwurf wird von deinen Geräten entfernt.' },
         conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Textinhalt', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
@@ -6585,8 +6586,12 @@ export const de: TranslationStructure = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Tastatur nach dem Senden geöffnet lassen" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} von ${total}`,
         sendOptions: {
             title: "Sendeoptionen",
+            sendAndStartAnother: "Senden und weitere starten",
+            sendAndOpen: "Senden und Sitzung öffnen",
             queue: "Einreihen",
             hint: "Gedrückt halten, um die Sendeart zu wählen",
         },
@@ -7900,6 +7905,7 @@ export const de: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Terminal-Host für neue Sitzungen',
     terminalHostNone: 'Kein Terminal-Host',
+    newSessionAfterSend: { title: "Nach dem Senden", footer: "Lege fest, was beim Senden aus dem Editor für neue Sitzungen passiert. Halte Senden gedrückt, um für eine Nachricht die andere Option zu wählen.", openTitle: "Sitzung öffnen", openSubtitle: "Zur Sitzung wechseln, sobald sie startet.", startAnotherTitle: "Bleiben und weitere starten", startAnotherSubtitle: "Im Hintergrund weiter starten und einen neuen Entwurf öffnen." },
     newSessionDraftEntry: {
         title: 'Entwürfe für neue Sitzungen',
         footer: 'Wähle, ob „Neue Sitzung“ den Entwurf dieses Geräts fortsetzt oder einen neuen öffnet.',
@@ -8091,6 +8097,8 @@ settingsSession: {
               resetHiddenSubtitle: 'Die auf diesem Gerät ausgeblendeten Banner zurückholen.',
           },
           inputBehavior: {
+              keepFocusTitle: "Eingabefeld nach dem Senden fokussiert lassen",
+              keepFocusSubtitle: "Im Nachrichtenfeld bleiben, um gleich die nächste Nachricht zu schreiben.",
               title: 'Eingabeverhalten',
               footer: 'Enter-zum-Senden und das Verhalten des Nachrichtenverlaufs einstellen.',
               enterToSendEnabledNativeSubtitle: 'Enter zum Senden drücken',

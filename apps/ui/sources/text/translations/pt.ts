@@ -678,6 +678,7 @@ export const pt: TranslationStructure = {
             composerFocus: 'Focar compositor',
             composerSendImmediate: 'Envio alternativo (fila / orientar)',
             composerSendInterrupt: 'Interromper e enviar',
+            composerSendAlternateAfterSend: "Enviar e começar outra / abrir",
             composerSendPending: 'Enviar para a fila pendente',
             commandPaletteOpen: 'Abrir paleta de comandos',
             modeCycle: 'Alternar modo',
@@ -6681,7 +6682,7 @@ export const pt: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Rascunhos', badge: 'Rascunho', untitled: 'Rascunho sem título', continueEditing: 'Continuar a editar', startAnother: 'Começar outro',
+    sectionTitle: 'Rascunhos', badge: 'Rascunho', untitled: 'Rascunho sem título', continueEditing: 'Continuar a editar', startAnother: 'Começar outro', startedOpen: "Sessão iniciada · Abrir",
     status: { offline: 'Sem ligação', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', startInterrupted: 'Início interrompido' },
     new: { action: 'Novo rascunho' }, delete: { action: 'Eliminar rascunho', confirmTitle: 'Eliminar rascunho?', confirmDescription: 'Este rascunho será removido dos teus dispositivos.' },
     conflict: { title: 'Conflito de rascunho', description: 'Este campo mudou noutro dispositivo.', mine: 'Neste dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Manter do dispositivo', copyMine: 'Copiar o meu', copied: 'Copiado', copyFailed: 'Não foi possível copiar', field: { text: 'Texto', mentions: 'Menções', attachments: 'Anexos', recipient: 'Destinatário', agentContinuation: 'Continuação do agente', executionRunDelivery: 'Entrega da execução' } },
@@ -7089,8 +7090,12 @@ export const pt: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "Manter o teclado aberto ao enviar" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
       sendOptions: {
           title: "Opções de envio",
+          sendAndStartAnother: "Enviar e começar outra",
+          sendAndOpen: "Enviar e abrir sessão",
           queue: "Enfileirar",
           hint: "Mantenha pressionado para escolher como enviar",
       },
@@ -8464,6 +8469,7 @@ export const pt: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Host de terminal para novas sessões',
     terminalHostNone: 'Sem host de terminal',
+    newSessionAfterSend: { title: "Depois de enviar", footer: "Escolha o que acontece ao enviar pelo editor de nova sessão. Mantenha Enviar pressionado para escolher a outra opção em uma única mensagem.", openTitle: "Abrir a sessão", openSubtitle: "Ir para a sessão assim que ela começar.", startAnotherTitle: "Ficar e começar outra", startAnotherSubtitle: "Continuar iniciando em segundo plano e abrir um novo rascunho." },
     newSessionDraftEntry: {
         title: 'Rascunhos de nova sessão',
         footer: 'Escolha se Nova sessão continua o rascunho deste dispositivo ou abre um novo.',
@@ -8637,6 +8643,8 @@ settingsSession: {
           resetHiddenSubtitle: 'Limpe os avisos ocultos neste dispositivo.',
       },
       inputBehavior: {
+          keepFocusTitle: "Manter o editor em foco ao enviar",
+          keepFocusSubtitle: "Permaneça no campo de mensagem para escrever a próxima em seguida.",
           title: 'Comportamento da entrada',
           footer: 'Configure enviar com Enter e o comportamento do histórico de mensagens.',
           enterToSendEnabledNativeSubtitle: 'Pressione Enter para enviar',

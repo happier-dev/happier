@@ -8,6 +8,7 @@ export type KeyboardCommandId =
     | 'composer.sendImmediate'
     | 'composer.sendPending'
     | 'composer.sendInterrupt'
+    | 'composer.sendAlternateAfterSend'
     | 'commandPalette.open'
     | 'mode.cycle'
     | 'permission.cycle'
@@ -59,6 +60,8 @@ export type KeybindingRule = Readonly<{
     platforms?: readonly KeyboardPlatform[];
     blockedSurfaces?: readonly KeyboardSurface[];
     allowInEditable?: boolean;
+    /** Commands that are never reachable together may share a key; a scope is a namespace in the duplicate report. */
+    conflictScope?: string;
 }>;
 
 export type KeyboardSurface = 'native' | 'web';

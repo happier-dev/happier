@@ -86,6 +86,24 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(newSession).not.toHaveBeenCalled();
     });
 
+    it('opens a new session from inside a text field only on the chord that cannot type a character', () => {
+        const newSession = vi.fn();
+        const dispatcherFor = (surface: 'native' | 'web') => createKeyboardShortcutDispatcher({
+            enabled: true,
+            platform: 'macos',
+            surface,
+            singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [],
+            overrides: {},
+            handlers: { 'session.new': newSession },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        });
+
+        expect(dispatcherFor('web')(keyEvent({ key: 'n', code: 'KeyN', altKey: true }))).toBe(false);
+        expect(dispatcherFor('native')(keyEvent({ key: 'n', code: 'KeyN', metaKey: true, shiftKey: true }))).toBe(true);
+        expect(newSession).toHaveBeenCalledTimes(1);
+    });
+
     it('dispatches the web-safe new session default instead of the Chrome private-window shortcut', () => {
         const newSession = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({

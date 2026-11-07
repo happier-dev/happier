@@ -228,7 +228,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
             deferOnWeb(() => {
-                params.handleCreateSession(opts);
+                params.handleCreateSession(options?.afterSend ? { ...opts, afterSend: options.afterSend } : opts);
             });
         };
 

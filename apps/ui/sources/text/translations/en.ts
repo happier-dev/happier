@@ -443,6 +443,7 @@ export const en = {
             composerFocus: 'Focus composer',
             composerSendImmediate: 'Alternate send (queue / steer)',
             composerSendInterrupt: 'Interrupt and send',
+            composerSendAlternateAfterSend: "Send and start another / open",
             composerSendPending: 'Send to pending queue',
             commandPaletteOpen: 'Open command palette',
             modeCycle: 'Cycle mode',
@@ -6222,7 +6223,7 @@ export const en = {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another',
+        sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another', startedOpen: "Session started · Open",
         status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
         new: { action: 'New draft' },
         delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
@@ -6617,8 +6618,12 @@ export const en = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Keep keyboard open after sending" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} of ${total}`,
         sendOptions: {
             title: "Send options",
+            sendAndStartAnother: "Send and start another",
+            sendAndOpen: "Send and open session",
             queue: "Queue",
             hint: "Hold to choose how to send",
         },
@@ -7932,6 +7937,7 @@ export const en = {
 settingsSession: {
     terminalHostTitle: 'Terminal host for new sessions',
     terminalHostNone: 'No terminal host',
+    newSessionAfterSend: { title: "After sending", footer: "Choose what happens when you send from the new session composer. Hold Send to choose the other way for one message.", openTitle: "Open the session", openSubtitle: "Go to the session as soon as it starts.", startAnotherTitle: "Stay and start another", startAnotherSubtitle: "Keep it starting in the background and open a fresh draft." },
     newSessionDraftEntry: {
         title: 'New session drafts',
         footer: 'Choose whether New session continues this device’s draft or opens a fresh one.',
@@ -8123,6 +8129,8 @@ settingsSession: {
               resetHiddenSubtitle: 'Clear the banners hidden on this device.',
           },
           inputBehavior: {
+              keepFocusTitle: "Keep composer focused after sending",
+              keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
               title: 'Input behavior',
               footer: 'Configure Enter-to-send and message history behavior.',
               enterToSendEnabledNativeSubtitle: 'Press Enter to send',

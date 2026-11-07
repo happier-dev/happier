@@ -33,6 +33,8 @@ export const NEW_SESSION_WIZARD_SECTION_PRESENTATIONS = [
 ] as const;
 
 export const NEW_SESSION_DRAFT_ENTRY_MODES = ['resumePrevious', 'alwaysFresh'] as const;
+export const NEW_SESSION_AFTER_SEND_MODES = ['open', 'startAnother'] as const;
+export type NewSessionAfterSendMode = (typeof NEW_SESSION_AFTER_SEND_MODES)[number];
 
 export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
 export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
@@ -109,6 +111,19 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
 }, z.record(BackendTargetKeySchema, SessionTranscriptStorageModeSchema).default({}));
 
 export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinitions({
+    newSessionAfterSendV1: {
+        schema: z.enum(NEW_SESSION_AFTER_SEND_MODES),
+        default: 'open',
+        description: 'Whether sending from the new-session composer opens the Session or keeps it starting in the background and opens a fresh draft',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'safe',
+            identityScope: 'person',
+        },
+    },
     newSessionDraftEntryMode: {
         schema: z.enum(NEW_SESSION_DRAFT_ENTRY_MODES),
         default: 'resumePrevious',

@@ -627,6 +627,7 @@ export const zhHans: TranslationStructure = {
             composerFocus: '聚焦输入框',
             composerSendImmediate: '切换发送方式（排队 / 引导）',
             composerSendInterrupt: '中断并发送',
+            composerSendAlternateAfterSend: "发送并开始另一个 / 打开",
             composerSendPending: '发送到待处理队列',
             commandPaletteOpen: '打开命令面板',
             modeCycle: '切换模式',
@@ -6364,7 +6365,7 @@ export const zhHans: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '继续编辑', startAnother: '开始另一份',
+    sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '继续编辑', startAnother: '开始另一份', startedOpen: "会话已启动 · 打开",
     status: { offline: '离线', syncing: '同步中', conflict: '冲突', machineUnavailable: '机器不可用', attachmentNeedsAttention: '附件需要处理', startInterrupted: '启动中断' },
     new: { action: '新建草稿' }, delete: { action: '删除草稿', confirmTitle: '删除草稿？', confirmDescription: '此草稿将从你的设备中移除。' },
     conflict: { title: '草稿冲突', description: '此字段已在另一台设备上更改。', mine: '此设备', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留设备版本', copyMine: '复制我的版本', copied: '已复制', copyFailed: '无法复制', field: { text: '文本', mentions: '提及', attachments: '附件', recipient: '接收者', agentContinuation: '代理延续', executionRunDelivery: '运行交付' } },
@@ -6754,8 +6755,12 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "发送后保持键盘打开" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
       sendOptions: {
           title: "发送选项",
+          sendAndStartAnother: "发送并开始另一个",
+          sendAndOpen: "发送并打开会话",
           queue: "加入队列",
           hint: "长按选择发送方式",
       },
@@ -8099,6 +8104,7 @@ export const zhHans: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: '新会话的终端宿主',
     terminalHostNone: '不使用终端宿主',
+    newSessionAfterSend: { title: "发送后", footer: "选择从新会话编辑器发送时的行为。长按发送可为单条消息选择另一种方式。", openTitle: "打开会话", openSubtitle: "会话启动后立即前往。", startAnotherTitle: "留下并开始另一个", startAnotherSubtitle: "在后台继续启动，并打开新的草稿。" },
     newSessionDraftEntry: {
         title: '新会话草稿',
         footer: '选择“新会话”是继续此设备上的草稿，还是打开新草稿。',
@@ -8290,6 +8296,8 @@ settingsSession: {
         resetHiddenSubtitle: '清除本设备上已隐藏的横幅。',
     },
     inputBehavior: {
+        keepFocusTitle: "发送后保持编辑器焦点",
+        keepFocusSubtitle: "留在消息框中，以便立即编写下一条消息。",
         title: '输入行为',
         footer: '设置按 Enter 发送以及消息历史行为。',
         enterToSendEnabledNativeSubtitle: '按 Enter 发送',

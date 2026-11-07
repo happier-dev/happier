@@ -612,6 +612,7 @@ export const ja: TranslationStructure = {
             composerFocus: 'コンポーザーにフォーカス',
             composerSendImmediate: '別の方法で送信（キュー / 方向修正）',
             composerSendInterrupt: '中断して送信',
+            composerSendAlternateAfterSend: "送信して次を開始 / 開く",
             composerSendPending: '保留キューに送信',
             commandPaletteOpen: 'コマンドパレットを開く',
             modeCycle: 'モードを切り替え',
@@ -6836,7 +6837,7 @@ localTailscale: {
   },
 
   sessionDrafts: {
-    sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始',
+    sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始', startedOpen: "セッションを開始しました · 開く",
     status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', startInterrupted: '開始が中断されました' },
     new: { action: '新しい下書き' }, delete: { action: '下書きを削除', confirmTitle: '下書きを削除しますか？', confirmDescription: 'この下書きはデバイスから削除されます。' },
     conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
@@ -7239,8 +7240,12 @@ localTailscale: {
   },
 
   agentInput: {
+      keepKeyboard: { label: "送信後もキーボードを開いたままにする" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
       sendOptions: {
           title: "送信オプション",
+          sendAndStartAnother: "送信して次を開始",
+          sendAndOpen: "送信してセッションを開く",
           queue: "キューに追加",
           hint: "長押しして送信方法を選択",
       },
@@ -8604,6 +8609,7 @@ localTailscale: {
 settingsSession: {
     terminalHostTitle: '新しいセッションのターミナルホスト',
     terminalHostNone: 'ターミナルホストなし',
+    newSessionAfterSend: { title: "送信後の動作", footer: "新規セッションのコンポーザーから送信したときの動作を選びます。送信を長押しすると、1 件だけもう一方の動作を選べます。", openTitle: "セッションを開く", openSubtitle: "開始したらすぐセッションに移動します。", startAnotherTitle: "このまま次を開始", startAnotherSubtitle: "バックグラウンドで開始を続け、新しい下書きを開きます。" },
     newSessionDraftEntry: {
         title: '新しいセッションの下書き',
         footer: '「新しいセッション」でこのデバイスの下書きを続けるか、新規作成するかを選びます。',
@@ -8777,6 +8783,8 @@ settingsSession: {
         resetHiddenSubtitle: 'この端末で非表示にしたバナーを解除します。',
     },
     inputBehavior: {
+        keepFocusTitle: "送信後もコンポーザーにフォーカスを保つ",
+        keepFocusSubtitle: "入力欄に留まり、すぐ次のメッセージを書けます。",
         title: '入力の動作',
         footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
         enterToSendEnabledNativeSubtitle: 'Enterで送信',

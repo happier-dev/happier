@@ -644,6 +644,7 @@ export const ru: TranslationStructure = {
             composerFocus: 'Перейти к вводу',
             composerSendImmediate: 'Альтернативная отправка (очередь / направление)',
             composerSendInterrupt: 'Прервать и отправить',
+            composerSendAlternateAfterSend: "Отправить и начать ещё одну / открыть",
             composerSendPending: 'Отправить в очередь ожидания',
             commandPaletteOpen: 'Открыть палитру команд',
             modeCycle: 'Переключить режим',
@@ -5505,7 +5506,7 @@ export const ru: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой',
+    sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой', startedOpen: "Сессия запущена · Открыть",
     status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', startInterrupted: 'Запуск прерван' },
     new: { action: 'Новый черновик' }, delete: { action: 'Удалить черновик', confirmTitle: 'Удалить черновик?', confirmDescription: 'Этот черновик будет удалён с ваших устройств.' },
     conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
@@ -6960,8 +6961,12 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        keepKeyboard: { label: "Не закрывать клавиатуру после отправки" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} из ${total}`,
         sendOptions: {
             title: "Варианты отправки",
+            sendAndStartAnother: "Отправить и начать ещё одну",
+            sendAndOpen: "Отправить и открыть сессию",
             queue: "В очередь",
             hint: "Удерживайте, чтобы выбрать способ отправки",
         },
@@ -8330,6 +8335,7 @@ export const ru: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Терминальный хост для новых сеансов',
     terminalHostNone: 'Без терминального хоста',
+    newSessionAfterSend: { title: "После отправки", footer: "Выберите, что происходит при отправке из редактора новой сессии. Удерживайте «Отправить», чтобы выбрать другой вариант для одного сообщения.", openTitle: "Открыть сессию", openSubtitle: "Перейти к сессии сразу после запуска.", startAnotherTitle: "Остаться и начать ещё одну", startAnotherSubtitle: "Продолжить запуск в фоне и открыть новый черновик." },
     newSessionDraftEntry: {
         title: 'Черновики новой сессии',
         footer: 'Выберите, продолжать ли черновик на этом устройстве или открывать новый при выборе «Новая сессия».',
@@ -8503,6 +8509,8 @@ settingsSession: {
         resetHiddenSubtitle: 'Очистить список баннеров, скрытых на этом устройстве.',
     },
     inputBehavior: {
+        keepFocusTitle: "Сохранять фокус в редакторе после отправки",
+        keepFocusSubtitle: "Оставаться в поле сообщения, чтобы сразу написать следующее.",
         title: 'Поведение ввода',
         footer: 'Настройте отправку по Enter и поведение истории сообщений.',
         enterToSendEnabledNativeSubtitle: 'Нажмите Enter, чтобы отправить',

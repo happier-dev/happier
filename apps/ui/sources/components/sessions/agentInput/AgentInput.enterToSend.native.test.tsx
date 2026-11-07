@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
@@ -122,8 +122,28 @@ installAgentInputCommonModuleMocks({
     },
 });
 
+const historyMock = vi.hoisted(() => ({
+    moveUp: vi.fn((): string | null => null),
+    moveDown: vi.fn((): string | null => null),
+    browsing: false,
+}));
+
+vi.mock('@/hooks/session/useUserMessageHistory', () => ({
+    useUserMessageHistory: () => ({
+        moveUp: historyMock.moveUp,
+        moveDown: historyMock.moveDown,
+        pause: () => {},
+        reset: () => {},
+        warmup: () => {},
+        isBrowsing: () => historyMock.browsing,
+        hasRetainedSession: () => historyMock.browsing,
+        readPosition: () => null,
+    }),
+}));
+
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
+    useLocalSettingMutable: () => [null, () => {}],
     useSessionServerId: () => null,
 }));
 
@@ -589,6 +609,107 @@ describe('AgentInput (enter to send on native)', () => {
 
         expect(mocks.onSend).toHaveBeenCalledTimes(1);
         expect(mocks.inputBlur).toHaveBeenCalledTimes(1);
+    });
+
+    describe('message history flicks', () => {
+        const renderComposer = (AgentInput: typeof import('./AgentInput').AgentInput, value: string, onChangeText = mocks.onChangeText) => (
+            <AgentInput
+                sessionId="session-1"
+                value={value}
+                onChangeText={onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+        // Like the real navigator: once a message is recalled, the history is being browsed.
+        const recall = (fn: typeof historyMock.moveUp, ...messages: string[]) => {
+            fn.mockReset();
+            for (const message of messages) fn.mockImplementationOnce(() => { historyMock.browsing = true; return message; });
+            fn.mockImplementation(() => null);
+        };
+        beforeEach(() => {
+            historyMock.browsing = false;
+            recall(historyMock.moveUp);
+            recall(historyMock.moveDown);
+        });
+        const swipeArea = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+            screen.root.findByProps({ testID: 'composer-history-swipe-area' });
+        /** Replays one finger's touch stream: [pageX, pageY, timestamp ms] samples, first = down, last = up. */
+        const touch = async (screen: Awaited<ReturnType<typeof renderScreen>>, samples: ReadonlyArray<readonly [number, number, number]>) => {
+            const event = ([pageX, pageY, timestamp]: readonly [number, number, number], touches: number) =>
+                ({ nativeEvent: { pageX, pageY, timestamp, touches: Array.from({ length: touches }, () => ({})) } });
+            await act(async () => {
+                const area = swipeArea(screen);
+                area.props.onTouchStart(event(samples[0]!, 1));
+                for (const sample of samples.slice(1, -1)) area.props.onTouchMove(event(sample, 1));
+                area.props.onTouchEnd(event(samples[samples.length - 1]!, 0));
+            });
+        };
+        const flickUp = (screen: Awaited<ReturnType<typeof renderScreen>>) => touch(screen, [[100, 300, 0], [100, 260, 60], [100, 220, 120]]);
+
+        it('steps on a quick flick but leaves a slow drag, a held finger or a sideways swipe to the text field', async () => {
+            recall(historyMock.moveUp, 'previous message');
+            recall(historyMock.moveDown, '');
+            const { AgentInput } = await import('./AgentInput');
+            const screen = await renderScreen(renderComposer(AgentInput, ''));
+            await touch(screen, [[100, 300, 0], [100, 250, 400], [100, 200, 800]]);
+            await touch(screen, [[100, 300, 0], [100, 300, 600], [100, 220, 700]]);
+            await touch(screen, [[100, 300, 0], [180, 280, 80], [260, 260, 120]]);
+            expect(historyMock.moveUp).not.toHaveBeenCalled();
+            await flickUp(screen);
+            expect(historyMock.moveUp).toHaveBeenCalledTimes(1);
+            expect(mocks.onChangeText).toHaveBeenLastCalledWith('previous message');
+            await touch(screen, [[100, 220, 0], [100, 260, 60], [100, 300, 120]]);
+            expect(historyMock.moveDown).toHaveBeenCalledTimes(1);
+            await screen.unmount();
+        });
+
+        it('cycles with repeated flicks from an empty composer', async () => {
+            recall(historyMock.moveUp, 'previous message', 'older message');
+            const { AgentInput } = await import('./AgentInput');
+            const screen = await renderScreen(renderComposer(AgentInput, ''));
+            await flickUp(screen);
+            await flickUp(screen);
+            expect(historyMock.moveUp).toHaveBeenCalledTimes(2);
+            expect(mocks.onChangeText).toHaveBeenLastCalledWith('older message');
+            await screen.unmount();
+        });
+
+        it.each(['focus', 'caret move'] as const)('stops cycling once the person reaches into the recalled message (%s)', async (reach) => {
+            recall(historyMock.moveUp, 'previous message', 'older message');
+            const { AgentInput } = await import('./AgentInput');
+            const screen = await renderScreen(renderComposer(AgentInput, ''));
+            await flickUp(screen);
+            const input = findMultiTextInput(screen);
+            await act(async () => {
+                if (reach === 'focus') input.props.onFocus?.();
+                else input.props.onStateChange?.({ text: 'previous message', selection: { start: 3, end: 3 } });
+            });
+            await screen.update(renderComposer(AgentInput, 'previous message'));
+            await flickUp(screen);
+            expect(historyMock.moveUp).toHaveBeenCalledTimes(1);
+            await screen.unmount();
+        });
+
+        it('leaves text the person typed alone, and cycles again once the field is emptied', async () => {
+            recall(historyMock.moveUp, 'previous message', 'older message');
+            const { AgentInput } = await import('./AgentInput');
+            const screen = await renderScreen(renderComposer(AgentInput, 'typed draft'));
+            await flickUp(screen);
+            expect(historyMock.moveUp).not.toHaveBeenCalled();
+            await act(async () => {
+                findMultiTextInput(screen).props.onStateChange?.({ text: '', selection: { start: 0, end: 0 } });
+            });
+            await screen.update(renderComposer(AgentInput, ''));
+            await flickUp(screen);
+            expect(historyMock.moveUp).toHaveBeenCalledTimes(1);
+            await screen.unmount();
+        });
     });
 
     it('inserts a newline for focused hardware Shift+Enter when native enter-to-send is enabled', async () => {

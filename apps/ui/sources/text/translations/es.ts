@@ -629,6 +629,7 @@ export const es: TranslationStructure = {
             composerFocus: 'Enfocar el compositor',
             composerSendImmediate: 'Envío alternativo (cola / dirigir)',
             composerSendInterrupt: 'Interrumpir y enviar',
+            composerSendAlternateAfterSend: "Enviar y empezar otra / abrir",
             composerSendPending: 'Enviar a la cola pendiente',
             commandPaletteOpen: 'Abrir paleta de comandos',
             modeCycle: 'Cambiar modo',
@@ -6563,7 +6564,7 @@ export const es: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro',
+    sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro', startedOpen: "Sesión iniciada · Abrir",
     status: { offline: 'Sin conexión', syncing: 'Sincronizando', conflict: 'Conflicto', machineUnavailable: 'Máquina no disponible', attachmentNeedsAttention: 'El archivo adjunto requiere atención', startInterrupted: 'Inicio interrumpido' },
     new: { action: 'Nuevo borrador' }, delete: { action: 'Eliminar borrador', confirmTitle: '¿Eliminar borrador?', confirmDescription: 'Este borrador se eliminará de tus dispositivos.' },
     conflict: { title: 'Conflicto de borrador', description: 'Este campo cambió en otro dispositivo.', mine: 'En este dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Conservar dispositivo', copyMine: 'Copiar el mío', copied: 'Copiado', copyFailed: 'No se pudo copiar', field: { text: 'Texto', mentions: 'Menciones', attachments: 'Adjuntos', recipient: 'Destinatario', agentContinuation: 'Continuación del agente', executionRunDelivery: 'Entrega de ejecución' } },
@@ -6959,8 +6960,12 @@ export const es: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "Mantener el teclado abierto al enviar" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
       sendOptions: {
           title: "Opciones de envío",
+          sendAndStartAnother: "Enviar y empezar otra",
+          sendAndOpen: "Enviar y abrir sesión",
           queue: "Poner en cola",
           hint: "Mantén pulsado para elegir cómo enviar",
       },
@@ -8334,6 +8339,7 @@ export const es: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Terminal para nuevas sesiones',
     terminalHostNone: 'Sin terminal',
+    newSessionAfterSend: { title: "Después de enviar", footer: "Elige qué ocurre al enviar desde el editor de nueva sesión. Mantén pulsado Enviar para elegir la otra opción en un solo mensaje.", openTitle: "Abrir la sesión", openSubtitle: "Ir a la sesión en cuanto empiece.", startAnotherTitle: "Quedarse y empezar otra", startAnotherSubtitle: "Seguir iniciándola en segundo plano y abrir un borrador nuevo." },
     newSessionDraftEntry: {
         title: 'Borradores de sesión nueva',
         footer: 'Elige si Nueva sesión continúa el borrador de este dispositivo o abre uno nuevo.',
@@ -8525,6 +8531,8 @@ settingsSession: {
           resetHiddenSubtitle: 'Borra los avisos ocultos en este dispositivo.',
       },
       inputBehavior: {
+          keepFocusTitle: "Mantener el editor enfocado al enviar",
+          keepFocusSubtitle: "Permanece en el campo de mensaje para escribir el siguiente enseguida.",
           title: 'Comportamiento de la entrada',
           footer: 'Configura Enviar con Intro y el comportamiento del historial de mensajes.',
           enterToSendEnabledNativeSubtitle: 'Pulsa Intro para enviar',

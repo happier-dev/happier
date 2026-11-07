@@ -619,6 +619,7 @@ export const ca: TranslationStructure = {
             composerFocus: 'Enfoca el compositor',
             composerSendImmediate: 'Enviament alternatiu (cua / orientar)',
             composerSendInterrupt: 'Interromp i envia',
+            composerSendAlternateAfterSend: "Envia i comença una altra / obre",
             composerSendPending: 'Envia a la cua pendent',
             commandPaletteOpen: 'Obre la paleta d’ordres',
             modeCycle: 'Canvia de mode',
@@ -6202,7 +6203,7 @@ deps: {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Esborranys', badge: 'Esborrany', untitled: 'Esborrany sense títol', continueEditing: 'Continua editant', startAnother: 'Comença’n un altre',
+        sectionTitle: 'Esborranys', badge: 'Esborrany', untitled: 'Esborrany sense títol', continueEditing: 'Continua editant', startAnother: 'Comença’n un altre', startedOpen: "Sessió iniciada · Obre",
         status: { offline: 'Sense connexió', syncing: 'Sincronitzant', conflict: 'Conflicte', machineUnavailable: 'Màquina no disponible', attachmentNeedsAttention: 'Cal revisar l’adjunt', startInterrupted: 'Inici interromput' },
         new: { action: 'Esborrany nou' }, delete: { action: 'Suprimeix l’esborrany', confirmTitle: 'Vols suprimir l’esborrany?', confirmDescription: 'Aquest esborrany se suprimirà dels teus dispositius.' },
         conflict: { title: 'Conflicte d’esborrany', description: 'Aquest camp ha canviat en un altre dispositiu.', mine: 'En aquest dispositiu', synced: 'Sincronitzat', useSynced: 'Utilitza el sincronitzat', keepDevice: 'Conserva el del dispositiu', copyMine: 'Copia el meu', copied: 'Copiat', copyFailed: 'No s’ha pogut copiar', field: { text: 'Contingut de text', mentions: 'Mencions', attachments: 'Adjunts', recipient: 'Destinatari', agentContinuation: 'Continuació de l’agent', executionRunDelivery: 'Lliurament de l’execució' } },
@@ -6586,8 +6587,12 @@ deps: {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Mantén el teclat obert després d’enviar" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
         sendOptions: {
             title: "Opcions d’enviament",
+            sendAndStartAnother: "Envia i comença una altra",
+            sendAndOpen: "Envia i obre la sessió",
             queue: "Posa a la cua",
             hint: "Mantén premut per triar com enviar",
         },
@@ -7897,6 +7902,7 @@ deps: {
 settingsSession: {
     terminalHostTitle: 'Amfitrió de terminal per a sessions noves',
     terminalHostNone: 'Sense amfitrió de terminal',
+    newSessionAfterSend: { title: "Després d’enviar", footer: "Tria què passa quan envies des del redactor de sessió nova. Mantén premut Envia per triar l’altra opció per a un sol missatge.", openTitle: "Obre la sessió", openSubtitle: "Ves a la sessió tan bon punt comenci.", startAnotherTitle: "Queda’t i comença una altra", startAnotherSubtitle: "Continua iniciant-la en segon pla i obre un esborrany nou." },
     newSessionDraftEntry: {
         title: 'Esborranys de sessió nova',
         footer: 'Tria si Sessió nova continua l’esborrany d’aquest dispositiu o n’obre un de nou.',
@@ -8088,6 +8094,8 @@ settingsSession: {
                 resetHiddenSubtitle: 'Esborra els bàners amagats en aquest dispositiu.',
             },
             inputBehavior: {
+                keepFocusTitle: "Mantén el redactor enfocat després d’enviar",
+                keepFocusSubtitle: "Queda’t al camp del missatge per escriure el següent de seguida.",
                 title: 'Comportament de l’entrada',
                 footer: 'Configura Enviar amb Retorn i el comportament de l’historial de missatges.',
                 enterToSendEnabledNativeSubtitle: 'Prem Retorn per enviar',

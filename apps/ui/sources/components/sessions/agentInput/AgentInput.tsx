@@ -43,6 +43,11 @@ import {
     useSetting,
 } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
+import { useHasHardwareKeyboard } from '@/hooks/ui/useHasHardwareKeyboard';
+import type { NewSessionAfterSendMode } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import { ComposerHistorySwipeArea, type ComposerHistoryDirection } from './ComposerHistorySwipeArea';
+import { AgentInputKeepKeyboardToggle } from './components/AgentInputKeepKeyboardToggle';
+import { buildAgentInputSendMenuItems } from './agentInputSendOptions';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 
@@ -167,6 +172,7 @@ import {
     resolveComposerEnterAction,
     resolveComposerEscapeAction,
     resolveComposerSendShortcutAction,
+    buildComposerAfterSendShortcutLabel,
     buildComposerSendShortcutLabels,
     shouldRunComposerModeCycleShortcut,
 } from '@/keyboard/composer';
@@ -256,6 +262,13 @@ interface AgentInputProps {
     sessionId?: string;
     onSend: (options?: AgentInputSendOptions) => void;
     sendMenuModes?: readonly MessageSendMode[];
+    /**
+     * A new-session composer that can choose what follows Send: the configured default. Its send menu
+     * and second send key then offer the other choice. Absent where only one outcome exists.
+     */
+    newSessionAfterSendMode?: NewSessionAfterSendMode;
+    /** Puts the caret in the composer when it opens, for writing the next session right away. */
+    focusOnMount?: boolean;
     alternateSendMode?: MessageSendMode;
     canSendNextQueued?: boolean;
     submitAccessibilityLabel?: string;
@@ -1120,6 +1133,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
+/** How long the recalled message's place in the history stays on screen after a flick. */
+const HISTORY_POSITION_HINT_MS = 1200;
+
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -1244,6 +1260,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
         platformOS: Platform.OS,
     }), [props.alternateSendMode, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
+    const afterSendShortcut = React.useMemo(() => buildComposerAfterSendShortcutLabel({
+        keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
+        platformOS: Platform.OS,
+    }), [keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
+    const sendMenuItems = React.useMemo(() => buildAgentInputSendMenuItems({
+        modes: props.sendMenuModes,
+        shortcuts: sendMenuShortcuts,
+        newSessionAfterSendMode: props.newSessionAfterSendMode,
+        afterSendShortcut: props.newSessionAfterSendMode ? afterSendShortcut : undefined,
+    }), [afterSendShortcut, props.newSessionAfterSendMode, props.sendMenuModes, sendMenuShortcuts]);
     const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
     const micActive = voiceEnabled && props.isMicActive === true;
     const [fileDragActive, setFileDragActive] = React.useState(false);
@@ -1364,7 +1390,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const sessionPermissionModeApplyTiming = useSetting('sessionPermissionModeApplyTiming');
     const isGlassComposer = isGlassComposerSurface({ setting: useSetting('composerSurfaceStyle') });
 
-    const historyScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
+    // A new-session composer has no Session of its own, so its history is the person's recent prompts.
+    const historyScope = !props.sessionId || agentInputHistoryScope === 'global' ? 'global' : 'perSession';
     const messageHistory = useUserMessageHistory({
         scope: historyScope,
         sessionId: props.sessionId ?? null,
@@ -1372,6 +1399,24 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
     const inputRef = React.useRef<MultiTextInputHandle>(null);
+    const hasHardwareKeyboard = useHasHardwareKeyboard();
+    const keepFocusAfterSendSetting = useLocalSetting('composerKeepFocusAfterSend');
+    const keepFocusAfterSend = keepFocusAfterSendSetting === true
+        || (keepFocusAfterSendSetting == null && hasHardwareKeyboard);
+    const showKeepKeyboardToggle = Boolean(props.sessionId) && !hasHardwareKeyboard;
+    // History flicks cycle from an empty field and keep cycling while it shows a recalled message. The
+    // person reaching into that message (focus, a caret move, an edit) ends it until the field is empty again.
+    const [historyFlicksArmed, setHistoryFlicksArmed] = React.useState(false);
+    const [historyPositionHint, setHistoryPositionHint] = React.useState<string | null>(null);
+    React.useEffect(() => {
+        if (!historyPositionHint) return;
+        const timer = setTimeout(() => setHistoryPositionHint(null), HISTORY_POSITION_HINT_MS);
+        return () => clearTimeout(timer);
+    }, [historyPositionHint]);
+    const focusOnMountRef = React.useRef(props.focusOnMount === true);
+    React.useEffect(() => {
+        if (focusOnMountRef.current) inputRef.current?.focus();
+    }, []);
     const initialInputState = React.useMemo<TextInputState>(() => ({
         text: props.value,
         selection: { start: props.value.length, end: props.value.length },
@@ -1445,6 +1490,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!isProgrammaticHistoryApply && hasRetainedHistorySession()) {
             historyAppliedInputStateRef.current = null;
             messageHistory.pause(newState.text);
+            setHistoryFlicksArmed(false);
         }
         // SB-7 — one reconciler for every text change, live edit or programmatic swap alike.
         // It used to be two, because maintaining a mention's `[start, end)` needed the selection
@@ -1610,10 +1656,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setLiveTextStatus(nextStatus);
             updateInputSelectionState(nextState.selection);
         }
-        if (props.sessionId) {
+        if (props.sessionId && !keepFocusAfterSend) {
             inputRef.current?.blur();
         }
         messageHistory.reset();
+        setHistoryFlicksArmed(false);
         const structuredInputMetaOverrides = buildStructuredInputMetaOverrides({
             mentions: structuredInputMentionsRef.current,
             text: liveInputText,
@@ -1621,16 +1668,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const hasStructuredInputMeta = Object.keys(structuredInputMetaOverrides).length > 0;
         const shouldCarryLiveInputText = !props.sessionId || liveInputText !== props.value;
         props.onSend(
-            options?.forceImmediate === true || options?.deliveryIntent != null || hasStructuredInputMeta
+            options?.forceImmediate === true || options?.deliveryIntent != null || options?.afterSend != null || hasStructuredInputMeta
                 ? {
                     ...(options?.forceImmediate === true ? { forceImmediate: true } : {}),
                     ...(options?.deliveryIntent != null ? { deliveryIntent: options.deliveryIntent } : {}),
+                    ...(options?.afterSend != null ? { afterSend: options.afterSend } : {}),
                     ...(hasStructuredInputMeta ? { structuredInputMetaOverrides } : {}),
                     ...(shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : {}),
                 }
                 : (shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : undefined),
         );
     }, [
+        keepFocusAfterSend,
         messageHistory,
         props.onSend,
         props.sessionId,
@@ -1674,6 +1723,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     React.useImperativeHandle(ref, () => inputRef.current!, []);
 
     const handleComposerFocus = React.useCallback(() => {
+        setHistoryFlicksArmed(false);
         composerKeyboardLayoutForFocus?.setComposerInputFocused?.(true);
         setIsInputFocused(true);
         const focusedActiveWord = findActiveWord(
@@ -2580,6 +2630,38 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         shakerRef.current?.shake();
     }, [handleAbortPress]);
 
+    // The one history step: the arrow keys and the composer swipe differ only in how they ask.
+    const stepMessageHistory = React.useCallback((direction: ComposerHistoryDirection, inputState: TextInputState): boolean => {
+        const historyBrowsing = isHistoryBrowsing();
+        if (direction === 'up' && (historyBrowsing || inputState.selection.start === 0)) {
+            const next = messageHistory.moveUp(inputState.text);
+            if (next !== null) {
+                applyHistoryInputText(next);
+                return true;
+            }
+        }
+        const canResumeRetainedSessionDown = hasRetainedHistorySession()
+            && inputState.selection.end === inputState.text.length;
+        if (direction === 'down' && (historyBrowsing || canResumeRetainedSessionDown)) {
+            const next = messageHistory.moveDown(inputState.text);
+            if (next !== null) {
+                applyHistoryInputText(next);
+                return true;
+            }
+        }
+        return false;
+    }, [applyHistoryInputText, hasRetainedHistorySession, isHistoryBrowsing, messageHistory]);
+    const handleHistorySwipe = React.useCallback((direction: ComposerHistoryDirection) => {
+        // A flick has no caret: up reaches back from the start, down walks forward from the end.
+        const state = inputStateRef.current;
+        const caret = direction === 'up' ? 0 : state.text.length;
+        if (!stepMessageHistory(direction, { text: state.text, selection: { start: caret, end: caret } })) return;
+        hapticsLight();
+        setHistoryFlicksArmed(messageHistory.isBrowsing());
+        const position = messageHistory.readPosition();
+        setHistoryPositionHint(position ? t('agentInput.historyPosition', position) : null);
+    }, [messageHistory, stepMessageHistory]);
+
     const handleComposerFocusShortcut = React.useCallback(() => {
         if (props.disabled) return;
         inputRef.current?.focus();
@@ -2758,6 +2840,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText
             || props.hasSendableAttachments === true || props.armedContinuationTarget != null;
         const sendShortcutAction = resolveComposerSendShortcutAction(event, {
+            newSessionComposer: props.newSessionAfterSendMode != null,
             keyboardShortcutsV2Enabled,
             keyboardSingleKeyShortcutsEnabled,
             keyboardShortcutOverridesV1,
@@ -2767,6 +2850,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             sendActionDisabled,
             platformOS: Platform.OS,
         });
+        if (sendShortcutAction === 'sendAlternateAfterSend') {
+            handleSend({ afterSend: props.newSessionAfterSendMode === 'startAnother' ? 'open' : 'startAnother' });
+            return true;
+        }
         if (sendShortcutAction) {
             const deliveryIntent = sendShortcutAction === 'sendInterrupt' ? 'interrupt'
                 : sendShortcutAction === 'sendPending' ? 'server_pending'
@@ -2814,25 +2901,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             const historyInputState = resolveHistoryKeyInputState(event, inputStateRef.current);
             const isCollapsedSelection = historyInputState.selection.start === historyInputState.selection.end;
             if (!props.disabled && isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-                const historyBrowsing = isHistoryBrowsing();
-                if (event.key === 'ArrowUp' && (historyBrowsing || historyInputState.selection.start === 0)) {
-                    const next = messageHistory.moveUp(historyInputState.text);
-                    if (next !== null) {
-                        applyHistoryInputText(next);
-                        return true;
-                    }
-                }
-
-                const canResumeRetainedSessionDown =
-                    hasRetainedHistorySession()
-                    && historyInputState.selection.end === historyInputState.text.length;
-                if (event.key === 'ArrowDown' && (historyBrowsing || canResumeRetainedSessionDown)) {
-                    const next = messageHistory.moveDown(historyInputState.text);
-                    if (next !== null) {
-                        applyHistoryInputText(next);
-                        return true;
-                    }
-                }
+                if (stepMessageHistory(event.key === 'ArrowUp' ? 'up' : 'down', historyInputState)) return true;
             }
 
             // Handle Shift+Tab for permission mode switching
@@ -2859,7 +2928,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, props.disabled, props.hasSendableAttachments, props.armedContinuationTarget, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    }, [handleCommandMenuKey, props.disabled, props.hasSendableAttachments, props.armedContinuationTarget, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
@@ -2909,6 +2978,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         uiBackdropBlurEnabled,
     ]);
     const renderComposerInput = () => (
+        <ComposerHistorySwipeArea
+            enabled={!props.disabled && (!liveTextStatus.hasText || historyFlicksArmed)}
+            onStep={handleHistorySwipe}
+            hint={historyPositionHint}
+        >
         <View
             ref={composerAnchorRef}
             collapsable={false}
@@ -2962,6 +3036,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 </Pressable>
             ) : null}
         </View>
+        </ComposerHistorySwipeArea>
     );
 
     const renderComposerAttentionRequests = () => (
@@ -3094,8 +3169,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         micActive={micActive}
                         armedContinuationTarget={props.armedContinuationTarget ?? null}
                         onSend={handleSend}
-                        sendMenuModes={props.sendMenuModes}
-                        sendMenuShortcuts={sendMenuShortcuts}
+                        sendMenuItems={sendMenuItems}
                         onStop={handleAbortPress}
                     />
                 </View>,
@@ -3295,7 +3369,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     testID="agent-input-command-menu"
                 />
                 {/* Connection status, context usage, and permission mode */}
-                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || props.statusTrailingActions || (props.statusBadges && props.statusBadges.length > 0)) && (
+                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || props.statusTrailingActions || showKeepKeyboardToggle || (props.statusBadges && props.statusBadges.length > 0)) && (
                     <View style={styles.statusContainer}>
                         <View style={styles.statusRow}>
                             {props.connectionStatus && (
@@ -3331,6 +3405,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         </View>
                         <View testID="agent-input-status-trailing" style={styles.statusTrailing}>
                             {props.statusTrailingActions}
+                            {showKeepKeyboardToggle ? <AgentInputKeepKeyboardToggle /> : null}
                             {props.showStatusPermissionMode !== false ? (
                                 <View style={[
                                     styles.permissionModeContainer,
