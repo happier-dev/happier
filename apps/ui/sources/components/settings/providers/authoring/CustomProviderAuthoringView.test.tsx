@@ -19,7 +19,7 @@ function Editor(props: Readonly<{
     const fieldRef = React.useRef(null);
     return <CustomProviderAuthoringView model={{
         machineId: 'machine-a', currentMachineName: 'Mac', draft,
-        presets: [], presetOpen: false, credentialStyles: [], credentialOpen: false,
+        presets: [], presetOpen: false,
         invalidField: null, localEndpoint: null, enableAfterSaving: false,
         draftRequiresApiKey: draft.advanced ? draft.endpoints.some(endpoint => endpoint.enabled && endpoint.requiresApiKey) : draft.requiresApiKey,
         secretSelected: false, savedSecretSelectionEnabled: true,
@@ -27,8 +27,8 @@ function Editor(props: Readonly<{
         error: null, probeError: null, secondaryTextColor: '#777',
         nameFieldRef: fieldRef, baseUrlFieldRef: fieldRef, manualModelsFieldRef: fieldRef,
     }} actions={{
-        onPresetOpenChange: () => {}, onCredentialOpenChange: () => {}, onPresetSelect: () => {},
-        onCredentialStyleSelect: () => {}, onDraftChange: setDraft,
+        onPresetOpenChange: () => {}, onPresetSelect: () => {},
+        onDraftChange: setDraft,
         onNameChange: name => setDraft(current => ({ ...current, name })),
         onBaseUrlChange: baseUrl => setDraft(current => ({ ...current, baseUrl })),
         onManualModelsChange: manualModelsText => setDraft(current => ({ ...current, manualModelsText })),
@@ -53,6 +53,15 @@ describe('custom provider authoring', () => {
             catalog: expect.objectContaining({ probes: [expect.objectContaining({ path: '/our-models' })] }),
         }));
         expect(save.mock.results[0]?.value.credential).toBeUndefined();
+    });
+
+    it('asks for the key in the details; its header format is set per endpoint in Advanced', async () => {
+        const screen = await renderScreen(<Editor initial={{ ...createCustomProviderDraft('openai-chat'), name: 'Gateway' }} onSave={() => {}} />);
+        expect(screen.findHostByTestId('settings-provider-authoring-api-key')).not.toBeNull();
+        expect(screen.findHostByTestId('settings-provider-authoring-credential-style')).toBeNull();
+        expect(screen.findHostByTestId('settings-provider-authoring-credential-header')).toBeNull();
+        await act(async () => screen.findByTestId('settings-provider-authoring-advanced')!.props.onValueChange(true));
+        expect(screen.findHostByTestId('settings-provider-authoring-api-key')).not.toBeNull();
     });
 
     it('keeps Save and Cancel directly available in phone navigation', async () => {

@@ -329,6 +329,19 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
             || capabilities.narrowDisclosure
             || capabilities.refreshDirectMaterial,
     });
+    // One status voice: the state row says the cause and, for someone who cannot repair it, whom to ask.
+    // Test is the retry, and the broker's owner changes it on its own row, so neither repeats as a banner.
+    const ownerHandoff = administratorRecovery?.destination === 'source_owner_handoff'
+        ? teamCredentialRecoveryLabel(administratorRecovery) : undefined;
+    // Any other repair this viewer can make is the state row's action; Test waits until it is made.
+    const rowRecovery = administratorRecovery !== null && administratorRecovery.destination !== 'retry'
+        && administratorRecovery.destination !== 'broker_selection' && recoveryDestinationIsNavigable(administratorRecovery.destination)
+        ? administratorRecovery : null;
+    const openRecovery = (recovery: TeamCredentialRecoveryPresentation) => {
+        if (recovery.destination === 'app_update') router.push(UPDATES_ROUTE);
+        else if (recovery.destination === 'choose_another_resource') router.push(teamCredentialsPath(context.address));
+        else router.push(teamCredentialEditPath(context.address, resourceId));
+    };
 
     return frame(
         <>
@@ -352,9 +365,19 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     testID="team-credential-state"
                     title={resourceStateLabel(resource.readiness, resource.sourceOwnerDisplayName)}
                     // The last test's answer, while there is one, says more than the delivery line.
-                    subtitle={testResult?.code ? delivery ?? undefined : testResult?.message ?? delivery ?? undefined}
+                    subtitle={testResult?.code ? ownerHandoff ?? delivery ?? undefined : testResult?.message ?? ownerHandoff ?? delivery ?? undefined}
+                    subtitleLines={0}
                     showChevron={false}
-                    rightElement={(
+                    rightElement={rowRecovery ? (
+                        <RoundButton
+                            testID="team-credential-recovery"
+                            size="small"
+                            display="secondary"
+                            title={teamCredentialRecoveryLabel(rowRecovery)}
+                            disabled={busy}
+                            onPress={() => openRecovery(rowRecovery)}
+                        />
+                    ) : (
                         <RoundButton
                             testID="team-credential-test"
                             size="small"
@@ -441,19 +464,19 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     accessibilityLabel={[t('teams.credentials.detail.brokerLabel'), brokerPlacementLabel(resource), brokerConnectionSemantics]
                         .filter(Boolean).join('. ')}
                     showChevron={false}
+                    // Whoever may move the broker chooses it here, where the location is shown.
+                    rightElement={capabilities.updateBrokerPlacement ? (
+                        <RoundButton
+                            testID="team-credential-choose-broker"
+                            size="small"
+                            display="secondary"
+                            title={t('teams.credentials.recovery.selectBroker')}
+                            disabled={busy}
+                            onPress={() => router.push(teamCredentialEditPath(context.address, resourceId))}
+                        />
+                    ) : undefined}
                 /> : null}
             </ItemGroup>
-
-            {administratorRecovery !== null ? (
-                <CredentialRecoveryRow
-                    recovery={administratorRecovery}
-                    retryTestID="team-credential-admin-retry"
-                    onRetry={() => void view.reload()}
-                    onOpenResourceSettings={() => router.push(teamCredentialEditPath(context.address, resourceId))}
-                    onAppUpdate={() => router.push(UPDATES_ROUTE)}
-                    onChooseAnotherResource={() => router.push(teamCredentialsPath(context.address))}
-                />
-            ) : null}
 
             {capabilities.refreshDirectMaterial ? (
                 <ItemGroup>

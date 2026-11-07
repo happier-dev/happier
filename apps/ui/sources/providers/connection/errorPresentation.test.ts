@@ -4,6 +4,15 @@ import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/p
 import { presentProviderError, presentProviderRecoveryAction } from './errorPresentation';
 
 describe('provider error presentation', () => {
+    it('names an unresolvable host from the typed probe cause, and keeps the generic sentence otherwise', () => {
+        const cause = (errorCode: string) => ({ phase: 'providers.probe.resolve_host', errorCode, errorClass: 'Error', httpStatus: null });
+        const unreachable = createProviderErrorV1('provider_endpoint_unreachable');
+        expect(presentProviderError({ ...unreachable, failureCause: cause('ENOTFOUND') }).descriptionKey)
+            .toBe('settingsProviders.errors.hostNotFoundDescription');
+        expect(presentProviderError({ ...unreachable, failureCause: cause('ECONNRESET') }).descriptionKey)
+            .toBe(presentProviderError(unreachable).descriptionKey);
+    });
+
     it('classifies stale Account grants separately from stale Machine grants', () => {
         expect(presentProviderError(createProviderErrorV1('provider_account_grant_stale', { connectionId: 'pc_a' })))
             .toMatchObject({ scope: 'account', action: 'review_account_grant' });

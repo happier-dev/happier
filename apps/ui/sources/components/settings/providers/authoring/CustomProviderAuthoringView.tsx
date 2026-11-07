@@ -28,8 +28,6 @@ export type CustomProviderAuthoringViewModel = Readonly<{
     draft: CustomProviderDraft;
     presets: readonly DropdownMenuItem[];
     presetOpen: boolean;
-    credentialStyles: readonly DropdownMenuItem[];
-    credentialOpen: boolean;
     invalidField: 'name' | 'baseUrl' | null;
     localEndpoint: string | null;
     enableAfterSaving: boolean;
@@ -59,9 +57,7 @@ export type CustomProviderAuthoringViewModel = Readonly<{
 
 export type CustomProviderAuthoringViewActions = Readonly<{
     onPresetOpenChange: (open: boolean) => void;
-    onCredentialOpenChange: (open: boolean) => void;
     onPresetSelect: (preset: string) => void;
-    onCredentialStyleSelect: (style: string) => void;
     onDraftChange: React.Dispatch<React.SetStateAction<CustomProviderDraft>>;
     onNameChange: (name: string) => void;
     onBaseUrlChange: (baseUrl: string) => void;
@@ -216,6 +212,17 @@ export function CustomProviderAuthoringView(props: Readonly<{
                         onChangeText={actions.onBaseUrlChange}
                     />
                 ) : null}
+                {/* The key is asked for in the details (PA1); its header format lives with each endpoint in Advanced. */}
+                {!draft.advanced ? (
+                    <Item
+                        title={t('settingsProviders.authoring.requiresApiKey')}
+                        subtitle={draft.requiresApiKey ? t('settingsProviders.authoring.requiresApiKeyYes') : t('settingsProviders.authoring.requiresApiKeyNo')}
+                        showChevron={false}
+                        rightElement={<Switch testID="settings-provider-authoring-requires-api-key" accessibilityLabel={t('settingsProviders.authoring.requiresApiKey')} value={draft.requiresApiKey} onValueChange={(requiresApiKey) => actions.onDraftChange((current) => ({ ...current, requiresApiKey }))} />}
+                        rightElementOutsidePressable
+                    />
+                ) : null}
+                {model.draftRequiresApiKey && !model.editing ? <CustomProviderKeyEntry model={model} actions={actions} /> : null}
                 <Item
                     title={t('settingsProviders.authoring.advancedSetup')}
                     subtitle={draft.advanced ? t('settingsProviders.authoring.advancedSetupEnabled') : t('settingsProviders.authoring.advancedSetupDisabled')}
@@ -226,52 +233,6 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 />
             </ItemGroup>
             {draft.advanced ? <CustomProviderAdvancedFields draft={draft} baseUrlFieldRef={model.baseUrlFieldRef} onChange={actions.onDraftChange} /> : null}
-
-            {!draft.advanced ? (
-                <ItemGroup title={t('settingsProviders.authoring.credentialsTitle')} description={t('settingsProviders.authoring.credentialsFooter')}>
-                    <Item
-                        title={t('settingsProviders.authoring.requiresApiKey')}
-                        subtitle={draft.requiresApiKey ? t('settingsProviders.authoring.requiresApiKeyYes') : t('settingsProviders.authoring.requiresApiKeyNo')}
-                        showChevron={false}
-                        rightElement={<Switch testID="settings-provider-authoring-requires-api-key" accessibilityLabel={t('settingsProviders.authoring.requiresApiKey')} value={draft.requiresApiKey} onValueChange={(requiresApiKey) => actions.onDraftChange((current) => ({ ...current, requiresApiKey }))} />}
-                        rightElementOutsidePressable
-                    />
-                    {draft.requiresApiKey ? <>
-                        {!model.editing ? <CustomProviderKeyEntry model={model} actions={actions} /> : null}
-                        <DropdownMenu
-                            testID="settings-provider-authoring-credential-style"
-                            open={model.credentialOpen}
-                            onOpenChange={actions.onCredentialOpenChange}
-                            variant="selectable"
-                            search={false}
-                            selectedId={draft.credentialStyle}
-                            showCategoryTitles={false}
-                            rowKind="item"
-                            itemTrigger={{
-                                title: t('settingsProviders.authoring.credentialStyleTitle'),
-                                showSelectedDetail: true,
-                                showSelectedSubtitle: false,
-                            }}
-                            items={model.credentialStyles}
-                            onSelect={actions.onCredentialStyleSelect}
-                        />
-                        {draft.credentialStyle === 'custom-header' || draft.credentialStyle === 'custom-header-bearer' ? (
-                            <ProviderFieldRow
-                                testID="settings-provider-authoring-credential-header"
-                                title={t('settingsProviders.authoring.credentialHeader')}
-                                value={draft.credentialHeader}
-                                placeholder={t('settingsProviders.authoring.credentialHeaderPlaceholder')}
-                                monospace
-                                onChangeText={(credentialHeader) => actions.onDraftChange((current) => ({ ...current, credentialHeader }))}
-                            />
-                        ) : null}
-                    </> : null}
-                </ItemGroup>
-            ) : model.draftRequiresApiKey && !model.editing ? (
-                <ItemGroup title={t('settingsProviders.authoring.credentialsTitle')} description={t('settingsProviders.authoring.credentialsFooter')}>
-                    <CustomProviderKeyEntry model={model} actions={actions} />
-                </ItemGroup>
-            ) : null}
 
             <ItemGroup title={t('settingsProviders.authoring.catalogTitle')} description={t('settingsProviders.authoring.catalogFooter')}>
                 {!draft.advanced && draft.protocol !== 'anthropic' ? (

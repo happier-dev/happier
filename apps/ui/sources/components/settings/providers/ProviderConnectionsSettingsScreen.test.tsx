@@ -392,18 +392,13 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
         await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
-        // A connection row, then the "+" menu's catalog provider and custom endpoint.
+        // A connection row, then the "+" menu's catalog provider (a custom endpoint stays in the dialog).
         const entries = [
             { testID: 'settings-provider-connection:pc_a', open: async () => { findConnectionRow(screen, 'pc_a')?.props.onPress?.(); } },
             { testID: 'settings-providers-add', open: async () => {
                 const picker = await openProviderPicker(screen);
                 await picker.select(picker.config().catalog.itemKey(picker.config().catalog.items[0]));
                 await picker.modal.pressByTestIdAsync('providers.add:primary');
-                await picker.modal.unmount();
-            } },
-            { testID: 'settings-providers-add', open: async () => {
-                const picker = await openProviderPicker(screen);
-                await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
                 await picker.modal.unmount();
             } },
         ];
@@ -435,7 +430,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
             2,
             expect.stringMatching(/^\/\(app\)\/settings\/providers\/new\?contributionKey=/),
         );
-        expect(routerPush).toHaveBeenNthCalledWith(3, '/(app)/settings/providers/new');
+        expect(routerPush).toHaveBeenCalledTimes(2);
     });
 
     it('fails closed into the unavailable state when the root provider feature is off', async () => {
@@ -711,7 +706,9 @@ describe('ProviderConnectionsSettingsScreen', () => {
             const picker = await openProviderPicker(screen, trigger);
             expect(run).not.toHaveBeenCalled();
             await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
-            expect(routerPush).toHaveBeenLastCalledWith('/(app)/settings/providers/new');
+            // Custom endpoint is set up inside the dialog, by the same authoring owner as the page.
+            await waitForHomeGovernance(() => expect(picker.modal.findByTestId('settings-provider-authoring')).not.toBeNull());
+            expect(routerPush).not.toHaveBeenCalled();
             await picker.modal.unmount();
         }
         navigationState.params = {};
@@ -1201,7 +1198,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-invitation')).not.toBeNull());
         const picker = await openProviderPicker(screen, 'settings-providers-invitation-custom');
         await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
-        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
+        await waitForHomeGovernance(() => expect(picker.modal.findByTestId('settings-provider-authoring')).not.toBeNull());
+        expect(routerPush).not.toHaveBeenCalled();
     });
 
     it.each(['page', 'landing'] as const)('offers guarded Account authoring in the no-machine %s presentation', async (presentation) => {
@@ -1215,14 +1213,11 @@ describe('ProviderConnectionsSettingsScreen', () => {
         // Empty Account configuration leads directly to authoring; no machine setup is needed.
         const authoringId = 'settings-providers-invitation-custom';
         await waitForHomeGovernance(() => expect(screen.findHostByTestId(authoringId)).not.toBeNull());
-        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision: async () => 'keepEditing', tag: 'provider-prerequisite-test' });
         const picker = await openProviderPicker(screen, authoringId);
         await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
+        await waitForHomeGovernance(() => expect(picker.modal.findByTestId('settings-provider-authoring')).not.toBeNull());
         expect(routerPush).not.toHaveBeenCalled();
         expect(routerReplace).not.toHaveBeenCalled();
-        clearActiveUnsavedChangesGuard();
-        await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
-        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
         expect(providerHarness.state.requests).toHaveLength(0);
     });
 
@@ -1414,7 +1409,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(screen.findAllByType(Item).map((item) => item.props.title)).not.toContain('settingsProviders.emptyTitle');
         const picker = await openProviderPicker(screen, 'settings-providers-invitation-custom');
         await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
-        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
+        await waitForHomeGovernance(() => expect(picker.modal.findByTestId('settings-provider-authoring')).not.toBeNull());
+        expect(routerPush).not.toHaveBeenCalled();
     });
 
     it('retains Account rows while the Found view retries a typed Machine refresh failure', async () => {

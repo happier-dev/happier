@@ -293,6 +293,8 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     };
     return {
         ...PRESENTATIONS[error.code],
+        // A typed transport cause that names the fix replaces the generic sentence (an unknown host: the Base URL).
+        ...(error.failureCause?.errorCode === 'ENOTFOUND' ? { descriptionKey: 'settingsProviders.errors.hostNotFoundDescription' as const } : {}),
         action: error.action,
         severity: severityFor(error),
         scope: error.action === 'review_account_grant' ? 'account'

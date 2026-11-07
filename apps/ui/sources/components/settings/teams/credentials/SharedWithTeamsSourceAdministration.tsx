@@ -207,10 +207,13 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
     // section that only says "none" (or a loading row for it) is not shown. A share, a failure or a
     // pending approval still speaks.
     if (!approval.approvalId && !error && (rows === null || rows.length === 0)) return null;
+    // One explanation: when every share stands the same way, the section says it once and the rows name the Teams.
+    const stateLabels = rows?.map((row) => resourceStateLabel(row.readiness)) ?? [];
+    const sharedState = stateLabels.length > 1 && stateLabels.every((label) => label === stateLabels[0]) ? stateLabels[0] : null;
 
     return (
         <>
-        <ItemGroup title={t('teams.credentials.sourceAdministration.title')} description={error ?? undefined}>
+        <ItemGroup title={t('teams.credentials.sourceAdministration.title')} description={error ?? sharedState ?? undefined}>
             {approval.approvalId ? <Item
                 testID="shared-with-teams:approval"
                 title={t('approvals.title')}
@@ -224,7 +227,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                     <Item
                         testID={`shared-with-teams:resource:${row.id}`}
                         title={row.displayName}
-                        subtitle={resourceStateLabel(row.readiness.kind)}
+                        subtitle={sharedState === null ? resourceStateLabel(row.readiness) : undefined}
                         selected={openId === row.id}
                         accessibilityExpanded={openId === row.id}
                         onPress={() => setOpenId((current) => current === row.id ? null : row.id)}

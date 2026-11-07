@@ -22,7 +22,8 @@ import { t } from '@/text';
 import { ProviderAddDetailSections } from './ProviderAddDetailSections';
 import { ProviderErrorItems } from '../ProviderErrorItems';
 import { useProviderFeatureAvailability } from '../ProviderFeatureAvailability';
-import { buildProviderCollection, newProviderRoute, type ProviderAvailableContribution, type ProviderCollectionFoundRow } from '../collection/providerCollectionModel';
+import { buildProviderCollection, newProviderRoute, providerConnectionDetailRoute, type ProviderAvailableContribution, type ProviderCollectionFoundRow } from '../collection/providerCollectionModel';
+import { ProviderConnectionAuthoringScreen } from '../ProviderConnectionAuthoringScreen';
 import { useProviderFoundContinuation } from '../collection/useProviderFoundContinuation';
 
 type ProviderAddRow = Readonly<{ kind: 'contribution'; key: string; provider: ProviderAvailableContribution; detail: ProviderDeclarationDetail }>
@@ -84,7 +85,9 @@ function ProviderAddModal({ params, onClose, ...injected }: CustomModalInjectedP
         title: t('settingsProvidersCollection.pickerTitle'), testID: TEST_ID,
         modes: [
             { key: 'browse', label: t('settingsProvidersCollection.menuCatalogCategory'), icon: 'magnifying-glass', kind: 'catalog' },
-            { key: 'custom', label: t('settingsProvidersCollection.customEndpoint'), icon: 'plus', kind: 'handoff', onSelect: () => continueAuthoring(newProviderRoute(null)) },
+            // A custom endpoint is set up in the dialog by the one authoring owner; saving opens the new provider.
+            { key: 'custom', label: t('settingsProvidersCollection.customEndpoint'), icon: 'plus', kind: 'input',
+                renderBody: () => <ProviderConnectionAuthoringScreen onCreated={connectionId => navigate(providerConnectionDetailRoute(connectionId))} onDiscard={onClose} /> },
         ],
         catalog: { query: search, onQueryChange: setSearch, searchPlaceholder: t('settingsProviders.searchPlaceholder'),
             items: rows, itemKey: row => row.key, loading: query.loading && available.length === 0,

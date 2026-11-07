@@ -324,6 +324,41 @@ describe('TeamCredentialDetailScreen', () => {
             .toContain('team-credential-not-found'));
         expect(screen.getTextContent()).toContain('teams.credentials.detail.notFound');
     });
+    it.each([
+        { viewer: 'source owner', recoveryAction: 'retry' as const, rowAction: 'team-credential-test' },
+        { viewer: 'source owner', recoveryAction: 'source_owner_action' as const, rowAction: 'team-credential-recovery' },
+        { viewer: 'Team manager', recoveryAction: 'select_broker' as const, rowAction: 'team-credential-test' },
+    ])('says the state once with the one action the $viewer can take ($recoveryAction)', async ({ viewer, recoveryAction, rowAction }) => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada',
+            teamsEnabled: true, credentialResourcesEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }) });
+        const owner = viewer === 'source owner';
+        harness.answer(serverId, GET_PATH, { body: teamCredentialResourceFixture({
+            custodianAccountId: owner ? 'account-ada' : 'account-other',
+            readiness: { kind: 'source_unavailable' }, recoveryAction,
+            ...(owner ? {} : { capabilities: {
+                manageAudience: true, managePolicy: true, manageLimits: true,
+                updateBrokerPlacement: false, narrowDisclosure: false, widenDisclosure: false,
+                refreshDirectMaterial: false, disable: true, enable: true, delete: true,
+            } }),
+        }) });
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<TeamCredentialDetailScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-state'));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        // Test is the retry and the broker row holds the broker choice, so no banner repeats either.
+        expect(ids).not.toContain('team-credential-recovery-notice');
+        expect(ids.includes('team-credential-choose-broker')).toBe(owner);
+        expect(ids).toContain(rowAction);
+        const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-state');
+        if (owner) expect(state?.props.subtitle).not.toBe(t('teams.credentials.recovery.ownerHandoff'));
+        else expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoff'));
+    });
+
     it('shows the preparation refresh only to the source owner when direct delivery needs preparation', async () => {
         const serverId = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada',

@@ -227,7 +227,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         if (!selectedTargetServerMatchesActiveAccount) setSecretId(null);
     }, [selectedTargetServerMatchesActiveAccount]);
     const [presetOpen, setPresetOpen] = React.useState(false);
-    const [credentialOpen, setCredentialOpen] = React.useState(false);
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
     const [probeError, setProbeError] = React.useState<ProviderErrorV1 | null>(null);
     const [localError, setLocalError] = React.useState<string | null>(null);
@@ -360,7 +359,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         saveOperation.current = null;
         setSaveInProgress(false);
         setPresetOpen(false);
-        setCredentialOpen(false);
         setProbeState('idle');
         setProbeError(null);
         setLocalError(null);
@@ -721,13 +719,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         title: t(`settingsProviders.authoring.protocol.${id}.title`),
         subtitle: t(`settingsProviders.authoring.protocol.${id}.description`),
     })), []);
-    const credentialStyles = React.useMemo<readonly DropdownMenuItem[]>(() => [
-        { id: 'bearer', title: t('settingsProviders.authoring.credentialStyle.bearer') },
-        { id: 'x-api-key', title: t('settingsProviders.authoring.credentialStyle.xApiKey') },
-        { id: 'api-key', title: t('settingsProviders.authoring.credentialStyle.apiKey') },
-        { id: 'custom-header', title: t('settingsProviders.authoring.credentialStyle.customHeader') },
-        { id: 'custom-header-bearer', title: t('settingsProviders.authoring.credentialStyle.customHeaderBearer') },
-    ], []);
     const leaveDraft = React.useCallback(() => {
         if (!accountStillCurrent()) return;
         discardAuthoringDraft();
@@ -879,8 +870,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 draft,
                 presets,
                 presetOpen,
-                credentialStyles,
-                credentialOpen,
                 invalidField,
                 localEndpoint,
                 enableAfterSaving,
@@ -906,21 +895,10 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 onPresetOpenChange: (open) => {
                     if (accountStillCurrent()) setPresetOpen(open);
                 },
-                onCredentialOpenChange: (open) => {
-                    if (accountStillCurrent()) setCredentialOpen(open);
-                },
                 onPresetSelect: (preset) => {
                     if (!accountStillCurrent()) return;
                     if (PRESETS.includes(preset as CustomProviderPreset)) {
                         setDraft((current) => updateCustomProviderDraftPreset(current, preset as CustomProviderPreset));
-                    }
-                },
-                onCredentialStyleSelect: (credentialStyle) => {
-                    if (!accountStillCurrent()) return;
-                    if (credentialStyle === 'bearer' || credentialStyle === 'x-api-key'
-                        || credentialStyle === 'api-key' || credentialStyle === 'custom-header'
-                        || credentialStyle === 'custom-header-bearer') {
-                        setDraft((current) => ({ ...current, credentialStyle }));
                     }
                 },
                 onDraftChange: (nextDraft) => {

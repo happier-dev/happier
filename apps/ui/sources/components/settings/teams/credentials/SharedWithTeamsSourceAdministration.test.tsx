@@ -384,6 +384,22 @@ describe('SharedWithTeamsSourceAdministration', () => {
         });
     });
 
+    it('explains a state every share has once, above the Teams it applies to', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        await harness.selectHomes([serverId]);
+        const readiness = { kind: 'source_unavailable' } as const;
+        harness.answer(serverId, LIST_PATH, { body: { resources: ['resource-1', 'resource-2', 'resource-3'].map((id) =>
+            teamCredentialSourceResourceFixture({ id, displayName: `Team ${id}`, readiness })), nextCursor: null } });
+        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const { resourceStateLabel } = await import('./teamCredentialPresentation');
+        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
+            scope={{ serverId, accountId: 'owner' }}
+            source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
+        />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:resource:resource-3'));
+        expect(screen.getTextContent().split(resourceStateLabel(readiness)).length - 1).toBe(1);
+    });
+
     it('stays quiet while nothing is shared: no section that only says "none"', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
