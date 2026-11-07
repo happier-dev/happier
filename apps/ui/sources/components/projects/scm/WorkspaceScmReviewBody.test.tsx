@@ -16,13 +16,85 @@ const mockReactNativeWithWindow = vi.hoisted(() => async () => {
   });
 });
 vi.mock('react-native', () => mockReactNativeWithWindow());
-installNavigationCommonModuleMocks({ reactNative: mockReactNativeWithWindow });
+installNavigationCommonModuleMocks({ reactNative: mockReactNativeWithWindow, storage: importOriginal => importOriginal() });
 // Install the navigation factory before either consumer loads react-native. A static
 // import resolves the helper's default factory before its options have been configured.
 const { Text } = await import('react-native');
 const { renderScreen } = await import('@/dev/testkit');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+const { WorkspaceScmReviewBody } = await import('./WorkspaceScmReviewBody');
 
 describe('WorkspaceScmReviewBody', () => {
+  it('keeps mounted file rows quiet when only the host render function changes', async () => {
+    let rowRenders = 0;
+    const Row = React.memo(function Row({ chrome }: { chrome: Parameters<React.ComponentProps<typeof WorkspaceScmReviewBody>['renderFiles']>[0] }) {
+      rowRenders += 1;
+      return <Text testID="quiet-row-root">{chrome.rootPath}</Text>;
+    });
+    const props = {
+      comparison: { kind: 'workingTree' as const }, view: 'files' as const,
+      scopeLabel: 'Pending changes', scopeOptions: [], rootPath: '/repo',
+      onSelectComparison() {}, onSelectView() {}, explain: false, onExplainChange() {},
+      renderWalkthrough: () => null,
+    };
+    const view = (rootPath = '/repo') => <WorkspaceScmReviewBody {...props} rootPath={rootPath}
+      renderFiles={chrome => <Row chrome={chrome} />} />;
+    const screen = await renderScreen(view());
+    rowRenders = 0;
+    for (let i = 0; i < 5; i += 1) await screen.update(view());
+    expect(rowRenders).toBe(0);
+    await screen.update(view('/other-checkout'));
+    expect(rowRenders).toBe(1);
+    expect(screen.findHostByTestId('quiet-row-root')?.props.children).toBe('/other-checkout');
+    await screen.unmount();
+  });
+
+  it('keeps each tab’s comparison while another retained review restores across a phone resize', async () => {
+    const { useScmReviewActiveFileSelection } = await import('@/components/sessions/files/comparison/useSessionScmReviewTabState');
+    const { scmComparisonKey } = await import('@/components/sessions/files/comparison/filesComparison');
+    const { activeReviewFileKeyForSession, requestActiveReviewFileForComparison, resetActiveReviewFilesForTests } = await import('@/components/workspaces/scm/review/activeReviewFile');
+    type Comparison = NonNullable<React.ComponentProps<typeof WorkspaceScmReviewBody>['comparison']>;
+    const key = activeReviewFileKeyForSession('resize-session', 'home');
+    const branch = { kind: 'branch', head: 'master', base: '0968584' } as const;
+    function Review({ id, initial, presented }: { id: string; initial: Comparison; presented: boolean }) {
+      const pane = useAppPaneScope(`session:resize-${id}`);
+      const [comparison, setComparison] = React.useState(initial);
+      const activeReviewFile = useScmReviewActiveFileSelection({ pane, hostKey: 'host', activeFileKey: key,
+        comparison, view: 'files', presented,
+        persistedSelection: { selectionKey: JSON.stringify(['host', scmComparisonKey(initial)]), path: `${id}.txt` } });
+      return <WorkspaceScmReviewBody activeReviewFile={activeReviewFile} comparison={comparison} view="files"
+        scopeLabel={scmComparisonKey(comparison)} scopeOptions={[]} onSelectComparison={setComparison}
+        onSelectView={() => {}} explain={false} onExplainChange={() => {}}
+        renderFiles={() => <Text testID={id}>{scmComparisonKey(comparison)}</Text>} renderWalkthrough={() => null} />;
+    }
+    function Reviews({ retainedPresented }: { retainedPresented: boolean }) {
+      return <><Review id="branch" initial={branch} presented />
+        <Review id="session" initial={{ kind: 'session' }} presented={retainedPresented} /></>;
+    }
+    resetActiveReviewFilesForTests();
+    const screen = await renderScreen(<AppPaneProvider><Reviews retainedPresented={false} /></AppPaneProvider>);
+    try {
+      for (const width of [390, 1440, 390]) {
+        windowSize.width = width;
+        await screen.update(<AppPaneProvider><Reviews retainedPresented={width === 390} /></AppPaneProvider>);
+        expect(screen.findHostByTestId('branch')?.props.children).toBe('branch:master:0968584');
+        expect(screen.findHostByTestId('session')?.props.children).toBe('session');
+      }
+      // A deliberate outside navigation still chooses its requested comparison.
+      await screen.update(<AppPaneProvider><Reviews retainedPresented={false} /></AppPaneProvider>);
+      await act(async () => {
+        requestActiveReviewFileForComparison(key, 'pending.txt', { kind: 'workingTree' });
+      });
+      expect(screen.findHostByTestId('branch')?.props.children).toBe('workingTree');
+      expect(screen.findHostByTestId('session')?.props.children).toBe('session');
+    } finally {
+      await act(async () => screen.unmount());
+      resetActiveReviewFilesForTests();
+      windowSize.width = 1200;
+    }
+  });
+
   it('offers no review actions while a state stands in for the files (not a repository, unreachable)', async () => {
     const { WorkspaceScmReviewBody } = await import('./WorkspaceScmReviewBody');
     const props = {
@@ -118,6 +190,30 @@ describe('WorkspaceScmReviewBody', () => {
     expect(onStartReview).toHaveBeenCalledTimes(1);
   });
 
+  it('states the phone Files file count once: the header names the scope, the coverage line counts the files', async () => {
+    windowSize.width = 390;
+    try {
+      const { t } = await import('@/text');
+      const coverage = { fileCount: 59814, added: 0, removed: 0, linesKnown: false };
+      const screen = await renderScreen(
+        <WorkspaceScmReviewBody comparison={{ kind: 'workingTree' }} view="files" scopeLabel="Pending changes" scopeOptions={[]}
+          fileCount={59814} onSelectComparison={vi.fn()} onSelectView={vi.fn()} explain={false} onExplainChange={vi.fn()}
+          renderFiles={(chrome) => <>{chrome.renderBar?.(coverage, null)}{chrome.renderHeader?.(coverage)}</>}
+          renderWalkthrough={() => null} />,
+      );
+      type Node = { children: ReadonlyArray<Node | string> };
+      const textOf = (node: Node | null): string => node
+        ? node.children.map((child) => typeof child === 'string' ? child : textOf(child)).join('') : '';
+      const count = t('scmComparison.fileCount', { count: 59814 });
+      const phoneHeader = textOf(screen.findHostByTestId('scm-comparison-phone-header'));
+      expect(phoneHeader).toContain('Pending changes');
+      expect(phoneHeader).not.toContain(count);
+      expect(textOf(screen.findHostByTestId('scm-comparison-header-source'))).toContain(count);
+    } finally {
+      windowSize.width = 1200;
+    }
+  });
+
   it.each([
     { window: 390, expected: 'phone' },
     { window: 1440, expected: 'narrow' },
@@ -135,6 +231,30 @@ describe('WorkspaceScmReviewBody', () => {
       // A phone never draws the wide reading first (it did after Retry at 390); a wide window waits for its measure.
       expect(layouts.length).toBeGreaterThan(0);
       expect(new Set(layouts)).toEqual(new Set([expected]));
+    } finally {
+      windowSize.width = 1200;
+    }
+  });
+  it('follows the window to the phone layout when it narrows after the body was measured wide', async () => {
+    // A resized window reaches the body before its own layout event does (a heavy reading delays that event),
+    // and a body cannot be wider than its window: the wide measure must not keep the rail beside a phone.
+    windowSize.width = 1440;
+    try {
+      const { WorkspaceScmReviewBody } = await import('./WorkspaceScmReviewBody');
+      const layouts: string[] = [];
+      const element = () => (
+        <WorkspaceScmReviewBody comparison={null} view="walkthrough" scopeLabel="Pending changes" scopeOptions={[]}
+          onSelectComparison={vi.fn()} onSelectView={vi.fn()} explain={false} onExplainChange={vi.fn()}
+          renderFiles={() => null}
+          renderWalkthrough={({ layout }) => { layouts.push(layout); return null; }} />
+      );
+      const screen = await renderScreen(element());
+      const measured = screen.root.find((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function');
+      await act(async () => { measured.props.onLayout({ nativeEvent: { layout: { width: 1200 } } }); });
+      expect(layouts.at(-1)).toBe('wide');
+      windowSize.width = 390;
+      await act(async () => { screen.update(element()); });
+      expect(layouts.at(-1)).toBe('phone');
     } finally {
       windowSize.width = 1200;
     }
