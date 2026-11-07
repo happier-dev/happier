@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   BITBUCKET_REPOSITORY_ROUTE_ID,
@@ -53,15 +54,15 @@ describe('Bitbucket scan continuation codec', () => {
     expect(decodeBitbucketScanContinuation(encoded, SCOPE)).toEqual(record);
     expect(decodeBitbucketScanContinuation(encoded, 'another-configured-source')).toBeNull();
 
-    // The token is the frontier and nothing else: no credential, account, viewer, or delivered row.
+    // The scope and frontier carry no credential, viewer, or delivered row data.
     expect(encoded.token).not.toContain('Basic ');
-    expect(encoded.token).not.toContain('accountId');
     expect(encoded.token).not.toContain('observedAt');
   });
 
-  it('refuses a token this source did not mint rather than guessing a frontier', () => {
+  it('accepts a plain versioned frontier and refuses malformed or mismatched positions', () => {
     const base = {
       v: 1,
+      s: SCOPE,
       l: 64,
       n: 50,
       i: 0,
@@ -70,11 +71,12 @@ describe('Bitbucket scan continuation codec', () => {
       r: null,
       c: null,
     } as const;
+    // SIMPLIFY-CHALLENGE-1106 #7: positions carry no authority and need no process signature.
+    expect(decodeBitbucketScanContinuation({ v: 1, token: JSON.stringify(base) }, SCOPE))
+      .toEqual(frontier());
     const vectors: readonly string[] = [
       'not-json',
-      // A structurally valid frontier is still forged when it did not pass through this process's
-      // continuation issuer.
-      JSON.stringify(base),
+      JSON.stringify({ ...base, s: 'another-configured-source' }),
       JSON.stringify({ ...base, v: 2 }),
       // Geometry that disagrees with itself would fetch pages the budget can never admit.
       JSON.stringify({ ...base, l: 10, n: 64 }),
@@ -100,17 +102,25 @@ describe('Bitbucket scan continuation codec', () => {
     }
   });
 
-  it('preserves a wide valid frontier and leaves size to the Action envelope', () => {
-    const wideListUrl = `${LIST_NEXT_URL}&pad=${'p'.repeat(32 * 1024)}`;
-    const wide = frontier({
-      repositoryListNextUrl: wideListUrl,
+  it('preserves a frontier up to the canonical paging-token byte ceiling', () => {
+    const baseListUrl = `${LIST_NEXT_URL}&pad=`;
+    const base = frontier({
+      repositoryListNextUrl: baseListUrl,
       // The constant-space checkpoint is an earlier reached cursor, not another copy of the
       // current provider URL. Keeping the earlier position is the cycle evidence it exists for.
       repositoryListCycleProbe: probe(LIST_NEXT_URL),
     });
+    const baseToken = encodeBitbucketScanContinuation(base, SCOPE);
+    if (baseToken === null) throw new Error('the unpadded frontier must fit');
+    const paddingBytes = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
+      - new TextEncoder().encode(baseToken.token).byteLength;
+    const wide = { ...base, repositoryListNextUrl: `${baseListUrl}${'p'.repeat(paddingBytes)}` };
 
     const encoded = encodeBitbucketScanContinuation(wide, SCOPE);
     expect(encoded).not.toBeNull();
     expect(encoded === null ? null : decodeBitbucketScanContinuation(encoded, SCOPE)).toEqual(wide);
+    expect(encodeBitbucketScanContinuation({
+      ...wide, repositoryListNextUrl: `${wide.repositoryListNextUrl}p`,
+    }, SCOPE)).toBeNull();
   });
 });

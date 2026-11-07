@@ -37,7 +37,7 @@
  */
 
 import * as React from 'react';
-import { formatUsageDurationCompact } from '@happier-dev/protocol/usage/usageFormatting';
+import { formatUsageDurationCompact } from '@happier-dev/plugin-ui/components';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   createReviewCommentLinkedIssueIdV1,
@@ -59,6 +59,7 @@ import {
   Item,
   ItemGroup,
   Icon,
+  IconButton,
   List,
   LoadingState,
   Markdown,
@@ -91,7 +92,13 @@ import {
   type TriageDetailSurfaceInputV1,
   type TriageLinkedSessionProjectionV1,
   type TriageSourceFailureV1,
+  type SessionPullRequestNativeStatusV1,
 } from '@happier-dev/triage-protocol/v1';
+import { GithubChecksRunDrilldown } from './detail/checksRunDrilldown.js';
+import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailure.js';
+import type { GithubReadFailureV1 } from './detail/readBoundary.js';
+import { GithubFilesViewedFact, GithubFileViewedMark, useGithubFileViewedSource } from './detail/filesViewed.js';
+import type { GithubCheckActionsTargetV1 } from '../triage/checks.js';
 import {
   completeTriagePostMutationIfNeeded,
   TriageDetailInstance,
@@ -103,9 +110,14 @@ import {
   type TriageDetailChecksRollupV1,
   TriageStatusRow,
   TriageActivityTimeline,
+  TriageSourceCommentComposer,
+  type TriageSourceWriteSettlementV1,
   useTriagePostMutationCompletion,
   useTriageEvidenceDisclosure,
+  useTriageSourcePanelIntentV1,
+  type TriageSourcePanelCommandV1,
   useTriageDetailRequest,
+  useTriagePullRequestPrimaryWriteV1,
   type TriageDetailPrimaryWriteV1,
   type TriageActivityContinuationV1,
   type TriageActivityEventV1,
@@ -121,6 +133,7 @@ import {
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
+  type TriagePullRequestOperationOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -133,27 +146,39 @@ import type {
   GithubProjectedTimelineRowV1,
 } from '../triage/detail/projection.js';
 import { GITHUB_CHANGED_FILES_CEILING_V1 } from '../triage/detail/routes.js';
-import { githubMarkdownDisplayText, projectGithubMarkdownForDisplay } from '../triage/detail/markdown/projectGithubMarkdownForDisplay.js';
+import { githubMarkdownDisplayText } from '../triage/detail/markdown/projectGithubMarkdownForDisplay.js';
+import { GithubOverviewMarkdown } from './detail/markdown.js';
 import type { GithubOverviewResultV1 } from '../triage/detail/contracts.js';
 import {
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
+  GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
   readGithubTriageKindId,
 } from '../triage/contribution.js';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
+import type { GithubFeedbackCommentV1 } from '../triage/feedback.js';
+import { GITHUB_WRITE_REFUSAL_COPY_V1 as WRITE_REFUSAL_COPY } from '../triage/mutations/outcome.js';
+import { GithubSecurityAlertBody, type GithubSecurityAlertRenderersV1 } from './securityAlerts/detail.js';
 import {
   githubReviewPublicationCredential,
   GithubIssueDeltaResultV1Schema,
-  GithubPullRequestMarkReadyResultV1Schema,
-  GithubPullRequestMergeResultV1Schema,
+  GithubPullRequestMarkReadyActionResultV1Schema,
   GithubPullRequestReviewPublicationResultV1Schema,
   GithubPullRequestReviewersResultV1Schema,
   GithubPullRequestStateResultV1Schema,
   GithubPullRequestThreadResolutionResultV1Schema,
   GithubPullRequestUpdateBranchResultV1Schema,
+  GithubCommentEditResultV1Schema,
+  GithubCommentCreateResultV1Schema,
+  GithubPullRequestHeadBranchDeleteResultV1Schema,
+  GithubPullRequestHeadBranchRestoreResultV1Schema,
+  GithubPullRequestReviewMutationResultV1Schema,
+  type GithubCommentEditTargetKindV1,
   type GithubIssueCloseReasonV1,
-  type GithubMergeMethodV1,
   type GithubPullRequestReviewVerdictV1,
+  GITHUB_REVIEW_VERDICTS_V1,
 } from '../triage/mutations/contracts.js';
+import { GithubRelationshipMutationResultV1Schema } from '../triage/mutations/relationshipContracts.js';
+import { ScmSuggestionApplyResponseSchema, type ScmSuggestionV1 } from '@happier-dev/protocol/scm';
 import type { GithubTriageKindIdV1 } from '../triage/types.js';
 import type { GithubRepositoryCapabilitiesV1 } from '../triage/capabilities.js';
 
@@ -170,17 +195,22 @@ import {
   type GithubDetailFieldV1,
 } from './detail/model.js';
 import {
-  useGithubChangedFileDiff,
+  GithubDetailChecksFromOverview,
+  GithubDetailResourcesProvider,
+  useGithubChecksDemanded,
   useGithubChangedFiles,
-  useGithubCapabilities,
   useGithubChecks,
   useGithubFeedbackComments,
   useGithubFeedbackRequests,
   useGithubFeedbackReviews,
   useGithubFeedbackThreads,
+  useGithubTimeline,
+} from './detail/resourceOwners.js';
+import {
+  useGithubChangedFileDiff,
+  useGithubCapabilities,
   useGithubFeedbackThreadReplies,
   useGithubOverview,
-  useGithubTimeline,
   type GithubChangedFileViewV1,
   type GithubChecksViewV1,
   type GithubOverviewControllerV1,
@@ -191,26 +221,39 @@ import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubPagedStateV1, GithubReadStateV1 } from './detail/panelState.js';
 import {
   GITHUB_ISSUE_CLOSE_REASONS_V1,
-  GITHUB_MERGE_METHODS_V1,
   buildGithubIssueCloseInputV1,
+  buildGithubCommentCreateInputV1,
+  buildGithubCommentEditInputV1,
   buildGithubIssueCommentInputV1,
   buildGithubIssueAssigneesInputV1,
   buildGithubIssueLabelsInputV1,
   buildGithubIssueReopenInputV1,
-  buildGithubPullRequestMarkReadyInputV1,
   buildGithubPullRequestReviewCommentCreateInputV1,
   buildGithubPullRequestReviewPublicationInputV1,
-  buildGithubPullRequestMergeInputV1,
   buildGithubPullRequestReviewersInputV1,
   buildGithubPullRequestTargetInputV1,
   buildGithubPullRequestThreadResolutionInputV1,
   buildGithubPullRequestThreadReplyInputV1,
   buildGithubPullRequestUpdateBranchInputV1,
+  buildGithubEntryLockInputV1,
+  buildGithubEntryMilestoneSetInputV1,
+  buildGithubEntryUnlockInputV1,
+  buildGithubIssueTypeSetInputV1,
+  buildGithubPullRequestChangeBaseInputV1,
+  buildGithubPullRequestConvertToDraftInputV1,
+  buildGithubPullRequestEditInputV1,
+  buildGithubPullRequestHeadBranchInputV1,
+  buildGithubRelatedEntryInputV1,
+  buildGithubSubIssueAddInputV1,
+  readGithubSameRepositoryNumberV1,
+  buildGithubPendingReviewDeleteInputV1,
+  buildGithubPendingReviewSubmitInputV1,
+  buildGithubReviewDismissInputV1,
+  GITHUB_LOCK_REASONS_V1,
+  type GithubLockReasonV1,
   githubMutationMayHaveChangedProviderStateV1,
   githubOfferedMutationsV1,
   projectGithubMutationOutcomeV1,
-  projectGithubPrimaryWriteV1,
-  type GithubPrimaryWriteReasonV1,
   readGithubLabelsV1,
   readGithubNamesV1,
   type GithubMutationOutcomeV1,
@@ -272,6 +315,7 @@ function PageFailureBanner({
   const text = usePluginTranslation();
   if (state.failure === null) return null;
   return (
+    <Stack gap="small">
     <Banner
       tone="warning"
       title="Showing what was read so far"
@@ -281,6 +325,8 @@ function PageFailureBanner({
         text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text,
       )}
     />
+    <GithubReadFailureDetails failures={[state.failure]} />
+    </Stack>
   );
 }
 
@@ -339,28 +385,6 @@ function RefreshRow({
  * confirmed, would invite exactly the blind retry the write contract forbids.
  */
 
-const WRITE_REFUSAL_COPY: Readonly<Record<
-  GithubMutationRefusalReasonV1,
-  Readonly<{ key: string; fallback: string }>
->> = Object.freeze({
-  head_advanced: Object.freeze({
-    key: 'plugins.github.ui.mutations.refused.head_advanced',
-    fallback: 'New commits were pushed since the head shown here, so nothing was merged.',
-  }),
-  state_changed: Object.freeze({
-    key: 'plugins.github.ui.mutations.refused.state_changed',
-    fallback: 'The state this entry is in on GitHub cannot make this change.',
-  }),
-  not_mergeable: Object.freeze({
-    key: 'plugins.github.ui.mutations.refused.not_mergeable',
-    fallback: 'GitHub will not merge this pull request right now.',
-  }),
-  merge_method_not_allowed: Object.freeze({
-    key: 'plugins.github.ui.mutations.refused.merge_method_not_allowed',
-    fallback: 'This repository does not allow that merge method.',
-  }),
-});
-
 /**
  * GitHub's merge methods in the reader's words. Keyed by the contract's own union,
  * so a method added there fails this build rather than losing its label.
@@ -384,29 +408,19 @@ const ISSUE_CLOSE_REASON_COPY: Readonly<Record<
   }),
 });
 
-const MERGE_METHOD_COPY: Readonly<Record<
-  GithubMergeMethodV1,
-  Readonly<{ key: string; fallback: string }>
->> = Object.freeze({
-  merge: Object.freeze({
-    key: 'plugins.github.ui.mutations.mergeMethod.merge',
-    fallback: 'Create a merge commit',
-  }),
-  squash: Object.freeze({
-    key: 'plugins.github.ui.mutations.mergeMethod.squash',
-    fallback: 'Squash and merge',
-  }),
-  rebase: Object.freeze({
-    key: 'plugins.github.ui.mutations.mergeMethod.rebase',
-    fallback: 'Rebase and merge',
-  }),
-});
-
 /** The settled answer one write owes the reader who pressed it. */
 function WriteOutcome({
   outcome,
 }: Readonly<{ outcome: GithubMutationOutcomeV1 }>): React.ReactElement {
   const text = usePluginTranslation();
+  if ('presentation' in outcome) {
+    const presentation = outcome.presentation;
+    const description = presentation.descriptionKey === undefined
+      ? presentation.description : text(presentation.descriptionKey, presentation.description);
+    return <Banner tone={presentation.tone}
+      title={presentation.titleKey === undefined ? presentation.title : text(presentation.titleKey, presentation.title)}
+      description={[description, ...(outcome.kind === 'refused' ? outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [] : [])].join(' · ')} />;
+  }
   if (outcome.kind === 'publication') {
     const fullyPublished = outcome.publishedCount === outcome.totalCount
       && outcome.uncertainCount === 0
@@ -492,7 +506,7 @@ function WriteOutcome({
         tone="warning"
         title="Refused"
         titleKey="plugins.github.ui.mutations.refused"
-        description={text(copy.key, copy.fallback)}
+        description={[text(copy.key, copy.fallback), ...(outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [])].join(' · ')}
       />
     );
   }
@@ -570,15 +584,15 @@ type GithubWriteControllerV1 = Readonly<{
   /** `null` until one dispatch has settled; a press in flight settles nothing. */
   outcome: GithubMutationOutcomeV1 | null;
   pending: boolean;
-  run: (payload: GithubWritePayloadV1, signal?: AbortSignal) => Promise<void>;
+  /** Resolves with the Action's parsed result, `null` when it settled without a readable one. */
+  run: (payload: GithubWritePayloadV1, signal?: AbortSignal) => Promise<GithubMutationResultV1 | null>;
 }>;
 
 type GithubWritePayloadV1 =
-  NonNullable<ReturnType<typeof buildGithubPullRequestTargetInputV1>>
-  | NonNullable<ReturnType<typeof buildGithubPullRequestMergeInputV1>>
+  TriagePullRequestOperationOfferV1['variants'][number]['input']
+  | NonNullable<ReturnType<typeof buildGithubPullRequestTargetInputV1>>
   | NonNullable<ReturnType<typeof buildGithubIssueCloseInputV1>>
   | NonNullable<ReturnType<typeof buildGithubIssueReopenInputV1>>
-  | NonNullable<ReturnType<typeof buildGithubPullRequestMarkReadyInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestReviewPublicationInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestReviewCommentCreateInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestThreadReplyInputV1>>
@@ -587,7 +601,22 @@ type GithubWritePayloadV1 =
   | NonNullable<ReturnType<typeof buildGithubPullRequestReviewersInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestThreadResolutionInputV1>>
   | NonNullable<ReturnType<typeof buildGithubIssueAssigneesInputV1>>
-  | NonNullable<ReturnType<typeof buildGithubIssueLabelsInputV1>>;
+  | NonNullable<ReturnType<typeof buildGithubIssueLabelsInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubCommentEditInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubCommentCreateInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPullRequestEditInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPullRequestChangeBaseInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPullRequestConvertToDraftInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubEntryMilestoneSetInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubIssueTypeSetInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubEntryLockInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubEntryUnlockInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPullRequestHeadBranchInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubRelatedEntryInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubSubIssueAddInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPendingReviewSubmitInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubPendingReviewDeleteInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubReviewDismissInputV1>>;
 
 /**
  * One write's dispatch and its settled answer, held together.
@@ -608,14 +637,17 @@ function useGithubWrite(
   );
   const { execution, execute } = useExecutePluginAction(action);
   const [outcome, setOutcome] = React.useState<GithubMutationOutcomeV1 | null>(null);
-
-  const run = React.useCallback(async (payload: GithubWritePayloadV1, signal?: AbortSignal): Promise<void> => {
+  const run = React.useCallback(async (
+    payload: GithubWritePayloadV1,
+    signal?: AbortSignal,
+  ): Promise<GithubMutationResultV1 | null> => {
     setOutcome(null);
     const settled = await execute(payload, signal === undefined ? undefined : { signal });
     const parsed = settled.status === 'success' ? parseResult(settled.result) : null;
     const outcome = projectGithubMutationOutcomeV1(settled, parsed);
     setOutcome(outcome);
     onObserved(settled, outcome, localId);
+    return parsed;
   }, [execute, localId, onObserved, parseResult]);
 
   return React.useMemo(
@@ -624,18 +656,13 @@ function useGithubWrite(
   );
 }
 
-function parseMergeResult(value: unknown): GithubMutationResultV1 | null {
-  const parsed = GithubPullRequestMergeResultV1Schema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
 function parseStateResult(value: unknown): GithubMutationResultV1 | null {
   const parsed = GithubPullRequestStateResultV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
 function parseMarkReadyResult(value: unknown): GithubMutationResultV1 | null {
-  const parsed = GithubPullRequestMarkReadyResultV1Schema.safeParse(value);
+  const parsed = GithubPullRequestMarkReadyActionResultV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -659,81 +686,89 @@ function parseIssueDeltaResult(value: unknown): GithubMutationResultV1 | null {
   return parsed.success ? parsed.data : null;
 }
 
+function parseCommentEditResult(value: unknown): GithubMutationResultV1 | null {
+  const parsed = GithubCommentEditResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function parseThreadResolutionResult(value: unknown): GithubMutationResultV1 | null {
   const parsed = GithubPullRequestThreadResolutionResultV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
-const PRIMARY_WRITE_REASONS: Readonly<Record<GithubPrimaryWriteReasonV1, string>> = {
-  reading: 'Reading the current pull request…',
-  unavailable: 'The current pull request could not be read.',
-  headUnknown: 'The head commit is not known yet.',
-  headChanged: 'New commits arrived. Re-read this pull request before changing it.',
-  conflicts: 'This pull request has merge conflicts.',
-  blocked: 'GitHub is blocking this merge.',
-  checksFailed: 'Required checks are failing.',
-  checksPending: 'Required checks are still running.',
-  reviewRequired: 'A required review is missing.',
-  changesRequested: 'Changes have been requested.',
-  mergeabilityUnknown: 'GitHub has not confirmed that this pull request is ready to merge.',
-  methodsUnknown: 'No enabled merge method has been reported by GitHub.',
-  archived: 'This repository is archived.',
-  unsupported: 'This repository does not support this change.',
-};
-
-/** The header and source controls share the incumbent writers and H2 projection. */
+/** Source scope/admission effects around the public portable-operation controller. */
 function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
   overview: GithubOverviewControllerV1,
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>,
   onObserved: GithubObservedEntryHandlerV1,
   activity: ReturnType<typeof useTabPanelActivity>,
-): TriageDetailPrimaryWriteV1 | null {
+): Readonly<{ value: TriageDetailPrimaryWriteV1 | null; refresh: () => Promise<void> }> {
   const text = usePluginTranslation();
+  const host = usePluginHostApi();
   const { active, activeSignal } = activity;
   const request = useTriageDetailRequest(input);
   const routingToken = input.observation.locator.routingToken;
   const head = input.observation.snapshot.reviewRevision?.headSha;
   const presentation = input.observation.snapshot.state.presentation;
-  const merge = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge, parseMergeResult, onObserved);
-  const markReady = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady, parseMarkReadyResult, onObserved);
-  const projection = React.useMemo(() => projectGithubPrimaryWriteV1({ detail: input, overview: overview.value,
-    capabilities: capabilities.kind === 'ready' ? capabilities.value : null,
-    failed: overview.failure !== null || capabilities.kind === 'unavailable',
-  // An offer depends on write authority/head/state, not a newly parsed copy of
-  // title, links or the parent context. Publishing it must not create its own arrival.
-  }), [request, routingToken, head, presentation, overview.value, overview.failure, capabilities]);
-  const write = projection?.kind === 'markReady' ? markReady : merge;
-  const execute = React.useCallback(async (methodId?: string): Promise<void> => {
-    if (!active || activeSignal.aborted || projection === null || projection.reason !== null || write.pending
-      || write.outcome?.kind === 'uncertain' || write.outcome?.kind === 'unreadable') return;
-    if (projection.kind === 'markReady') {
-      const payload = buildGithubPullRequestMarkReadyInputV1(input);
-      if (payload !== null) await write.run(payload, activeSignal);
-    } else {
-      const method = projection.methods.find((candidate) => candidate === methodId);
-      if (method === undefined) return;
-      const payload = buildGithubPullRequestMergeInputV1(input, method);
-      if (payload !== null) await write.run(payload, activeSignal);
+  const observedStatus = overview.value?.kindId === 'pull-request' ? overview.value.pullRequestStatus : undefined;
+  const operations = observedStatus?.operations;
+  const nativeStatus = React.useMemo<SessionPullRequestNativeStatusV1 | null>(() => {
+    if (observedStatus !== undefined && overview.checkedAtMs !== null) {
+      return overview.failure === null
+        ? { kind: 'current', value: observedStatus, checkedAtMs: overview.checkedAtMs }
+        : { kind: 'stale', value: observedStatus, checkedAtMs: overview.checkedAtMs, failure: overview.failure };
     }
-  }, [active, activeSignal, request, routingToken, head, projection, write.pending, write.outcome, write.run]);
-  return React.useMemo(() => {
-    if (projection === null) return null;
-    const uncertain = write.outcome?.kind === 'uncertain' || write.outcome?.kind === 'unreadable';
-    const disabledReason = !active ? text('plugins.github.ui.primaryWrite.inactive', 'Open the source detail to make this change.')
-      : uncertain ? text('plugins.github.ui.mutations.uncertain.description', 'The outcome is unknown. Re-read the pull request before trying again.')
-      : projection.reason === null ? null : text(`plugins.github.ui.primaryWrite.${projection.reason}`, PRIMARY_WRITE_REASONS[projection.reason]);
-    return {
-      title: projection.kind === 'markReady' ? text('plugins.github.ui.primaryWrite.markReady', 'Mark ready')
-        : text('plugins.github.ui.primaryWrite.merge', 'Merge'),
-      disabledReason,
-      pending: write.pending,
-      ...(projection.kind === 'markReady' ? {} : { methods: projection.methods.map((method) => ({
-        id: method, title: text(MERGE_METHOD_COPY[method].key, MERGE_METHOD_COPY[method].fallback),
-      })) }),
-      ...(write.outcome === null ? {} : { feedback: <WriteOutcome outcome={write.outcome} /> }),
-      execute,
-    };
-  }, [active, execute, projection, text, write.outcome, write.pending]);
+    return overview.failure === null ? null : { kind: 'unavailable', failure: overview.failure };
+  }, [observedStatus, overview.checkedAtMs, overview.failure]);
+  // Choice identity retires old callbacks. Feedback instead belongs to the
+  // entry/head/activity lifetime, including a failed explicit re-read.
+  const offerScope = React.useMemo(() => ({ request, routingToken, head, presentation, operations, observedStatus,
+    failure: overview.failure, active }),
+    [request, routingToken, head, presentation, operations, observedStatus, overview.failure, active]);
+  const currentOffer = React.useRef(offerScope);
+  currentOffer.current = offerScope;
+  const offeredRequest = React.useMemo(() => new AbortController(), [request, routingToken, head, presentation, activeSignal]);
+  React.useEffect(() => {
+    const retire = () => offeredRequest.abort();
+    if (activeSignal.aborted) retire();
+    else activeSignal.addEventListener('abort', retire, { once: true });
+    return () => { activeSignal.removeEventListener('abort', retire); retire(); };
+  }, [activeSignal, offeredRequest]);
+  const readReason = overview.failure === null && overview.value === null
+    ? text('plugins.github.ui.primaryWrite.reading', 'Reading the current pull request…')
+    : text('plugins.github.ui.primaryWrite.unavailable', 'The current pull request could not be read.');
+  const unavailableReason = !active ? text('plugins.github.ui.primaryWrite.inactive', 'Open the source detail to make this change.')
+    : overview.failure !== null || operations === undefined ? readReason
+      : head !== undefined && observedStatus?.branch?.headRevision !== undefined && observedStatus.branch.headRevision !== head
+        ? text('plugins.github.ui.primaryWrite.headChanged', 'New commits arrived. Re-read this pull request before changing it.') : undefined;
+  const execute = React.useCallback(async (operationId: string, variantId?: string): Promise<unknown> => {
+    if (offeredRequest.signal.aborted || currentOffer.current !== offerScope || unavailableReason !== undefined || !operations) {
+      return { kind: 'unavailable', reason: 'operationUnavailable' };
+    }
+    const offers = [operations.primary, ...operations.alternatives].filter(offer => offer.id === operationId);
+    const offer = offers[0];
+    if (offers.length !== 1 || !offer || offer.disabledReason !== null) return { kind: 'unavailable', reason: 'operationUnavailable' };
+    const choices = offer.variants.filter(variant => variantId === undefined
+      ? offer.variants.length === 1 && variant.method === undefined : variant.id === variantId);
+    if (choices.length !== 1 || !choices[0]) return { kind: 'unavailable', reason: 'operationUnavailable' };
+    return host.executeAction(offer.actionRef, choices[0].input, { signal: offeredRequest.signal });
+  }, [host, offeredRequest, offerScope, unavailableReason, operations]);
+  const onSettled = React.useCallback((execution: PluginActionExecution<unknown>,
+    outcome: Parameters<GithubObservedEntryHandlerV1>[1], offer: TriagePullRequestOperationOfferV1) => {
+    onObserved(execution, outcome, offer.actionRef.localId);
+  }, [onObserved]);
+  const controller = useTriagePullRequestPrimaryWriteV1({ operations,
+    ...(nativeStatus === null ? {} : { nativeStatus }),
+    ...(unavailableReason === undefined ? {} : { unavailableReason }),
+    execute, signal: offeredRequest.signal, refresh: overview.refresh, readRequirements: overview.readRequirements, onSettled });
+  const value = React.useMemo<TriageDetailPrimaryWriteV1 | null>(() => {
+    if (input.observation.entryRef.kindId !== 'pull-request' || presentation !== 'active') return null;
+    // Keep an unknown read explainable, but respect the producer's closed-state absence.
+    if (controller.primaryWrite !== null || overview.value?.state === 'closed') return controller.primaryWrite;
+    return { title: text('plugins.github.ui.primaryWrite.merge', 'Merge'),
+      disabledReason: readReason, pending: false, execute: async () => {},
+      ...(nativeStatus === null ? {} : { nativeStatus }), readRequirements: controller.refresh };
+  }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.value?.state, nativeStatus, readReason, text]);
+  return React.useMemo(() => ({ value, refresh: controller.refresh }), [value, controller.refresh]);
 }
 
 type GithubMergeSignatureStateV1 = Readonly<{
@@ -784,112 +819,46 @@ function GithubMergeSignature({ state }: Readonly<{
 function MergeWrite({
   input,
   terminal,
-  onObserved,
-  capabilities,
   primaryWrite,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   terminal: boolean;
-  onObserved: GithubObservedEntryHandlerV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
-  primaryWrite?: TriageDetailPrimaryWriteV1;
+  primaryWrite: TriageDetailPrimaryWriteV1;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const capabilityReason = primaryWrite === undefined ? githubOperationCapabilityReason(
-    text,
-    capabilities,
-    'pullRequestMerge',
-  ) : primaryWrite.disabledReason;
-  const [mergeMethod, setMergeMethod] = React.useState<GithubMergeMethodV1 | null>(null);
-  const write = useGithubWrite(
-    GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge,
-    parseMergeResult,
-    onObserved,
-  );
-  // Built against the first method only to answer whether this observation can
-  // address a merge at all; the dispatched payload always carries the chosen one.
-  const addressable = React.useMemo(
-    () => buildGithubPullRequestMergeInputV1(input, 'merge') !== null,
-    [input],
-  );
-  const payload = React.useMemo(
-    () => (mergeMethod === null
-      ? null
-      : buildGithubPullRequestMergeInputV1(input, mergeMethod)),
-    [input, mergeMethod],
-  );
+  const [mergeMethod, setMergeMethod] = React.useState<string | null>(null);
   const head = input.observation.snapshot.reviewRevision?.headSha;
-  const allowedMethods = GITHUB_MERGE_METHODS_V1.filter((method) => {
-    if (primaryWrite !== undefined) return primaryWrite.methods?.some((choice) => choice.id === method) === true;
-    if (capabilities.kind !== 'ready') return true;
-    const availability = capabilities.value.mergeMethods[method];
-    return availability.kind === 'available';
-  });
-
-  if (capabilityReason !== null) {
-    return (
-      <UnavailableOperationWrite
-        title="Merge pull request"
-        titleKey="plugins.github.ui.mutations.merge"
-        reason={capabilityReason}
-        variant="primary"
-      />
-    );
-  }
-
-  if (!addressable) {
-    // A merge is pinned to the head the user saw. Without one there is nothing
-    // honest to pin it to, so the control is absent rather than present and broken.
-    return (
-      <Text
-        variant="micro"
-        tone="neutral"
-        valueKey="plugins.github.ui.mutations.mergeHeadUnknown"
-        fallback={'This observation carries no head commit, so this pull request cannot be'
-          + ' merged from here.'}
-      />
-    );
-  }
-
-  if (allowedMethods.length === 0) {
-    const exposed = capabilities.kind === 'ready'
-      ? GITHUB_MERGE_METHODS_V1.map((method) => capabilities.value.mergeMethods[method])
-      : [];
-    const reason = exposed.some((value) => value.kind === 'denied' && value.code === 'repository_archived')
-      ? text('plugins.github.ui.capabilities.archived', 'This repository is archived.')
-      : text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.');
+  if (primaryWrite.disabledReason !== null) {
     return (
       <Stack gap="small">
-        <Button
-          title="Merge pull request"
-          titleKey="plugins.github.ui.mutations.merge"
-          variant="primary"
-          disabled
-          onPress={() => {}}
-        />
-        <Text variant="micro" tone="neutral" value={reason} />
+      <UnavailableOperationWrite
+        title={primaryWrite.id === undefined || primaryWrite.id === 'merge' ? 'Merge pull request' : primaryWrite.title}
+        {...(primaryWrite.id === undefined || primaryWrite.id === 'merge' ? { titleKey: 'plugins.github.ui.mutations.merge' } : {})}
+        reason={primaryWrite.disabledReason}
+        variant="primary"
+      />
+      {primaryWrite.feedback}
       </Stack>
     );
   }
-
+  const methods = primaryWrite.methods;
+  const chosen = methods?.find(method => method.id === mergeMethod);
+  const payload = primaryWrite.inputFor?.(chosen?.id);
   return (
     <Stack gap="small">
-      <Form.Select
+      {methods === undefined ? null : <Form.Select
         label={text('plugins.github.ui.mutations.mergeMethod', 'Merge method')}
-        options={allowedMethods.map((method) => ({
-          value: method,
-          label: text(MERGE_METHOD_COPY[method].key, MERGE_METHOD_COPY[method].fallback),
+        options={methods.map((method) => ({
+          value: method.id,
+          label: method.title,
         }))}
-        {...(mergeMethod === null ? {} : { value: mergeMethod })}
+        {...(chosen === undefined ? {} : { value: chosen.id })}
         onChange={(value) => {
-          // The chooser is the one place a method enters this control, and only
-          // the declared vocabulary may. A value outside it selects nothing.
-          const chosen = GITHUB_MERGE_METHODS_V1.find((method) => method === value);
-          if (chosen !== undefined) setMergeMethod(chosen);
+          if (typeof value === 'string' && methods.some(method => method.id === value)) setMergeMethod(value);
         }}
-        disabled={(primaryWrite?.pending ?? write.pending) || terminal}
-      />
-      {head === undefined
+        disabled={primaryWrite.pending || terminal}
+      />}
+      {head === undefined || methods === undefined
         ? null
         : (
           <Text
@@ -901,17 +870,14 @@ function MergeWrite({
           />
         )}
       <Button
-        title="Merge pull request"
-        titleKey="plugins.github.ui.mutations.merge"
+        title={primaryWrite.id === 'merge' ? 'Merge pull request' : primaryWrite.title}
+        {...(primaryWrite.id === 'merge' ? { titleKey: 'plugins.github.ui.mutations.merge' } : {})}
         variant="primary"
-        busy={primaryWrite?.pending ?? write.pending}
-        disabled={payload === null || (primaryWrite?.pending ?? write.pending) || terminal}
-        onPress={() => {
-          if (primaryWrite !== undefined) void primaryWrite.execute(mergeMethod ?? undefined);
-          else if (payload !== null) void write.run(payload);
-        }}
+        busy={primaryWrite.pending}
+        disabled={payload == null || primaryWrite.pending || terminal}
+        onPress={() => { if (payload != null) void primaryWrite.execute(chosen?.id); }}
       />
-      {primaryWrite === undefined ? write.outcome === null ? null : <WriteOutcome outcome={write.outcome} /> : primaryWrite.feedback}
+      {primaryWrite.feedback}
     </Stack>
   );
 }
@@ -971,15 +937,16 @@ function ExactWrite({
   primaryWrite,
 }: Readonly<{
   localId: string;
-  payload: GithubWritePayloadV1 | null;
   title: string;
   titleKey: string;
   parseResult: (value: unknown) => GithubMutationResultV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
   operation: keyof GithubRepositoryCapabilitiesV1['operations'];
-  primaryWrite?: TriageDetailPrimaryWriteV1;
-}>): React.ReactElement {
+} & (
+  | { primaryWrite: TriageDetailPrimaryWriteV1; payload: unknown }
+  | { primaryWrite?: undefined; payload: GithubWritePayloadV1 | null }
+)>): React.ReactElement {
   const text = usePluginTranslation();
   const capabilityReason = primaryWrite === undefined ? githubOperationCapabilityReason(text, capabilities, operation) : primaryWrite.disabledReason;
   const write = useGithubWrite(localId, parseResult, onObserved);
@@ -1015,16 +982,16 @@ function PullRequestHeadWrites({
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
   branchUpdateEligible: boolean;
-  primaryWrite?: TriageDetailPrimaryWriteV1 | null;
+  primaryWrite: TriageDetailPrimaryWriteV1 | null;
 }>): React.ReactElement {
-  const markReady = React.useMemo(() => buildGithubPullRequestMarkReadyInputV1(input), [input]);
+  const markReady = primaryWrite?.id === 'markReady' ? primaryWrite.inputFor?.() ?? null : null;
   const updateBranch = React.useMemo(
     () => buildGithubPullRequestUpdateBranchInputV1(input),
     [input],
   );
   return (
     <Stack gap="medium">
-      {(primaryWrite === undefined ? input.observation.snapshot.state.nativeLabel === 'Draft' : primaryWrite !== null && primaryWrite.methods === undefined)
+      {primaryWrite?.id === 'markReady'
         ? (
           <ExactWrite
             localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady}
@@ -1035,7 +1002,7 @@ function PullRequestHeadWrites({
             onObserved={onObserved}
             capabilities={capabilities}
             operation="pullRequestMarkReady"
-            {...(primaryWrite == null ? {} : { primaryWrite })}
+            primaryWrite={primaryWrite}
           />
         )
         : null}
@@ -1118,12 +1085,6 @@ function PullRequestReviewerWrites({
     </Stack>
   );
 }
-
-const GITHUB_REVIEW_VERDICTS_V1: readonly GithubPullRequestReviewVerdictV1[] = Object.freeze([
-  'comment',
-  'approve',
-  'requestChanges',
-]);
 
 /**
  * Publishes exactly one already-canonical Review Comment. This is intentionally
@@ -1433,97 +1394,6 @@ function PullRequestReviewPublicationWrite({
   );
 }
 
-function IssueMemberWrites({
-  input,
-  onObserved,
-  publicationProposals,
-  capabilities,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  onObserved: GithubObservedEntryHandlerV1;
-  publicationProposals: ReviewCommentProposalReadV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
-}>): React.ReactElement {
-  const text = usePluginTranslation();
-  const [assigneeValue, setAssigneeValue] = React.useState('');
-  const [labelValue, setLabelValue] = React.useState('');
-  const usernames = React.useMemo(() => readGithubNamesV1(assigneeValue), [assigneeValue]);
-  const labels = React.useMemo(() => readGithubLabelsV1(labelValue), [labelValue]);
-  return (
-    <Stack gap="medium">
-      <Stack gap="small">
-        <Form.TextField
-          label={text('plugins.github.ui.mutations.assignees', 'Assignee usernames')}
-          placeholder={text('plugins.github.ui.mutations.separateWithCommas', 'Separate several with commas')}
-          value={assigneeValue}
-          onChange={setAssigneeValue}
-        />
-        <Row gap="small">
-          <ExactWrite
-            localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd}
-            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'add')}
-            title="Add assignees"
-            titleKey="plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel"
-            parseResult={parseIssueDeltaResult}
-            onObserved={onObserved}
-            capabilities={capabilities}
-            operation="issueAssigneeAdd"
-          />
-          <ExactWrite
-            localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove}
-            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'remove')}
-            title="Remove assignees"
-            titleKey="plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel"
-            parseResult={parseIssueDeltaResult}
-            onObserved={onObserved}
-            capabilities={capabilities}
-            operation="issueAssigneeRemove"
-          />
-        </Row>
-      </Stack>
-      <Stack gap="small">
-        <Form.TextField
-          label={text('plugins.github.ui.mutations.labels', 'Label names')}
-          placeholder={text('plugins.github.ui.mutations.oneLabelPerLine', 'One label per line')}
-          multiline
-          value={labelValue}
-          onChange={setLabelValue}
-        />
-        <Row gap="small">
-          <ExactWrite
-            localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd}
-            payload={buildGithubIssueLabelsInputV1(input, labels, 'add')}
-            title="Add labels"
-            titleKey="plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel"
-            parseResult={parseIssueDeltaResult}
-            onObserved={onObserved}
-            capabilities={capabilities}
-            operation="issueLabelAdd"
-          />
-          <ExactWrite
-            localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove}
-            payload={buildGithubIssueLabelsInputV1(input, labels, 'remove')}
-            title="Remove label"
-            titleKey="plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel"
-            parseResult={parseIssueDeltaResult}
-            onObserved={onObserved}
-            capabilities={capabilities}
-            operation="issueLabelRemove"
-          />
-        </Row>
-      </Stack>
-      <SingleProposalPublicationWrite
-        input={input}
-        proposals={publicationProposals.proposals}
-        proposalRead={publicationProposals.status}
-        kind="issue-comment"
-        onObserved={onObserved}
-        capabilities={capabilities}
-      />
-    </Stack>
-  );
-}
-
 /**
  * Closing an issue: choose what it means, then say it.
  *
@@ -1597,16 +1467,21 @@ function IssueCloseWrite({
   );
 }
 
-/** The writes an ISSUE offers, which are its two state transitions and nothing else. */
+/**
+ * The writes an ISSUE offers, where github.com keeps them: its sidebar properties and relationships, the selected
+ * proposal to publish, and its state transition last.
+ */
 function IssueWrites({
   input,
   offered,
+  overview,
   onObserved,
   publicationProposals,
   capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   offered: readonly string[];
+  overview: GithubOverviewValueV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
@@ -1619,6 +1494,16 @@ function IssueWrites({
         tone="neutral"
         valueKey="plugins.github.ui.mutations.issueDescription"
         fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
+      />
+      <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} />
+      <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} />
+      <SingleProposalPublicationWrite
+        input={input}
+        proposals={publicationProposals.proposals}
+        proposalRead={publicationProposals.status}
+        kind="issue-comment"
+        onObserved={onObserved}
+        capabilities={capabilities}
       />
       {offered.includes('close')
         ? <IssueCloseWrite input={input} onObserved={onObserved} capabilities={capabilities} />
@@ -1636,13 +1521,387 @@ function IssueWrites({
           />
         )
         : null}
-      <IssueMemberWrites
-        input={input}
-        onObserved={onObserved}
-        publicationProposals={publicationProposals}
-        capabilities={capabilities}
-      />
     </Stack>
+  );
+}
+
+/* ----------------------------------------------------------- write parity rows */
+
+function parseRelationshipResult(value: unknown): GithubMutationResultV1 | null {
+  const parsed = GithubRelationshipMutationResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseHeadBranchDeleteResult(value: unknown): GithubMutationResultV1 | null {
+  const parsed = GithubPullRequestHeadBranchDeleteResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseHeadBranchRestoreResult(value: unknown): GithubMutationResultV1 | null {
+  const parsed = GithubPullRequestHeadBranchRestoreResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * One github.com sidebar property: the row says what it is and its current value, and opens in place onto its own
+ * control. Calm by default: nothing editable is on screen until the reader asks for that one property.
+ */
+function GithubPropertyRow({ title, value, children }: Readonly<{
+  title: string;
+  value?: string;
+  children: React.ReactNode;
+}>): React.ReactElement {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <Item
+      title={title}
+      {...(value === undefined ? {} : { subtitle: value })}
+      // The row is named by what it is, then its current value, as one phrase rather than run together.
+      accessibilityLabel={value === undefined ? title : `${title}, ${value}`}
+      expanded={open}
+      {...(open ? { expandedContent: <Stack gap="small">{children}</Stack> } : {})}
+      onPress={() => setOpen((current) => !current)}
+    />
+  );
+}
+
+/** Title and description, edited from GitHub's own text; only what the reader changed is sent. */
+function GithubPullRequestContentEditor({ input, overview, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  overview: GithubOverviewValueV1 | null;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const currentTitle = overview?.title ?? input.observation.snapshot.title;
+  const currentBody = overview?.body ?? '';
+  const [title, setTitle] = React.useState(currentTitle);
+  const [body, setBody] = React.useState(currentBody);
+  const payload = React.useMemo(() => {
+    const edited = {
+      ...(title !== currentTitle ? { title } : {}),
+      ...(body !== currentBody ? { body } : {}),
+    };
+    return Object.keys(edited).length === 0 ? null : buildGithubPullRequestEditInputV1(input, edited);
+  }, [body, currentBody, currentTitle, input, title]);
+  return (
+    <>
+      <Form.TextField label={text('plugins.github.ui.parity.title', 'Title')} value={title} onChange={setTitle} />
+      <Form.TextField label={text('plugins.github.ui.parity.description', 'Description')} multiline value={body} onChange={setBody} />
+      <ExactWrite
+        localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEdit}
+        payload={payload}
+        title="Save changes"
+        titleKey="plugins.github.ui.parity.saveChanges"
+        parseResult={parseStateResult}
+        onObserved={onObserved}
+        capabilities={capabilities}
+        operation="pullRequestEdit"
+      />
+    </>
+  );
+}
+
+function githubJoinedOrNone(text: PluginTranslate, values: readonly string[] | undefined): string | undefined {
+  if (values === undefined) return undefined;
+  return values.length === 0 ? text('plugins.github.ui.parity.none', 'None') : values.join(', ');
+}
+
+/** The sidebar of one issue or pull request (github.com's right column): people, labels, milestone, type, base. */
+function GithubEntryProperties({ input, kindId, overview, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  kindId: GithubTriageKindIdV1;
+  overview: GithubOverviewValueV1 | null;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const [assigneeValue, setAssigneeValue] = React.useState('');
+  const [labelValue, setLabelValue] = React.useState('');
+  const [milestoneValue, setMilestoneValue] = React.useState('');
+  const [typeValue, setTypeValue] = React.useState('');
+  const [baseValue, setBaseValue] = React.useState('');
+  const [lockReason, setLockReason] = React.useState<GithubLockReasonV1 | null>(null);
+  const usernames = React.useMemo(() => readGithubNamesV1(assigneeValue), [assigneeValue]);
+  const labels = React.useMemo(() => readGithubLabelsV1(labelValue), [labelValue]);
+  const milestoneNumber = readGithubSameRepositoryNumberV1(milestoneValue);
+  const pullRequest = overview?.kindId === 'pull-request' ? overview : null;
+  const active = input.observation.snapshot.state.presentation === 'active';
+  const reviewers = pullRequest?.requestedReviewers?.map((reviewer) => reviewer.subject);
+  const none = text('plugins.github.ui.parity.none', 'None');
+  return (
+    <ItemGroup title={text('plugins.github.ui.parity.details', 'Details')}>
+      {kindId === 'pull-request' ? (
+        <GithubPropertyRow title={text('plugins.github.ui.parity.titleAndDescription', 'Title and description')}
+          value={overview?.title ?? input.observation.snapshot.title}>
+          <GithubPullRequestContentEditor input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
+        </GithubPropertyRow>
+      ) : null}
+      {kindId === 'issue' ? null : (
+      <GithubPropertyRow title={text('plugins.github.ui.parity.assignees', 'Assignees')}
+        {...(() => { const value = githubJoinedOrNone(text, overview?.assignees); return value === undefined ? {} : { value }; })()}>
+        <Form.TextField
+          label={text('plugins.github.ui.mutations.assignees', 'Assignee usernames')}
+          placeholder={text('plugins.github.ui.mutations.separateWithCommas', 'Separate several with commas')}
+          value={assigneeValue}
+          onChange={setAssigneeValue}
+        />
+        <Row gap="small" wrap>
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd}
+            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'add')} title="Add assignees"
+            titleKey="plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="issueAssigneeAdd" />
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove}
+            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'remove')} title="Remove assignees"
+            titleKey="plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="issueAssigneeRemove" />
+        </Row>
+      </GithubPropertyRow>
+      )}
+      {kindId === 'pull-request' && active ? (
+        <GithubPropertyRow title={text('plugins.github.ui.parity.reviewers', 'Reviewers')}
+          {...(reviewers === undefined ? {} : { value: reviewers.length === 0 ? none : reviewers.join(', ') })}>
+          <PullRequestReviewerWrites input={input} onObserved={onObserved} capabilities={capabilities} />
+        </GithubPropertyRow>
+      ) : null}
+      {kindId === 'issue' ? null : (
+      <GithubPropertyRow title={text('plugins.github.ui.parity.labels', 'Labels')}
+        {...(() => { const value = githubJoinedOrNone(text, overview?.labels); return value === undefined ? {} : { value }; })()}>
+        <Form.TextField
+          label={text('plugins.github.ui.mutations.labels', 'Label names')}
+          placeholder={text('plugins.github.ui.mutations.oneLabelPerLine', 'One label per line')}
+          multiline
+          value={labelValue}
+          onChange={setLabelValue}
+        />
+        <Row gap="small" wrap>
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd}
+            payload={buildGithubIssueLabelsInputV1(input, labels, 'add')} title="Add labels"
+            titleKey="plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="issueLabelAdd" />
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove}
+            payload={buildGithubIssueLabelsInputV1(input, labels, 'remove')} title="Remove label"
+            titleKey="plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="issueLabelRemove" />
+        </Row>
+      </GithubPropertyRow>
+      )}
+      {kindId === 'issue' ? (
+        <GithubPropertyRow title={text('plugins.github.ui.parity.type', 'Type')}
+          {...(overview === null || overview.issueType === undefined ? {} : { value: overview.issueType ?? none })}>
+          <Form.TextField label={text('plugins.github.ui.parity.typeName', 'Type name')} value={typeValue} onChange={setTypeValue} />
+          <Row gap="small" wrap>
+            <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTypeSet}
+              payload={typeValue.trim() === '' ? null : buildGithubIssueTypeSetInputV1(input, typeValue)} title="Set type"
+              titleKey="plugins.github.ui.parity.setType" parseResult={parseIssueDeltaResult}
+              onObserved={onObserved} capabilities={capabilities} operation="issueTypeSet" />
+            {overview?.issueType === null ? null : (
+              <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTypeSet}
+                payload={buildGithubIssueTypeSetInputV1(input, null)} title="Clear type"
+                titleKey="plugins.github.ui.parity.clearType" parseResult={parseIssueDeltaResult}
+                onObserved={onObserved} capabilities={capabilities} operation="issueTypeSet" />
+            )}
+          </Row>
+        </GithubPropertyRow>
+      ) : null}
+      <GithubPropertyRow title={text('plugins.github.ui.parity.milestone', 'Milestone')}
+        {...(overview === null || overview.milestone === undefined ? {} : { value: overview.milestone ?? none })}>
+        <Form.TextField label={text('plugins.github.ui.parity.milestoneNumber', 'Milestone number')}
+          value={milestoneValue} onChange={setMilestoneValue} />
+        <Row gap="small" wrap>
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet}
+            payload={milestoneNumber === null ? null : buildGithubEntryMilestoneSetInputV1(input, Number(milestoneNumber))}
+            title="Set milestone" titleKey="plugins.github.ui.parity.setMilestone" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="entryMilestoneSet" />
+          {overview?.milestone === null ? null : (
+            <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet}
+              payload={buildGithubEntryMilestoneSetInputV1(input, null)} title="Clear milestone"
+              titleKey="plugins.github.ui.parity.clearMilestone" parseResult={parseIssueDeltaResult}
+              onObserved={onObserved} capabilities={capabilities} operation="entryMilestoneSet" />
+          )}
+        </Row>
+      </GithubPropertyRow>
+      {kindId === 'pull-request' && active ? (
+        <GithubPropertyRow title={text('plugins.github.ui.parity.baseBranch', 'Base branch')}
+          {...(pullRequest?.baseBranch === undefined ? {} : {
+            value: pullRequest.headBranch === undefined ? pullRequest.baseBranch
+              : text('plugins.github.ui.parity.branchInto', '{head} into {base}', { head: pullRequest.headBranch, base: pullRequest.baseBranch }),
+          })}>
+          <Form.TextField label={text('plugins.github.ui.parity.newBase', 'New base branch')} value={baseValue} onChange={setBaseValue} />
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestChangeBase}
+            payload={baseValue.trim() === '' || baseValue.trim() === pullRequest?.baseBranch ? null
+              : buildGithubPullRequestChangeBaseInputV1(input, baseValue)}
+            title="Change base" titleKey="plugins.github.ui.parity.changeBase" parseResult={parseStateResult}
+            onObserved={onObserved} capabilities={capabilities} operation="pullRequestChangeBase" />
+        </GithubPropertyRow>
+      ) : null}
+      <GithubPropertyRow title={text('plugins.github.ui.parity.conversation', 'Conversation')}
+        {...(overview?.locked === undefined ? {} : {
+          value: overview.locked
+            ? overview.lockReason ? text('plugins.github.ui.parity.lockedBecause', 'Locked as {reason}', { reason: overview.lockReason })
+              : text('plugins.github.ui.parity.locked', 'Locked')
+            : text('plugins.github.ui.parity.unlocked', 'Open to comments'),
+        })}>
+        {overview?.locked === true ? (
+          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnlock}
+            payload={buildGithubEntryUnlockInputV1(input)} title="Unlock conversation"
+            titleKey="plugins.github.ui.parity.unlock" parseResult={parseIssueDeltaResult}
+            onObserved={onObserved} capabilities={capabilities} operation="entryUnlock" />
+        ) : (
+          <>
+            <Form.Select
+              label={text('plugins.github.ui.parity.lockReason', 'Reason (optional)')}
+              options={GITHUB_LOCK_REASONS_V1.map((value) => ({
+                value, label: text(`plugins.github.ui.parity.lockReason.${value.replace(' ', '-')}`, GITHUB_LOCK_REASON_COPY[value]),
+              }))}
+              {...(lockReason === null ? {} : { value: lockReason })}
+              onChange={(value) => {
+                const chosen = GITHUB_LOCK_REASONS_V1.find((candidate) => candidate === value);
+                if (chosen !== undefined) setLockReason(chosen);
+              }}
+            />
+            <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryLock}
+              payload={buildGithubEntryLockInputV1(input, lockReason)} title="Lock conversation"
+              titleKey="plugins.github.ui.parity.lock" parseResult={parseIssueDeltaResult}
+              onObserved={onObserved} capabilities={capabilities} operation="entryLock" />
+          </>
+        )}
+      </GithubPropertyRow>
+    </ItemGroup>
+  );
+}
+
+const GITHUB_LOCK_REASON_COPY: Readonly<Record<GithubLockReasonV1, string>> = Object.freeze({
+  'off-topic': 'Off-topic', 'too heated': 'Too heated', resolved: 'Resolved', spam: 'Spam',
+});
+
+/** One relationship edited by the related entry's number in this repository: Add and Remove, each its own Action. */
+function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove, onObserved }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  title: string;
+  value?: string;
+  relatedKindId: 'issue' | 'pull-request';
+  add: Readonly<{ localId: string; title: string; titleKey: string }>;
+  remove: Readonly<{ localId: string; title: string; titleKey: string }>;
+  onObserved: GithubObservedEntryHandlerV1;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const [numberValue, setNumberValue] = React.useState('');
+  const number = readGithubSameRepositoryNumberV1(numberValue);
+  const addWrite = useGithubWrite(add.localId, parseRelationshipResult, onObserved);
+  const removeWrite = useGithubWrite(remove.localId, parseRelationshipResult, onObserved);
+  const payload = add.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueAdd
+    ? buildGithubSubIssueAddInputV1(input, number)
+    : buildGithubRelatedEntryInputV1(input, relatedKindId, number);
+  const removal = buildGithubRelatedEntryInputV1(input, relatedKindId, number);
+  const pending = addWrite.pending || removeWrite.pending;
+  const outcome = removeWrite.outcome ?? addWrite.outcome;
+  return (
+    <GithubPropertyRow title={title} {...(value === undefined ? {} : { value })}>
+      <Form.TextField
+        label={relatedKindId === 'issue'
+          ? text('plugins.github.ui.parity.issueNumber', 'Issue number')
+          : text('plugins.github.ui.parity.pullRequestNumber', 'Pull request number')}
+        value={numberValue}
+        onChange={setNumberValue}
+      />
+      <Row gap="small" wrap>
+        <Button title={add.title} titleKey={add.titleKey} variant="secondary" busy={addWrite.pending}
+          disabled={payload === null || pending} onPress={() => { if (payload !== null) void addWrite.run(payload); }} />
+        <Button title={remove.title} titleKey={remove.titleKey} variant="plain" busy={removeWrite.pending}
+          disabled={removal === null || pending} onPress={() => { if (removal !== null) void removeWrite.run(removal); }} />
+      </Row>
+      {outcome === null ? null : <WriteOutcome outcome={outcome} />}
+    </GithubPropertyRow>
+  );
+}
+
+/** Same-repository references the observation already read, as "#12, #14"; another repository's are counted. */
+function githubRelatedNumbersText(
+  text: PluginTranslate,
+  input: TriageDetailSurfaceInputV1,
+  refs: readonly Readonly<{ collisionScope: string; entryId: string }>[] | undefined,
+): string | undefined {
+  if (refs === undefined) return undefined;
+  if (refs.length === 0) return text('plugins.github.ui.parity.none', 'None');
+  return refs.map((ref) => ref.collisionScope === input.observation.entryRef.collisionScope ? `#${ref.entryId}` : '…').join(', ');
+}
+
+/** github.com's Development and Relationships: closing references, sub-issues and dependencies. */
+function GithubEntryRelationships({ input, kindId, onObserved }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  kindId: GithubTriageKindIdV1;
+  onObserved: GithubObservedEntryHandlerV1;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const relations = input.observation.snapshot.relations;
+  const ids = GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1;
+  if (kindId === 'pull-request') {
+    return (
+      <ItemGroup title={text('plugins.github.ui.parity.relationships', 'Relationships')}>
+        <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+          title={text('plugins.github.ui.parity.closesIssues', 'Closes issues')}
+          add={{ localId: ids.closingReferenceAdd, title: 'Link issue', titleKey: 'plugins.github.ui.parity.linkIssue' }}
+          remove={{ localId: ids.closingReferenceRemove, title: 'Unlink issue', titleKey: 'plugins.github.ui.parity.unlinkIssue' }} />
+      </ItemGroup>
+    );
+  }
+  const children = relations?.children;
+  const blockedBy = githubRelatedNumbersText(text, input, relations?.blockedBy);
+  return (
+    <ItemGroup title={text('plugins.github.ui.parity.relationships', 'Relationships')}>
+      <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+        title={text('plugins.github.ui.parity.subIssues', 'Sub-issues')}
+        {...(children === undefined ? {} : {
+          value: children.total === 0 ? text('plugins.github.ui.parity.none', 'None')
+            : text('plugins.github.ui.parity.subIssuesDone', '{completed} of {total} done', {
+              completed: String(children.completed ?? 0), total: String(children.total) }),
+        })}
+        add={{ localId: ids.subIssueAdd, title: 'Add sub-issue', titleKey: 'plugins.github.ui.parity.addSubIssue' }}
+        remove={{ localId: ids.subIssueRemove, title: 'Remove sub-issue', titleKey: 'plugins.github.ui.parity.removeSubIssue' }} />
+      <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+        title={text('plugins.github.ui.parity.blockedBy', 'Blocked by')}
+        {...(blockedBy === undefined ? {} : { value: blockedBy })}
+        add={{ localId: ids.blockedByAdd, title: 'Add blocker', titleKey: 'plugins.github.ui.parity.addBlocker' }}
+        remove={{ localId: ids.blockedByRemove, title: 'Remove blocker', titleKey: 'plugins.github.ui.parity.removeBlocker' }} />
+      <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+        title={text('plugins.github.ui.parity.blocking', 'Blocking')}
+        add={{ localId: ids.blockingAdd, title: 'Add blocked issue', titleKey: 'plugins.github.ui.parity.addBlocking' }}
+        remove={{ localId: ids.blockingRemove, title: 'Remove blocked issue', titleKey: 'plugins.github.ui.parity.removeBlocking' }} />
+      <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="pull-request"
+        title={text('plugins.github.ui.parity.linkedPullRequests', 'Linked pull requests')}
+        add={{ localId: ids.closingReferenceAdd, title: 'Link pull request', titleKey: 'plugins.github.ui.parity.linkPullRequest' }}
+        remove={{ localId: ids.closingReferenceRemove, title: 'Unlink pull request', titleKey: 'plugins.github.ui.parity.unlinkPullRequest' }} />
+    </ItemGroup>
+  );
+}
+
+/**
+ * The source branch after a pull request closes (github.com's "Delete branch" / "Restore branch"). Both name the head
+ * the reader saw; GitHub's answer decides which one shows next, never a guess.
+ */
+function PullRequestHeadBranchWrite({ input, overview, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  overview: GithubOverviewValueV1 | null;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const head = (overview?.kindId === 'pull-request' ? overview.headRevision : undefined)
+    ?? input.observation.snapshot.reviewRevision?.headSha;
+  const payload = buildGithubPullRequestHeadBranchInputV1(input, head);
+  const [deleted, setDeleted] = React.useState(false);
+  const observe = React.useCallback<GithubObservedEntryHandlerV1>((execution, outcome, actionLocalId) => {
+    if (outcome?.kind === 'applied') setDeleted(actionLocalId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete);
+    onObserved(execution, outcome, actionLocalId);
+  }, [onObserved]);
+  return deleted ? (
+    <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchRestore} payload={payload}
+      title="Restore branch" titleKey="plugins.github.ui.parity.restoreBranch" parseResult={parseHeadBranchRestoreResult}
+      onObserved={observe} capabilities={capabilities} operation="pullRequestHeadBranchRestore" />
+  ) : (
+    <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete} payload={payload}
+      title="Delete branch" titleKey="plugins.github.ui.parity.deleteBranch" parseResult={parseHeadBranchDeleteResult}
+      onObserved={observe} capabilities={capabilities} operation="pullRequestHeadBranchDelete" />
   );
 }
 
@@ -1656,7 +1915,7 @@ function githubOperationCapabilityReason(
   // decisive provider fact disables an operation before dispatch.
   if (capabilities.kind !== 'ready') return null;
   const availability = capabilities.value.operations[operation];
-  if (availability.kind === 'available') return null;
+  if (availability === undefined || availability.kind === 'available') return null;
   if (availability.code === 'repository_archived') {
     return text('plugins.github.ui.capabilities.archived', 'This repository is archived.');
   }
@@ -1673,7 +1932,7 @@ function UnavailableOperationWrite({
   variant = 'secondary',
 }: Readonly<{
   title: string;
-  titleKey: string;
+  titleKey?: string;
   reason: string;
   variant?: 'primary' | 'secondary';
 }>): React.ReactElement {
@@ -1704,9 +1963,9 @@ function GithubActionsPanel(props: Readonly<{
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
   overview: GithubOverviewControllerV1;
+  primaryWrite: TriageDetailPrimaryWriteV1 | null;
 }>): React.ReactElement | null {
   const primaryHost = useTriageEvidenceDisclosure().primaryWrite;
-  const sharedPrimary = primaryHost === undefined ? undefined : primaryHost.value ?? null;
   return (
     <WritesSection
       input={props.input}
@@ -1716,7 +1975,7 @@ function GithubActionsPanel(props: Readonly<{
       publicationProposals={props.publicationProposals}
       capabilities={props.capabilities}
       overview={props.overview.value}
-      {...(sharedPrimary === undefined ? {} : { primaryWrite: sharedPrimary })}
+      primaryWrite={primaryHost === undefined ? props.primaryWrite : null}
     />
   );
 }
@@ -1738,7 +1997,7 @@ function WritesSection({
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
   overview: Extract<GithubOverviewResultV1, { kind: 'overview' }> | null;
-  primaryWrite?: TriageDetailPrimaryWriteV1 | null;
+  primaryWrite: TriageDetailPrimaryWriteV1 | null;
 }>): React.ReactElement | null {
   const offered = githubOfferedMutationsV1({
     kindId,
@@ -1754,7 +2013,7 @@ function WritesSection({
     <Stack gap="small">
       <Divider />
       {kindId === 'pull-request' ? <GithubMergeSignature state={mergeSignature} /> : null}
-      <>{offered.length === 0 ? null : (
+      <>{offered.length === 0 && kindId !== 'pull-request' ? null : (
         <>
       <Text
         variant="label"
@@ -1776,6 +2035,7 @@ function WritesSection({
             <IssueWrites
               input={input}
               offered={offered}
+              overview={overview}
               onObserved={onObserved}
               publicationProposals={publicationProposals}
               capabilities={capabilities}
@@ -1789,17 +2049,18 @@ function WritesSection({
               valueKey="plugins.github.ui.mutations.description"
               fallback="These change the pull request on GitHub itself. Each one asks you to confirm before anything is written."
             />
-            {offered.includes('merge') && (primaryWrite === undefined || (primaryWrite !== null && primaryWrite.methods !== undefined))
+            {offered.includes('merge') && primaryWrite !== null && primaryWrite.id !== 'markReady'
               ? (
                 <MergeWrite
                   input={input}
                   terminal={mergeSignature.terminal}
-                  onObserved={onObserved}
-                  capabilities={capabilities}
-                  {...(primaryWrite?.methods === undefined ? {} : { primaryWrite })}
+                  primaryWrite={primaryWrite}
                 />
               )
               : null}
+            {primaryWrite?.alternatives?.map(alternative => (
+              <MergeWrite key={alternative.id} input={input} terminal={mergeSignature.terminal} primaryWrite={alternative} />
+            ))}
             {input.observation.snapshot.state.presentation === 'active'
               ? (
                 <>
@@ -1807,11 +2068,30 @@ function WritesSection({
                     input={input}
                     onObserved={onObserved}
                     capabilities={capabilities}
-                    {...(primaryWrite === undefined ? {} : { primaryWrite })}
+                    primaryWrite={primaryWrite}
                     branchUpdateEligible={overview?.kindId === 'pull-request'
                       && overview.branchUpdateEligibility === 'behind'}
                   />
-                  <PullRequestReviewerWrites input={input} onObserved={onObserved} capabilities={capabilities} />
+                  {overview?.kindId === 'pull-request' && overview.draft === false ? (
+                    <ExactWrite
+                      localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestConvertToDraft}
+                      payload={buildGithubPullRequestConvertToDraftInputV1(input)}
+                      title="Convert to draft"
+                      titleKey="plugins.github.ui.parity.convertToDraft"
+                      parseResult={parseStateResult}
+                      onObserved={onObserved}
+                      capabilities={capabilities}
+                      operation="pullRequestConvertToDraft"
+                    />
+                  ) : null}
+                </>
+              )
+              : null}
+            <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} />
+            <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} />
+            {input.observation.snapshot.state.presentation === 'active'
+              ? (
+                <>
                   <PullRequestReviewPublicationWrite
                     input={input}
                     onObserved={onObserved}
@@ -1847,6 +2127,9 @@ function WritesSection({
                 />
               )
               : null}
+            {input.observation.snapshot.state.presentation === 'active' ? null : (
+              <PullRequestHeadBranchWrite input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
+            )}
           </Stack>
         )}
         </>
@@ -1975,48 +2258,6 @@ function githubOverviewEntries(
   return Object.freeze(entries);
 }
 
-function GithubOverviewMarkdown({ body }: Readonly<{ body: string | null | undefined }>) {
-  const text = usePluginTranslation();
-  // Overview is a retained panel. Keep the parsed display model with its exact
-  // body so parent/tab renders while inactive do no Markdown preprocessing.
-  const segments = React.useMemo(
-    () => typeof body === 'string' && body.length > 0
-      ? projectGithubMarkdownForDisplay(body)
-      : [],
-    [body],
-  );
-  if (body === undefined) {
-    return <Text variant="micro" tone="neutral" value="Description unavailable" />;
-  }
-  if (body === null || body.length === 0) {
-    return <Text variant="micro" tone="neutral" value="No description" />;
-  }
-  return (
-    <Stack gap="small">
-      {segments.map((segment, index) => segment.kind === 'markdown'
-        ? <Markdown key={`markdown:${index}`} value={segment.value} />
-        : (
-          <Stack key={`attachment:${index}:${segment.url}`} gap="xsmall">
-            <Text
-              variant="micro"
-              tone="secondary"
-              value={segment.media === 'video' ? 'Video attachment' : 'Attachment'}
-            />
-            <Action.OpenExternal
-              url={segment.url}
-              title={segment.media === 'video'
-                ? text('plugins.github.ui.overview.openVideo', 'Open video')
-                : text('plugins.github.ui.overview.openAttachment', 'Open attachment')}
-              accessibilityLabel={segment.media === 'video'
-                ? text('plugins.github.ui.overview.openVideoAttachment', 'Open video attachment')
-                : text('plugins.github.ui.overview.openAttachment', 'Open attachment')}
-            />
-          </Stack>
-        ))}
-    </Stack>
-  );
-}
-
 function GithubOverviewReadFailure({
   controller,
 }: Readonly<{ controller: GithubOverviewControllerV1 }>): React.ReactElement | null {
@@ -2028,23 +2269,24 @@ function GithubOverviewReadFailure({
   );
   return controller.value === null
     ? (
-      <ErrorState
+      <GithubReadFailure
         title={text(
           'plugins.github.ui.overview.unavailable',
           'The current overview is unavailable',
         )}
-        description={description}
+        failures={[controller.failure]}
+        refresh={controller.refresh}
       />
     )
     : (
-      <Banner
+      <Stack gap="small"><Banner
         tone="warning"
         title={text(
           'plugins.github.ui.overview.retained',
           'Showing the last overview read',
         )}
         description={description}
-      />
+      /><GithubReadFailureDetails failures={[controller.failure]} /></Stack>
     );
 }
 
@@ -2070,8 +2312,11 @@ function OverviewPanel({
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  // Whole-detail legacy presentation retains its manual, tab-owned read interval.
-  const overview = useGithubOverview(input);
+  // Preserve the standalone view's existing manual, tab-owned read interval.
+  const activity = useTabPanelActivity();
+  const overview = useGithubOverview(input, { activity });
+  const primaryController = useGithubPrimaryWrite(input, overview, onObserved, activity);
+  const primaryWrite = primaryController.value;
   const exact = overview.value;
   const statusLabel = githubOverviewStatusLabel(input, exact);
   const currentEntries = React.useMemo(
@@ -2097,7 +2342,7 @@ function OverviewPanel({
     <ScrollArea>
       <Stack gap="large">
         <RefreshRow
-          onRefresh={overview.refresh}
+          onRefresh={primaryController.refresh}
           pending={overview.refreshing}
           accessibilityLabel={text(
             'plugins.github.ui.overview.reread',
@@ -2183,6 +2428,7 @@ function OverviewPanel({
           publicationProposals={publicationProposals}
           capabilities={capabilities}
           overview={exact}
+          primaryWrite={primaryWrite}
         />
       </Stack>
     </ScrollArea>
@@ -2242,7 +2488,8 @@ type GithubActivityStreamV1 = Readonly<{
   /** The read has not answered yet. */
   settling: boolean;
   /** The read answered with nothing usable at all: a cold failure. */
-  unavailable: Readonly<{ title: string; titleKey: string; failure: TriageSourceFailureV1 | null }> | null;
+  unavailable: Readonly<{ title: string; titleKey: string; failure: GithubReadFailureV1 | null }> | null;
+  failedReads: readonly Readonly<{ failure: GithubReadFailureV1 | null; refresh: () => unknown }>[];
   header: React.ReactNode;
   events: readonly TriageActivityEventV1[];
   /**
@@ -2252,15 +2499,17 @@ type GithubActivityStreamV1 = Readonly<{
    */
   mirrorsRemarks?: true;
   continuations: readonly TriageActivityContinuationV1[];
+  /** The conversation's comment box, after the last event. */
+  composer?: React.ReactNode;
   summary: React.ReactNode;
   refresh: () => void;
   pending: boolean;
   empty: React.ReactNode;
 }>;
 
-function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActivityStreamV1 {
+function useGithubTimelineStream(): GithubActivityStreamV1 {
   const text = usePluginTranslation();
-  const controller = useGithubTimeline(input);
+  const controller = useGithubTimeline();
   const { state } = controller;
   const incomplete = incompleteDescription(text, state.incomplete, null);
   return {
@@ -2268,6 +2517,7 @@ function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActiv
     unavailable: state.kind === 'unavailable'
       ? { title: 'The timeline is unavailable', titleKey: 'plugins.github.ui.timelineUnavailable', failure: state.failure }
       : null,
+    failedReads: [{ failure: state.failure, refresh: controller.refresh }],
     header: <PageFailureBanner state={state} />,
     events: state.rows.map((row) => {
       const headline = timelineHeadline(text, row);
@@ -2296,6 +2546,7 @@ function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActiv
       : [],
     summary: (
       <Stack gap="small">
+        {/* A complete read says nothing; only rows that could not be understood are worth a line. */}
         {state.omittedRowCount === 0 ? null : <Text
           variant="micro"
           tone="neutral"
@@ -2357,10 +2608,13 @@ function GithubActivityView({
   const cold = streams.every((stream) => stream.unavailable !== null) ? streams[0]?.unavailable ?? null : null;
   if (cold !== null) {
     return (
-      <ErrorState
+      <GithubReadFailure
         title={cold.title}
         titleKey={cold.titleKey}
-        description={failureDescription(cold.failure, readFailed, text)}
+        failures={streams.flatMap(stream => stream.failedReads.map(read => read.failure))}
+        refresh={() => { for (const read of streams.flatMap(stream => stream.failedReads)) {
+          if (read.failure?.retryable === true) read.refresh();
+        } }}
       />
     );
   }
@@ -2390,12 +2644,12 @@ function GithubActivityView({
               {stream.unavailable === null
                 ? stream.header
                 : (
-                  <Banner
+                  <Stack gap="small"><Banner
                     tone="warning"
                     title={stream.unavailable.title}
                     titleKey={stream.unavailable.titleKey}
                     description={failureDescription(stream.unavailable.failure, readFailed, text)}
-                  />
+                  /><GithubReadFailureDetails failures={stream.failedReads.map(read => read.failure)} /></Stack>
                 )}
             </React.Fragment>
           ))}
@@ -2411,6 +2665,7 @@ function GithubActivityView({
       }}
       footer={(
         <Stack gap="small">
+          {streams.map((stream, index) => <React.Fragment key={index}>{stream.composer ?? null}</React.Fragment>)}
           {answered.map((stream, index) => <React.Fragment key={index}>{stream.summary}</React.Fragment>)}
         </Stack>
       )}
@@ -2419,15 +2674,13 @@ function GithubActivityView({
 }
 
 function TimelinePanel({
-  input,
   locale,
   nowMs,
 }: Readonly<{
-  input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
-  const timeline = useGithubTimelineStream(input);
+  const timeline = useGithubTimelineStream();
   return (
     <GithubActivityView
       streams={[timeline]}
@@ -2518,17 +2771,32 @@ function FilesPanel({
 }: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string }>): React.ReactElement {
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
-  const controller = useGithubChangedFiles(input);
+  const controller = useGithubChangedFiles();
   const { state } = controller;
+  // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner; each row observes its own path.
+  const viewed = useGithubFileViewedSource(input);
   // Which files are open in place. Opening a file reads its own diff; closing it drops that read.
   const [openPaths, setOpenPaths] = React.useState<ReadonlySet<string>>(() => new Set());
-  const toggle = React.useCallback((path: string) => {
-    setOpenPaths((current) => {
+  const expansionCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
+    .filter(row => row.diffAvailable).map(row => ({ title: row.path,
+      operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: !openPaths.has(row.path) } })), [state.rows, openPaths]);
+  const expand = useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
+    if (operation.kind !== 'setSourceItemExpanded' || !state.rows.some(row => row.path === operation.itemId && row.diffAvailable)) return { status: 'unavailable' };
+    setOpenPaths(current => {
       const next = new Set(current);
-      if (next.has(path)) next.delete(path); else next.add(path);
+      if (operation.expanded) next.add(operation.itemId); else next.delete(operation.itemId);
       return next;
     });
-  }, []);
+    return { status: 'applied' };
+  }, expansionCommands);
+  const pagingCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.canLoadMore && !state.pending
+    ? [{ title: text('plugins.github.ui.loadMoreFiles', 'Load more files'), operation: { kind: 'loadMoreSourceItems', list: 'files' } }] : [],
+  [state.canLoadMore, state.pending, text]);
+  const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'files' }, async (operation) => {
+    if (operation.kind !== 'loadMoreSourceItems' || !state.canLoadMore || state.pending) return { status: 'unavailable' };
+    controller.loadMore();
+    return { status: 'applied' };
+  }, pagingCommands);
   // The reading order is a source-owned fact computed over everything read so
   // far, so appending a page reorders within the same three bands rather than
   // stapling a second, differently ordered list onto the end.
@@ -2543,13 +2811,11 @@ function FilesPanel({
   }
   if (state.kind === 'unavailable') {
     return (
-      <ErrorState
+      <GithubReadFailure
         title="The changed files are unavailable"
         titleKey="plugins.github.ui.filesUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text,
-        )}
+        failures={[state.failure]}
+        refresh={controller.refresh}
       />
     );
   }
@@ -2584,6 +2850,7 @@ function FilesPanel({
       keyForItem={(row) => row.path}
       header={(
         <Stack gap="small">
+          {viewed === null ? null : <GithubFilesViewedFact source={viewed} total={state.rows.length} />}
           <PageFailureBanner state={state} />
           {incomplete === null
             ? null
@@ -2615,12 +2882,12 @@ function FilesPanel({
                 titleKey="plugins.github.ui.loadMoreFiles"
                 variant="secondary"
                 busy={state.pending}
-                onPress={controller.loadMore}
+                onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
               />
             )
             : null}
           <RefreshRow
-            onRefresh={controller.refresh}
+            onRefresh={() => { controller.refresh(); void viewed?.refresh(); }}
             pending={state.pending}
             accessibilityLabel="Re-read the changed files from GitHub"
             accessibilityLabelKey="plugins.github.ui.rereadFiles"
@@ -2638,12 +2905,23 @@ function FilesPanel({
             const subtitle = changedFileSubtitle(text, row);
             return subtitle === undefined ? {} : { subtitle };
           })()}
-          accessory={<DiffStat added={row.additions} removed={row.deletions} locale={locale} />}
+          accessory={viewed === null
+            ? <DiffStat added={row.additions} removed={row.deletions} locale={locale} />
+            : (
+              <Row gap="medium" align="center">
+                <DiffStat added={row.additions} removed={row.deletions} locale={locale} />
+                <GithubFileViewedMark source={viewed} path={row.path} />
+              </Row>
+            )}
+          // The Viewed checkbox is its own control: a press on it never opens or closes the file.
+          accessoryOutsidePressable={viewed !== null}
+          // On a narrow pane the marks move under the path instead of starving it.
+          accessoryWraps={viewed !== null}
           tone={CHANGED_FILE_TONES[row.status] ?? 'neutral'}
           {...(row.diffAvailable
             ? {
               expanded: openPaths.has(row.path),
-              onPress: () => toggle(row.path),
+              onPress: () => { void expand({ kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: !openPaths.has(row.path) }); },
               expandedContent: <GithubFileDiffBody input={input} row={row} />,
             }
             : {})}
@@ -2733,12 +3011,15 @@ function ChecksBody({
   nowMs,
   pending,
   onRefresh,
+  onOpenRun,
 }: Readonly<{
   view: GithubChecksViewV1;
   locale: string;
   nowMs: number;
   pending: boolean;
   onRefresh: () => void;
+  /** A check GitHub Actions ran opens its run in place (lab a8); others open in place as before. */
+  onOpenRun: (target: GithubCheckActionsTargetV1) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
@@ -2867,9 +3148,13 @@ function ChecksBody({
             status={checkStatusText(text, row)}
             tone={checkTone(row)}
             {...(detail === '' ? {} : { detail })}
-            expanded={openKeys.has(row.key)}
-            onPress={() => toggle(row.key)}
-            expandedContent={<GithubCheckDetails row={row} />}
+            {...(row.actions === undefined
+              ? {
+                expanded: openKeys.has(row.key),
+                onPress: () => toggle(row.key),
+                expandedContent: <GithubCheckDetails row={row} />,
+              }
+              : { onPress: () => onOpenRun(row.actions!) })}
             {...quietRowActions(hostApi, text, {
               copyValue: row.name,
               ...(row.detailsUrl === undefined ? {} : { openUrl: row.detailsUrl }),
@@ -2924,30 +3209,40 @@ function GithubCheckDetails({ row }: Readonly<{ row: GithubProjectedCheckRowV1 }
 }
 
 function ChecksPanel({
-  input,
   locale,
   nowMs,
+  signal,
 }: Readonly<{
-  input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
+  signal: AbortSignal;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useGithubChecks(input);
+  const controller = useGithubChecks();
   const checks: GithubReadStateV1<GithubChecksViewV1> = controller.state;
+  // The run a check opened (lab a8); Back returns to the checks, which re-render from the retained read.
+  const [drill, setDrill] = React.useState<GithubCheckActionsTargetV1 | null>(null);
+  if (drill !== null) {
+    return (
+      <GithubChecksRunDrilldown
+        target={drill}
+        checksLabel={text('plugins.github.ci.backToChecks', 'Checks')}
+        onBack={() => setDrill(null)}
+        signal={signal}
+      />
+    );
+  }
 
   if (checks.kind === 'loading') {
     return <LoadingState title="Reading the checks from GitHub" titleKey="plugins.github.ui.readingChecks" />;
   }
   if (checks.kind === 'unavailable') {
     return (
-      <ErrorState
+      <GithubReadFailure
         title="The checks are unavailable"
         titleKey="plugins.github.ui.checksUnavailable"
-        description={failureDescription(
-          checks.failure,
-          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text,
-        )}
+        failures={[checks.failure]}
+        refresh={controller.refresh}
       />
     );
   }
@@ -2958,12 +3253,306 @@ function ChecksPanel({
       nowMs={nowMs}
       pending={controller.pending}
       onRefresh={controller.refresh}
+      onOpenRun={setDrill}
     />
   );
 }
 
 /* --------------------------------------------------------------------- Comments */
 
+
+/* --------------------------------------------------------------- remark editing */
+
+/**
+ * A person's own writes into one mounted conversation stream: which remark is open for editing,
+ * what GitHub answered each saved edit with, and the comments they posted here.
+ *
+ * Each answer is shown only until the stream's own read carries it: a saved edit while the stream
+ * still holds the text it replaced, a posted comment while no read row has its id. No re-read
+ * follows a write and no second row store exists; the readers keep their rows.
+ */
+type GithubRemarkEditsV1 = Readonly<{
+  editingId: string | null;
+  begin: (id: string) => void;
+  end: () => void;
+  shown: (id: string, readBody: string) => string;
+  saved: (id: string, replaced: string, body: string) => void;
+  posted: (comment: GithubFeedbackCommentV1) => void;
+  /** The read rows followed by this person's posted comments the read does not hold yet. */
+  withPosted: (rows: readonly GithubFeedbackCommentV1[]) => readonly GithubFeedbackCommentV1[];
+  /** The one review whose dismiss or submit form is open in place of its words. */
+  reviewForm: Readonly<{ id: string; form: 'dismiss' | 'submit' }> | null;
+  openReview: (id: string, form: 'dismiss' | 'submit') => void;
+  closeReview: () => void;
+}>;
+
+function useGithubRemarkEdits(): GithubRemarkEditsV1 {
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [savedEdits, setSavedEdits] = React.useState<
+    ReadonlyMap<string, Readonly<{ replaced: string; body: string }>>
+  >(() => new Map());
+  const [postedComments, setPostedComments] = React.useState<readonly GithubFeedbackCommentV1[]>([]);
+  const [reviewForm, setReviewForm] = React.useState<GithubRemarkEditsV1['reviewForm']>(null);
+  return React.useMemo(() => ({
+    reviewForm,
+    openReview: (id: string, form: 'dismiss' | 'submit') => setReviewForm({ id, form }),
+    closeReview: () => setReviewForm(null),
+    editingId,
+    begin: setEditingId,
+    end: () => setEditingId(null),
+    shown: (id, readBody) => {
+      const edit = savedEdits.get(id);
+      return edit !== undefined && edit.replaced === readBody ? edit.body : readBody;
+    },
+    saved: (id, replaced, body) => setSavedEdits((current) => new Map(current).set(id, { replaced, body })),
+    posted: (comment) => setPostedComments((current) => [...current, comment]),
+    withPosted: (rows) => {
+      if (postedComments.length === 0) return rows;
+      const read = new Set(rows.map((row) => row.id));
+      const unread = postedComments.filter((comment) => !read.has(comment.id));
+      return unread.length === 0 ? rows : [...rows, ...unread];
+    },
+  }), [editingId, postedComments, reviewForm, savedEdits]);
+}
+
+/** What an editable remark needs from its stream: the edit owner and the write's entry. */
+type GithubRemarkEditContextV1 = Readonly<{
+  edits: GithubRemarkEditsV1;
+  input: TriageDetailSurfaceInputV1;
+  onObserved: GithubObservedEntryHandlerV1;
+}>;
+
+/** The inline editor that replaces a remark's text while it is open. Save is the confirmed write. */
+function GithubRemarkEditor({
+  context,
+  target,
+  body,
+}: Readonly<{
+  context: GithubRemarkEditContextV1;
+  target: Readonly<{ kind: GithubCommentEditTargetKindV1; id: string }>;
+  body: string;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const { edits, input, onObserved } = context;
+  const [draft, setDraft] = React.useState(body);
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit, parseCommentEditResult, onObserved);
+  const payload = draft === body ? null : buildGithubCommentEditInputV1(input, target, draft);
+  const save = async (): Promise<void> => {
+    if (payload === null) return;
+    const result = await write.run(payload);
+    if (result?.kind === 'applied' && 'comment' in result) {
+      edits.saved(target.id, body, result.comment.body);
+      edits.end();
+    }
+  };
+  return (
+    <Stack gap="small">
+      <Form.TextField
+        multiline
+        label={target.kind === 'review'
+          ? text('plugins.github.ui.commentEdit.reviewLabel', 'Review summary')
+          : text('plugins.github.ui.commentEdit.label', 'Comment')}
+        value={draft}
+        onChange={setDraft}
+        disabled={write.pending}
+      />
+      <Row gap="small">
+        <Button
+          title="Save"
+          titleKey="plugins.github.ui.commentEdit.save"
+          variant="secondary"
+          busy={write.pending}
+          disabled={payload === null || write.pending}
+          onPress={save}
+        />
+        <Button
+          title="Cancel"
+          titleKey="plugins.github.ui.commentEdit.cancel"
+          variant="plain"
+          disabled={write.pending}
+          onPress={edits.end}
+        />
+      </Row>
+      {write.outcome === null || write.outcome.kind === 'applied' ? null : <WriteOutcome outcome={write.outcome} />}
+    </Stack>
+  );
+}
+
+/** The quiet Edit control beside a remark GitHub lets this viewer change. */
+function GithubRemarkEditButton({ edits, id, item }: Readonly<{
+  edits: GithubRemarkEditsV1;
+  id: string;
+  item: string;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  return (
+    <IconButton
+      icon={<Icon name="edit" tone="secondary" size="small" />}
+      accessibilityLabel={text('plugins.github.ui.commentEdit.editItem', 'Edit {item}', { item })}
+      onPress={() => edits.begin(id)}
+    />
+  );
+}
+
+const GITHUB_COMMENT_CREATE_ACTION = Object.freeze({
+  pluginId: GITHUB_PLUGIN_ID,
+  localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate,
+});
+
+/** GitHub's comment-create result in the shared write vocabulary; the posted comment rides on `applied`. */
+function readGithubCommentCreateSettlementV1(value: unknown): TriageSourceWriteSettlementV1 {
+  const parsed = GithubCommentCreateResultV1Schema.safeParse(value);
+  if (!parsed.success) return { kind: 'uncertain' };
+  switch (parsed.data.kind) {
+    case 'applied': return { kind: 'applied', result: parsed.data };
+    case 'uncertain': return { kind: 'uncertain' };
+    case 'failed': return { kind: 'failed', failure: parsed.data.failure };
+  }
+}
+
+/**
+ * The comment box at the end of a conversation, as GitHub places it: the shared source comment composer, bound to
+ * GitHub's comment Action, its capability answer and its posted-comment handoff.
+ */
+function GithubCommentComposer({
+  context,
+  capabilities,
+}: Readonly<{
+  context: GithubRemarkEditContextV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const { edits, input } = context;
+  const buildInput = React.useCallback((body: string) => buildGithubCommentCreateInputV1(input, body), [input]);
+  const onPublished = React.useCallback((result: unknown) => {
+    const parsed = GithubCommentCreateResultV1Schema.safeParse(result);
+    if (!parsed.success || parsed.data.kind !== 'applied') return;
+    const comment = parsed.data.comment;
+    edits.posted(Object.freeze({
+      id: comment.id,
+      body: comment.body,
+      author: comment.author ?? null,
+      createdAtMs: comment.createdAtMs ?? null,
+      url: comment.url ?? null,
+      editable: true as const,
+    }));
+  }, [edits]);
+  const webUrl = input.observation.locator.webUrl;
+  return (
+    <TriageSourceCommentComposer
+      action={GITHUB_COMMENT_CREATE_ACTION}
+      buildInput={buildInput}
+      sourceName="GitHub"
+      {...(webUrl === undefined ? {} : { sourceUrl: webUrl })}
+      readResult={readGithubCommentCreateSettlementV1}
+      unavailableReason={githubOperationCapabilityReason(text, capabilities, 'commentCreate')}
+      onPublished={onPublished}
+    />
+  );
+}
+
+function parseReviewMutationResult(value: unknown): GithubMutationResultV1 | null {
+  const parsed = GithubPullRequestReviewMutationResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * A review's own lifecycle, beside its words as github.com keeps it: a submitted approval or change request can be
+ * dismissed (with a reason); the viewer's pending review can be submitted or deleted. A comment review has neither.
+ */
+function GithubReviewLifecycleActions({ context, reviewId, state, item }: Readonly<{
+  context: GithubRemarkEditContextV1;
+  reviewId: string;
+  state: string;
+  item: string;
+}>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const normalized = state.trim().toUpperCase();
+  const remove = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete, parseReviewMutationResult, context.onObserved);
+  if (normalized === 'APPROVED' || normalized === 'CHANGES_REQUESTED') {
+    return (
+      <Button title="Dismiss" titleKey="plugins.github.ui.review.dismiss" variant="plain"
+        accessibilityLabel={text('plugins.github.ui.review.dismissItem', 'Dismiss {item}', { item })}
+        onPress={() => context.edits.openReview(reviewId, 'dismiss')} />
+    );
+  }
+  if (normalized !== 'PENDING') return null;
+  const payload = buildGithubPendingReviewDeleteInputV1(context.input, reviewId);
+  return (
+    <Row gap="small">
+      <Button title="Submit" titleKey="plugins.github.ui.review.submit" variant="plain"
+        accessibilityLabel={text('plugins.github.ui.review.submitItem', 'Submit {item}', { item })}
+        onPress={() => context.edits.openReview(reviewId, 'submit')} />
+      <Button title="Delete draft review" titleKey="plugins.github.ui.review.deleteDraft" variant="plain"
+        busy={remove.pending} disabled={payload === null || remove.pending}
+        onPress={() => { if (payload !== null) void remove.run(payload); }} />
+      {remove.outcome === null || remove.outcome.kind === 'applied' ? null : <WriteOutcome outcome={remove.outcome} />}
+    </Row>
+  );
+}
+
+/** The dismiss reason or the pending review's verdict, open in place of the review's words until it settles. */
+function GithubReviewLifecycleForm({ context, reviewId, form }: Readonly<{
+  context: GithubRemarkEditContextV1;
+  reviewId: string;
+  form: 'dismiss' | 'submit';
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const [message, setMessage] = React.useState('');
+  const [verdict, setVerdict] = React.useState<GithubPullRequestReviewVerdictV1 | null>(null);
+  const write = useGithubWrite(form === 'dismiss'
+    ? GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss
+    : GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit, parseReviewMutationResult, context.onObserved);
+  const payload = form === 'dismiss'
+    ? buildGithubReviewDismissInputV1(context.input, reviewId, message)
+    : verdict === null ? null : buildGithubPendingReviewSubmitInputV1(context.input, reviewId, verdict, message);
+  const run = async (): Promise<void> => {
+    if (payload === null) return;
+    const result = await write.run(payload);
+    if (result?.kind === 'applied') context.edits.closeReview();
+  };
+  return (
+    <Stack gap="small">
+      {form === 'submit' ? (
+        <Form.Select
+          label={text('plugins.github.ui.mutations.review.verdict', 'Review verdict')}
+          options={GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
+            value,
+            label: value === 'requestChanges'
+              ? text('plugins.github.ui.mutations.review.verdict.requestChanges', 'Request changes')
+              : value === 'approve'
+                ? text('plugins.github.ui.mutations.review.verdict.approve', 'Approve')
+                : text('plugins.github.ui.mutations.review.verdict.comment', 'Comment'),
+          }))}
+          {...(verdict === null ? {} : { value: verdict })}
+          onChange={(value) => {
+            const next = GITHUB_REVIEW_VERDICTS_V1.find((candidate) => candidate === value);
+            if (next !== undefined) setVerdict(next);
+          }}
+          disabled={write.pending}
+        />
+      ) : null}
+      <Form.TextField
+        multiline
+        label={form === 'dismiss'
+          ? text('plugins.github.ui.review.dismissReason', 'Reason for dismissing')
+          : text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
+        value={message}
+        onChange={setMessage}
+        disabled={write.pending}
+      />
+      <Row gap="small">
+        <Button
+          title={form === 'dismiss' ? 'Dismiss review' : 'Submit review'}
+          titleKey={form === 'dismiss' ? 'plugins.github.ui.review.dismissReview' : 'plugins.github.ui.review.submitReview'}
+          variant="secondary" busy={write.pending} disabled={payload === null || write.pending} onPress={run} />
+        <Button title="Cancel" titleKey="plugins.github.ui.commentEdit.cancel" variant="plain"
+          disabled={write.pending} onPress={context.edits.closeReview} />
+      </Row>
+      {write.outcome === null || write.outcome.kind === 'applied' ? null : <WriteOutcome outcome={write.outcome} />}
+    </Stack>
+  );
+}
 
 /** A remark as one Activity event: its author's mark, the verb, and its own words quoted. */
 function remarkEvent(text: PluginTranslate, remark: Readonly<{
@@ -2974,23 +3563,51 @@ function remarkEvent(text: PluginTranslate, remark: Readonly<{
   webUrl: string | null;
   kind: 'comment' | 'review';
   summary: string;
+  /** Present when GitHub lets this viewer edit the remark and its whole body was read. */
+  edit?: Readonly<{ context: GithubRemarkEditContextV1; target: GithubCommentEditTargetKindV1 }>;
+  /** A review's own lifecycle: dismissing a submitted verdict, or submitting or deleting a pending one. */
+  review?: Readonly<{ context: GithubRemarkEditContextV1; state: string }>;
 }>): TriageActivityEventV1 {
   const actor = remark.author ?? text('plugins.github.ui.someone', 'Someone');
+  const item = `${actor} · ${remark.summary}`;
+  const edit = remark.edit;
+  const body = edit === undefined ? remark.body : edit.context.edits.shown(remark.id, remark.body);
+  const editing = edit !== undefined && edit.context.edits.editingId === remark.id;
+  const review = remark.review;
+  const reviewForm = review !== undefined && review.context.edits.reviewForm?.id === remark.id
+    ? review.context.edits.reviewForm.form : null;
+  const reviewActions = review === undefined || reviewForm !== null || editing ? null
+    : <GithubReviewLifecycleActions context={review.context} reviewId={remark.id} state={review.state} item={item} />;
+  const editAction = edit === undefined || editing || reviewForm !== null ? null
+    : <GithubRemarkEditButton edits={edit.context.edits} id={remark.id} item={item} />;
   return {
     id: remark.id,
     atMs: remark.atMs,
     kind: remark.kind,
     actor,
     summary: remark.summary,
-    ...(remark.body === ''
-      ? remark.kind === 'comment'
-        ? { detail: text('plugins.github.ui.commentNoText', 'This comment carries no text.') }
-        : {}
-      : { quote: githubMarkdownDisplayText(remark.body) }),
+    ...(editing
+      ? {
+        inset: (
+          <GithubRemarkEditor
+            context={edit.context}
+            target={{ kind: edit.target, id: remark.id }}
+            body={body}
+          />
+        ),
+      }
+      : review !== undefined && reviewForm !== null
+        ? { inset: <GithubReviewLifecycleForm context={review.context} reviewId={remark.id} form={reviewForm} /> }
+      : body === ''
+        ? remark.kind === 'comment'
+          ? { detail: text('plugins.github.ui.commentNoText', 'This comment carries no text.') }
+          : {}
+        : { quote: <GithubOverviewMarkdown body={body} /> }),
+    ...(editAction === null && reviewActions === null
+      ? {}
+      : { actions: reviewActions === null ? editAction! : <Row gap="small">{editAction}{reviewActions}</Row> }),
     href: remark.webUrl,
-    hrefLabel: text('plugins.github.ui.openOnGithub', 'Open {item} on GitHub', {
-      item: `${actor} · ${remark.summary}`,
-    }),
+    hrefLabel: text('plugins.github.ui.openOnGithub', 'Open {item} on GitHub', { item }),
   };
 }
 
@@ -2999,13 +3616,18 @@ function ThreadReplyRow({
   reply,
   locale,
   nowMs,
+  editContext,
 }: Readonly<{
   reply: import('../triage/feedback.js').GithubFeedbackCommentV1;
   locale: string;
   nowMs: number;
+  editContext?: GithubRemarkEditContextV1;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const author = reply.author ?? text('plugins.github.ui.someone', 'Someone');
+  const edit = reply.editable === true && reply.truncated !== true ? editContext : undefined;
+  const body = edit === undefined ? reply.body : edit.edits.shown(reply.id, reply.body);
+  const editing = edit !== undefined && edit.edits.editingId === reply.id;
   return (
     <Stack gap="small">
       <Row gap="small">
@@ -3030,8 +3652,13 @@ function ThreadReplyRow({
               )}
             />
           )}
+        {edit === undefined || editing
+          ? null
+          : <GithubRemarkEditButton edits={edit.edits} id={reply.id} item={author} />}
       </Row>
-      {reply.body === ''
+      {editing
+        ? <GithubRemarkEditor context={edit} target={{ kind: 'review-comment', id: reply.id }} body={body} />
+        : body === ''
         ? (
           <Text
             variant="micro"
@@ -3040,14 +3667,20 @@ function ThreadReplyRow({
             fallback="This comment carries no text."
           />
         )
-        : <Markdown value={githubMarkdownDisplayText(reply.body)} />}
+        : <GithubOverviewMarkdown body={body} />}
     </Stack>
   );
 }
 
-function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActivityStreamV1 {
+function useGithubCommentsStream(
+  input: TriageDetailSurfaceInputV1,
+  onObserved: GithubObservedEntryHandlerV1,
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>,
+): GithubActivityStreamV1 {
   const text = usePluginTranslation();
-  const controller = useGithubFeedbackComments(input);
+  const controller = useGithubFeedbackComments();
+  const edits = useGithubRemarkEdits();
+  const editContext = React.useMemo(() => ({ edits, input, onObserved }), [edits, input, onObserved]);
   const { state } = controller;
   const incomplete = incompleteDescription(text, state.incomplete, null);
   const commented = text(githubTimelineHeadlineKey('commented'), GITHUB_TIMELINE_HEADLINES_V1['commented'] ?? 'Commented');
@@ -3056,12 +3689,9 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
     unavailable: state.kind === 'unavailable'
       ? { title: 'The conversation is unavailable', titleKey: 'plugins.github.ui.conversationUnavailable', failure: state.failure }
       : null,
-    header: (
-      <Stack gap="small">
-        <PageFailureBanner state={state} />
-      </Stack>
-    ),
-    events: state.rows.map((row) => remarkEvent(text, {
+    failedReads: [{ failure: state.failure, refresh: controller.refresh }],
+    header: <PageFailureBanner state={state} />,
+    events: edits.withPosted(state.rows).map((row) => remarkEvent(text, {
       id: row.id,
       atMs: row.createdAtMs,
       author: row.author,
@@ -3069,6 +3699,9 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
       webUrl: row.url,
       kind: 'comment',
       summary: commented,
+      ...(row.editable === true && row.truncated !== true
+        ? { edit: { context: editContext, target: 'issue-comment' as const } }
+        : {}),
     })),
     continuations: state.canLoadMore
       ? [{
@@ -3080,6 +3713,7 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
         reads: 'earlier',
       }]
       : [],
+    composer: <GithubCommentComposer context={editContext} capabilities={capabilities} />,
     summary: (
       <Stack gap="small">
         {state.omittedRowCount === 0 ? null : <Text
@@ -3117,12 +3751,16 @@ function CommentsPanel({
   input,
   locale,
   nowMs,
+  onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
-  const comments = useGithubCommentsStream(input);
+  const comments = useGithubCommentsStream(input, onObserved, capabilities);
   return (
     <GithubActivityView
       streams={[comments]}
@@ -3147,7 +3785,10 @@ function reviewStateText(text: PluginTranslate, state: string): string {
   return copy === undefined ? state : text(githubReviewStateKey(normalized), copy);
 }
 
-/** The two review-people groups, rendered as two labelled groups and never unioned. */
+/**
+ * Who reviewed, with GitHub's state and when. Who is still awaited is said once: by the Overview's facts and the
+ * rail's own request event, never as a block above the rail (lab c7).
+ */
 function ReviewPeople({
   people,
   locale,
@@ -3158,46 +3799,14 @@ function ReviewPeople({
   nowMs: number;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (people.reviewed.length === 0 && people.requested.length === 0) return null;
-
+  if (people.reviewed.length === 0) return null;
   const reviewed: readonly MetadataEntry[] = people.reviewed.map((reviewer) => ({
     label: reviewer.login,
     value: reviewer.submittedAtMs === undefined
       ? reviewStateText(text, reviewer.state)
       : `${reviewStateText(text, reviewer.state)} · ${formatTimestamp(locale, reviewer.submittedAtMs, 'relative', nowMs)}`,
   }));
-  const requested: readonly MetadataEntry[] = people.requested.map((request) => ({
-    label: request.subject,
-    // `requested_reviewers` has no request instant. Rendering the observation
-    // time here would turn the time we looked into a claim about when GitHub
-    // asked, so requested reviewers state only that work is still awaited.
-    value: text('plugins.github.ui.reviewAwaited', 'Waiting'),
-  }));
-
-  return (
-    <Stack gap="small">
-      {reviewed.length === 0
-        ? null
-        : (
-          <Metadata
-            title="Reviewed"
-            titleKey="plugins.github.ui.reviewedBy"
-            entries={reviewed}
-          />
-        )}
-      {requested.length === 0
-        ? null
-        : (
-          // Never merged with the group above: a person who reviewed is history,
-          // and a request nobody has answered is work still outstanding.
-          <Metadata
-            title="Review requested from"
-            titleKey="plugins.github.ui.reviewRequestedFrom"
-            entries={requested}
-          />
-        )}
-    </Stack>
-  );
+  return <Metadata title="Reviewed" titleKey="plugins.github.ui.reviewedBy" entries={reviewed} />;
 }
 
 const FINDING_STATE_COPY: Readonly<Record<'check' | 'conflict', Readonly<{
@@ -3223,11 +3832,16 @@ type GithubFeedbackWriteContextV1 = Readonly<{
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>;
 
+/** The write context plus the stream's one remark-edit owner, which thread replies share. */
+type GithubFeedbackEventContextV1 = GithubFeedbackWriteContextV1 & Readonly<{
+  editContext: GithubRemarkEditContextV1;
+}>;
+
 /** One feedback finding as one Activity event; a line conversation keeps its replies and controls under it. */
 function feedbackFindingEvent(
   text: PluginTranslate,
   finding: GithubFeedbackFindingV1,
-  context: GithubFeedbackWriteContextV1,
+  context: GithubFeedbackEventContextV1,
 ): TriageActivityEventV1 {
   if (finding.resource === 'comment') {
     return remarkEvent(text, {
@@ -3238,6 +3852,7 @@ function feedbackFindingEvent(
       webUrl: finding.webUrl,
       kind: 'comment',
       summary: text(githubTimelineHeadlineKey('commented'), GITHUB_TIMELINE_HEADLINES_V1['commented'] ?? 'Commented'),
+      ...(finding.editable ? { edit: { context: context.editContext, target: 'issue-comment' as const } } : {}),
     });
   }
   if (finding.resource === 'review') {
@@ -3249,6 +3864,8 @@ function feedbackFindingEvent(
       webUrl: finding.webUrl,
       kind: 'review',
       summary: reviewStateText(text, finding.state),
+      ...(finding.editable ? { edit: { context: context.editContext, target: 'review' as const } } : {}),
+      review: { context: context.editContext, state: finding.state },
     });
   }
   if (finding.resource === 'thread') {
@@ -3290,7 +3907,7 @@ function threadLocation(text: PluginTranslate, finding: GithubThreadFindingV1): 
 function ThreadFindingInset({
   finding,
   context,
-}: Readonly<{ finding: GithubThreadFindingV1; context: GithubFeedbackWriteContextV1 }>): React.ReactElement {
+}: Readonly<{ finding: GithubThreadFindingV1; context: GithubFeedbackEventContextV1 }>): React.ReactElement {
   const { platform } = useSurfaceContext();
   const mobile = platform === 'ios' || platform === 'android';
   return finding.previousRepliesCursor === null || mobile
@@ -3310,7 +3927,8 @@ function ThreadFeedbackFinding({
   onObserved,
   publicationProposals,
   capabilities,
-}: GithubFeedbackWriteContextV1 & Readonly<{
+  editContext,
+}: GithubFeedbackEventContextV1 & Readonly<{
   finding: GithubThreadFindingV1;
   earlierReplies?: GithubThreadFindingV1['replies'];
   mobile?: boolean;
@@ -3334,7 +3952,7 @@ function ThreadFeedbackFinding({
   return (
       <Stack gap="small">
         {visibleReplies.map((reply) => (
-          <ThreadReplyRow key={reply.id} reply={reply} locale={locale} nowMs={nowMs} />
+          <ThreadReplyRow key={reply.id} reply={reply} locale={locale} nowMs={nowMs} editContext={editContext} />
         ))}
         {mobile
           ? (
@@ -3361,6 +3979,8 @@ function ThreadFeedbackFinding({
           capabilities={capabilities}
           operation="pullRequestThreadResolution"
         />
+        <GithubSuggestionApply input={input}
+          suggestions={visibleReplies.flatMap((reply) => reply.suggestions ?? [])} />
         <SingleProposalPublicationWrite
           input={input}
           proposals={publicationProposals.proposals}
@@ -3374,11 +3994,92 @@ function ThreadFeedbackFinding({
   );
 }
 
+const GITHUB_SUGGESTION_REFUSAL_COPY: Readonly<Record<string, Readonly<{ key: string; fallback: string }>>> = Object.freeze({
+  suggestion_conflict: { key: 'plugins.github.ui.suggestion.conflict', fallback: 'the Session\'s copy no longer matches this suggestion' },
+  suggestion_outdated: { key: 'plugins.github.ui.suggestion.outdated', fallback: 'the file changed since this suggestion' },
+  invalid_path: { key: 'plugins.github.ui.suggestion.invalidPath', fallback: 'the file is outside this Session\'s checkout' },
+  file_replace_failed: { key: 'plugins.github.ui.suggestion.writeFailed', fallback: 'the file could not be written' },
+});
+
+/**
+ * GitHub's "Apply suggestion", done where the code is: the conversation's suggestions applied to a Session linked to
+ * this pull request, without committing. Each file reports its own answer (applied, conflict, outdated). With no
+ * linked Session there is nowhere to apply them here; Open on GitHub stays on each comment.
+ */
+function GithubSuggestionApply({ input, suggestions }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  suggestions: readonly ScmSuggestionV1[];
+}>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const host = usePluginHostApi();
+  const sessions = input.linkedSessions;
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState(false);
+  const [answer, setAnswer] = React.useState<Readonly<{ tone: 'success' | 'warning' | 'danger'; label: string }> | null>(null);
+  if (suggestions.length === 0) return null;
+  if (sessions.length === 0) {
+    return <Text variant="micro" tone="neutral" value={text('plugins.github.ui.suggestion.noSession',
+      'Link a Session to this pull request to apply these suggestions in it.')} />;
+  }
+  const session = sessions.length === 1 ? sessions[0] : sessions.find((candidate) => candidate.sessionId === chosen);
+  const sessionTitle = (candidate: TriageLinkedSessionProjectionV1) => candidate.displayTitle
+    ?? text('plugins.github.ui.linkedSession', 'Session');
+  const apply = async (): Promise<void> => {
+    if (session === undefined) return;
+    setPending(true);
+    setAnswer(null);
+    try {
+      const parsed = ScmSuggestionApplyResponseSchema.safeParse(
+        await host.executeAction('scm.suggestion.apply', { sessionId: session.sessionId, suggestions: [...suggestions] }),
+      );
+      if (!parsed.success) {
+        setAnswer({ tone: 'warning', label: text('plugins.github.ui.suggestion.unknown', 'Check the Session\'s changes to see what was applied.') });
+        return;
+      }
+      const applied = parsed.data.files.filter((file) => file.status === 'applied').length;
+      const refused = parsed.data.files.flatMap((file) => file.status === 'refused' ? [`${file.path}: ${text(
+        GITHUB_SUGGESTION_REFUSAL_COPY[file.errorCode]?.key ?? 'plugins.github.ui.suggestion.writeFailed',
+        GITHUB_SUGGESTION_REFUSAL_COPY[file.errorCode]?.fallback ?? 'the file could not be written')}.`] : []);
+      setAnswer({
+        tone: refused.length === 0 ? 'success' : applied === 0 ? 'danger' : 'warning',
+        label: [text('plugins.github.ui.suggestion.applied', 'Applied {applied} of {total} files.', {
+          applied: String(applied), total: String(parsed.data.files.length) }), ...refused].join(' '),
+      });
+    } catch {
+      setAnswer({ tone: 'warning', label: text('plugins.github.ui.suggestion.unknown', 'Check the Session\'s changes to see what was applied.') });
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <Stack gap="small">
+      {sessions.length > 1 ? (
+        <Form.Select
+          label={text('plugins.github.ui.suggestion.session', 'Apply in')}
+          options={sessions.map((candidate) => ({ value: candidate.sessionId, label: sessionTitle(candidate) }))}
+          {...(chosen === null ? {} : { value: chosen })}
+          onChange={(value) => setChosen(sessions.find((candidate) => candidate.sessionId === value)?.sessionId ?? null)}
+          disabled={pending}
+        />
+      ) : null}
+      <Row gap="small">
+        <Button
+          title={text('plugins.github.ui.suggestion.apply', 'Apply {count} suggestions in {session}', {
+            count: String(suggestions.length),
+            session: session === undefined ? text('plugins.github.ui.linkedSession', 'Session') : sessionTitle(session),
+          })}
+          variant="secondary" busy={pending} disabled={session === undefined || pending} onPress={apply} />
+      </Row>
+      {answer === null ? null : <Status tone={answer.tone} label={answer.label} />}
+    </Stack>
+  );
+}
+
 function PagedThreadFeedbackFinding({
   finding,
   firstCursor,
   ...context
-}: GithubFeedbackWriteContextV1 & Readonly<{
+}: GithubFeedbackEventContextV1 & Readonly<{
   finding: GithubThreadFindingV1;
   firstCursor: string;
 }>): React.ReactElement {
@@ -3405,11 +4106,14 @@ function PagedThreadFeedbackFinding({
 function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubActivityStreamV1 {
   const { input, locale, nowMs } = context;
   const text = usePluginTranslation();
-  const conversation = useGithubFeedbackComments(input);
-  const threads = useGithubFeedbackThreads(input);
-  const reviews = useGithubFeedbackReviews(input);
-  const requests = useGithubFeedbackRequests(input);
-  const checks = useGithubChecks(input);
+  const conversation = useGithubFeedbackComments();
+  const threads = useGithubFeedbackThreads();
+  const reviews = useGithubFeedbackReviews();
+  const requests = useGithubFeedbackRequests();
+  const checks = useGithubChecks();
+  const edits = useGithubRemarkEdits();
+  const { onObserved } = context;
+  const eventContext: GithubFeedbackEventContextV1 = { ...context, editContext: { edits, input, onObserved } };
   const { observation } = input;
   const currentChecks = checks.state.kind === 'ready'
     ? checks.state.value.rowState ?? null
@@ -3428,22 +4132,24 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
     () => projectGithubFeedback({
       facts: observation.snapshot.facts,
       observedAtMs: observation.observedAtMs,
-      comments: conversation.state.rows,
+      comments: edits.withPosted(conversation.state.rows),
       historicalReviews: reviews.state.rows,
       threads: threads.state.rows,
       reviewDecision: reviews.reviewDecision,
       requests: requests.state.rows,
       checks: currentChecks,
     }),
-    [checks.state, conversation.state.rows, observation, requests.state.rows,
+    [checks.state, conversation.state.rows, edits, observation, requests.state.rows,
       reviews.reviewDecision, reviews.state.rows, threads.state.rows],
   );
 
-  const settling = (conversation.state.kind === 'idle' || conversation.state.kind === 'loading')
-    && reviews.state.kind === 'loading'
-    && threads.state.kind === 'loading'
-    && requests.state.kind === 'loading'
-    && checks.state.kind === 'loading';
+  // Publish the first combined rail after all its initial reads answer. Warm
+  // refreshes retain ready rows in their readers and do not enter this state.
+  const settling = conversation.state.kind === 'idle' || conversation.state.kind === 'loading'
+    || reviews.state.kind === 'idle' || reviews.state.kind === 'loading'
+    || threads.state.kind === 'idle' || threads.state.kind === 'loading'
+    || requests.state.kind === 'idle' || requests.state.kind === 'loading'
+    || checks.state.kind === 'loading';
   // Cold: no read answered, so there is no content to keep and nothing
   // honest to say beyond that we could not look.
   const cold = conversation.state.kind === 'unavailable'
@@ -3485,6 +4191,13 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
   ];
   const connectionFailure = conversation.state.failure ?? threadsFailure ?? reviewsFailure
     ?? requestsFailure ?? checksFailure;
+  const failedReads = [
+    { failure: conversation.state.failure, refresh: conversation.refresh },
+    { failure: threadsFailure, refresh: threads.refresh },
+    { failure: reviewsFailure, refresh: reviews.refresh },
+    { failure: requestsFailure, refresh: requests.refresh },
+    { failure: checksFailure, refresh: checks.refresh },
+  ];
   const allConnectionsAnswered = conversation.state.kind === 'ready'
     && threads.state.kind === 'ready' && reviews.state.kind === 'ready'
     && requests.state.kind === 'ready' && checks.state.kind === 'ready';
@@ -3497,6 +4210,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
 
   return {
     settling,
+    failedReads,
     unavailable: cold
       ? { title: 'The feedback is unavailable', titleKey: 'plugins.github.ui.feedbackUnavailable', failure: conversation.state.failure }
       : null,
@@ -3513,15 +4227,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
               />
             </Row>
           )
-          : (
-            <Text
-              variant="micro"
-              tone="neutral"
-              valueKey="plugins.github.ui.reviewUnresolved"
-              fallback={'GitHub\'s current reviews read did not report a review decision, so'
-                + ' nothing here says whether it is approved.'}
-            />
-          )}
+          : null}
         <ReviewPeople people={view.people} locale={locale} nowMs={nowMs} />
         {checksKnownIncomplete
           ? (
@@ -3540,7 +4246,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
         {failedConnections.length === 0 || connectionFailure === null
           ? null
           : (
-            <Banner
+            <Stack gap="small"><Banner
               tone="warning"
               title="Part of this feedback could not be read"
               titleKey="plugins.github.ui.feedbackPartial"
@@ -3553,11 +4259,11 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
                   { connections: failedConnections.join(', ') },
                 ), text,
               )}
-            />
+            /><GithubReadFailureDetails failures={failedReads.map(read => read.failure)} /></Stack>
           )}
       </Stack>
     ),
-    events: view.findings.map((finding) => feedbackFindingEvent(text, finding, context)),
+    events: view.findings.map((finding) => feedbackFindingEvent(text, finding, eventContext)),
     continuations: [
       ...(conversation.state.canLoadMore
         ? [{ key: 'comments', title: 'Load more comments', titleKey: 'plugins.github.ui.loadMoreComments', pending: conversation.state.pending, onLoadMore: conversation.loadMore, reads: 'earlier' as const }]
@@ -3572,6 +4278,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
         ? [{ key: 'requests', title: 'Load more review requests', titleKey: 'plugins.github.ui.loadMoreReviewRequests', pending: requests.state.pending, onLoadMore: requests.loadMore }]
         : []),
     ],
+    composer: <GithubCommentComposer context={eventContext.editContext} capabilities={context.capabilities} />,
     summary: conversation.state.kind !== 'ready' ? null : (
       <Stack gap="small">
         {conversation.state.omittedRowCount === 0 ? null : <Text
@@ -3651,7 +4358,7 @@ function FeedbackPanel(props: GithubFeedbackWriteContextV1): React.ReactElement 
  */
 function PullRequestActivityPanel(props: GithubFeedbackWriteContextV1): React.ReactElement {
   const feedback = useGithubFeedbackStream(props);
-  const timeline = useGithubTimelineStream(props.input);
+  const timeline = useGithubTimelineStream();
   return <GithubActivityPanelView streams={[feedback, timeline]} locale={props.locale} nowMs={props.nowMs} />;
 }
 
@@ -3659,9 +4366,11 @@ function IssueActivityPanel(props: Readonly<{
   input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
-  const comments = useGithubCommentsStream(props.input);
-  const timeline = useGithubTimelineStream(props.input);
+  const comments = useGithubCommentsStream(props.input, props.onObserved, props.capabilities);
+  const timeline = useGithubTimelineStream();
   return <GithubActivityPanelView streams={[comments, timeline]} locale={props.locale} nowMs={props.nowMs} />;
 }
 
@@ -3761,12 +4470,11 @@ function WorkSessionsPanel({
  * ② What changed: the shared summary over the changed-file pages the Files panel's
  * reader reads, with GitHub's own whole-change totals once the overview states them.
  */
-function GithubChangeStep({ input, overview }: Readonly<{
-  input: TriageDetailSurfaceInputV1;
+function GithubChangeStep({ overview }: Readonly<{
   overview: GithubOverviewValueV1 | null;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const files = useGithubChangedFiles(input);
+  const files = useGithubChangedFiles();
   const rows = React.useMemo(() => files.state.rows.map((row) => ({
     path: row.path, lines: { additions: row.additions, deletions: row.deletions },
   })), [files.state.rows]);
@@ -3826,9 +4534,21 @@ function firstGithubOutputLine(output: string): string | undefined {
  * so the step carries what was read so far: the failing count `checks.ts` observed and the
  * in-flight checks among the rows, marked incomplete.
  */
-function GithubChecksStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
-  const checks = useGithubChecks(input);
-  if (checks.state.kind !== 'ready') return null;
+function GithubChecksStep(): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const checks = useGithubChecks();
+  if (checks.state.kind !== 'ready') return (
+    <Step title="Checks" titleKey="plugins.github.ui.story.checks"
+      marker={{ kind: 'state', state: 'open', label: 'Checks' }}>
+      {checks.state.kind === 'unavailable' && checks.overviewFailure === true
+        // The story's own read failed; its failure and Re-read are already shown above.
+        ? <Status tone="muted" label={text('plugins.github.ui.checksUnavailable', 'The checks are unavailable')} />
+        : checks.state.kind === 'unavailable'
+        ? <GithubReadFailure title="The checks are unavailable" titleKey="plugins.github.ui.checksUnavailable"
+          failures={[checks.state.failure]} refresh={checks.refresh} />
+        : <Status tone="muted" pulsing label={text('plugins.github.ui.readingChecks', 'Reading the checks from GitHub')} />}
+    </Step>
+  );
   const view = checks.state.value;
   const failed = view.rows.filter((row) => readGithubCheckOutcomeV1(row) === 'failed');
   const rollup = githubChecksRollupV1(view);
@@ -3849,10 +4569,13 @@ function GithubChecksStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV
  */
 function GithubStoryFacts({ overview }: Readonly<{ overview: GithubOverviewValueV1 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  const labels = overview.labels ?? [];
+  // An issue is a task in Triage: its Assignees and Labels are the task's own property rows above the story, so the
+  // story does not say them a second time.
+  const issue = overview.kindId === 'issue';
+  const labels = issue ? [] : overview.labels ?? [];
   const reviewers = overview.kindId === 'pull-request' ? overview.requestedReviewers ?? [] : [];
   const parts = [
-    ...(overview.assignees === undefined || overview.assignees.length === 0 ? []
+    ...(issue || overview.assignees === undefined || overview.assignees.length === 0 ? []
       : [text('plugins.github.ui.story.assignees', 'Assigned to {names}', { names: overview.assignees.join(', ') })]),
     ...(reviewers.length === 0 ? [] : [`${text('plugins.github.ui.reviewRequestedFrom', 'Review requested from')} ${reviewers
       .map((reviewer) => reviewer.kind === 'team' ? `${reviewer.subject} (team)` : reviewer.subject).join(', ')}`]),
@@ -3881,12 +4604,14 @@ function GithubStoryOverview({
   locale,
   nowMs,
   overview,
+  refresh,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
   locale: string;
   nowMs: number;
   overview: GithubOverviewControllerV1;
+  refresh: () => Promise<void>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const exact = overview.value;
@@ -3897,26 +4622,31 @@ function GithubStoryOverview({
   const byline = [exact?.author, opened].filter((part): part is string => typeof part === 'string' && part.length > 0);
   return (
     <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
-        changes={kindId === 'pull-request' ? <GithubChangeStep input={input} overview={exact} /> : null}
-        checks={kindId === 'pull-request' ? <GithubChecksStep input={input} /> : null}
+        // Nothing to show yet (no last read, no list summary) while the first read settles: hold ①'s place.
+        loading={exact === null && overview.failure === null && (ask === undefined || ask === null || ask.length === 0)}
+        changes={kindId === 'pull-request' ? <GithubChangeStep overview={exact} /> : null}
+        checks={kindId === 'pull-request' ? <GithubChecksStep /> : null}
         trailing={byline.length === 0 ? undefined : <Text variant="micro" tone="secondary" value={byline.join(' · ')} />}
         notice={overview.failure === null ? undefined : (
           // One line above the ask, beside its Re-read: the description it previews (the last read, or the
           // list's own summary) stays readable instead of sitting under a whole-panel error.
-          <Status
-            tone="warning"
-            label={exact === null
-              ? text('plugins.github.ui.overview.unavailable', 'The current overview is unavailable')
-              : text('plugins.github.ui.overview.retained', 'Showing the last overview read')}
-            value={failureDescription(overview.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
-            action={(
-              <RefreshRow
-                onRefresh={overview.refresh}
-                pending={overview.refreshing}
-                accessibilityLabel={text('plugins.github.ui.overview.reread', 'Re-read this overview from GitHub')}
-              />
-            )}
-          />
+          <Stack gap="small">
+            <Status
+              tone="warning"
+              label={exact === null
+                ? text('plugins.github.ui.overview.unavailable', 'The current overview is unavailable')
+                : text('plugins.github.ui.overview.retained', 'Showing the last overview read')}
+              value={failureDescription(overview.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
+              action={(
+                <RefreshRow
+                  onRefresh={refresh}
+                  pending={overview.refreshing}
+                  accessibilityLabel={text('plugins.github.ui.overview.reread', 'Re-read this overview from GitHub')}
+                />
+              )}
+            />
+            <GithubReadFailureDetails failures={[overview.failure]} />
+          </Stack>
         )}
       >
         {ask === undefined || ask === null || ask.length === 0
@@ -3999,9 +4729,13 @@ function GithubDetailBody({
   // The header is outside the body tabs. Its facts and confirmed writer belong
   // to this mounted detail, even while a sibling tab hides the source body.
   const activity = publishesPrimaryWrite ? detailActivity : tabActivity;
-  const capabilities = useGithubCapabilities(input, activity);
-  const overview = useGithubOverview(input, { readWhenActive: input.panel === 'overview' || publishesPrimaryWrite, activity });
-  const primaryWrite = useGithubPrimaryWrite(input, overview, capabilities, onObserved, activity);
+  const readWhenActive = input.panel === 'overview' || publishesPrimaryWrite;
+  // A shown checks consumer reads the checks this Overview read states.
+  const checksDemanded = useGithubChecksDemanded();
+  const overview = useGithubOverview(input, { readWhenActive: readWhenActive || checksDemanded, activity });
+  const capabilities = useGithubCapabilities(input, activity, kindId === 'pull-request' && readWhenActive ? overview : undefined);
+  const primaryController = useGithubPrimaryWrite(input, overview, onObserved, activity);
+  const primaryWrite = primaryController.value;
   const publishPrimaryWrite = primaryHost?.offer;
   React.useLayoutEffect(() => {
     if (publishPrimaryWrite === undefined || !publishesPrimaryWrite) return undefined;
@@ -4023,6 +4757,7 @@ function GithubDetailBody({
   const tab = githubResolveSelectedTab(selected, visible);
 
   const panels: Readonly<Record<GithubDetailTabIdV1, React.ReactNode>> = {
+    locations: null,
     overview: (
       <OverviewPanel
         body={body}
@@ -4036,9 +4771,9 @@ function GithubDetailBody({
         capabilities={capabilities}
       />
     ),
-    timeline: <TimelinePanel input={input} locale={locale} nowMs={nowMs} />,
+    timeline: <TimelinePanel locale={locale} nowMs={nowMs} />,
     files: <FilesPanel input={input} locale={locale} />,
-    checks: <ChecksPanel input={input} locale={locale} nowMs={nowMs} />,
+    checks: <ChecksPanel locale={locale} nowMs={nowMs} signal={detailActivity.activeSignal} />,
     feedback: (
       <FeedbackPanel
         input={input}
@@ -4049,23 +4784,28 @@ function GithubDetailBody({
         capabilities={capabilities}
       />
     ),
-    comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,
+    comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} onObserved={onObserved} capabilities={capabilities} />,
     'work-sessions': <WorkSessionsPanel sessions={body.linkedSessions} />,
   };
 
   // The Triage detail asked for exactly one panel (r0.42): its frame draws the
   // tab strip, and this body renders that panel inside its own active interval.
+  // Every checks consumer in this body reads the Overview's own rollup answer.
+  const withChecks = (node: React.ReactElement) => (
+    <GithubDetailChecksFromOverview overview={overview}>{node}</GithubDetailChecksFromOverview>
+  );
   if (input.panel !== undefined) {
-    return (
+    return withChecks(
       <Screen safeArea>
         <TriageDetailPanel
+          scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           ariaLabel={text('plugins.github.ui.detailTabs', 'GitHub entry detail')}
           retention={Object.fromEntries(visible
             .filter((declaration) => ['overview', 'timeline', 'files', 'checks'].includes(declaration.id))
             .map((declaration) => [declaration.id === 'timeline' ? 'activity' : declaration.id, declaration.retention]))}
           panels={{
-            overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} overview={overview} />,
+            overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} overview={overview} refresh={primaryController.refresh} />,
             activity: kindId === 'pull-request'
               ? (
                 <PullRequestActivityPanel
@@ -4077,7 +4817,7 @@ function GithubDetailBody({
                   capabilities={capabilities}
                 />
               )
-              : <IssueActivityPanel input={input} locale={locale} nowMs={nowMs} />,
+              : <IssueActivityPanel input={input} locale={locale} nowMs={nowMs} onObserved={onObserved} capabilities={capabilities} />,
             ...(kindId === 'pull-request' ? { files: panels.files, checks: panels.checks } : {}),
             actions: (
               <GithubActionsPanel
@@ -4088,17 +4828,20 @@ function GithubDetailBody({
                 publicationProposals={publicationProposals}
                 capabilities={capabilities}
                 overview={overview}
+                primaryWrite={primaryWrite}
               />
             ),
           }}
         />
-      </Screen>
+      </Screen>,
     );
   }
 
-  return (
+  return withChecks(
     <Screen safeArea>
       <Tabs
+        presentation="page"
+        pageKind={{ pluginId: GITHUB_PLUGIN_ID, localId: `${GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1}/${kindId}` }}
         value={tab}
         onValueChange={(next) => {
           // The visible declarations are the only tab identities this body renders, so a value
@@ -4115,6 +4858,7 @@ function GithubDetailBody({
             // `Tabs.Item` takes a plain string, so the declaration carries both
             // halves and the title is resolved here rather than read.
             title={text(declaration.titleKey, declaration.title)}
+            glyph={declaration.glyph}
             // Stated, never inherited: the shared primitive would otherwise discard a panel
             // this source means to keep, or keep one it means to discard.
             retention={declaration.retention}
@@ -4126,11 +4870,17 @@ function GithubDetailBody({
           </Tabs.Item>
         ))}
       </Tabs>
-    </Screen>
+    </Screen>,
   );
 }
 
-function GithubDetailSurface(context: RenderContext): React.ReactElement {
+/** The source's own Markdown projection and settled-write presenter, lent to the alert composition. */
+const GITHUB_SECURITY_ALERT_RENDERERS: GithubSecurityAlertRenderersV1 = Object.freeze({
+  renderMarkdown: (body: string) => <GithubOverviewMarkdown body={body} />,
+  renderOutcome: (outcome: GithubMutationOutcomeV1) => <WriteOutcome outcome={outcome} />,
+});
+
+function GithubDetailSurface(context: RenderContext): React.ReactElement | null {
   const detailActivity = React.useMemo(() => ({
     active: context.activity?.active !== false,
     activeSignal: context.signal,
@@ -4159,7 +4909,17 @@ function GithubDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <TriageDetailInstance><GithubDetailBody input={admitted.input} kindId={admitted.kindId} detailActivity={detailActivity} /></TriageDetailInstance>;
+  // An alert never enters the issue/PR readers: its own composition reads it through the selected-alert controller.
+  if (admitted.kindId !== 'pull-request' && admitted.kindId !== 'issue') {
+    return <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}><GithubSecurityAlertBody input={admitted.input} renderers={GITHUB_SECURITY_ALERT_RENDERERS} detailActivity={detailActivity} /></TriageDetailInstance>;
+  }
+  return (
+    <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}>
+      <GithubDetailResourcesProvider input={admitted.input} activity={detailActivity}>
+        <GithubDetailBody input={admitted.input} kindId={admitted.kindId} detailActivity={detailActivity} />
+      </GithubDetailResourcesProvider>
+    </TriageDetailInstance>
+  );
 }
 
 /**

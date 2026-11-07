@@ -1,14 +1,11 @@
 import {
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
   type TriageConfiguredSourceConnectedAccountInstanceV1,
   type TriageScanContinuationV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { readBitbucketApiUrl } from './apiUrl.js';
-import {
-  buildBitbucketContinuationBindingScope,
-  decodeBitbucketContinuationPayload,
-  encodeBitbucketContinuationPayload,
-} from './continuationIntegrity.js';
 import { readBitbucketBracedUuid } from './identity.js';
 import { resolveBitbucketPageGeometry } from './pagination.js';
 import {
@@ -20,16 +17,16 @@ import {
  * The strict versioned codec for this source's own scan continuation bytes.
  *
  * The token is source-private and mount-scoped: the target copies it back without parsing it or
- * granting it authority. Its process-local signature binds it to one configured source/account
- * route. Process death or mount loss discards it and the next attempt starts again at
- * `page: 'initial'`; it is never persisted, handed to another machine/account/configured instance,
+ * granting it authority. Its plain scope field identifies the configured source/account route;
+ * invocation admission still chooses credentials. Mount loss discards it and the next attempt
+ * starts at `page: 'initial'`; it is never persisted, handed to another machine/account/configured instance,
  * or promoted into a checkpoint, watermark, epoch, lease, or scheduled resume point.
  *
- * What it carries is the walk frontier and nothing else: fixed page geometry, the
+ * It carries the scope and walk frontier: fixed page geometry, the
  * rotation position, the walk's sticky health, the workspace-wide `authored` lane, the repository
  * enumeration cursor, and the lanes of the one repository currently being walked. It carries no
- * credential, no account ref, no viewer identity, no origin, no delivered-id history, no
- * accumulated row array, and no target timestamp.
+ * credential, no viewer identity, no delivered-id history, no accumulated row array, and no
+ * target timestamp.
  *
  * The bounded JSON envelope is the protocol's; the frontier record inside it and every
  * field check on the way back in stay here.
@@ -43,7 +40,13 @@ export function buildBitbucketScanContinuationScope(
 ): string {
   return JSON.stringify([
     'bitbucket-scan-v1',
-    buildBitbucketContinuationBindingScope(instance),
+    instance.instance.source.pluginId,
+    instance.instance.source.localId,
+    instance.instance.sourceInstanceId,
+    instance.binding.purpose,
+    instance.binding.account.service.pluginId,
+    instance.binding.account.service.localId,
+    instance.binding.account.accountId,
     workspaceUuid,
   ]);
 }
@@ -109,6 +112,7 @@ export type BitbucketRepositoryLaneFrontierRecord = BitbucketLaneFrontierRecord 
  * | Key | Meaning |
  * |---|---|
  * | `v` | codec version |
+ * | `s` | configured source/account/workspace scope equality |
  * | `l` | this walk's `scanLimit` |
  * | `n` | this walk's fixed `nativePageSize` |
  * | `i` | rotation position within the open lanes |
@@ -149,8 +153,9 @@ export function encodeBitbucketScanContinuation(
   frontier: BitbucketScanFrontierRecord,
   scope: string,
 ): TriageScanContinuationV1 | null {
-  const token = encodeBitbucketContinuationPayload({
+  const token = encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
+    s: scope,
     l: frontier.scanLimit,
     n: frontier.nativePageSize,
     i: frontier.nextLaneIndex,
@@ -167,12 +172,12 @@ export function encodeBitbucketScanContinuation(
           [REPOSITORY_LANE_CODE, lane.nextUrl, lane.ended, lane.cycleProbe]
         )),
       ],
-  }, scope);
+  });
   return token === null ? null : { v: 1, token };
 }
 
 /**
- * Decodes a continuation this source produced in this process.
+ * Decodes a versioned frontier for this configured source route.
  *
  * Anything else — another version, an unknown lane code, an unrecognized health reason, a geometry
  * that disagrees with itself, a rotation position outside the open lane set, or a URL that is not a
@@ -185,8 +190,8 @@ export function decodeBitbucketScanContinuation(
   continuation: TriageScanContinuationV1,
   scope: string,
 ): BitbucketScanFrontierRecord | null {
-  const record = decodeBitbucketContinuationPayload(continuation.token, scope);
-  if (record === null || record.v !== CONTINUATION_VERSION) return null;
+  const record = decodeTriagePagingTokenV1(continuation.token);
+  if (record === null || record.v !== CONTINUATION_VERSION || record.s !== scope) return null;
 
   const scanLimit = readCount(record.l, 1);
   const nativePageSize = readCount(record.n, 1);

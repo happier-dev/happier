@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
+import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
+import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -11,6 +14,8 @@ import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from '../../triage/source/detailContracts.js';
 
 import { renderSurface } from '../renderSurface.js';
+import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
+import { createTriageEphemeralSharedScopeFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 
 /**
  * Which planes the Bitbucket pull-request detail body mounts, proven by mounting it.
@@ -28,24 +33,35 @@ import { renderSurface } from '../renderSurface.js';
 const FIXTURE = createTriageSourceV1Fixture();
 const mounted: PluginUiTestkit[] = [];
 
+/** The parent page supplies its public refresh generation; the source has no second refresh control. */
+function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+    <Button title="Refresh page" onPress={() => setRefreshGeneration(value => value + 1)} />
+    {children}
+  </TriageActivityAgentProvider>;
+}
+
 async function mountDetail(
   launchInput: JsonValue,
   results: Readonly<Record<string, JsonValue>> = {},
   /** A scripted answer per invocation, for cases whose contract is a sequence of reads. */
   scripted?: (localId: string, signal: AbortSignal) => JsonValue | undefined | Promise<JsonValue>,
 ): Promise<PluginUiTestkit> {
+  const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-162', mountNonce: 'fixture-mount-162' },
       authorPlugin: { id: BITBUCKET_PLUGIN_ID, version: '0.0.0' },
-      surface: renderSurface,
+      surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
-        executeAction: async ({ action, signal }) => {
-          const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
+        executeAction: async ({ action, input, signal }) => {
+          const localId = typeof action === 'string' ? action : action.localId;
+          if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
           return scripted?.(localId, signal) ?? results[localId] ?? ({
             kind: 'unavailable',
             failure: { class: 'transient', code: 'unset' },
@@ -192,6 +208,15 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     await expect(detail.getByText('src/provider.ts')).resolves.toBeDefined();
     await expect(detail.getByText('diff --git a/src/provider.ts b/src/provider.ts'))
       .resolves.toBeDefined();
+    // The count is the section's own fact; the page's one refresh re-reads this panel, so it draws no refresh.
+    await expect(detail.getByText('Changed files · 1')).resolves.toBeDefined();
+    await expect(detail.queryByText('1 changed file(s) read.')).resolves.toBeUndefined();
+    await expect(detail.queryByRole('button', { name: 'Re-read this diff from Bitbucket' })).resolves.toBeUndefined();
+    // One scroller (QB-55/81): the changed files lead and scroll inside the diff's own list (lab c7 Files order).
+    const diff = document.querySelector('[data-testid="bitbucket-pull-request-diff"]');
+    expect(diff?.textContent).toContain('Changed files');
+    const text = diff?.textContent ?? '';
+    expect(text.indexOf('src/provider.ts')).toBeLessThan(text.indexOf('diff --git'));
   });
 
   it('keeps the native Overview description through a failed refresh and retained revisit', async () => {
@@ -318,7 +343,7 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     // An explicit refresh is a warm replacement: a refresh that fails must not leave the reader
     // with an empty panel where the last-known-good walk was.
     await detail.press(await detail.getByRole('button', {
-      name: 'Re-read this activity from Bitbucket',
+      name: 'Refresh page',
     }));
     expect(activityReads).toBe(4);
     await expect(detail.getByText('Reviewer One')).resolves.toBeDefined();

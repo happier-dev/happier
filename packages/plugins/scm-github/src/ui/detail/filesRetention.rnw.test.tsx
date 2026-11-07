@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -13,6 +15,8 @@ import {
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
 
 import { renderSurface } from '../renderSurface.js';
+import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
+import { createTriageEphemeralSharedScopeFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -139,18 +143,20 @@ function openRefreshedFirstPageGate(): () => void {
 }
 
 async function mountDetail(): Promise<PluginUiTestkit> {
+  const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-200', mountNonce: 'fixture-mount-200' },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: renderSurface,
+      surface: defineUiSurface(context => <SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture>),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: launchInput(),
       handlers: {
-        executeAction: async ({ action, input }) => {
-          const localId = (action as { localId: string }).localId;
+        executeAction: async ({ action, input, signal }) => {
+          const localId = typeof action === 'string' ? action : action.localId;
+          if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
           dispatched.push(localId);
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles) {
             const continuation = (input as { continuation?: string }).continuation;
@@ -404,18 +410,20 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
       .resolves.toEqual({ content: '3 changed file(s) read.' });
   });
 
-  it('still restarts a panel that declares discard', async () => {
+  it('redraws a discarded panel from the detail-owned walk without re-reading it', async () => {
     const detail = await mountDetail();
     await openTab(detail, 'Timeline');
     // Settled with a row in hand: the leave must discard something for the two
     // lifetimes to be told apart at all.
-    await expect(detail.getByText('1 event(s) read.'))
-      .resolves.toEqual({ content: '1 event(s) read.' });
+    expect(listedText()).toContain('needs-review');
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline)).toBe(1);
 
     await openTab(detail, 'Checks');
     await openTab(detail, 'Timeline');
 
-    expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline)).toBe(2);
+    // The panel was unmounted and drawn again; the timeline it shows is the
+    // detail's one answer, so GitHub is not asked a second time.
+    expect(listedText()).toContain('needs-review');
+    expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline)).toBe(1);
   });
 });

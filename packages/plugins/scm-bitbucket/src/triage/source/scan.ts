@@ -118,8 +118,8 @@ function readScanStart(
     };
   }
 
-  // A continuation this source did not mint in this process — another version, an unrecognized
-  // health reason, a URL that is not a Bitbucket API URL — is refused rather than guessed at, so
+  // An unsupported version, mismatched scope, unrecognized health reason, or URL outside the
+  // Bitbucket API is refused rather than guessed at, so
   // the next attempt restarts at `page: 'initial'`.
   const decoded = decodeBitbucketScanContinuation(input.page.continuation, continuationScope);
   if (decoded === null) {

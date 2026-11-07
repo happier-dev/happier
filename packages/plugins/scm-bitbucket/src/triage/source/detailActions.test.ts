@@ -326,13 +326,29 @@ describe('Bitbucket comments plane', () => {
   });
 });
 
-describe('Bitbucket detail continuation custody', () => {
-  it('refuses a forged same-origin continuation for another pull request and page geometry', async () => {
+describe('Bitbucket detail continuation admission', () => {
+  it('reads an unsigned versioned position through the admitted comments route', async () => {
+    const nextUrl = `${PULL_REQUEST_URL}/comments?page=2&pagelen=30`;
+    const seam = harness((url) => url === nextUrl
+      ? envelope([{ id: 2, content: { raw: 'continued page' } }])
+      : undefined);
+    // SIMPLIFY-CHALLENGE-1106 #7: the invocation owns credentials; paging is plain data.
+    const settled = BitbucketCommentsResultV1Schema.parse(await listBitbucketComments(
+      planeInput({ continuation: JSON.stringify({ v: 1, nextUrl }) }), seam.context,
+    ));
+    expect(settled.kind).toBe('comments');
+    if (settled.kind !== 'comments') throw new Error('expected the continued comments page');
+    expect(settled.rows.map((comment) => comment.body)).toEqual(['continued page']);
+    expect(seam.requests.map(({ url }) => url)).toEqual([PULL_REQUEST_URL, nextUrl]);
+  });
+
+  it.each([
+    { v: 1, nextUrl: `${PULL_REQUEST_URL.replace('/42', '/99')}/comments?page=7&pagelen=30` },
+    { v: 1, nextUrl: `${PULL_REQUEST_URL}/comments?page=7&pagelen=10` },
+    { v: 2, nextUrl: `${PULL_REQUEST_URL}/comments?page=7&pagelen=30` },
+  ])('refuses an unsupported route, page geometry, or version: %j', async (payload) => {
     const seam = harness(() => undefined);
-    const forged = JSON.stringify({
-      v: 1,
-      nextUrl: 'https://api.bitbucket.org/2.0/repositories/other/repository/pullrequests/99/comments?page=7&pagelen=10',
-    });
+    const forged = JSON.stringify(payload);
     const settled = BitbucketCommentsResultV1Schema.parse(
       await listBitbucketComments(planeInput({ continuation: forged }), seam.context),
     );
@@ -359,7 +375,7 @@ describe('Bitbucket detail continuation custody', () => {
     expect(seam.requests).toHaveLength(0);
   });
 
-  it('refuses a continuation this source did not mint', async () => {
+  it('refuses a malformed continuation', async () => {
     const seam = harness(() => undefined);
     const settled = BitbucketActivityResultV1Schema.parse(
       await listBitbucketActivity(planeInput({ continuation: 'not-a-token' }), seam.context),
@@ -625,7 +641,7 @@ describe('Bitbucket detail entity proof', () => {
     expect(replaced.requests.map((request) => request.url)).toEqual([PULL_REQUEST_URL]);
   });
 
-  it('spends no provider request proving an entity for a continuation it did not mint', async () => {
+  it('spends no provider request proving an entity for a malformed continuation', async () => {
     const seam = harness(() => undefined);
     const settled = BitbucketCommentsResultV1Schema.parse(
       await listBitbucketComments(planeInput({ continuation: 'not-a-token' }), seam.context),

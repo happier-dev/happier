@@ -12,6 +12,18 @@ Import detail helpers such as `useTriageDetailRequest` from
 `@happier-dev/triage-sources/ui` and runtime helpers from
 `@happier-dev/triage-sources/runtime`.
 
+In unreleased 0.3 source panels, bind `useTriageSourcePanelIntentV1` with
+`{ kind: 'loadMoreSourceItems', list: 'files' }` or
+`{ kind: 'setSourceItemExpanded', list: 'files' }`. The source declares its own
+list keys and publishes available operations in the binding's `commands`.
+Expansion operations also carry `itemId` and `expanded`; paging operations
+carry `list`. Call the returned intent from the visible control as well, so
+UI presses and the public `happier.triage/actions/ui/mounted-v1` Action reach
+the same mounted controller. The Action input is `{ mountId, operation }`.
+An inactive panel, unknown list/item or exhausted page returns `unavailable`.
+These mounted operations require an answering client and do not acquire a
+second source reader or persist presentation state.
+
 Bind `createTriageSourceSettingsSurface` to the source's discovery Action, Connected
 Account service and `connectedAccountPurpose` (the discovery Action's HostAccess
 request id). Its Connect/Manage link opens Happier's existing purpose setup for
@@ -38,6 +50,34 @@ provider bodies. The existing composer renders this untrusted evidence through
 the shared forge-content block; source UI requests Fix through
 `requestTriageSessionHandoffV1` rather than framing evidence or starting Sessions
 itself.
+
+In current 0.3 development source, Sentry and PostHog reuse the finite issue
+transition adapter from `/runtime` and the daemon-only checkpointed observer
+from the Plugin SDK `/background-services` entry. Their existing native scan
+owners retain credential admission, pagination and rate-limit evidence. The
+person selects the check period in Event source setup; the stated default is
+300 seconds (five minutes), and provider retry deadlines can delay a check.
+The SDK owns the single observer lifetime and stops work without a current,
+assigned consumer. The adapter advances effective per-issue checkpoints through
+the declared Account Collection CAS only after safe Event admission and the notice commit.
+Each source plugin declares `TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1` in
+`accountCollections`. The adapter selects the current scan's opaque issue ids
+in Collection pages and batches changed rows within the host's row and byte
+limits. A settled unchanged scan writes nothing. The growing checkpoint set
+does not consume Account KV's bounded logical-key map.
+Before admission, the issue's private checkpoint retains the transition's immutable
+first-observation time. Equal retries and reloads reuse it without another write;
+native last-seen time remains evidence, never the Event's occurrence clock.
+
+Native last-seen time is bounded evidence, not a status modification watermark.
+The same native time can still produce a resolved/reopened transition. Missing
+rows or incomplete scans never imply resolution; an initially resolved issue
+establishes a quiet baseline. Notices reuse one item per configured source and
+issue. Inbox is the default; automatic investigation requires an explicitly
+selected configured Triage investigate Action and actual Event admission (or a
+rejoin of that admission). Safely filtered or age-skipped Events may update the
+notice but never start an investigation. Retained Inbox investigation
+navigation remains an integration requirement, not a shipped claim.
 
 ## Evolving the ABI
 

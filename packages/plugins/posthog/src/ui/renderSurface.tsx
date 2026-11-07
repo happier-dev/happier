@@ -23,7 +23,7 @@
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { TriageActivityTimeline, TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageEvidenceDisclosure, useTriageSourcePanelIntentV1, triageEvidenceDisclosureActionResultV1, type TriageActivityEventV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
-import { TriageDetailSpread, useTriageDetailPanelOpener, type TriageDetailSpreadTileV1, type TriageDetailTrendV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailSpread, TriageSourceWrites, useTriageDetailPanelOpener, useTriageDetailRequest, type TriageDetailSpreadTileV1, type TriageDetailTrendV1, type TriageSourceWriteV1 } from '@happier-dev/triage-sources/ui';
 import {
     Badge,
     Banner,
@@ -70,6 +70,7 @@ import {
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { PosthogNativeOverviewResultV1Schema } from '../source/detail/nativeOverviewContract.js';
+import { PosthogIssueWriteInputV1Schema } from '../source/writeContracts.js';
 import { createPosthogEvidenceCandidate } from '../composer/candidate.js';
 import {
     projectPosthogDetailSurface,
@@ -353,6 +354,7 @@ function OverviewPanel({
     nowMs,
     onOpenStackTrace,
     story = false,
+    writes = null,
 }: Readonly<{
     model: PosthogDetailSurfaceModelV1;
     controller: PosthogOccurrenceControllerV1;
@@ -361,6 +363,8 @@ function OverviewPanel({
     /** Absent when no tab or frame panel offers the stack trace. */
     onOpenStackTrace: (() => void) | undefined;
     story?: boolean;
+    /** The person's native issue writes, beside the status they change. */
+    writes?: React.ReactNode;
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const projected = useActiveDerivation(() => {
@@ -445,6 +449,7 @@ function OverviewPanel({
                             ))}
                         </Row>
                     )}
+                {writes}
                 {story ? null : spread}
                 {/* In the story the facts and the counts' caveats are reference, not the account of what happened:
                     one Facts line holds them, so the chapter's preview never cuts a fact in half. */}
@@ -590,9 +595,9 @@ function SampleFooter({
     const text = usePluginTranslation();
     const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() =>
         controller.state.canLoadMore && !controller.state.pending ? [{ title: text('plugins.posthog.ui.loadMoreSamples', 'Load more sampled occurrences'),
-            operation: { kind: 'loadMoreSourceOccurrences' } }] : [], [controller.state.canLoadMore, controller.state.pending, text]);
-    const loadMore = useTriageSourcePanelIntentV1('loadMoreSourceOccurrences', async (operation, signal) => {
-        if (operation.kind !== 'loadMoreSourceOccurrences' || signal.aborted || !controller.state.canLoadMore || controller.state.pending) return { status: 'unavailable' };
+            operation: { kind: 'loadMoreSourceItems', list: 'occurrences' } }] : [], [controller.state.canLoadMore, controller.state.pending, text]);
+    const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'occurrences' }, async (operation, signal) => {
+        if (operation.kind !== 'loadMoreSourceItems' || signal.aborted || !controller.state.canLoadMore || controller.state.pending) return { status: 'unavailable' };
         controller.loadMore();
         return { status: 'applied' };
     }, commands);
@@ -632,7 +637,7 @@ function SampleFooter({
                         titleKey="plugins.posthog.ui.loadMoreSamples"
                         variant="secondary"
                         busy={controller.state.pending}
-                        onPress={() => { void loadMore({ kind: 'loadMoreSourceOccurrences' }); }}
+                        onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'occurrences' }); }}
                     />
                 )
                 : null}
@@ -1012,49 +1017,23 @@ function posthogActivityEvent(row: PosthogProjectedActivityRecord): TriageActivi
 
 function ActivityFooter({
     controller,
-}: Readonly<{ controller: PosthogActivityControllerV1 }>): React.ReactElement {
+}: Readonly<{ controller: PosthogActivityControllerV1 }>): React.ReactElement | null {
+    const text = usePluginTranslation();
     const { state } = controller;
     const covered = state.rows.length;
+    // Healthy is quiet: a history read whole needs no count under it. Otherwise one calm line says what is shown.
+    const partial = state.totalCount !== null && covered < state.totalCount;
+    if (!partial && state.omittedRowCount === 0 && state.incomplete === null) return null;
     return (
-        <Stack gap="small">
-            <Text
-                variant="micro"
-                tone="neutral"
-                valueKey={state.totalCount === null
-                    ? 'plugins.posthog.ui.activityRecordsRead'
-                    : 'plugins.posthog.ui.activityRecordsReadOfTotal'}
-                fallback={state.totalCount === null
-                    ? '{covered} activity record(s) read.'
-                    : '{covered} of {total} activity record(s) read.'}
-                values={{ covered, total: state.totalCount ?? covered }}
-            />
-            {state.omittedRowCount === 0
-                ? null
-                : (
-                    <Text
-                        variant="micro"
-                        tone="neutral"
-                        valueKey="plugins.posthog.ui.recordsUnreadable"
-                        fallback="{count} record(s) on the pages read could not be understood."
-                        values={{ count: state.omittedRowCount }}
-                    />
-                )}
-            {/*
-                A walk that stopped short has exactly the shape of an exhausted one —
-                no continuation, so no Load more — and the opposite meaning. Without
-                this line the count above reads as the whole of what PostHog recorded.
-            */}
-            {state.incomplete === null
-                ? null
-                : (
-                    <Text
-                        variant="micro"
-                        tone="warning"
-                        valueKey="plugins.posthog.ui.activityStoppedShort"
-                        fallback="PostHog recorded more activity than this list could read, so it stops here."
-                    />
-                )}
-        </Stack>
+        <Text variant="micro" tone="neutral" value={[
+            partial ? text('plugins.posthog.ui.activity.showing', 'Showing {covered} of {total} events.',
+                { covered, total: state.totalCount ?? covered }) : null,
+            state.omittedRowCount === 0 ? null
+                : text('plugins.posthog.ui.activity.unshown', '{count} couldn’t be shown.', { count: state.omittedRowCount }),
+            // A walk that stopped short has the shape of an exhausted one (no Load more) and the opposite meaning.
+            state.incomplete === null ? null
+                : text('plugins.posthog.ui.activity.older', 'PostHog keeps older events this list doesn’t reach.'),
+        ].filter((line): line is string => line !== null).join(' ')} />
     );
 }
 
@@ -1172,6 +1151,42 @@ function ActivityTab({
     return <ActivityPanel controller={controller} locale={locale} nowMs={nowMs} />;
 }
 
+/**
+ * The person's native issue writes: the source's own Actions as host controls, offered only where
+ * they would change the issue. Suppress keeps its own warning in the host confirmation. Assign
+ * needs a PostHog user or role id and this source reads no assignable members yet, so it stays an
+ * Agent/MCP/CLI write until that read exists rather than becoming a raw id field.
+ */
+function PosthogIssueWrites({ input, presentation }: Readonly<{
+    input: TriageDetailSurfaceInputV1;
+    /** The live state when the live read disagrees with the observation, else the observation's. */
+    presentation: TriageDetailSurfaceInputV1['observation']['snapshot']['state']['presentation'];
+}>): React.ReactElement | null {
+    const request = useTriageDetailRequest(input);
+    const writes = React.useMemo((): readonly TriageSourceWriteV1[] => {
+        const target = PosthogIssueWriteInputV1Schema.safeParse({ v: 1, ...request });
+        const writeInput = target.success ? target.data : null;
+        const write = (id: 'resolve' | 'suppress' | 'unsuppress', copy: Pick<TriageSourceWriteV1,
+            'title' | 'titleKey' | 'appliedTitle' | 'appliedTitleKey'>): TriageSourceWriteV1 => ({
+            id, action: { pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS[id] }, input: writeInput,
+            variant: 'secondary', ...copy,
+        });
+        const resolve = write('resolve', { title: 'Resolve', titleKey: 'plugins.posthog.ui.write.resolve',
+            appliedTitle: 'Resolved in PostHog', appliedTitleKey: 'plugins.posthog.ui.write.resolved' });
+        const suppress = write('suppress', { title: 'Suppress', titleKey: 'plugins.posthog.ui.write.suppress',
+            appliedTitle: 'Suppressed in PostHog', appliedTitleKey: 'plugins.posthog.ui.write.suppressed' });
+        const unsuppress = write('unsuppress', { title: 'Unsuppress', titleKey: 'plugins.posthog.ui.write.unsuppress',
+            appliedTitle: 'Active again in PostHog', appliedTitleKey: 'plugins.posthog.ui.write.unsuppressed' });
+        return presentation === 'active' ? [resolve, suppress]
+            : presentation === 'resolved' ? [suppress]
+                : presentation === 'suppressed' ? [unsuppress] : [];
+    }, [presentation, request]);
+    if (writes.length === 0) return null;
+    const webUrl = input.observation.locator.webUrl;
+    return <TriageSourceWrites key={`${input.observation.observedAtMs}:${presentation}`} writes={writes} sourceName="PostHog"
+        {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} />;
+}
+
 function PosthogDetailBody({
     input,
     signal,
@@ -1190,6 +1205,8 @@ function PosthogDetailBody({
         [input, live],
     );
 
+    const writes = <PosthogIssueWrites input={input}
+        presentation={model.nativeStateNow?.presentation ?? input.observation.snapshot.state.presentation} />;
     const panels: Readonly<Record<PosthogDetailTabIdV1, React.ReactNode>> = {
         overview: (
             <OverviewPanel
@@ -1198,6 +1215,8 @@ function PosthogDetailBody({
                 locale={locale}
                 nowMs={nowMs}
                 story={input.panel !== undefined}
+                // In a Triage panel the writes are the frame's `actions` panel, beside the header's own actions.
+                writes={input.panel !== undefined ? null : writes}
                 // In a Triage panel Stack trace is the frame's own panel (r0.42), so the frame selects it.
                 onOpenStackTrace={input.panel !== undefined ? openFrameStackTrace : () => { setTab('stack-trace'); }}
             />
@@ -1220,12 +1239,13 @@ function PosthogDetailBody({
         return (
             <Screen safeArea>
                 <TriageDetailPanel
+                    scrollOwner={input.panelScrollOwner}
                     panel={input.panel}
                     retention={Object.fromEntries(POSTHOG_DETAIL_TABS_V1.map(
                         (declaration) => [declaration.id, declaration.retention] as const,
                     ))}
                     ariaLabel={text('plugins.posthog.ui.tabsLabel', 'PostHog issue detail')}
-                    panels={panels}
+                    panels={{ ...panels, actions: writes }}
                 />
             </Screen>
         );
@@ -1283,7 +1303,7 @@ function PosthogDetailSurface(context: RenderContext): React.ReactElement {
         );
     }
 
-    return <TriageDetailInstance><PosthogDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
+    return <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}><PosthogDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
 }
 
 /** The manifest names this exact universal CommonJS export. */

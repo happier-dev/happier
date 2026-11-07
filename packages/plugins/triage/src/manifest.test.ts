@@ -1,13 +1,19 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { readFileSync } from 'node:fs';
 
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST as GITHUB_MANIFEST, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../scm-github/src/manifest.js';
+import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../../scm-github/src/triage/fileViewedContracts.js';
+import { PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../channels/src/manifest.js';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+  TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -17,14 +23,144 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
 } from './manifest.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/listEntriesProtocol.js';
+import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from './actions/sessionLinksProtocol.js';
+import {
+  TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+  TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
+  TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
+} from './actions/entrySessionProtocol.js';
+import { TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 } from './actions/tasksProtocol.js';
+import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 } from './actions/savedViewsProtocol.js';
+import { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } from './actions/actionsCatalogProtocol.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from './actions/mountedUiProtocol.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
-import { TRIAGE_UI_TRANSLATIONS } from './ui/translations.js';
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
 
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
+
 describe('Triage plugin manifest', () => {
+  it('runs reversible present-user edits directly while preserving explicit Ask and automated defaults', async () => {
+    // SIMPLIFY-CHALLENGE-1106 #5/M1 changes the default, never a person's Ask preference.
+    for (const id of [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1, TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
+      TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1,
+      TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]) {
+      const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === id);
+      if (!action) throw new Error(`Missing reversible Action: ${id}`);
+      const gate = (ask = false) => createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+        policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${id}`, occurrenceId: 'triage-edit-occurrence',
+          dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+          scopes: action.scopes, surfaces: action.surfaces,
+          ...(ask ? { approvalRequiredByActionSettings: true } : {}),
+          authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+      }) });
+      expect(await gate().admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} }), id)
+        .toMatchObject({ status: 'admitted' });
+      expect(await gate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} }), `${id} explicit Ask`)
+        .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+      for (const surface of ['agent', 'mcp']) {
+        expect(await gate().admit({ surface, invocationSurface: surface, input: {} }), `${id} ${surface}`)
+          .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+      }
+    }
+  });
+  it('runs reversible personal PR state directly through the shared approval owner, retaining explicit Ask', async () => {
+    const cases = [
+      { manifest: PLUGIN_MANIFEST, id: TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, input: { sessionId: 'session-a' }, asks: [] as string[] },
+      { manifest: PLUGIN_MANIFEST, id: TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1, input: { sessionId: 'session-a' }, asks: [] as string[] },
+      ...[true, false].map(linked => ({ manifest: GITHUB_MANIFEST,
+        id: GITHUB_TRIAGE_ACTION_IDS_V1.linkSession, input: { sessionId: 'session-a', linked }, asks: [] as string[] })),
+      ...[true, false].map(viewed => ({ manifest: GITHUB_MANIFEST,
+        id: GITHUB_FILE_VIEWED_ACTION_IDS_V1.set, input: { viewed }, asks: [] as string[] })),
+      ...['attach', 'unlink'].map(kind => ({ manifest: CHANNELS_MANIFEST,
+        id: 'session-pull-request-binding-v1', input: { sessionId: 'session-a', kind }, asks: [] as string[] })),
+      { manifest: CHANNELS_MANIFEST, id: 'session-pull-request-binding-v1',
+        input: { sessionId: 'session-a', kind: 'attach', target: { automationId: 'automation-a' } }, asks: ['ui', 'agent', 'mcp'] },
+      { manifest: CHANNELS_MANIFEST, id: 'session-pull-request-binding-v1',
+        input: { sessionId: 'session-a', kind: 'removeTrigger' }, asks: ['ui', 'cli', 'agent', 'mcp'] },
+    ];
+    for (const { manifest, id, input, asks } of cases) {
+      const action = manifest.contributes.actions?.find(entry => entry.id === id);
+      if (!action) throw new Error(`Missing relationship Action: ${manifest.id}/${id}`);
+      const gate = (ask = false) => createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+        policy: { qualifiedId: `${manifest.id}/${id}`, occurrenceId: 'link-direct-occurrence',
+          dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+          scopes: action.scopes, surfaces: action.surfaces,
+          ...(ask ? { approvalRequiredByActionSettings: true } : {}),
+          authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+      }) });
+      for (const surface of ['ui', 'cli', 'agent', 'mcp']) {
+        // Nested Account Actions retain automation authority, even with a physical UI origin.
+        const outerTriageAction = manifest.id === PLUGIN_MANIFEST.id;
+        expect(await gate().admit({ surface, invocationSurface: surface,
+          invocationAuthority: outerTriageAction && surface === 'ui' ? 'present_user' : 'account_automation', input }),
+          `${manifest.id}/${id} ${surface} ${JSON.stringify(input)}`).toMatchObject(asks.includes(surface)
+            ? { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' } : { status: 'admitted' });
+        expect(await gate(true).admit({ surface, invocationSurface: surface, input }), `${manifest.id}/${id} explicit Ask`)
+          .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+      }
+    }
+  });
+  it('admits personal Account task writes directly by their declared defaults', async () => {
+    for (const id of ['tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1',
+      'internal/tasks/create-v1', 'internal/tasks/edit-v1', 'internal/tasks/transition-v1', 'internal/tasks/link-session-v1']) {
+      const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === id)!;
+      const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+        policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${id}`, occurrenceId: 'triage-occurrence',
+          dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+          scopes: action.scopes, surfaces: action.surfaces,
+          authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+      }) });
+      for (const surface of ['ui', 'agent', 'mcp', 'cli']) {
+        expect(await gate.admit({ surface, invocationSurface: surface, input: {} }), id)
+          .toMatchObject({ status: 'admitted' });
+      }
+    }
+  });
+  it('keeps outward GitHub Action defaults at Ask', async () => {
+    const actions = GITHUB_MANIFEST.contributes.actions.filter(action => action.dangerLevel === 'writesRemote'
+      && action.surfaces.includes('ui') && action.id !== GITHUB_FILE_VIEWED_ACTION_IDS_V1.set);
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+        policy: { qualifiedId: `${GITHUB_MANIFEST.id}/${action.id}`, occurrenceId: 'github-occurrence',
+          dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+          scopes: action.scopes, surfaces: action.surfaces,
+          authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+      }) });
+      expect(await gate.admit({ surface: 'ui', invocationSurface: 'ui', input: {} }), action.id)
+        .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+    }
+  });
+  it('admits the owning Resource plugin surface to the shared relation read', async () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === 'sessions/read-source-links-v1');
+    if (!action) throw new Error('Relation read must be declared');
+    const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+      policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-occurrence',
+        dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
+        authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+          resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+    }) });
+    expect(await gate.admit({ surface: 'plugin', invocationSurface: 'plugin', input: { v: 1, sessionId: 'session-a' } }))
+      .toMatchObject({ status: 'admitted' });
+  });
+  it('declares the Session relation read operand for host admission and Machine source placement', () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === 'sessions/read-source-links-v1');
+    expect(action).toMatchObject({ sessionTarget: { field: 'sessionId', cardinality: 'one' } });
+  });
+  it('admits the shared Session PR Resource and its native read on the portable Account owner', () => {
+    expect(PLUGIN_MANIFEST.contributes.resources.find(resource => resource.id === 'session-pull-request-status-v1'))
+      .toMatchObject({ source: 'dynamic', scope: 'session', contentType: 'application/json',
+        execution: { target: 'account', account: { artifactId: 'triage-account-runtime', exportName: 'activate' } } });
+    expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'entries/read-pull-request-status-v1'))
+      .toMatchObject({ readOnly: true,
+        execution: { target: 'account', account: { artifactId: 'triage-account-runtime', exportName: 'activate' } } });
+  });
   it('places aggregate and personal task operations on the portable Account artifact', () => {
     const dataActions = [
       'tasks/list-v1', 'tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1',
@@ -39,22 +175,32 @@ describe('Triage plugin manifest', () => {
       });
     }
   });
-  it('declares Tasks as another page of the existing plugin and /task through its create Action', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui.views.find((view) => view.id === 'tasks')).toMatchObject({ container: 'appPage', renderer: 'tasks-page' });
+  it('contributes one rail destination and keeps the old Tasks entrance contextual with /task through its create Action', () => {
+    const pages = PLUGIN_MANIFEST.contributes.ui.views.filter((view) => view.container === 'appPage');
+    expect(pages.filter((view) => view.placement?.kind === 'rail').map((view) => view.id)).toEqual(['triage']);
+    const tasks = pages.find((view) => view.id === 'tasks');
+    expect(tasks).toMatchObject({ container: 'appPage', renderer: 'tasks-page' });
+    expect(tasks?.placement).toBeUndefined();
+    const page = pages.find((view) => view.id === 'triage');
+    expect(page).toMatchObject({ icon: 'change-open', placement: { kind: 'rail' } });
+    expect(page).not.toHaveProperty('column');
+    expect(PLUGIN_MANIFEST.contributes.ui.renderers.map((renderer) => renderer.id)).not.toContain('views-column');
     expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === 'tasks/open-create-v1')).toMatchObject({
       slash: { tokens: ['/task'] }, surfaces: expect.arrayContaining(['ui', 'voice', 'agent', 'mcp', 'cli']),
-      scopes: expect.arrayContaining(['global', 'message']),
+      // Session slash discovery selects session scope; a global-only declaration is unreachable there.
+      scopes: expect.arrayContaining(['global', 'session', 'message']),
       placementBindings: expect.arrayContaining(['composer.slash', 'commandPalette', 'message.menu']),
     });
   });
-  it('keeps linked-session selection requestable on the incumbent mounted client Action', async () => {
+  it.each([
+    { kind: 'selectLinkedSession', sessionId: 'linked-session' },
+    { kind: 'setGroupExpanded', group: 'completed', expanded: true },
+  ])('keeps $kind requestable on the incumbent mounted client Action', async (operation) => {
     const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
     if (!action) throw new Error('Mounted action must be declared');
     expect(action.surfaces).toEqual(expect.arrayContaining(['ui', 'agent', 'mcp', 'cli']));
     expect(action.execution).toMatchObject({ target: 'client', client: { exportName: 'activate' } });
-    const input = TriageMountedUiInputV1Schema.parse({ mountId: 'active-detail', operation: {
-      kind: 'selectLinkedSession', sessionId: 'linked-session',
-    } });
+    const input = TriageMountedUiInputV1Schema.parse({ mountId: 'active-detail', operation });
     const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
       policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-occurrence',
         dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
@@ -67,10 +213,10 @@ describe('Triage plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dragSources', [expect.objectContaining({
       id: 'entry-reference', client: { artifactId: 'triage-entity-drag-drop-native', exportName: 'activate' },
     })]);
-    expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dropTargets', [expect.objectContaining({
+    expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dropTargets', expect.arrayContaining([expect.objectContaining({
       id: 'entry-session', acceptedKinds: ['session'],
       actions: [{ kind: 'plugin', action: 'sessions/link-entry-v1' }],
-    })]);
+    })]));
   });
   it('admits an agent pin through the shared gate and writes the same canonical mark', async () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === 'marks/set-pinned-v1');
@@ -102,14 +248,14 @@ describe('Triage plugin manifest', () => {
     expect(read.pins.map((pin) => pin.entryRef)).toEqual([entryRef]);
   });
 
-  it('admits every Triage action on the centrally authorized agent, MCP and CLI surfaces', () => {
-    for (const action of PLUGIN_MANIFEST.contributes.actions) {
+  it('admits every public Triage action on the centrally authorized agent, MCP and CLI surfaces', () => {
+    for (const action of PLUGIN_MANIFEST.contributes.actions.filter(action => !action.surfaces.every(surface => surface === 'plugin'))) {
       expect(action.surfaces, action.id).toEqual(expect.arrayContaining(['agent', 'mcp', 'cli']));
     }
   });
   it('offers mounted UI a safe exact-entry PR-status read without a global affordance', () => {
     expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === 'entries/read-pull-request-status-v1'))
-      .toMatchObject({ dangerLevel: 'safe', surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [], hostAccess: ['account-storage'] });
+      .toMatchObject({ dangerLevel: 'safe', surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [], hostAccess: ['account-storage'] });
   });
   it('projects its prior cold identity and declared contribution families through one definePlugin value', () => {
     const normalized = parsePluginManifest(TRIAGE_PLUGIN.manifest);
@@ -129,16 +275,20 @@ describe('Triage plugin manifest', () => {
     expect(Object.keys(TRIAGE_PLUGIN.manifest.contributes).sort()).toEqual([
       'accountCollections',
       'actions',
+      'backgroundServices',
       'composerAttachments',
       'composerControls',
+      'composerRegions',
       'dragSources',
       'dropTargets',
       'inputTypes',
+      'notifications',
       'pluginContributionPoints',
       'resources',
       'searchProviders',
       'targetedPluginContributions',
       'ui',
+      'workItems',
     ]);
   });
 
@@ -159,22 +309,6 @@ describe('Triage plugin manifest', () => {
     expect(parsed.ok ? null : parsed.diagnostics).toBe(null);
   });
 
-  it('declares its rail page without an app-rail views column', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui.views.map(({ id, icon }) => ({ id, icon }))).toEqual([
-      { id: 'triage', icon: 'change-open' },
-      { id: 'tasks', icon: 'list' },
-      { id: 'latest', icon: 'change-open' },
-      { id: 'my-tasks', icon: 'list' },
-      { id: 'session-entries', icon: 'change-open' },
-    ]);
-    // Owner ruling 2026-10-11: the in-page Views menu is the one view selector on every platform, so the
-    // page declares no app-rail column (a second selector beside it on desktop, absent on phones).
-    const page = PLUGIN_MANIFEST.contributes.ui.views.find((view) => view.id === 'triage');
-    expect(page).toEqual(expect.objectContaining({ id: 'triage', icon: 'change-open', placement: { kind: 'rail' } }));
-    expect(page).not.toHaveProperty('column');
-    expect(PLUGIN_MANIFEST.contributes.ui.renderers.map((renderer) => renderer.id)).not.toContain('views-column');
-  });
-
   it('declares its Home latest widget as shown by default', () => {
     expect(PLUGIN_MANIFEST.contributes.ui.views).toContainEqual(expect.objectContaining({
       id: 'latest',
@@ -189,7 +323,7 @@ describe('Triage plugin manifest', () => {
     }));
   });
 
-  it('puts every durable local mutation behind host-owned confirmation', () => {
+  it('retains confirmation copy for durable local mutations when approval is required', () => {
     const nonSafeActions = PLUGIN_MANIFEST.contributes.actions
       .filter((action) => action.dangerLevel !== 'safe');
 
@@ -304,7 +438,7 @@ describe('Triage plugin manifest', () => {
         fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
       },
     });
-    for (const messages of Object.values(TRIAGE_UI_TRANSLATIONS)) {
+    for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
       expect(messages['plugins.triage.action.listEntries.title']).toEqual(expect.any(String));
       expect(messages['plugins.triage.action.listEntries.description']).toEqual(expect.any(String));
     }

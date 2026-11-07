@@ -20,15 +20,17 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
   retire(): void;
 }> {
   const values = new Map<string, SharedValueEntry>();
+  let retired = false;
 
   return Object.freeze({
     retire() {
+      retired = true;
       const entries = [...values.values()];
       values.clear();
       for (const entry of entries) entry.dispose();
     },
     forExecutionOrigin(executionOriginKey: string): PluginUiEphemeralSharedScope {
-      return Object.freeze({
+      const scope: PluginUiEphemeralSharedScope = Object.freeze({
         acquire<T>(key: string, create: () => Readonly<{
           value: T;
           dispose(): void;
@@ -36,6 +38,7 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
           onIdle?(): void;
           onExecutionOriginChange?(): void;
         }>) {
+          if (retired) return null;
           let entry = values.get(key);
           if (entry === undefined) {
             const created = create();
@@ -87,6 +90,9 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
           });
         },
       });
+      const acquireExecutionBound: PluginUiEphemeralSharedScope['acquire'] = (key, create) =>
+        scope.acquire(JSON.stringify(['execution', executionOriginKey, key]), create);
+      return Object.freeze({ ...scope, acquireExecutionBound });
     },
   });
 }

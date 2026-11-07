@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type {
   TriageConfiguredSourceConnectedAccountInstanceV1,
   TriageSourceFailureV1,
@@ -110,7 +110,7 @@ async function admitBitbucketDetailInvocation(
     localRef: Readonly<{ kindId: string; entryId: string; collisionScope: string }>;
     lastKnownLocator: Parameters<typeof admitBitbucketEntryInvocation>[0]['lastKnownLocator'];
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AdmittedInvocation> {
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
@@ -146,9 +146,8 @@ async function admitBitbucketDetailInvocation(
 /**
  * Resolves where one paged read starts.
  *
- * A continuation this source did not mint, or one naming a URL outside the Cloud
- * API base, is refused rather than reinterpreted: resuming at a position nobody
- * can vouch for would silently skip or repeat part of the collection.
+ * A malformed continuation, or one outside this collection's Cloud API route and
+ * page geometry, is refused rather than reinterpreted as another position.
  */
 function resolvePosition(
   continuation: string | undefined,
@@ -225,7 +224,7 @@ function shapeWalkPosition(
 
 export async function readBitbucketOverview(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketOverviewResultV1> {
   const parsed = BitbucketOverviewInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -276,7 +275,7 @@ function fitRawDiff(
 
 export async function readBitbucketDiff(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketDiffResultV1> {
   const parsed = BitbucketDiffInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -289,9 +288,6 @@ export async function readBitbucketDiff(
   if (!admitted.ok) return unavailable(admitted.failure);
   try {
   const continuationContext = Object.freeze({
-    instance: request.instance,
-    route: admitted.route,
-    plane: 'diffstat' as const,
     firstUrl: buildBitbucketDiffstatUrl(admitted.route),
     nativePageSize: BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1,
   });
@@ -355,7 +351,7 @@ export async function readBitbucketDiff(
  */
 export async function listBitbucketActivity(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketActivityResultV1> {
   const parsed = BitbucketActivityInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -370,9 +366,6 @@ export async function listBitbucketActivity(
   try {
 
   const continuationContext = Object.freeze({
-    instance: request.instance,
-    route: admitted.route,
-    plane: 'activity' as const,
     firstUrl: buildBitbucketActivityUrl(admitted.route),
     nativePageSize: BITBUCKET_ACTIVITY_PAGE_LENGTH_V1,
   });
@@ -418,7 +411,7 @@ export async function listBitbucketActivity(
  */
 export async function listBitbucketBuilds(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketBuildsResultV1> {
   const parsed = BitbucketBuildsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -433,9 +426,6 @@ export async function listBitbucketBuilds(
   try {
 
   const continuationContext = Object.freeze({
-    instance: request.instance,
-    route: admitted.route,
-    plane: 'builds' as const,
     firstUrl: buildBitbucketStatusesUrl(admitted.route),
     nativePageSize: BITBUCKET_STATUSES_PAGE_LENGTH_V1,
   });
@@ -482,7 +472,7 @@ export async function listBitbucketBuilds(
 /** One bounded page of the pull request's comment records, in provider order. */
 export async function listBitbucketComments(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketCommentsResultV1> {
   const parsed = BitbucketCommentsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -497,9 +487,6 @@ export async function listBitbucketComments(
   try {
 
   const continuationContext = Object.freeze({
-    instance: request.instance,
-    route: admitted.route,
-    plane: 'comments' as const,
     firstUrl: buildBitbucketCommentsUrl(admitted.route),
     nativePageSize: BITBUCKET_COMMENTS_PAGE_LENGTH_V1,
   });

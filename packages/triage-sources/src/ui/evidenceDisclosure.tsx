@@ -1,15 +1,16 @@
 import * as React from 'react';
-import type { ComposerReferenceCandidatePageV1, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
 import type { SessionPullRequestNativeStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
-import type { TriageSourcePanelOperationV1, TriageSourcePanelResultV1 } from './sourcePanelProtocol.js';
+import type { TriageEvidenceCandidateV1, TriageSourcePanelOperationV1, TriageSourcePanelResultV1 } from './sourcePanelProtocol.js';
+export type { TriageEvidenceCandidateV1 } from './sourcePanelProtocol.js';
 
 export type TriageSourcePanelCommandV1 = Readonly<{ title: string; operation: TriageSourcePanelOperationV1 }>;
 export type TriageSourcePanelHandlerV1 = (operation: TriageSourcePanelOperationV1, signal: AbortSignal) => Promise<TriageSourcePanelResultV1>;
 export type TriageSourcePanelActionsV1 = Readonly<{
-  bind(kind: TriageSourcePanelOperationV1['kind'], invoke: TriageSourcePanelHandlerV1, commands: readonly TriageSourcePanelCommandV1[]): () => void;
+  bind(key: string, invoke: TriageSourcePanelHandlerV1, commands: readonly TriageSourcePanelCommandV1[]): () => void;
   execute(operation: TriageSourcePanelOperationV1, signal?: AbortSignal): Promise<TriageSourcePanelResultV1>;
 }>;
 
@@ -25,6 +26,9 @@ export type TriageDetailPrimaryWriteV1 = Readonly<{
   reading?: boolean;
   /** Source-owned choices, with no implicit selection by the header. */
   methods?: readonly Readonly<{ id: string; title: string }>[];
+  /** Original declared Action and operands; the header forwards the source's execute callback. */
+  actionRef?: PluginUiContributionIdentityV1;
+  inputFor?: (methodId?: string) => unknown;
   /** Exact acknowledged requirements for the shared destructive confirmation. */
   unmetRequirements?: readonly Readonly<{ kind: string; id: string; label: string }>[];
   /** Native status and ordinary-action availability are deliberately distinct. */
@@ -67,20 +71,6 @@ export type TriageDetailPrimaryWriteHostV1 = Readonly<{
  * the reader moved to another entry — or after the detail unmounted — is aborted
  * and cannot reach the draft.
  */
-
-/**
- * One disclosure-approved candidate, qualified by the reference contribution
- * that resolves it at dispatch.
- *
- * The candidate shape is the public Composer provider's own bounded page item,
- * not a Triage mirror: Triage never receives, stores or interprets the selected
- * provider response bytes, and the reference identity is what re-reads them at
- * dispatch time.
- */
-export type TriageEvidenceCandidateV1 = Readonly<{
-  reference: PluginUiContributionIdentityV1;
-  candidate: ComposerReferenceCandidatePageV1[number];
-}>;
 
 /**
  * The source's own disclosure step. `null` means the reader cancelled it. The

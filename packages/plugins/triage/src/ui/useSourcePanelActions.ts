@@ -18,16 +18,16 @@ export function useTriageSourcePanelActionsV1(scope: PluginEphemeralSharedScope 
   const actions = React.useMemo<TriageSourcePanelActionsV1>(() => {
     const bindings = new Map<string, readonly TriageSourcePanelCommandV1[]>();
     const owner: TriageSourcePanelActionsV1 = {
-      bind(kind, invoke, commands) {
+      bind(key, invoke, commands) {
         if (scope === null || !active || identity === null) return () => {};
         const guarded = async (...args: Parameters<typeof invoke>) => current.current === owner
           && !args[1].aborted ? await invoke(...args) : { status: 'unavailable' as const };
-        const release = bindTriageMountedSourcePanelAction(scope, mountId, kind, guarded);
-        bindings.set(kind, commands);
+        const release = bindTriageMountedSourcePanelAction(scope, mountId, key, guarded);
+        bindings.set(key, commands);
         setPublished({ owner, commands: [...bindings.values()].flat() });
         return () => {
           release();
-          if (bindings.get(kind) === commands) bindings.delete(kind);
+          if (bindings.get(key) === commands) bindings.delete(key);
           if (current.current === owner) setPublished({ owner, commands: [...bindings.values()].flat() });
         };
       },

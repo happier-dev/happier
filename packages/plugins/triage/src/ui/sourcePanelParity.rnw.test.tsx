@@ -148,8 +148,8 @@ async function mountSource(source: 'sentry' | 'posthog', mode: 'default' | 'ask'
 describe('source panel agent/UI parity', () => {
   it.each(['sentry', 'posthog'] as const)('pages %s occurrences through the same mounted controller as the UI', async (source) => {
     const agent = await mountSource(source, 'default', true, false, true);
-    const operation = () => TriageSourcePanelOperationV1Schema.parse({ kind: 'loadMoreSourceOccurrences' });
-    expect(agent.commands().some((command) => command.operation.kind === 'loadMoreSourceOccurrences')).toBe(true);
+    const operation = () => TriageSourcePanelOperationV1Schema.parse({ kind: 'loadMoreSourceItems', list: 'occurrences' });
+    expect(agent.commands().some((command) => command.operation.kind === 'loadMoreSourceItems')).toBe(true);
     await act(async () => { await agent.page.press(await agent.page.getByRole('tab', { name: 'Overview' })); });
     expect(await agent.invoke(operation())).toEqual({ status: 'unavailable' });
     await act(async () => { await agent.page.press(await agent.page.getByRole('tab', { name: 'Occurrences' })); });
@@ -158,7 +158,7 @@ describe('source panel agent/UI parity', () => {
     await expect(agent.page.getByRole(source === 'sentry' ? 'button' : 'option', { name: 'Second occurrence' })).resolves.toBeDefined();
     await act(async () => { expect(await agent.invoke({ kind: 'selectSourceOccurrence', occurrenceId: agent.second })).toEqual({ status: 'applied' }); });
     expect(await agent.invoke(operation())).toEqual({ status: 'unavailable' });
-    expect(agent.commands().some((command) => command.operation.kind === 'loadMoreSourceOccurrences')).toBe(false);
+    expect(agent.commands().some((command) => command.operation.kind === 'loadMoreSourceItems')).toBe(false);
     expect(agent.dialogs).toEqual([]);
     if (source === 'posthog') await act(async () => { await agent.page.press(await agent.page.getByRole('tab', { name: 'Stack trace' })); });
     await act(async () => { expect(await agent.invoke({ kind: 'insertSelectedEvidence', occurrenceId: agent.second })).toEqual({ status: 'applied' }); });

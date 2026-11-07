@@ -85,6 +85,9 @@ import {
   TriageDetailChecks,
   type TriageActivityEventV1,
   type TriageActivityKindV1,
+  useTriagePageRefresh,
+  useTriageSourcePanelIntentV1,
+  type TriageSourcePanelCommandV1,
 } from '@happier-dev/triage-sources/ui';
 import {
   BitbucketCommentResolutionControls,
@@ -153,13 +156,14 @@ function PagedFooter({
   onRefresh?: () => void;
   refreshLabel?: string;
   refreshLabelKey?: string;
-  summary: string;
-  summaryKey: string;
-  summaryValues: Readonly<Record<string, string | number>>;
+  /** Absent where the section header already carries the count. */
+  summary?: string;
+  summaryKey?: string;
+  summaryValues?: Readonly<Record<string, string | number>>;
 }>): React.ReactElement {
   return (
     <Stack gap="small">
-      <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />
+      {summary === undefined ? null : <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />}
       {state.omittedRowCount === 0 ? null : (
         <Text
           variant="micro"
@@ -400,8 +404,19 @@ function OverviewPanel({
 
 function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { locale } = useSurfaceContext();
   const controller = useBitbucketDiff(input);
   const { state } = controller;
+  // The page's one refresh re-reads this diff; the panel draws no refresh of its own.
+  useTriagePageRefresh(controller.refresh);
+  const pagingCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.canLoadMore && !state.pending
+    ? [{ title: text('plugins.bitbucket.ui.showMoreFiles', 'Show more changed files'), operation: { kind: 'loadMoreSourceItems', list: 'files' } }] : [],
+  [state.canLoadMore, state.pending, text]);
+  const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'files' }, async (operation) => {
+    if (operation.kind !== 'loadMoreSourceItems' || !state.canLoadMore || state.pending) return { status: 'unavailable' };
+    controller.loadMore();
+    return { status: 'applied' };
+  }, pagingCommands);
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading this diff from Bitbucket" titleKey="plugins.bitbucket.ui.readingDiff" />;
   }
@@ -417,22 +432,39 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
       />
     );
   }
-  return (
-    <ScrollArea>
-      <Stack gap="large">
-        <PageFailureBanner state={state} />
-        {controller.raw?.kind !== 'tooLarge' ? null : (
-          <Banner
-            tone="warning"
-            title="This diff is too large for Bitbucket to return"
-            titleKey="plugins.bitbucket.ui.diffTooLarge"
-            description="The pull request remains available; open it in Bitbucket for the full diff."
-            descriptionKey="plugins.bitbucket.ui.diffTooLarge.description"
-          />
-        )}
-        {controller.raw?.kind !== 'available' ? null : (
-          <Stack gap="small">
-            {controller.raw.truncated ? (
+  const changedFiles = (
+    <>
+      <Metadata
+        // The count is the section's own fact (lab c7 Files), not an engineering line under the rows.
+        title={`${text('plugins.bitbucket.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`}
+        entries={state.rows.map((row: BitbucketProjectedDiffstatRowV1) => ({
+          label: row.path,
+          value: `${row.status} · +${String(row.linesAdded)} −${String(row.linesRemoved)}`,
+        }))}
+      />
+      <PagedFooter
+        state={state}
+        loadMoreTitle="Show more changed files"
+        loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
+        onLoadMore={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
+      />
+    </>
+  );
+  const raw = controller.raw;
+  if (raw?.kind === 'available') {
+    // The diff is this panel's one scroller (QB-55/81; the frame only bounds a Files panel). Lab c7 Files: the
+    // changed files, then the diff; they read above its first line and scroll inside the diff's own list.
+    return (
+      <DiffViewer
+        fill
+        unifiedDiff={raw.text}
+        label={text('plugins.bitbucket.ui.tabs.diff', 'Diff')}
+        testID="bitbucket-pull-request-diff"
+        leadingContent={(
+          <Stack gap="large">
+            <PageFailureBanner state={state} />
+            {changedFiles}
+            {raw.truncated ? (
               <Banner
                 tone="neutral"
                 title="The raw diff was shortened"
@@ -441,33 +473,25 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
                 descriptionKey="plugins.bitbucket.ui.rawDiffShortened.description"
               />
             ) : null}
-            <DiffViewer
-              unifiedDiff={controller.raw.text}
-              label={text('plugins.bitbucket.ui.tabs.diff', 'Diff')}
-              testID="bitbucket-pull-request-diff"
-            />
           </Stack>
         )}
-        <Metadata
-          title="Changed files"
-          titleKey="plugins.bitbucket.ui.changedFiles"
-          entries={state.rows.map((row: BitbucketProjectedDiffstatRowV1) => ({
-            label: row.path,
-            value: `${row.status} · +${String(row.linesAdded)} −${String(row.linesRemoved)}`,
-          }))}
-        />
-        <PagedFooter
-          state={state}
-          loadMoreTitle="Show more changed files"
-          loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
-          onLoadMore={controller.loadMore}
-          onRefresh={controller.refresh}
-          refreshLabel="Re-read this diff from Bitbucket"
-          refreshLabelKey="plugins.bitbucket.ui.rereadDiff"
-          summary={`${String(state.rows.length)} changed file(s) read.`}
-          summaryKey="plugins.bitbucket.ui.diffFilesRead"
-          summaryValues={{ count: state.rows.length }}
-        />
+      />
+    );
+  }
+  return (
+    <ScrollArea>
+      <Stack gap="large">
+        <PageFailureBanner state={state} />
+        {raw?.kind !== 'tooLarge' ? null : (
+          <Banner
+            tone="warning"
+            title="This diff is too large for Bitbucket to return"
+            titleKey="plugins.bitbucket.ui.diffTooLarge"
+            description="The pull request remains available; open it in Bitbucket for the full diff."
+            descriptionKey="plugins.bitbucket.ui.diffTooLarge.description"
+          />
+        )}
+        {changedFiles}
       </Stack>
     </ScrollArea>
   );
@@ -859,6 +883,7 @@ function BitbucketDetailBody({
     return (
       <Screen safeArea>
         <TriageDetailPanel
+          scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           ariaLabel={text('plugins.bitbucket.ui.detailLabel', 'Bitbucket pull request detail')}
           retention={Object.fromEntries(BITBUCKET_DETAIL_TABS_V1

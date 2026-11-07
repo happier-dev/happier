@@ -1,0 +1,47 @@
+import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+
+/** UI-local transport facts; the source's published failure envelope stays unchanged. */
+export type GithubReadFailureV1 = TriageSourceFailureV1 & Readonly<{
+  retryable?: boolean;
+  diagnostics?: readonly PluginDiagnosticData[];
+  requestId?: string;
+}>;
+
+/** A result the surface could not read is a contract break, not an empty read. */
+export const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
+  class: 'unsupportedContract',
+  code: 'github-detail-result-unreadable',
+});
+
+/**
+ * The observation carried no route for this entry, so no plane can be read.
+ *
+ * It is a stated failure rather than an empty panel: a path is never guessed
+ * from identity, display text or a git remote.
+ */
+export const ROUTE_UNAVAILABLE: TriageSourceFailureV1 = Object.freeze({
+  class: 'unknown',
+  code: 'github_locator_unusable',
+});
+
+export function dispatchFailure(execution: ExecuteResult, fallbackCode: string): GithubReadFailureV1 {
+  const { status } = execution;
+  return Object.freeze({
+    class: status === 'error' ? 'transient' : 'unknown',
+    code: status === 'idle' || status === 'pending' ? 'github-detail-read-not-dispatched'
+      : 'code' in execution ? execution.code : fallbackCode,
+    ...(status === 'error' ? { retryable: execution.retryable, diagnostics: execution.diagnostics } : {}),
+    // A missing mutation receipt is uncertain, but these executions are finite reads.
+    ...(status === 'outcomeUnknown' ? { retryable: true } : {}),
+    ...('requestId' in execution && execution.requestId !== undefined ? { requestId: execution.requestId } : {}),
+  });
+}
+
+export type ExecuteResult = PluginActionExecution;
+
+/** The source-private route the target observed for this entry, if it has one. */
+export function useGithubRoutingToken(input: TriageDetailSurfaceInputV1): string | null {
+  return input.observation.locator.routingToken ?? null;
+}

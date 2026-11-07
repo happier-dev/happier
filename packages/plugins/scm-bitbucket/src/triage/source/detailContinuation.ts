@@ -1,59 +1,27 @@
-import type { TriageConfiguredSourceConnectedAccountInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import { readBitbucketApiUrl } from '../apiUrl.js';
-import {
-  buildBitbucketContinuationBindingScope,
-  decodeBitbucketContinuationPayload,
-  encodeBitbucketContinuationPayload,
-} from '../continuationIntegrity.js';
 
 /**
  * The paging position of one mounted Bitbucket Cloud detail panel.
  *
- * Bitbucket's `next` is opaque, so its query is carried byte-for-byte. The token
- * is nevertheless source-owned: a process-local MAC binds that query to the
- * configured source/account, immutable entry identity, locator route, detail
- * plane, and native page geometry. A caller therefore cannot forge a page or
- * replay a genuine token through another mounted route.
+ * Bitbucket's `next` is opaque, so its query is carried byte-for-byte in a plain
+ * versioned payload. Invocation admission chooses the configured source/account;
+ * this codec admits only the selected detail collection's API origin, pathname
+ * and native page geometry. The paging position grants no credential authority.
  */
 
 const CONTINUATION_VERSION = 1;
 
-export type BitbucketDetailContinuationPlaneV1 =
-  | 'activity'
-  | 'builds'
-  | 'comments'
-  | 'diffstat';
-
 export type BitbucketDetailContinuationContextV1 = Readonly<{
-  instance: TriageConfiguredSourceConnectedAccountInstanceV1;
-  route: Readonly<{
-    workspaceUuid: string;
-    repositorySlug: string;
-    repositoryKey: string;
-    expectedRepositoryUuid: string;
-    entryId: string;
-  }>;
-  plane: BitbucketDetailContinuationPlaneV1;
   firstUrl: string;
   nativePageSize: number;
 }>;
 
 export type BitbucketDetailFrontierV1 = Readonly<{ v: 1; nextUrl: string }>;
-
-function buildScope(input: BitbucketDetailContinuationContextV1): string {
-  return JSON.stringify([
-    'bitbucket-detail-v1',
-    buildBitbucketContinuationBindingScope(input.instance),
-    input.route.workspaceUuid,
-    input.route.repositorySlug,
-    input.route.repositoryKey,
-    input.route.expectedRepositoryUuid,
-    input.route.entryId,
-    input.plane,
-    input.nativePageSize,
-  ]);
-}
 
 /** Admits only a provider position for this exact collection and geometry. */
 function readIssuedNextUrl(
@@ -79,18 +47,15 @@ export function encodeBitbucketDetailContinuation(
   const admitted = readIssuedNextUrl(nextUrl, input);
   return admitted === null
     ? null
-    : encodeBitbucketContinuationPayload(
-      { v: CONTINUATION_VERSION, nextUrl: admitted },
-      buildScope(input),
-    );
+    : encodeTriagePagingTokenV1({ v: CONTINUATION_VERSION, nextUrl: admitted });
 }
 
-/** Refuses malformed, forged, cross-route, cross-plane, and wrong-geometry tokens whole. */
+/** Refuses malformed, cross-route, cross-plane, and wrong-geometry tokens whole. */
 export function decodeBitbucketDetailContinuation(
   token: string,
   input: BitbucketDetailContinuationContextV1,
 ): BitbucketDetailFrontierV1 | null {
-  const decoded = decodeBitbucketContinuationPayload(token, buildScope(input));
+  const decoded = decodeTriagePagingTokenV1(token);
   if (
     decoded === null
     || Object.keys(decoded).length !== 2

@@ -1,3 +1,7 @@
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { BITBUCKET_PLUGIN } from '../../manifest.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
+import { BITBUCKET_TRIAGE_ACTION_IDS } from './actions.js';
 import {
   TriageDetailSurfaceInputV1Schema,
   TriageGetResultV1Schema,
@@ -339,11 +343,11 @@ describe('Bitbucket scan', () => {
     // Three of the five canonical lanes cannot be served here, so the walk still lowers to a
     // bounded partial outcome rather than presenting empty lanes as successful.
     expect(result.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unavailable' });
-    // The continuation carries a frontier and nothing else: no credential, no account ref, no
-    // origin, no accumulated rows.
+    // The continuation carries its admitted route scope and frontier, never credentials or rows.
     expect(result.continuation.token).not.toContain('Basic ');
-    expect(result.continuation.token).not.toContain('account-1');
-    expect(result.continuation.token).not.toContain('bitbucket-connected-account');
+    expect(JSON.parse(result.continuation.token).s).toBe(
+      buildBitbucketScanContinuationScope(configuredInstance(), WORKSPACE_UUID),
+    );
     expect(result.continuation.token).not.toContain('\"42\"');
     // Every request is origin-checked and carries the invocation's own page geometry.
     expect(requests.every(({ url }) => url.startsWith('https://api.bitbucket.org/2.0/'))).toBe(true);
@@ -378,10 +382,10 @@ describe('Bitbucket scan', () => {
       observation.kind === 'present' ? observation.localRef.entryId : observation.kind
     ))).toEqual(['42', '41']);
     expect(result.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
-    expect(decodeBitbucketScanContinuation(
+    expect((decodeBitbucketScanContinuation(
       result.continuation,
       buildBitbucketScanContinuationScope(configuredInstance(), WORKSPACE_UUID),
-    )?.authored)
+    ))?.authored)
       .toMatchObject({ nextUrl: null, ended: true });
 
     const settled = TriageScanResultV1Schema.parse(await scanBitbucketSource(
@@ -600,6 +604,8 @@ describe('Bitbucket scan', () => {
       importance: 'primary',
       value: { kind: 'status', value: 'Approved', tone: 'success' },
     });
+    expect(present[0]?.snapshot.facts.length).toBeGreaterThan(4);
+    expect(present[0]?.snapshot.projectionTruncated).not.toBe(true);
     // Server-side narrowing is unavailable — Bitbucket refuses every `participants.*` predicate —
     // so the identity/approval correlation happens here, on evidence the row itself carries.
     const laneRequests = requests.filter(({ url }) => (
@@ -708,7 +714,7 @@ describe('Bitbucket scan', () => {
     expect(requests.some(({ url }) => url.includes('state=OPEN'))).toBe(false);
   });
 
-  it('refuses a continuation it never issued', async () => {
+  it('refuses a malformed continuation', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
     });
@@ -860,10 +866,10 @@ describe('Bitbucket scan', () => {
     });
     // The reason travels in the frontier as a name, never as a count: `omittedItemCount` stays a
     // per-call number so the target's `observations + omittedItemCount <= limit` check is exact.
-    expect(decodeBitbucketScanContinuation(
+    expect((decodeBitbucketScanContinuation(
       first.continuation,
       buildBitbucketScanContinuationScope(configuredInstance(), WORKSPACE_UUID),
-    )?.walkHealth)
+    ))?.walkHealth)
       .toContain('undecodable-items');
 
     const settled = TriageScanResultV1Schema.parse(await scanBitbucketSource(
@@ -1188,9 +1194,7 @@ describe('Bitbucket detail projection', () => {
       scopeLabel: 'example-workspace/deploy-tools',
       state: { presentation: 'active', nativeLabel: 'Open' },
       webUrl: 'https://bitbucket.org/example-workspace/deploy-tools/pull-requests/42',
-      // The five-fact bound dropped this row's supplementary facts, and the reader is told so
-      // rather than shown a list that quietly claims to be complete.
-      projectionTruncated: true,
+      projectionTruncated: false,
     });
     // The entry's Session relationship belongs to the Triage common header, so this source-owned
     // projection publishes none of it. `linkedSessions` on the launch input above is what makes
@@ -1238,4 +1242,25 @@ describe('Bitbucket listInstances with no connected account', () => {
 
     expect(result.kind).toBe('failed');
   });
+});
+
+
+it('discovers workspaces through Account registration and selected credentials over HTTP without a Machine', async () => {
+  const boundary = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+  const { http, requests } = createHttpStub(url => url.includes('/2.0/user/workspaces')
+    ? { body: workspacesPage } : undefined);
+  const kit = await createPluginTestkit({ manifest: BITBUCKET_PLUGIN.manifest,
+    module: { activate: BITBUCKET_PLUGIN.activate, activateAccount }, services: {
+      connectedAccounts: boundary.connectedAccounts, http,
+    },
+  });
+  try {
+    expect(await kit.invokeAction(BITBUCKET_TRIAGE_ACTION_IDS.listInstances, { v: 1 }))
+      .toMatchObject({ kind: 'complete', candidates: [
+        { binding: { account: accountRef('account-1') }, localInstanceKey: WORKSPACE_UUID },
+        { binding: { account: accountRef('account-1') } },
+      ] });
+    expect(boundary.materializations).toEqual(['account-1']);
+    expect(requests).toHaveLength(1);
+  } finally { await kit.dispose(); }
 });

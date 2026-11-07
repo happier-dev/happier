@@ -7,13 +7,15 @@ import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture
 import { describeTriageSourceFailureV1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 import { activate } from '../../activate.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
 import { encodeBitbucketConfiguration } from '../../triage/instance.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from '../../triage/source/descriptor.js';
-import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS, BitbucketBuildsInputV1Schema, BitbucketBuildsResultV1Schema } from '../../triage/source/detailContracts.js';
+import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS, BitbucketBuildsInputV1Schema, BitbucketBuildsResultV1Schema, BitbucketOverviewResultV1Schema } from '../../triage/source/detailContracts.js';
 import { accountRef, createConnectedAccountsStub, createHttpStub } from '../../triage/source/testSupport.js';
 import pullRequest from '../../triage/fixtures/pullRequestSelf.json' with { type: 'json' };
+import currentUser from '../../triage/fixtures/currentUser.json' with { type: 'json' };
 import { renderSurface } from '../renderSurface.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,17 +37,28 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'example-workspace/deploy-tools' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'example-workspace/deploy-tools', state: { presentation: 'active', nativeLabel: 'Open' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredBuilds(misbind = false) {
+async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' = 'checks') {
+  let panel: 'checks' | 'overview' | 'files' = initialPanel;
+  let entryId = '42';
+  const input = () => {
+    const value = launchInput();
+    return { ...value, panel, panelScrollOwner: panel === 'files' ? 'list' as const : 'scrollArea' as const,
+      observation: { ...value.observation,
+      entryRef: { ...value.observation.entryRef, entryId } } };
+  };
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const transport = createHttpStub(url => {
+    if (url.endsWith('/2.0/user')) return { body: currentUser };
+    if (url.includes('/diffstat')) return { body: { values: [] } };
+    if (url.endsWith('/diff')) return { bodyBytes: '' };
     if (url.includes('/statuses')) return { body: { values: [{ uuid: '{7c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f}', key: 'PIPELINE', name: 'Dispatch pipeline', state: 'SUCCESSFUL' }] } };
     if (url.includes('/comments')) return { body: { values: [] } };
-    if (url.endsWith('/pullrequests/42')) return { body: pullRequest };
+    if (url.endsWith(`/pullrequests/${entryId}`)) return { body: { ...pullRequest, id: Number(entryId) } };
     throw new Error(`Unexpected Bitbucket route: ${url}`);
   });
   const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
-  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
     connectedAccounts, http: { ...transport.http, request: async (request, options) => {
       if (request.url.includes('/statuses')) await pending;
       return transport.http.request(request, options);
@@ -53,31 +66,64 @@ async function mountRegisteredBuilds(misbind = false) {
   } });
   plugins.push(plugin);
   const producerResults: unknown[] = [];
+  const overviewResults: unknown[] = [];
+  const actions: string[] = [];
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'bitbucket-dispatch', mountNonce: 'bitbucket-dispatch-mount' },
       authorPlugin: { id: BITBUCKET_PLUGIN_ID, version: '0.0.0' }, surface: defineUiSurface(context => {
-        const body = renderSurface({ ...context, launchInput: launchInput() });
+        const body = renderSurface({ ...context, launchInput: input() });
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected native detail');
         return body;
       }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: async ({ action, input }) => {
         if (typeof action === 'string' || action.pluginId !== BITBUCKET_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
+        actions.push(action.localId);
         const builds = action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds;
         const request = misbind && builds ? BitbucketBuildsInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null ? action.localId : BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments,
           request === null ? input : request, { surface: 'ui' });
         if (builds) producerResults.push(result);
+        if (action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview) overviewResults.push(result);
         return result;
       } },
     });
   });
   mounted.push(detail);
-  return { detail, producerResults, release };
+  return { detail, producerResults, overviewResults, release, actions, requests: transport.requests,
+    async selectPanel(nextPanel: typeof panel, nextEntryId = entryId) {
+      panel = nextPanel;
+      entryId = nextEntryId;
+      await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    },
+  };
 }
 describe('registered Bitbucket detail read dispatch', () => {
+  it('retains the settled Overview across host Files switches but reads a different entry', async () => {
+    const { detail, release, actions, overviewResults, requests, selectPanel } = await mountRegisteredDetail(false, 'overview');
+    await act(async () => { release(); });
+    const overviewReads = () => actions.filter(action => action === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview).length;
+    expect(overviewReads()).toBe(1);
+    for (let index = 0; index < 4; index += 1) {
+      await selectPanel('files');
+      await selectPanel('overview');
+    }
+    expect(overviewReads()).toBe(1);
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(overviewReads()).toBe(1);
+    expect(BitbucketOverviewResultV1Schema.parse(overviewResults[0])).toMatchObject({ kind: 'overview',
+      description: pullRequest.summary.raw, observation: { kind: 'present' } });
+    // The Overview story's discardable Builds interval is a separate read. Its native
+    // Action proves the entity before reading statuses, even when Overview is retained.
+    expect(actions.filter(action => action === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds)).toHaveLength(5);
+    expect(requests.filter(request => new URL(request.url).pathname.endsWith('/statuses'))).toHaveLength(5);
+    await selectPanel('overview', '43');
+    expect(overviewReads()).toBe(2);
+    expect(BitbucketOverviewResultV1Schema.parse(overviewResults[1])).toMatchObject({ kind: 'overview',
+      observation: { kind: 'present', localRef: { entryId: '43' } } });
+  });
   it('retains pending and settled builds across equivalent parsed launch input', async () => {
-    const { detail, producerResults, release } = await mountRegisteredBuilds();
+    const { detail, producerResults, release } = await mountRegisteredDetail();
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
     await act(async () => { release(); });
     expect(producerResults).toHaveLength(1);
@@ -88,7 +134,7 @@ describe('registered Bitbucket detail read dispatch', () => {
     expect(producerResults).toHaveLength(1);
   });
   it('rejects a mis-bound registered producer', async () => {
-    const { detail, producerResults } = await mountRegisteredBuilds(true);
+    const { detail, producerResults } = await mountRegisteredDetail(true);
     expect(producerResults).toHaveLength(1);
     expect(BitbucketBuildsResultV1Schema.safeParse(producerResults[0]).success).toBe(false);
     await expect(detail.getByText(describeTriageSourceFailureV1({ class: 'unsupportedContract', code: 'bitbucket-detail-result-unreadable' }, 'Bitbucket could not complete this read.'))).resolves.toBeDefined();

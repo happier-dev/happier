@@ -27,6 +27,38 @@ inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-ui/A
 `node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
 exact installed inventory. Do not guess exports from examples or app source.
 
+## Live viewer input (0.3 development)
+
+`HappierLiveStreamInputLayer` from `@happier-dev/plugin-ui/components` is the
+shared browser, Computer and simulator input surface. A viewer selects `direct`
+or `trackpad` through `mode`; the host remembers that choice by its viewer's
+device-local identity. Keep the source's real `supports` result and current
+control ownership when mounting it:
+
+```tsx
+<HappierLiveStreamInputLayer
+  testID="my-plugin-viewer"
+  inputAccepted={viewerHasControl}
+  supports={sourceSupports}
+  mode={inputMode}
+  localZoom
+  viewport={viewport}
+  content={pictureBounds}
+  onViewTransformChange={setLocalPictureTransform}
+  renderCursor={renderLocalCursor}
+  onGesture={relayToSelectedSource}
+/>
+```
+
+The transform applies to the local picture; it never resizes the remote
+viewport. The source relay owns input delivery. Mouse and pen hover emits only
+while input is accepted, coalescing to the latest position per animation frame.
+Trackpad movement uses relative pointer motion, taps address that pointer,
+two-finger translation scrolls and pinch zooms the local picture. Browser
+long-press drag uses live pointer phases; Computer drivers with atomic drag
+send it on release and show the path locally. Keep simulator input direct and
+omit `localZoom` so pinch continues to reach the device.
+
 ## Coach evaluator values (0.3 development)
 
 An evaluator declares an ordinary dynamic Resource and Action, then registers
@@ -67,9 +99,50 @@ import { RowStatusLine } from '@happier-dev/plugin-ui/components';
 />
 ```
 
+A row that runs a command can lead the line with it: `lead` shows the command
+in mono before the outcome and is shortened first, so the outcome stays whole.
+When the row's own icon already shows the state, pass `marked` to keep the
+colour without the extra dot.
+
+```tsx
+<RowStatusLine lead="yarn lint" text="Exited with code 1 at 10:12" tone="bad" marked />
+```
+
 Rows default to one truncating line; pass `numberOfLines={2}` inside a card.
 For an announcing notice, use `Status` instead. Check the installed package's
 API inventory before using this development-source addition.
+
+## Composer status item (0.3 development)
+
+`ComposerStatusBadge` from `@happier-dev/plugin-ui/components` is the status item
+Happier draws in a Session's instrument strip, under the composer: the same capsule,
+spacing, caret and press target, drawn in your plugin's theme. Give it a short
+sentence-case `label` (or `labelKey`), a `tone` (`active` for work under way,
+`complete`, `warning` when it needs a look, `paused` or `neutral` for a plain fact)
+and, if you like, a leading `icon` token. `emphasis="quiet"` drops the capsule and
+leaves plain words for a fact that should not compete with the chips.
+
+```tsx
+import { ComposerStatusBadge } from '@happier-dev/plugin-ui/components';
+
+<ComposerStatusBadge
+  label="PR #482 · checks running"
+  tone="active"
+  icon="branch"
+  opensPopover
+  expanded={open}
+  anchorRef={anchorRef}
+  onPress={() => setOpen(!open)}
+/>
+```
+
+With `onPress` it is a button; `opensPopover` adds the caret and announces
+`expanded`, and `anchorRef` is the node your popover anchors to. The label stays
+on one line and truncates; pass `numberOfLines={0}` only for disclosure text that
+must stay whole. In matching 0.3 development SDK and host builds, declare a
+Composer region with `placement: 'statusStrip'` to mount this item beside the
+host badges. The [Composer guide](/plugins/guides/composer) describes scopes and
+Resource demand.
 
 ## Find and Search (0.3 development)
 
@@ -80,6 +153,19 @@ surface's `FindController`, and its current focus/open/input-focus callbacks.
 Pass `null` while the surface has no findable content. The hook returns false
 when no host registration binding is available; it does not install listeners
 or search content itself. Hidden mounts cannot receive targeted Find commands.
+
+On web, also provide `containsTarget(target)` for the surface's DOM root. The
+host uses pointer and focus interactions to keep Find addressed to that surface
+when clicking readable text leaves focus on the page body. An interaction
+outside every registered surface clears that address; a focused surface takes
+precedence. For example, with a DOM `rootRef`:
+
+```tsx
+containsTarget: target => target instanceof Node && rootRef.current?.contains(target) === true
+```
+
+The hook forwards the latest callback without registering again on each render.
+Native surfaces continue to supply their existing focus callback.
 
 Use `HappierFindBar` and the pure `matchFindText` from `/components` for shared
 chrome and matching. `HappierFindHighlightedText` draws half-open UTF-16 ranges,
@@ -93,6 +179,40 @@ To add a source to universal Search, declare the existing
 and implement its referenced Action. Native Agent transcript search instead
 uses the External Sessions source's `contentSearch` declaration and existing
 transcript readers; it does not create a plugin-owned index.
+
+### Prompt-picker rows and preview (0.3 development)
+
+`HappierPromptPickerRow`, `HappierPromptPickerMetaLine` and
+`HappierPromptPickerPreview` from `/components` draw the prompt picker's
+composition: a row's glyph, title and meta line ("Snippet · `/review`"), and the
+highlighted row's text with what choosing it does and when it was edited. They
+own layout only. Your surface owns the list, its selection and keys, the data,
+reading a prompt's text, and what choosing one does. They register nothing and
+add no contribution family.
+
+Supply a `host` whose `Text` draws the role, colour, line count, mono face and
+tabular figures the picker asks for, and `colors` from your theme. Mark the query
+in a title with `matchFindText` and `HappierFindHighlightedText`. Inside the
+preview, render loading and failure as the shared `SurfaceState` line; it
+stands on the preview's own edge. Announce a failure with
+`accessibilitySemantics="alert"` and give it its one recovery:
+
+```tsx
+<HappierPromptPickerPreview host={host} colors={colors} meta={meta}
+  action="Inserts" origin="Edited 3d ago">
+  {failed
+    ? <SurfaceState size="line" kind="error" accessibilitySemantics="alert"
+        title="Couldn’t read this snippet" action={{ label: 'Retry', onPress: retry }} />
+    : text !== undefined
+      ? <HappierText variant="body">{text}</HappierText>
+      : <SurfaceState size="line" kind="loading" title="Reading the snippet" />}
+</HappierPromptPickerPreview>
+```
+
+The maintained
+[public-authoring example](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-sdk/examples/public-authoring/ui/reviewPanelPortable.tsx)
+composes a small controlled snippet picker this way (`ReviewSnippetPicker`),
+including a `/`-prefixed filter `TextField`.
 
 ## Host API
 
@@ -116,10 +236,11 @@ function PluginPanel() {
 export const renderSurface = defineUiSurface(PluginPanel);
 ```
 
-The managed UI build targets the one initial **Host API 1.0.0** contract.
-Authors do not configure an API range, select a second Host API tier, or add a
-version-sniffing fallback: consume the bound host API supplied to the admitted
-surface and handle its typed unavailable or cancellation result.
+In unpublished 0.3 development source, the managed UI build requests **Host API
+1.1.0**. Consume the bound API supplied to the admitted surface and handle its
+typed unavailable or cancellation result. Negotiation reports which methods
+the mounted host supports; an older host that cannot admit the requested API
+returns `incompatible_api_version`.
 
 `@happier-dev/plugin-sdk/ui/client` is the hosted-web bootstrap client; do not
 use it from a React Native renderer. Use the curated `plugin-ui` controls for
@@ -145,14 +266,56 @@ permit an admitted surface to construct a host provider, access internal mount
 state, or import app, host, or protocol internals. Keep
 `defineUiSurface` as the sole provider installation boundary.
 
+### Host-rendered Action controls (0.3 development source)
+
+Use `Action.Control` when a person's Run button needs fresh input from your
+existing controller. This unpublished contract registers the host's accessible
+button in the mounted surface's action slot; the component renders no button
+inside your author tree. The same control works outside a hosted-web iframe.
+
+```tsx
+<Action.Control
+  action="projects.compute.exec"
+  title="Run"
+  controller={runController}
+  signal={renderContext.signal}
+  fallback={<Text value="Run is unavailable on this host." />}
+/>
+```
+
+The host requests `runController.prepare({ signal })` on its physical press.
+Return `{ input }` after validation, or `null` to cancel before invocation.
+Honor the signal: disposal and mount retirement abort preparation, and late
+input is not submitted. `onSettled(execution)` receives the original canonical
+Action envelope, including pending approval, operation identity and unknown
+outcomes. Retain those references and follow the Action's existing approval or
+operation status; pending acceptance is not completion. Do not automatically
+repeat a write when its acceptance is unknown. Replacing the controller does
+not transfer settlement from the controller that prepared the invocation.
+
+For non-React surfaces, `hostApi.actionControl({ action, presentation },
+controller, { signal })` provides the same binding. Its handle has `update`
+and `dispose`; dispose it on cleanup. Unsupported hosts show the component's
+`fallback` and may be reported through `onUnavailable`.
+
+Only the host's physical gesture supplies person authority. `Action.Execute`,
+`useExecutePluginAction` and raw `executeAction` remain plugin automation calls.
+A host control does not waive explicit Ask policy or setup consent. Keep an
+Allow preference and Run as separate gestures. Declare reviewed values through
+[`confirmation.inputFields`](/plugins/api/actions-tools-commands#actions) on the
+Action, rather than building a second confirmation dialog. Check the installed
+API inventory and target host before adopting this development contract.
+
 ### Floating frames in development
 
 `FloatingFrame` is the controlled frame shared with Happier's Session viewer.
 The public component supplies theme and reduced-motion defaults; the neutral
 primitive is also available as `HappierFloatingFrame` from `/components`. Supply the frame rectangle,
-available space, body aspect and measured obstacles. The shared geometry owner
-handles corner placement, usable minimum width and a request to dock when the
-picture cannot fit. Your domain still owns the mode and settled rectangle.
+the available rectangle (the viewport the frame may float in) and the body aspect.
+The frame stays inside that rectangle and shrinks to fit it over whatever is behind;
+it does not dock itself. Docking is your own explicit control: the
+frame only asks for `expanded` or `floating`. Your domain still owns the mode and
+settled rectangle.
 
 In the native app, the host supplies finger drag through its optional
 `companionNativeFrame` presentation binding. Only a floating frame with
@@ -179,9 +342,11 @@ revision rows consume the canonical owner's saved revision facts.
 These components do not authorize publication, fetch Artifacts, retain bearer
 secrets, or restore revisions. Those operations remain with the admitted host
 services. `HappierHtmlSandboxFrame` owns reading-area geometry and state
-presentation only: its typed `renderFrame` binding must enforce the host's URL
-admission, isolated origin, platform sandbox and navigation policy. Passing HTML
-to a frame does not establish an execution sandbox. Consult the installed API
+presentation only: its typed `renderFrame` binding must enforce the platform
+sandbox and navigation policy. Private HTML Artifact content is opened by the
+authorized host and passed directly to its opaque sandbox; this component does
+not require an isolated-origin URL. Passing HTML to a frame does not establish
+an execution sandbox. Consult the installed API
 inventory for the exact bindings; this development surface is not a released
 stability or platform-certification promise.
 
@@ -213,7 +378,12 @@ border/background/edge colors. Style the child input with
 nativeMinimumTargetSize, presentation })`. Match the box's `multiline` and
 `presentation` to those metrics; `presentation="document"` gives long prose a
 roomier reading treatment. Your input owns its value, label, caret, validation
-and submission, and your error renderer owns its alert semantics.
+and submission, and your error renderer owns its alert semantics. Its optional
+`leading` sits before the input with no gap, so the value continues it (a
+shortcut's `/`), and `trailing` sits at the end for inline actions or a mark;
+the box gives the input the room between them. Decide yourself whether
+assistive technology reads them. `TextField presentation="field"` exposes the
+same slots as decoration.
 
 `HappierSearchFieldBox` frames a child search input with `colors`, a `radius`,
 optional `leading`/`trailing` content and `minimumTargetSize`. Supply
@@ -242,6 +412,16 @@ unavailable. The current plugin-field adapter declares list support only.
 Host Follow and matching-session routing editors use `daemonRule`, so list-only
 Branch, Needs-you and plugin conditions cannot be saved as executable rules.
 
+Declare fields in `definePlugin({ ui: { listExtensions: { localId: descriptor } } })`.
+The descriptor selects `sessionWork`, `workflow`, `discussion`, or your `plugin:…`
+entity and supplies optional `filterFields`. Its optional `rowMark` references a
+declared field for the same entity and chooses `context` or `mark`; the host
+qualifies that reference. Import the canonical `PluginCollectionListExtensionV1`
+type from `@happier-dev/plugin-sdk/ui`. Resource references use the existing
+Resource contribution contract. Declaring one does not read it, and Resource-backed
+host-row marks and filters remain deferred. Row operations use ordinary Actions
+with their existing placements and Session operands.
+
 `useCollectionSavedViewsControl` supplies controlled select/create/rename/update/
 delete presentation without owning storage. Give it admitted items, localized
 labels, the selected identity, mutation callbacks and the captured authority's
@@ -251,10 +431,169 @@ retires private naming drafts, and stale callbacks cannot replace the next
 scope's presentation. Create and rename callbacks return acceptance; a refused
 write keeps the draft available for correction.
 
-The shared picker does not prescribe persistence: Triage keeps saved views and
-its selected view in Account storage, while host spaces keep their selection on
-the device. Host Resource-backed row fields are deferred; a plugin-owned page
-can supply its own held custom facts through the pure adapter without importing
+For a read-only lens, or a domain with its own editing Actions, compose
+`useCollectionSavedViewsSelection` with `Dropdown`. This is also the selection
+owner used by built-in collection titles. It requires no membership writer:
+
+```tsx
+const picker = useCollectionSavedViewsSelection({
+  scope: host,
+  items: views, // Domain-owned { id, label, ... } catalog.
+  selectedId,
+  labels: { title: words.spaces, unselected: words.allItems },
+  onSelect: setSelectedId,
+});
+const lens = <Dropdown
+  open={picker.open}
+  onOpenChange={picker.onOpenChange}
+  trigger={picker.selected?.label ?? words.allItems}
+  items={picker.items}
+  radioGroups={picker.radioGroups}
+  onSelect={picker.selectItem}
+/>;
+```
+
+The scope withdraws an open picker when its Account changes. The caller supplies
+effective enablement through its admitted catalog and `disabled`; membership
+and editing Actions remain domain callbacks composed beside that selection.
+
+`CollectionSavedViewsStrip` draws the same selection as the spaces strip Happier's
+own lists use: one tab per view (its glyph when every view has an `icon`, words on
+every tab otherwise), an add control, a sideways swipe between views on a phone,
+`shortcuts` for the desktop digit shortcuts (⌃1–⌃9 on a Mac) while the surface is
+presented, and `onReorder` for dragging a tab with a pointer. Resolve `onReorder` true only when your own write accepted
+the move; offer another path for touch, as Manage spaces does. The strip's swipe,
+drag and shortcuts need the host, so a hosted-web surface keeps selection, arrow
+keys and add only.
+
+```tsx
+<CollectionSavedViewsStrip
+  scope={host}
+  items={views} // { id, label, icon? }
+  selectedId={selectedId}
+  labels={{ title: words.views, add: words.newView }}
+  onSelect={setSelectedId}
+  onAdd={openNewView}
+  onReorder={(id, beforeId) => saveOrder(id, beforeId)}
+  shortcuts
+/>
+```
+
+## Avatars, loading pages and card footers (0.3 development)
+
+Use `AvatarStack` for overlapping identity marks. Each entry supplies a stable
+`key` and rendered `content`; `slot` fits the marks into one leading avatar slot,
+with the first entry in front. Give the stack one `accessibilityLabel` when the
+marks convey a combined identity.
+
+```tsx
+<AvatarStack size={20} slot accessibilityLabel={words.reviewers} entries={[
+  { key: 'ada', content: <Avatar name="Ada" /> },
+  { key: 'lin', content: <Avatar name="Lin" /> },
+]} />
+<PageLoadingRows testID="reviews-loading" header loadingLabel={words.loading} />
+<ModalCardFooterActions cancel={{ onPress: close }} cancelLabel={words.cancel}
+  note={words.publishConsequence}>
+  <Button title={words.publish} onPress={publish} />
+</ModalCardFooterActions>
+```
+
+`PageLoadingRows` reserves four rows and an optional page-header placeholder;
+the caller still owns the load. `ModalCardFooterActions` places Cancel and its
+note before the actions. Inside the host's phone sheet, the sheet supplies
+dismissal and the footer shows only the actions.
+
+For clipped horizontal content, `HorizontalScrollEdgeMask` takes `children`,
+the measured `width` and `ramps`. A stop is pixels from the leading edge or
+`{ fromEnd: pixels }`; a `null` start or end leaves that edge clear of a fade.
+Browser masking uses CSS, and native masking uses the containing Happier host.
+These are unpublished Developer Preview source components from
+`@happier-dev/plugin-ui/components`; check your installed API inventory first.
+
+## Collection identity and scope (0.3 development)
+
+`CollectionTitleButton` opens the caller's Space menu or dialog with the same
+heading anatomy as built-in collection titles. Supply its current `expanded`
+state and `hasPopup`; `scale="section"` keeps it a section heading on phones.
+`CollectionTitleNaturalWidthContext` lets an adjacent control yield to the whole
+title before it truncates, including the chevron and optical inset.
+
+`CollectionSpaceIcon` draws a glyph or an already-held Project favicon:
+
+```tsx
+<CollectionTitleButton testID="review-space" label={words.reviews}
+  accessibilityLabel={words.chooseSpace} expanded={open} hasPopup="menu"
+  onPress={() => setOpen(true)} />
+<CollectionSpaceIcon size={20} icon={{ kind: 'icon', name: 'review' }} />
+<CollectionSpaceIcon size={20} icon={{ kind: 'project', favicon: heldFavicon }} />
+```
+
+Project selection and favicon acquisition stay with the caller. A missing held
+favicon draws the identity fallback without starting a read. These are unpublished
+Developer Preview source components, demonstrated in the maintained external
+authoring fixture's `BuiltInParityExample`.
+
+## Registry suggestions and recovery (0.3 development)
+
+`RegistryShelf`, `RegistryShelfAddControl` and `RegistrySourcesUnavailable` from
+`@happier-dev/plugin-ui/components` draw the registry presentation used by built-in
+capability pages. These are unpublished Developer Preview source components;
+check your installed Plugin UI inventory before targeting them.
+
+Give the shelf listings you already hold and a projection for their identity,
+title, description and test identifier. A lone suggestion draws as a row; several
+draw as cards, with a separate Add target. A settled empty shelf stays quiet.
+`browseAll` supplies an optional destination, and `unavailable` keeps a failed
+source's recovery beside any retained suggestions.
+
+```tsx
+<RegistryShelf
+  testID="workflow-suggestions"
+  title={words.suggestions}
+  items={suggestions}
+  projection={listingProjection}
+  loading={loading}
+  columnTitle={words.workflow}
+  where={(listing) => listing.publisher}
+  onOpen={openListing}
+  action={(listing) => <RegistryShelfAddControl
+    testID={`workflow-add.${listing.id}`}
+    title={listing.title}
+    state={addState(listing.id)}
+    addLabel={words.add}
+    addedLabel={words.added}
+    failedLabel={words.tryAgain}
+    onAdd={() => addListing(listing)}
+  />}
+  unavailable={failure ? { message: failure.message, onRetry: refresh } : undefined}
+/>
+```
+
+The caller owns catalog demand, projection, declared Actions and their result
+states (`available`, `adding`, `added`, `failed`). The Add control acknowledges
+its own `adding` → `added` transition; listings already added when mounted stay
+silent. For a standalone outage, pass `RegistrySourcesUnavailable` a `failures`
+array of `{ key, message, details?, onRetry }` and a `testID`. It keeps technical
+details behind disclosure and invokes each distinct retry callback once per
+press. `size="page"` can show a single failure's optional `source` and `reason`
+as the page state. Neither component starts catalog reads or retries by itself.
+
+## Needs-you row highlight (0.3 development)
+
+Set `needsYou` on a `Collection` anatomy to give a row that waits on the person
+the highlight they chose under Appearance: nothing extra (Dot, the default), a
+static bar (Accent), or a sweep across the row (Glint, Shimmer). Return
+`{ unopened }` for that row and `null` for the rest; motion runs only until the
+person opens it, and never while the row is hidden or under reduced motion. Leave
+it off rows in a Needs you shelf, which already say so. Outside `Collection`, draw
+`CollectionRowNeedsYouHighlight` under your row's content, or read
+`useCollectionRowNeedsYouHighlight` for the leading mark and pulse. A hosted-web
+surface has no such preference and stays on Dot.
+
+The shared picker does not prescribe persistence: Triage keeps saved views in
+Account storage and its selected lens in the device page location. Host spaces
+also keep their selection on the device. Host Resource-backed row fields are
+deferred; a plugin-owned page can supply its own held custom facts through the pure adapter without importing
 host or protocol internals. These are development-source contracts; check the
 installed Plugin UI inventory before targeting a published package.
 
@@ -266,6 +605,11 @@ admitted content mounted while refreshing or after a failed refresh, with one
 freshness line and recovery action. Before the first successful read it shows
 loading or an error with Retry. Set `isEmpty` when your decoded content is empty;
 the component does not infer emptiness from Resource bytes.
+
+In unreleased 0.3 source, a dynamic Resource may still be preparing its runtime
+before the first read finishes. Keep that state loading rather than showing an
+empty result. Preparation failures use the same read error and Retry path;
+the component does not impose a separate preparation timeout.
 
 For typed shared content in unreleased 0.3 source, keep a stable
 `PluginUiResourceProjection` descriptor and use
@@ -403,6 +747,11 @@ Series without an explicit `color` use the ordered ramp from
 `theme.colors.dataAccent` against the theme surface. Older snapshots omit
 `dataAccent`; the shared chart then uses `theme.colors.accent`.
 
+`theme.colors.blue` and `theme.colors.purple` are the host's hues for a colour a
+person picks for a mark: `Badge` `dot` and a menu item's `swatch` accept `'blue'`
+and `'purple'` beside the semantic tones. Older snapshots omit them; the mark
+then uses `theme.colors.accent` (blue) or `theme.colors.info` (purple).
+
 Use `width`/`viewportHeight` for explicit plot room. `normalized` changes share
 geometry while preserving exact numbers; `fitLine`, `minimumMaximum` and
 `domain: { min, max }` control the value scale. `strokeWidth`, `plotInset`,
@@ -514,6 +863,14 @@ import { CompositionStrip } from '@happier-dev/plugin-ui/components';
     { id: 'review', label: 'Selected for cleanup', value: 30, pattern: 'hatched' },
   ]} />
 ```
+
+### Measured durations
+
+In unpublished 0.3 development source, import `formatUsageDurationCompact` from
+`@happier-dev/plugin-ui/components` for a measured duration in milliseconds.
+It shares Happier's duration rounding and uses the supplied locale's narrow
+unit labels: `formatUsageDurationCompact(40_000, 'en-US')` returns `40s`.
+Represent an unknown measurement explicitly before calling it.
 
 ### Byte figures
 
@@ -906,18 +1263,6 @@ surface, whose host bridge carries Collection UI queries only.
 
 ## A Collection with one detail body
 
-A list that
-scrolls with its page (`presentation="list"`, `scroll="page"`) can line figures up
-in columns: mark a field `listColumn: true` and wide rows draw it as its own end
-column at the field's `minWidth`, with the column titles once at the top of the
-first sheet (a service's Ports, Memory and Up). A phone draws no columns; your
-`byline` receives `{ fieldColumns }` so it can say those facts on the row's second
-line instead. While the columns show, a row-aligned `titleMeta`
-(`titleMetaAlign: 'row'`) gives its place to them, so declare that fact as a
-field too. Groups that share one page section (`section` on each group) sit on one
-sheet under sub-headings that keep their end: "customer-portal · Production"
-shortens the shared start first.
-
 In the **0.3 development / Developer Preview** source contract, `Collection`
 uses one model and item anatomy for list, table, board and grid presentations.
 Its `detail="auto"` adapts the same detail body to the available pane or pushed
@@ -1015,7 +1360,21 @@ token (`review`, `escalating`, …); the words still name it. The table's Entry 
 row's second line uses the anatomy's `byline` ("payments-api #2481 · Mara Okafor")
 when it has one, and `glyphBadge` pins a small icon or live dot to the row's glyph
 (`{ icon, tone }` or `{ live: true }`); the table shows neither, because its own
-columns say the same. Pass the narrowings in force as `search.tokens`
+columns say the same. An anatomy with nothing for a second line (no `byline`,
+`where`, `reason` or `description`) draws one-line list rows on the dense row
+height: the title, then its `titleSuffix` inline (a status word, "Working"), then
+the end-aligned `titleMeta` ("4.1 GB"). Keep the figure and the name in
+`accessibilityLabel`; the suffix gives way before the title does. A list that
+scrolls with its page (`presentation="list"`, `scroll="page"`) can line figures up
+in columns: mark a field `listColumn: true` and wide rows draw it as its own end
+column at the field's `minWidth`, with the column titles once at the top of the
+first sheet (a service's Ports, Memory and Up). A phone draws no columns; your
+`byline` receives `{ fieldColumns }` so it can say those facts on the row's second
+line instead. While the columns show, a row-aligned `titleMeta`
+(`titleMetaAlign: 'row'`) gives its place to them, so declare that fact as a
+field too. Groups that share one page section (`section` on each group) sit on one
+sheet under sub-headings that keep their end: "customer-portal · Production"
+shortens the shared start first. Pass the narrowings in force as `search.tokens`
 (`{ key, qualifier, label, onRemove }`): they sit inside the search field, each one
 press to remove. To put that search into your own toolbar row, pass `header` as a
 render: `header={({ search, selection, pageActions }) => <Row>{search}{selection}{trailing controls}{pageActions}</Row>}`
@@ -1033,44 +1392,144 @@ a custom animated composition may supply a public `HappierDisclosureMotionDriver
 while honoring `reducedMotion`. Its header receives the toggle and expanded
 accessibility state together. Keep `defineUiSurface` as the provider boundary.
 
-### Custom grid card bodies (0.3 development)
-
-For `presentation="grid"`, `CollectionAnatomy.cardContent` replaces the generic
-card head and description with your domain body. This is **unreleased 0.3
-development API**. Supply `{ height, render(item), ownsFooter? }`: `height` is
-the exact body height at normal text size, scaled with the reader's text size.
-Every card shares that height, and the body must fit it. Unlike a static
-`preview`, the rendered body may subscribe to live data through your existing
-data owner.
-
-Keep the body's own component under the shared card activation and focus
-target. For example, extending the `Item` anatomy above:
+In unreleased 0.3 development source, `headerPlacement="list"` puts that header
+over the list pane in a collection-scrolling split, letting the adjacent detail
+start at the top. The default, `"across"`, spans both panes. Page-scrolling
+collections keep the header in their page scroll flow. For example, using your
+existing model, anatomy and detail renderer:
 
 ```tsx
-import { Stack, Text, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+<Collection
+  model={model}
+  anatomy={anatomy}
+  accessibilityLabel="Extensions"
+  presentation="list"
+  detail="auto"
+  minListWidth={280}
+  minDetailWidth={420}
+  preferredListRatio={0.4}
+  search={{ label: 'Search extensions', value: query, onValueChange: setQuery }}
+  headerPlacement="list"
+  header={({ search }) => <Row>{search}</Row>}
+  renderDetail={renderDetail}
+/>
+```
+
+### Card slots and rich bodies (0.3 development)
+
+In **unreleased 0.3 development source**, grid and board cards share the same
+identity header, title, description and quiet facts. Use `Collection` with
+`presentation="grid"` or `"board"`; its internal `CollectionCards` renderer is
+not a separate author component. Supply bounded slots through
+`CollectionAnatomy.card`: `headerRight(item)` for independent controls or related
+package marks, `facts(item)` for quiet metadata, and `body: { render(item),
+heightAtNormalText? }` for rich domain content. The optional height is a
+text-scaled minimum for a measured body band; content can grow beyond it.
+Use `card.description(item)` for a rendered description, such as a live domain
+status line, in the description's existing place below the title. It replaces
+the string `description` on cards and reserves the same description band;
+`card.body` is for additional content below that band. Keep the string anatomy
+when list and table consumers also need the description.
+Unlike a static `preview`, a rich body may subscribe through your existing data
+owner. The Collection retains framing, selection, keyboard focus and activation.
+
+For example, extending the `Item` anatomy above with a caller-owned `choose`:
+
+```tsx
+import { BrandMark, Button, Stack, Text, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 
 const gridAnatomy: CollectionAnatomy<Item> = {
-  glyph: () => null,
+  glyph: () => <BrandMark externallyLabelled />,
   title: (item) => item.title,
+  rowRole: 'catalogRow',
+  description: (item) => item.summary,
   accessibilityLabel: (item) => item.title,
-  cardContent: {
-    height: 120,
-    render: (item) => <Stack><Text value={item.title} /><Text value={item.summary} /></Stack>,
+  columnTitles: { title: 'Item' },
+  card: {
+    headerRight: (item) => <Button size="small" title="Choose" onPress={() => choose(item)} />,
+    facts: () => <Text value="From your library" variant="meta" />,
+    body: { render: (item) => <Stack><Text value={item.summary} /></Stack> },
   },
 };
 ```
 
-The default keeps the anatomy's `reason` and `action` in their footer slots.
-Set `ownsFooter: true` only when your body draws that footer area itself; the
-grid then reserves no separate footer band. An anatomy `action` remains its
-own target outside the card's primary target, positioned over that area.
-Put interactive footer controls there instead of nesting a button in the
-card's body. List, table and board presentations retain their existing anatomy.
+Without `card.headerRight`, the card uses `reason` and `action`; without
+`card.facts`, it uses the held byline/where, signal, agent and age facts.
+An explicit slot replaces its default, so include any controls or safety facts
+the item still needs. Header and body controls are separate press and focus
+targets from card-open. Cards have no divided footer band. An item with no
+description adds no empty description band; truly title-only cards remain compact.
+List and table still consume the shared semantic anatomy.
+
+For a group, put exact package `BrandMark` targets in `headerRight`; the host
+resolves each manifest-owned brand. Keep group membership and deduplication in
+your data projection. `wrapItem` remains for interaction or presence decorators
+such as drag; it does not replace card framing. Navigation metadata belongs in
+`destination`, which accepts a qualified plugin destination or `{ href }`.
+
+The existing `WidgetFrame` uses the same portable chrome. Its `accessory` holds
+header controls, `facts` holds quiet metadata, and children retain the rich body.
+Optional `onOpen` adds a separate frame-open target; do not nest a second card
+around it or replace its disclosure and body lifecycle.
+In unreleased 0.3 source, changing `frameStyle` between `card` and `plain` keeps
+the body and header controls mounted. Keep one `WidgetFrame` and change its prop:
+
+```tsx
+const [frameStyle, setFrameStyle] = useState<'card' | 'plain'>('card');
+
+<WidgetFrame
+  frameStyle={frameStyle}
+  placement="board"
+  title="Review choices"
+  accessory={<Button title={frameStyle === 'card' ? 'Hide frame' : 'Show frame'}
+    onPress={() => setFrameStyle(current => current === 'card' ? 'plain' : 'card')} />}
+>
+  <ReviewChoices />
+</WidgetFrame>
+```
+
+An adapter that supplies `HappierMaterialSurfaceRender` must also honor
+`input.noCoat`: keep the same root and child placement, remove only its material
+paint, and inherit the surrounding material context.
 
 ### Interactive row controls and spanning fields (0.3 development)
 
 These additions describe **unreleased 0.3 development source**, not shipped
 package availability. Check your installed API inventory before using them.
+
+Collections with a `description` anatomy use `catalogRow`, including in narrow
+columns. A peer without its own description keeps that collection's row role.
+Set `anatomy.rowRole` explicitly to `catalogRow`, `item` or `menu` when the
+content needs an explicit role; title-only navigation, search results and
+sidebar rows can keep `item`. Standalone `List.Item` and `Item` accept the same
+`rowRole`, while ordinary preference rows keep their divided page anatomy.
+An optional `kindLabel` identifies rows in a mixed-kind catalog; omit it when
+the collection already names the kind.
+
+Use `capabilityCollectionAnatomy` for installable things with capability status.
+Its shared description projection keeps the description beside an independent
+control on a narrow row. Only the speaking status's own `fix` replaces the visible
+description; the full description remains in the accessible row name. For example,
+with the page's existing `enable` and `signIn` Action handlers:
+
+```tsx
+import { Button, capabilityCollectionAnatomy } from '@happier-dev/plugin-ui/components';
+
+const anatomy = capabilityCollectionAnatomy<Item>({
+  title: item => item.title,
+  description: item => item.summary,
+  facts: () => ({}),
+  status: item => item.id === 'signed-out'
+    ? { kind: 'signin', fix: { kind: 'sign_in', onPress: () => signIn(item) } }
+    : { kind: 'offline' },
+  action: item => <Button title="Enable" onPress={() => enable(item)} />,
+  accessibilityLabel: item => `${item.title}. ${item.summary}`,
+  testID: item => `capability:${item.id}`,
+});
+```
+
+Pass this anatomy to the existing `Collection`; an Offline row keeps its summary
+and Enable control, while the signed-out row keeps its independent Sign in fix.
 
 Put an interactive control beside a row's primary press target with
 `anatomy.titleControls`: it follows `titleSuffix` in the table and ends the
@@ -1169,6 +1628,22 @@ self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after
 its first visit; its asynchronous work must consume `useTabPanelActivity()` and
 stop when `activeSignal` aborts. Retention ends with the Tabs mount.
 
+In **0.3 development source**, an outer detail view can use
+`Tabs presentation="page" pageKind={{ pluginId, localId }}`. Keep `value` and
+`onValueChange` controlled by the same panel owner. The Items supply the labels,
+badges and navigation metadata; Happier applies the saved order to the strip
+inside the detail column and uses that declaration for phone navigation.
+Pass `phonePresented` from the Collection detail's `pushed` state when the
+detail is presented beside, or over, its collection. Nested source Tabs stay
+`tabList="host"` so they cannot replace the outer navigation.
+
+The strip's **More → Customize** opens Happier's shared navigation customizer
+for that page kind. Phone Top keeps the strip beside its content; phone Bottom
+uses the host bar. Both use the single host More menu for phone overflow.
+A rejected controlled selection keeps the previous panel and permits another
+attempt. Hosts without the installed page-navigation operation retain ordinary
+local Tabs. Matching development SDK and host versions are required.
+
 `Step` is a story or check, not a workflow runner. A numbered marker is
 `{ kind: 'number', value: 1 }`; a checks marker is
 `{ kind: 'state', state: 'passed', label: 'Passed' }` (also `running` or
@@ -1211,9 +1686,13 @@ phone. Put the tab's add action and its one live fact there with
 ```
 
 The actions render in the header, outside your surface's tree, and keep your
-plugin's context. Where the host mounts the surface without a pane header (a
-page or a widget), `PaneHeaderContent` renders nothing, so keep an add path in
-the body as well (an empty state's action). `triggerIcon` on `Menu` and `Popover`
+plugin's context. In a widget on Home or a Board the same content goes to the
+widget's frame header (its live fact and its "+", before ⋯). A widget can also
+pass `caption` to name the part of your plugin it comes from beside its title
+("Tasks" when the plugin also has "PRs & Issues"); without it the frame names your
+plugin. Tab headers have no such slot and ignore `caption`. Where the host
+mounts the surface without either header (a page), `PaneHeaderContent` renders
+nothing, so keep an add path in the body as well (an empty state's action). `triggerIcon` on `Menu` and `Popover`
 draws the trigger as a glyph alone, the way the host's own "+" and ⋯ look. With
 `triggerAppearance="control"` or `"primary"` the glyph leads the visible words
 instead, exactly like a `Button`'s leading icon: use it for a primary action that
@@ -1238,10 +1717,27 @@ label ("Loaded 10:42"), so one notice can carry the reason beside its `action`.
 `BrandMark size="small"` sits at text size beside a label; larger sizes keep their
 image steps.
 
+In **unreleased 0.3 development source**, public `BrandMark` reads the mounted
+plugin's manifest-owned artwork, or an exact package selected by `pluginId`.
+Public `HappierBrandMark` accepts admitted PNG bytes and a theme; `Image` accepts
+an admitted packaged PNG Resource. None accepts a remote `uri` or arbitrary
+`source`. The host's catalog URL binding is private. Absent, refused or broken
+brand artwork uses one bare grapheme in secondary ink; declared monochrome
+artwork uses primary ink, while coloured artwork keeps its supplied colours.
+Use `externallyLabelled` when adjacent text already names the mark, or `showName`
+when the mark should include its name.
+
+For a custom identity adapter, `resolveHappierBrandFallback(displayName)` from
+`/components` returns the same uppercase first grapheme. It returns `?` for an
+empty name or a runtime without grapheme segmentation. Reuse it rather than
+slicing a name, which can split an emoji or a combined character.
+
 A `Popover` that holds a large panel (a form, a picker with search, a detail view) sets
 `floatingRole="panel"`, so Happier draws it with the same heavier coat as its own dialogs and
 panels and its words stay legible over the page. Leave it off for a small popover; menus keep the
 lighter coat. The coat is Happier's to paint: there is no opacity or colour prop.
+
+For keyed live facts in 0.3 development source, pass a stable `useRowItem(item)` hook that subscribes to your canonical owner and returns the same item key. Rows, cards, peeks, accessibility labels and actions read that returned item. Update the model input for membership, order or group changes. A stable `useDetailHeader(key)` hook can subscribe to the selected title band below the container; it receives `null` when closed and can return `undefined` to retain `detailHeader` as the fallback. Keep both hooks backed by the existing owner rather than another item cache.
 
 In the Developer Preview source contract, a page Collection can supply
 `detailHeader(key)` with the item's `title`, optional `subtitle` and `actions`,
@@ -1488,8 +1984,15 @@ own Work tab, Inbox and workflow maps use, from
   disclosure. Loading retains the section header and skeleton instead.
 - `HappierWorkRowShell` and `HappierWorkSummary`: a Work row's pressable shell
   and its identity leaf (mark, title, one line of facts, the state word at the
-  trailing edge). On a `page` row, `trailingMeta` sets the date in one
-  right-aligned column after the row's own control, so dates line up however
+  trailing edge). `factsTail` holds a last fact, such as an age, that stays on
+  the line when the facts are too long for it: the facts truncate first and the
+  tail never does. It follows the facts after the same separator, stands alone
+  when no fact renders, and keeps a numeric `0`. Absent facts (`null`,
+  `undefined`, `false` and `''`) are skipped in `facts` and `factsTail` alike,
+  so a conditional fact never leaves a stray separator. Use it only for the one
+  piece of trailing information that must stay visible on a narrow row; put
+  ordinary metadata in `facts`. On a `page` row, `trailingMeta` sets the date in
+  one right-aligned column after the row's own control, so dates line up however
   wide each control is; pass `null` on a row with no date to keep that column.
 - `buildHappierWorkMap` and `HappierWorkMapView`: a map of work built only from
   the parent each node declares, drawn as cards on a rail or in side-by-side lanes;
@@ -1525,11 +2028,16 @@ does not establish package publication or loaded-platform validation.
 The development-source `session.work.get` (`{ sessionId }`) and `inbox.get`
 (`{}`) host Actions can read the answering client's existing mounted Work or
 Inbox owner. Their results distinguish `ready`, `loading` and `unavailable`;
-they do not open those surfaces, load a second projection or interpret
+Inbox also reports `partial` with coverage when some sources are unavailable.
+Its lead group roots require both `serverId` and `sessionId`, including for an
+unreadable lead, so equal Session ids in different Homes remain distinct.
+They do not open those surfaces, load a second projection or interpret
 `unavailable` as empty. Calls are bound to the invoking Home and Account.
 Use them only when your installed SDK's generated
 [host Action reference](/plugins/api/host-actions) lists them. Rendering the
-primitives below does not itself mount a host data source.
+primitives below does not itself mount a host data source. A generated Inbox
+result type does not grant a plugin permission to read the Inbox; caller
+admission still applies.
 
 ```tsx
 import * as React from 'react';
@@ -1566,6 +2074,7 @@ function DeployWork({ deploys, onOpen }: DeployWorkProps) {
             phase="attention"
             mark={<DeployMark />}
             facts={[deploy.environment, deploy.stepLabel]}
+            factsTail={deploy.age}
             trailingState={deploy.status}
             accessibilityLabel={`${deploy.name}, ${deploy.status.word}`}
           />
@@ -1597,25 +2106,6 @@ Inside a mounted surface these read the theme, page palette and text scale from
 the surface environment. The words stay yours: a row says the owner's own state
 ("Waiting for approval"), never the bucket label. A row carries no answer
 controls; open the place where the request is answered once.
-
-## Needs-you row highlight (0.3 development)
-
-Set `needsYou` on a `Collection` anatomy to give a row that waits on the person
-the highlight they chose under Appearance: nothing extra (Dot, the default), a
-static bar (Accent), or a sweep across the row (Glint, Shimmer). Return
-`{ unopened }` for that row and `null` for the rest; motion runs only until the
-person opens it, and never while the row is hidden or under reduced motion. Leave
-it off rows in a Needs you shelf, which already say so. Outside `Collection`, draw
-`CollectionRowNeedsYouHighlight` under your row's content, or read
-`useCollectionRowNeedsYouHighlight` for the leading mark and pulse. A hosted-web
-surface has no such preference and stays on Dot.
-
-The shared picker does not prescribe persistence: Triage keeps saved views in
-Account storage and its selected lens in the device page location. Host spaces
-also keep their selection on the device. Host Resource-backed row fields are
-deferred; a plugin-owned page can supply its own held custom facts through the pure adapter without importing
-host or protocol internals. These are development-source contracts; check the
-installed Plugin UI inventory before targeting a published package.
 
 ## Page headers and group labels (0.3 development)
 
@@ -1682,6 +2172,29 @@ a small card with no ring, your small mark in `icon`, and everything on one edge
 `surfaceStyle` replaces its fill. `eyebrow` adds the source line above the title
 ("Bash"). Facts stay in the body and the decision stays in `footer`.
 
+Put the request's arguments in the prompt's body with `ApprovalFields`, the
+same table Happier's own approval cards draw: each argument's label beside its
+value in one quiet inset table. Pass `rows` in the words people read. A row is
+a `value`, a structured value's `entries` (each `{ label, value, depth }`, with
+`value: null` for a group heading), `answers` to questions, or a `notice` that a
+value can't be shown here. Put exact ids and raw values in `technicalDetails`;
+they fold behind one "Technical details" line at the end. Use
+`anatomy="stack"` to set each label above its value instead. With no rows and no
+details it draws nothing.
+
+```tsx
+<ApprovalPrompt tone="attention" title={t('Change when a machine stops')}
+  footer={<DecisionButtons />}>
+  <ApprovalFields
+    rows={[
+      { kind: 'value', key: 'keep', label: t('Keep it'), value: t('Stop after 1 h unused') },
+      { kind: 'value', key: 'wake', label: t('Wake'), value: t('On your next message') },
+    ]}
+    technicalDetails={[{ key: 'machine', label: t('Machine ID'), value: machine.id }]}
+  />
+</ApprovalPrompt>
+```
+
 `<MotionFeedback trigger={confirmedSequence} decorative>` acknowledges a
 confirmed result. Change the trigger only after success, and expose that result
 in words outside decorative feedback. First mount is static; reduced motion
@@ -1738,6 +2251,18 @@ source's localized `name`, optional `status` and semantic `tone`; choose
 `presentation="compact"`, `"summary"` or `"list"` for the container. Full list
 rows accept `detail` and `actions`. Filtering, state vocabulary and operations
 remain source-owned.
+
+In unreleased 0.3 source panels, `useTriageSourcePanelIntentV1` from
+`@happier-dev/triage-sources/ui` binds a source-declared list to the mounted
+Triage Action. Bind `{ kind: 'loadMoreSourceItems', list: 'files' }` for paging,
+or `{ kind: 'setSourceItemExpanded', list: 'files' }` for expansion. Publish the
+available operands in the binding's `commands`, and call the returned intent
+from the visible control. Expansion includes `itemId` and `expanded`; paging
+includes `list`. Agents invoke `happier.triage/actions/ui/mounted-v1` with
+`{ mountId, operation }`, using those published commands. The existing active
+panel controller owns state and reads; unknown or inactive lists/items and
+exhausted pages return `unavailable`. This development seam changes in place
+and requires matching Triage/source packages; it is not a released SDK contract.
 
 ## Accessibility and offline snapshots
 

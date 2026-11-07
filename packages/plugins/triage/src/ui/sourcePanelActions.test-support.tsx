@@ -8,7 +8,7 @@ import { bindTriageMountedUiActions } from './mountedActions.js';
 import { useTriageSourcePanelActionsV1 } from './useSourcePanelActions.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { TriageMountedUiInputV1Schema, TriageMountedSourceInsertInputV1Schema, TriageMountedSourceRevealInputV1Schema } from '../actions/mountedUiProtocol.js';
-import { PluginActionConfirmationV2Schema } from '@happier-dev/protocol';
+import { PluginActionConfirmationV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 
 /** Source tests mount the real parent dispatcher; only the host Action/approval transport is a boundary fixture. */
 export function SourcePanelActionsFixture(props: Readonly<{

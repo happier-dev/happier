@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -11,6 +13,9 @@ import {
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PLUGIN_MANIFEST } from '../manifest.js';
+import { activate as activateMountedActions } from '../actions/mountedUi.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from '../actions/mountedUiProtocol.js';
 
 import {
     listTriageEntries,
@@ -50,8 +55,8 @@ import { filterFacetOption, toolbarMenuItem } from './shell/toolbarMenus.test-su
  * The saved-view lens a reader can actually reach.
  *
  * `core/CORPUS.md` §6.3 makes `triage.savedViews` durable user policy and
- * `core/SURFACE.md` §6.5 makes selecting one an explicit Account KV mutation whose
- * re-read projection becomes the reducer lens. These cases fail whenever the
+ * `core/SURFACE.md` §6.5 makes selection a device-local page-location change.
+ * These cases fail whenever the
  * saved set has no consumer, when selecting applies only part of a view, when
  * an ordinary lens edit silently rewrites the saved view, or when a route lens
  * touches Account KV at all.
@@ -65,6 +70,7 @@ const SCOPE = 'example/repository';
 const VIEW_ID = '0000000a-0000-4000-8000-00000000000a';
 const VIEW_LABEL = 'Needs my review';
 const VIEW_QUERY = 'normalizer';
+const SELECTED_VIEW_LOCATION = `sv,${VIEW_ID}/o,smart/sp,activity/fst,done/q,${VIEW_QUERY}`;
 
 function configuredInstance(): TriageConfiguredSourceInstanceV1 {
     return TriageConfiguredSourceInstanceV1Schema.parse({
@@ -208,6 +214,7 @@ function createHarness(
 }
 
 const mounted: PluginUiTestkit[] = [];
+const clients: PluginClientTestkit[] = [];
 
 async function mountShell(options: Readonly<{
     subPath?: string;
@@ -215,12 +222,15 @@ async function mountShell(options: Readonly<{
     gateViewsRead?: Promise<void>;
     viewsReadUnavailable?: boolean;
     rejectRoute?: boolean;
+    savedViewApprovalRequired?: boolean;
 }> = {}): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
     accountKv: ReturnType<typeof createTestkitAccountKv>;
     enableViewsRead: () => void;
     failNextWrite: () => void;
+    selectFromAgent: (viewId: string | null) => Promise<unknown>;
+    intentPromptCount: () => number;
 }>> {
     const harness = createHarness(
         options.selectedViewId ?? null,
@@ -229,7 +239,46 @@ async function mountShell(options: Readonly<{
     );
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const locations: string[] = [];
+    let intentPrompts = 0;
+    // Substitute the host boundary while keeping its shared approval policy real.
+    const admitSavedView = async (input: unknown) => {
+        const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1);
+        if (!action) throw new Error('Saved-view Action must be declared');
+        const gate = createPluginActionPresentUserGate({
+            resolve: () => ({ status: 'resolved', action, policy: {
+                qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'saved-view-occurrence',
+                dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+                scopes: action.scopes, surfaces: action.surfaces,
+                ...(options.savedViewApprovalRequired === true ? { approvalRequiredByActionSettings: true } : {}),
+                authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+                    resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] },
+            } }),
+            requestCurrentIntent: async ({ fingerprint }) => {
+                intentPrompts += 1;
+                return { status: 'approved', fingerprint };
+            },
+        });
+        return (await gate.admit({ input, surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user' })).status === 'admitted';
+    };
+    const declaration = PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
+    if (declaration?.execution.target !== 'client') throw new Error('Missing mounted UI Action');
+    const target = { ...declaration.execution.client, platform: 'web' as const };
+    const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST, target, activate: activateMountedActions });
+    clients.push(client);
+    const handler = client.registration('actions', declaration.id);
+    if (!handler) throw new Error('Mounted UI Action was not registered');
+    let mountId: string | undefined;
     let fixture!: PluginUiTestkit;
+    const invokeMounted = async (input: unknown, invocationSurface: 'ui' | 'agent') => {
+        const parsed = TriageMountedUiInputV1Schema.parse(input);
+        mountId = parsed.mountId;
+        return TriageMountedUiResultV1Schema.parse(await handler(parsed, {
+            plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+            contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+            invocationSurface, signal: new AbortController().signal,
+            ui: fixture.context.hostApi, ephemeralSharedScope,
+        }));
+    };
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-189', mountNonce: 'fixture-mount-189' },
@@ -240,7 +289,14 @@ async function mountShell(options: Readonly<{
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                executeAction: async ({ action, input }) => {
+                    if (action === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1) return await invokeMounted(input, 'ui');
+                    if (action === TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 && !await admitSavedView(input)) {
+                        throw new Error('Saved-view Action was not admitted');
+                    }
+                    return await harness.executeAction({ action, input });
+                },
+                admitAction: async ({ input }) => await admitSavedView(input),
                 replacePageLocation: ({ subPath: written }) => {
                     if (options.rejectRoute === true) throw new Error('host rejected replacement');
                     locations.push(written);
@@ -261,6 +317,11 @@ async function mountShell(options: Readonly<{
         accountKv: harness.accountKv,
         enableViewsRead: harness.enableViewsRead,
         failNextWrite: harness.failNextWrite,
+        intentPromptCount: () => intentPrompts,
+        selectFromAgent: async (viewId) => {
+            if (mountId === undefined) throw new Error('Select through the Views control first to obtain its mounted address');
+            return await invokeMounted({ mountId, operation: { kind: 'selectSavedView', viewId } }, 'agent');
+        },
     };
 }
 
@@ -303,11 +364,22 @@ function accountRetryButton(): HTMLElement {
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+    for (const client of clients.splice(0)) await client.dispose();
 });
 
 describe('the PRs & Issues saved-view lens', () => {
+    // SIMPLIFY-CHALLENGE-1106 #5/M1: a reversible in-app press is the default intent.
+    it.each([false, true])('saves from the mounted UI with explicit Ask=%s', async (savedViewApprovalRequired) => {
+        const { shell, accountKv, intentPromptCount } = await mountShell({ savedViewApprovalRequired });
+        await act(async () => { await shell.press(await toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Save as new view' })); });
+        await editViewName('My direct saved view');
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Save view' })); });
+        expect(storedValue(accountKv).views.some((view) => view.label === 'My direct saved view')).toBe(true);
+        expect(intentPromptCount()).toBe(savedViewApprovalRequired ? 1 : 0);
+    });
+
     it.each(['create', 'rename'] as const)('retains the exact %s name after a conflict and retries it', async (kind) => {
-        const { shell, accountKv } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv } = await mountShell({ subPath: SELECTED_VIEW_LOCATION });
         await act(async () => {
             await shell.press(await toolbarMenuItem(shell, 'Views', 'menuitem', {
                 name: kind === 'create' ? 'Save as new view' : 'Rename',
@@ -361,7 +433,7 @@ describe('the PRs & Issues saved-view lens', () => {
     });
 
     it('applies a selected view’s query, facets, order and Smart policy together', async () => {
-        const { shell, locations } = await mountShell();
+        const { shell, locations, accountKv } = await mountShell();
 
         const option = await toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: VIEW_LABEL });
         await act(async () => { await shell.press(option); });
@@ -377,13 +449,14 @@ describe('the PRs & Issues saved-view lens', () => {
         expect(written).toContain('fst,done');
         expect(written).toContain(`q,${VIEW_QUERY}`);
         expect((await shell.getByRole('textbox')).value).toBe(VIEW_QUERY);
+        expect(accountKv.setCallCount()).toBe(0);
         await expect(filterFacetOption(shell, 'State', {
             name: 'Done',
             state: { checked: true },
         })).resolves.toBeTruthy();
     });
 
-    it('settles the route before selecting durably', async () => {
+    it('retains the prior device selection when the host refuses the route', async () => {
         const { shell, accountKv, locations } = await mountShell({ rejectRoute: true });
 
         await act(async () => {
@@ -401,6 +474,25 @@ describe('the PRs & Issues saved-view lens', () => {
             name: 'Done',
             state: { checked: false },
         })).resolves.toBeTruthy();
+    });
+
+    it('shares UI and agent selection through the registered Action and restores the settled device location', async () => {
+        const { shell, locations, accountKv, selectFromAgent } = await mountShell();
+        await act(async () => { await shell.press(await toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: VIEW_LABEL })); });
+        expect((await shell.getByRole('textbox')).value).toBe(VIEW_QUERY);
+        await act(async () => { expect(await selectFromAgent(null)).toEqual({ status: 'applied' }); });
+        await expect(toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: 'No saved view', state: { checked: true } })).resolves.toBeTruthy();
+        await act(async () => { expect(await selectFromAgent(VIEW_ID)).toEqual({ status: 'applied' }); });
+        await act(async () => { expect(await selectFromAgent('unknown')).toEqual({ status: 'unavailable' }); });
+        expect(accountKv.setCallCount()).toBe(0);
+        const subPath = locations[locations.length - 1];
+        expect(subPath).toContain(`sv,${VIEW_ID}`);
+        await act(async () => { await shell.dispose(); });
+        mounted.splice(mounted.indexOf(shell), 1);
+        const restarted = await mountShell({ subPath });
+        expect((await restarted.shell.getByRole('textbox')).value).toBe(VIEW_QUERY);
+        await expect(toolbarMenuItem(restarted.shell, 'Views', 'menuitemradio', { name: VIEW_LABEL, state: { checked: true } })).resolves.toBeTruthy();
+        expect(restarted.accountKv.setCallCount()).toBe(0);
     });
 
     it('marks the lens modified after an edit without writing the saved view', async () => {
@@ -442,7 +534,7 @@ describe('the PRs & Issues saved-view lens', () => {
     });
 
     it('refuses a stale full-view update, re-reads, and shows the conflict', async () => {
-        const { shell, accountKv } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv } = await mountShell({ subPath: SELECTED_VIEW_LOCATION });
         const openFacet = await filterFacetOption(shell, 'State', { name: 'Open' });
         await act(async () => { await shell.press(openFacet); });
 
@@ -471,28 +563,28 @@ describe('the PRs & Issues saved-view lens', () => {
     });
 
     it('clears the selected view id when the view is deleted', async () => {
-        const { shell, accountKv, locations } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv, locations } = await mountShell({ subPath: SELECTED_VIEW_LOCATION });
 
         const remove = await toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Delete' });
         await act(async () => { await shell.press(remove); });
         await act(async () => { await Promise.resolve(); });
 
         expect(storedValue(accountKv).views).toEqual([]);
-        expect(storedValue(accountKv).selectedViewId).toBeNull();
+        expect(storedValue(accountKv)).not.toHaveProperty('selectedViewId');
         expect(locations[locations.length - 1] ?? '').not.toContain('sv,');
     });
 
-    it('restores the selected view exactly when the location carries no lens', async () => {
+    it('ignores the retired Account selection when the location carries no lens', async () => {
         const { shell, accountKv } = await mountShell({ selectedViewId: VIEW_ID });
 
-        // Durable account preference, applied on restart without a write.
+        // Retired Account state must never override this device's page location.
         await expect(filterFacetOption(shell, 'State', {
             name: 'Done',
-            state: { checked: true },
+            state: { checked: false },
         })).resolves.toBeTruthy();
         await expect(toolbarMenuItem(shell, 'Views', 'menuitemradio', {
             name: VIEW_LABEL,
-            state: { checked: true },
+            state: { checked: false },
         })).resolves.toBeTruthy();
         expect(accountKv.setCallCount()).toBe(0);
     });

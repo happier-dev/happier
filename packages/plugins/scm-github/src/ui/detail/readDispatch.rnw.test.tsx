@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { activate } from '../../activate.js';
+import { activate, activateAccount } from '../../activate.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -26,9 +26,11 @@ import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js
 import {
   GithubChangedFilesInputV1Schema,
   GithubChangedFilesResultV1Schema,
+  GithubOverviewResultV1Schema,
 } from '../../triage/detail/contracts.js';
 import {
   GITHUB_FIXTURE_REPOSITORY_ID,
+  GITHUB_PULL_REQUEST_RESPONSE,
   githubChangedFile,
 } from '../../triage/__fixtures__/githubResponses.js';
 import {
@@ -36,13 +38,18 @@ import {
   type StubHttpResponse,
 } from '../../triage/testkit/githubTriage.test-support.js';
 import { renderSurface } from '../renderSurface.js';
+import { createTriageEphemeralSharedScopeFixture, createTriageEphemeralSharedScopeOriginFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
+import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   projectGithubChangedFileRows,
 } from '../../triage/detail/projection.js';
 import {
   useGithubChangedFileDiff,
+  useGithubOverview,
+  useGithubTimelineReader,
   type GithubChangedFileViewV1,
+  type GithubOverviewControllerV1,
 } from './panelReaders.js';
 
 (
@@ -155,6 +162,7 @@ function FileDisclosureProbe() {
 async function mountRegisteredFiles(
   options: Readonly<{ misbind?: boolean; probe?: boolean }> = {},
 ) {
+  const scope = createTriageEphemeralSharedScopeFixture();
   let release!: (response: StubHttpResponse) => void;
   const pending = new Promise<StubHttpResponse>((resolve) => {
     release = resolve;
@@ -165,7 +173,7 @@ async function mountRegisteredFiles(
   });
   const plugin = await createPluginTestkit({
     manifest: PLUGIN_MANIFEST,
-    module: { activate },
+    module: { activate, activateAccount },
     services: {
       http: transport.context.services.http,
       connectedAccounts: transport.context.services.connectedAccounts,
@@ -189,13 +197,15 @@ async function mountRegisteredFiles(
         const body = renderSurface({ ...context, launchInput: launchInput() });
         if (body !== null && !React.isValidElement(body))
           throw new Error('Expected a React-native surface');
-        return body;
+        return <SourcePanelActionsFixture scope={scope}>{body}</SourcePanelActionsFixture>;
       }),
       launchInput: launchInput(),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
+          const localId = typeof action === 'string' ? action : action.localId;
+          if (localId.startsWith('ui/') && input !== undefined) return await invokeSourcePanelFixtureAction(scope, localId, input, detail.context, signal);
           if (
             typeof action === 'string' ||
             action.pluginId !== GITHUB_PLUGIN_ID
@@ -244,6 +254,267 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
+  it.each(['absent', 'unadmitted'] as const)('reads and retains an Account Overview with an %s Machine execution scope', async (executionScope) => {
+    const origins = createTriageEphemeralSharedScopeOriginFixture();
+    const presentation = origins.forExecutionOrigin('account');
+    // Host boundary: Account renderers can retain presentation data without a
+    // Machine origin. Older hosts omit the execution-bound operation entirely.
+    const scope = { acquire: presentation.acquire,
+      ...(executionScope === 'unadmitted' ? { acquireExecutionBound: () => null } : {}) };
+    let answer!: (response: StubHttpResponse) => void;
+    const pending = new Promise<StubHttpResponse>((resolve) => { answer = resolve; });
+    const transport = createStubGithubTransport({ respond: (request) =>
+      new URL(request.url).pathname.endsWith('/pulls/1284') ? pending : undefined });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const observed: { current: GithubOverviewControllerV1 | null } = { current: null };
+    let reads = 0;
+    function OverviewProbe() {
+      observed.current = useGithubOverview(launchInput(), { readWhenActive: true });
+      return <Text>{observed.current.value?.body ?? observed.current.failure?.code ?? 'pending'}</Text>;
+    }
+    const mount = async () => {
+      let detail!: PluginUiTestkit;
+      await act(async () => {
+        detail = await createPluginUiTestkit({
+          identity: { instanceId: 'account-overview', mountNonce: `account-overview-${reads}` },
+          authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+          surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel="Account Overview">
+            <Tabs.Item value="overview" title="Overview"><OverviewProbe /></Tabs.Item>
+          </Tabs>),
+          surfaceContext: createSurfaceContextFixture(),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+          handlers: { executeAction: async ({ action, input, signal }) => {
+            if (typeof action === 'string' || input === undefined) throw new Error('Expected an Overview Action');
+            reads++;
+            return plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
+          } },
+        });
+      });
+      return detail;
+    };
+    const first = await mount();
+    mounted.push(first);
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await act(async () => { answer({ status: 200, body: GITHUB_PULL_REQUEST_RESPONSE }); });
+    await vi.waitFor(() => expect(observed.current).toMatchObject({ value: { kind: 'overview', body: GITHUB_PULL_REQUEST_RESPONSE.body }, failure: null, refreshing: false }));
+    await act(async () => { await first.dispose(); });
+    mounted.splice(mounted.indexOf(first), 1);
+    const reopened = await mount();
+    mounted.push(reopened);
+    await vi.waitFor(() => expect(observed.current).toMatchObject({ value: { body: GITHUB_PULL_REQUEST_RESPONSE.body }, failure: null }));
+    expect(reads).toBe(1);
+    origins.retire();
+  });
+
+  it('settles a refused overview scope without dispatching or polling it', async () => {
+    const origins = createTriageEphemeralSharedScopeOriginFixture();
+    const scope = origins.forExecutionOrigin('retired');
+    origins.retire();
+    const observed: { current: GithubOverviewControllerV1 | null } = { current: null };
+    function OverviewProbe() {
+      observed.current = useGithubOverview(launchInput(), { readWhenActive: true });
+      return null;
+    }
+    const executeAction = vi.fn(async () => { throw new Error('A refused scope cannot dispatch'); });
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({
+        identity: { instanceId: 'github-overview-refused', mountNonce: 'github-overview-refused-mount' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel="Overview probe">
+          <Tabs.Item value="overview" title="Overview"><OverviewProbe /></Tabs.Item>
+        </Tabs>),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+        handlers: { executeAction },
+      });
+    });
+    mounted.push(detail);
+    expect(observed.current).toMatchObject({ value: null, refreshing: false,
+      failure: { code: 'github-overview-scope-unavailable' } });
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(await observed.current!.refresh()).toBe(false);
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['head', 'same-head source revision', 'execution origin'] as const)(
+    'acquires the latest %s demand and recovers held HTTP work across leave and re-entry', async (change) => {
+    const headRevision = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
+    const origins = createTriageEphemeralSharedScopeOriginFixture();
+    let executionScope = origins.forExecutionOrigin('initial-machine');
+    const pendingReads: Array<(response: StubHttpResponse) => void> = [];
+    const httpSignals: Array<AbortSignal | undefined> = [];
+    const transport = createStubGithubTransport({ respond: (request, options) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) {
+        httpSignals.push(options?.signal);
+        return new Promise<StubHttpResponse>((resolve) => { pendingReads.push(resolve); });
+      }
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const observed: { current: GithubOverviewControllerV1 | null } = { current: null };
+    function OverviewProbe() {
+      const [observationVersion, setObservationVersion] = React.useState(0);
+      const [, rerender] = React.useReducer((value: number) => value + 1, 0);
+      const launched = launchInput();
+      const input = { ...launched, observation: { ...launched.observation,
+        sourceUpdatedAtMs: change === 'same-head source revision' ? 3_000 + observationVersion * 1_000 : 3_000,
+        snapshot: { ...launched.observation.snapshot, ...(observationVersion > 0 || change !== 'head' ? { reviewRevision: {
+          baseSha: 'a'.repeat(40), headSha: headRevision, nativeRevision: headRevision,
+        } } : {}) },
+      } };
+      observed.current = useGithubOverview(input, { readWhenActive: true });
+      return <><Button title="Admit newer observation" onPress={() => {
+        if (change === 'execution origin') executionScope = origins.forExecutionOrigin('replacement-machine');
+        setObservationVersion(value => value + 1);
+      }} />
+        <Button title="Repeat equal observation" onPress={rerender} /></>;
+    }
+    function OverviewTabs() {
+      const [panel, setPanel] = React.useState('overview');
+      return <><Button title="Leave Overview" onPress={() => setPanel('other')} />
+        <Button title="Return to Overview" onPress={() => setPanel('overview')} />
+        <Tabs value={panel} onValueChange={setPanel} ariaLabel="Overview probe">
+          <Tabs.Item value="overview" title="Overview" retention="retain"><OverviewProbe /></Tabs.Item>
+          <Tabs.Item value="other" title="Other" />
+        </Tabs></>;
+    }
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({
+        identity: { instanceId: 'github-overview-head', mountNonce: 'github-overview-head-mount' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(() => <OverviewTabs />),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter({
+          get ephemeralSharedScope() { return executionScope; },
+        }),
+        handlers: { executeAction: async ({ action, input, signal }) => {
+          if (typeof action === 'string' || input === undefined) throw new Error('Expected the exact Overview Action');
+          return plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
+        } },
+      });
+    });
+    mounted.push(detail);
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Admit newer observation' })); });
+    if (change === 'execution origin') await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(observed.current).toMatchObject({ value: null, failure: null, refreshing: true });
+    if (change === 'same-head source revision') {
+      expect(httpSignals[0]?.aborted).toBe(false);
+      await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Admit newer observation' })); });
+      expect(pendingReads).toHaveLength(1);
+      await act(async () => { pendingReads[0]!({ status: 200, body: GITHUB_PULL_REQUEST_RESPONSE }); });
+    }
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(2));
+    if (change !== 'same-head source revision') expect(httpSignals[0]?.aborted).toBe(true);
+    expect(observed.current).toMatchObject({ failure: null, refreshing: true });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Leave Overview' })); });
+    expect(httpSignals[1]?.aborted).toBe(true);
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Return to Overview' })); });
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(3));
+    // Neither obsolete HTTP response is completed to unblock the next read.
+    await act(async () => { pendingReads[2]!({ status: 200, body: GITHUB_PULL_REQUEST_RESPONSE }); });
+    await vi.waitFor(() => expect(observed.current).toMatchObject({
+      value: { kind: 'overview', headRevision, pullRequestStatus: { kind: 'status' } },
+      checkedAtMs: expect.any(Number), failure: null, refreshing: false,
+    }));
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Repeat equal observation' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Leave Overview' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Return to Overview' })); });
+    expect(pendingReads).toHaveLength(3);
+  });
+
+  it('retains a failed native status and its successful clock throughout a pending retry', async () => {
+    const pendingReads: Array<(response: StubHttpResponse) => void> = [];
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return new Promise<StubHttpResponse>((resolve) => { pendingReads.push(resolve); });
+      if (path === '/graphql') return { status: 200, body: { data: { repository: { pullRequest: {
+        id: 'PR_1284', headRefOid: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+        reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', viewerCanMergeAsAdmin: true,
+        viewerCanUpdate: true, viewerCanEnableAutoMerge: true, viewerCanDisableAutoMerge: false,
+        mergeQueueEntry: null,
+        reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+        reviewRequests: { nodes: [], pageInfo: { hasNextPage: false } },
+        commits: { nodes: [{ commit: { oid: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+          statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false } } } } }] },
+      } } } } };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const observed: { current: GithubOverviewControllerV1 | null } = { current: null };
+    const results: unknown[] = [];
+    function OverviewProbe() {
+      const current = useGithubOverview(launchInput());
+      observed.current = current;
+      return <Button title="Refresh overview" onPress={() => { void current.refresh(); }} />;
+    }
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({
+        identity: { instanceId: 'github-overview-retry', mountNonce: 'github-overview-retry-mount' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel="Overview probe">
+          <Tabs.Item value="overview" title="Overview"><OverviewProbe /></Tabs.Item>
+        </Tabs>),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { executeAction: async ({ action, input, signal }) => {
+          if (typeof action === 'string' || action.pluginId !== GITHUB_PLUGIN_ID
+            || action.localId !== GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview || input === undefined) {
+            throw new Error('Expected the registered exact Overview Action');
+          }
+          const result = await plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
+          results.push(result);
+          return result;
+        } },
+      });
+    });
+    mounted.push(detail);
+    expect(observed.current).toMatchObject({ value: null, checkedAtMs: null, failure: null, refreshing: false });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh overview' })); });
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
+    expect(observed.current).toMatchObject({ value: null, checkedAtMs: null, failure: null, refreshing: true });
+    await act(async () => { pendingReads[0]!({ status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE,
+      mergeable: true, mergeable_state: 'clean', auto_merge: null } }); });
+    await vi.waitFor(() => expect(observed.current).toMatchObject({ failure: null, refreshing: false, checkedAtMs: expect.any(Number) }));
+    const successful = observed.current!;
+    expect(successful.value?.kindId === 'pull-request' && successful.value.pullRequestStatus?.merge?.canMergeWithoutWaiting).toBe(true);
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh overview' })); });
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(2));
+    await act(async () => { pendingReads[1]!({ status: 500, body: { message: 'Temporarily unavailable' } }); });
+    await vi.waitFor(() => expect(observed.current).toMatchObject({ failure: { class: 'transient' }, refreshing: false }));
+    const failed = observed.current!;
+    expect(failed.value).toBe(successful.value);
+    expect(failed.checkedAtMs).toBe(successful.checkedAtMs);
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh overview' })); });
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(3));
+    const retrying = observed.current!;
+    expect(retrying.refreshing).toBe(true);
+    expect(retrying.failure).toBe(failed.failure);
+    expect(retrying.value).toBe(failed.value);
+    expect(retrying.checkedAtMs).toBe(failed.checkedAtMs);
+    await act(async () => { pendingReads[2]!({ status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE,
+      mergeable: true, mergeable_state: 'clean', auto_merge: null } }); });
+    await vi.waitFor(() => expect(observed.current).toMatchObject({ failure: null, refreshing: false }));
+    const admitted = GithubOverviewResultV1Schema.parse(results.at(-1));
+    if (admitted.kind !== 'overview' || admitted.kindId !== 'pull-request' || !admitted.pullRequestStatus) {
+      throw new Error('Expected an admitted successful native PR status');
+    }
+    expect(observed.current!.checkedAtMs).toBe(admitted.pullRequestStatus.observedAtMs);
+  });
+
   it('cancels a pending old file before admitting the replacement file through the same Action', async () => {
     const { detail, transport, readSignals, release } =
       await mountRegisteredFiles({ probe: true });
@@ -479,5 +750,50 @@ describe('registered GitHub detail read dispatch', () => {
         ),
       ),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('a detail walk across an entry change', () => {
+  it('clears the previous entry\'s rows in the reader itself before the new entry answers', async () => {
+    const activity = { active: true, activeSignal: new AbortController().signal };
+    let answerSecond!: (value: unknown) => void;
+    const second = new Promise((resolve) => { answerSecond = resolve; });
+    const page = (summary: string) => ({ kind: 'timeline', omittedRowCount: 0, projectionTruncated: false,
+      rows: [{ id: summary, kind: 'unsupported', rawKind: 'provider-specific-event', actor: 'Mara', summary }] });
+    function TimelineProbe() {
+      const [entryId, setEntryId] = React.useState('1284');
+      const input = React.useMemo(() => {
+        const base = launchInput();
+        return { ...base, observation: { ...base.observation, entryRef: { ...base.observation.entryRef, entryId } } };
+      }, [entryId]);
+      const walk = useGithubTimelineReader(input, activity);
+      return <>
+        <Button title="Next entry" onPress={() => setEntryId('1285')} />
+        <Text testID="timeline-rows">{walk.state.rows.map((row) => row.summary).join(',') || walk.state.kind}</Text>
+      </>;
+    }
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({
+        identity: { instanceId: 'timeline-authority', mountNonce: 'timeline-authority-mount' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(() => <Tabs value="timeline" onValueChange={() => {}} ariaLabel="Timeline">
+          <Tabs.Item value="timeline" title="Timeline"><TimelineProbe /></Tabs.Item>
+        </Tabs>),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { executeAction: async ({ input }) => {
+          const { localRef } = input as { localRef: { entryId: string } };
+          return (localRef.entryId === '1284' ? page('first entry event') : await second) as never;
+        } },
+      });
+    });
+    mounted.push(detail);
+    await expect(detail.getByText('first entry event')).resolves.toBeDefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Next entry' })); });
+    // Another entry's walk is not this one's: nothing of the first is shown while the second is read.
+    await expect(detail.queryByText('first entry event')).resolves.toBeUndefined();
+    await act(async () => { answerSecond(page('second entry event')); });
+    await expect(detail.getByText('second entry event')).resolves.toBeDefined();
   });
 });
