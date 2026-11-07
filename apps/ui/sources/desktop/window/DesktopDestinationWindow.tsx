@@ -12,6 +12,9 @@ import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopW
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { registerDesktopAppWindowActionResponder, registerDesktopAppWindowReturnHandler } from '@/sync/ops/actions/desktopAppWindowActionDispatch';
 import { prepareSessionDraftWindowTransfer, resumeSessionDraftWindowPresentation } from '@/sync/ops/sessionDrafts/sessionDraftWindowTransfer';
 import { flushSessionDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -24,6 +27,7 @@ import { t } from '@/text';
 import type { AppWindowRecord } from './appWindowBoot';
 import { failDesktopAppWindow, readyDesktopAppWindow } from './appWindowRuntime';
 import { useDesktopAppWindowRecord } from './AppWindowRecordContext';
+import { DesktopWindowBotRail, openSessionInHappier } from './DesktopWindowBotRail';
 
 /** The destination uses the ordinary retained body, with only its own window chrome. */
 export function DesktopDestinationWindow(props: Readonly<{ full?: boolean; children?: React.ReactNode }> = {}) {
@@ -121,13 +125,29 @@ function DestinationWindowChrome(props: Readonly<{ children: React.ReactNode }>)
     const title = useWorkspaceFocusedDestinationTitle();
     const controls = useResolvedDesktopWindowControls({ variant: 'expanded' });
     const drag = useDesktopWindowDragMouseProps();
+    const record = useDesktopAppWindowRecord();
+    const railEnabled = useLocalSetting('desktopWindowBotRailEnabled');
+    const session = React.useMemo(() => record && record.chrome !== 'full' && record.selectedAddress.kind === 'session'
+        ? { windowId: record.windowId, homeId: record.homeId, accountId: record.accountId, sessionId: record.selectedAddress.sessionId }
+        : null, [record]);
+    const titleText = <Text numberOfLines={1} style={styles.title}>{title ?? t('common.loading')}</Text>;
     return <View style={styles.window}>
         <View {...drag} style={styles.titleBar}>
             <DesktopShellWindowControlsHost>{controls}</DesktopShellWindowControlsHost>
-            <Text numberOfLines={1} style={styles.title}>{title ?? t('common.loading')}</Text>
+            {session && railEnabled ? <DesktopWindowBotRail key={session.windowId} scope={session} fallback={titleText} /> : titleText}
+            {session ? <DestinationWindowOpenInHappier session={session} /> : null}
         </View>
         <View style={styles.body}>{props.children}</View>
     </View>;
+}
+
+/** "Open in Happier" for the window's own Session: a source tab returns, a no-source Session opens as a main tab. */
+function DestinationWindowOpenInHappier(props: Readonly<{ session: Readonly<{ homeId: string; sessionId: string }> }>) {
+    const router = useRouter();
+    return <IconButton testID="desktop-window-open-in-happier" variant="plain" iconName="arrow-elbow-up-left"
+        accessibilityLabel={t('settingsDesktop.windows.openInHappier')} tooltip={t('settingsDesktop.windows.openInHappier')}
+        onPress={() => openSessionInHappier({ serverId: props.session.homeId, sessionId: props.session.sessionId },
+            href => router.push(href))} />;
 }
 
 const styles = StyleSheet.create(theme => ({

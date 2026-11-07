@@ -169,13 +169,29 @@ the faces stack vertically.
 - **Open in a window** (the icon beside the pin) opens the same Session in its own
   window.
 - **Right-click a face** or a Bot row (or press Shift+F10 or the Menu key) for
-  **Open in new window** and **Open in the overlay**.
+  **Open in window** and **Open in the overlay**. **Open in window** appears only
+  where this computer can open Session windows.
 - The opened list shows your Bots first, each followed by its pending request,
   then your other Sessions.
 
 The pinned reply field is that Session's own draft, the same one its window and the
 main app show. Switching to another Bot is immediate and shows that Bot's draft;
 text you typed stays with the Bot you typed it for.
+
+### Session windows
+
+**Unreleased 0.3 development builds:** a Bot's Session window shows a Bot rail in
+its title bar: the Bots pinned to that Home's rail, in rail order, with the
+current Bot named. Click another face to switch the same window to that Bot; no
+new tab or window opens, and each Bot keeps its own draft. Right-click a face for
+**Open in window** and **Open in Happier**. A Session window that is not a Bot
+keeps its title instead.
+
+**Open in Happier** (also the arrow button in a Session window's title bar)
+brings that Session back to the main window. If you moved it out of a tab, the
+tab returns where it was; otherwise it opens as a new tab. Turn the rail off in
+**Settings → Desktop app → Windows → Bot rail in Session windows**. It is on by
+default and applies to this computer only.
 
 Completion states are queued by priority. Pending tool work is shown before a normal turn completion, and subagent completion can remain sticky so it is not lost behind a faster-changing session.
 

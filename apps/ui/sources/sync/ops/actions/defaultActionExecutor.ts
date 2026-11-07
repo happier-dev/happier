@@ -252,6 +252,7 @@ import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/auto
 import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { createAppShellAction } from './appShellAction';
 import { executeDesktopAppWindowClientAction } from './desktopAppWindowActionDispatch';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { createNotificationConfigurationAction } from './notificationConfigurationAction';
 import { createBugReportSubmitAction } from './bugReportSubmitAction';
 import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
@@ -2378,6 +2379,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const present = captureMountedDesktopOverlayPresentation();
         if (!present || !serverId) return { ok: false, errorCode: 'unavailable', error: 'desktop_overlay_unavailable' };
         return await present({ sessionId, serverId });
+      }
+      if (presentation === 'main' && serverId && isDesktopHost()) {
+        // The desktop window owner returns a Session window first, or forwards from one to main.
+        const { presentDesktopSessionInMain } = await import('@/desktop/window/appWindowRuntime');
+        const presented = await presentDesktopSessionInMain({ sessionId, serverId }, signal);
+        if (presented?.ok === false) return presented;
+        if (presented) return { ok: true, status: 'opened', sessionId, serverId, address: { serverId, sessionId } } as const;
       }
       const comparison = destination ? scmReviewComparisonOfSource(destination.comparison, destination.comparisonId) : null;
       if (destination && !comparison) return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_selector_unavailable' };

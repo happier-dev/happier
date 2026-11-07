@@ -35,7 +35,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
     });
     it('keeps a short Bot list at its measured natural height within the available frame', async () => {
         const faces: BotFaceSnapshot[] = Array.from({ length: 2 }, (_, index) => ({
-            sessionId: `short-${index}`, serverId: 'home-a', name: `Bot ${index}`,
+            sessionId: `short-${index}`, serverId: 'home-a', accountId: 'account-a', name: `Bot ${index}`,
             face: { seed: `face-${index}`, face: null }, activity: 'quiet', currentLine: null,
             meaningfulActivityAt: 0, live: false, agentId: null, machineId: null,
         }));
@@ -54,7 +54,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
     });
     it('mounts viewport Bots at scale and reaches the last Bot without dropping its open interaction', async () => {
         const faces: BotFaceSnapshot[] = Array.from({ length: 1001 }, (_, index) => ({
-            sessionId: `bot-${index}`, serverId: 'home-a', name: `Bot ${index}`,
+            sessionId: `bot-${index}`, serverId: 'home-a', accountId: 'account-a', name: `Bot ${index}`,
             face: { seed: `face-${index}`, face: null }, activity: 'quiet', currentLine: null,
             meaningfulActivityAt: 0, live: false, agentId: null, machineId: null,
         }));
@@ -90,7 +90,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
     });
     it('keeps an answered ask answered after its Bot leaves and returns to the viewport', async () => {
         const faces: BotFaceSnapshot[] = Array.from({ length: 1001 }, (_, index) => ({
-            sessionId: `answer-${index}`, serverId: 'home-a', name: `Bot ${index}`,
+            sessionId: `answer-${index}`, serverId: 'home-a', accountId: 'account-a', name: `Bot ${index}`,
             face: { seed: `face-${index}`, face: null }, activity: 'quiet', currentLine: null,
             meaningfulActivityAt: 0, live: false, agentId: null, machineId: null,
         }));
@@ -131,7 +131,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
     });
     it('keeps an Other answer draft after its Bot leaves and returns to the viewport', async () => {
         const faces: BotFaceSnapshot[] = Array.from({ length: 1001 }, (_, index) => ({
-            sessionId: `draft-${index}`, serverId: 'home-a', name: `Bot ${index}`,
+            sessionId: `draft-${index}`, serverId: 'home-a', accountId: 'account-a', name: `Bot ${index}`,
             face: { seed: `face-${index}`, face: null }, activity: 'quiet', currentLine: null,
             meaningfulActivityAt: 0, live: false, agentId: null, machineId: null,
         }));

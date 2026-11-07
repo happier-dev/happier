@@ -739,6 +739,7 @@ describe('DesktopActivityOverlayExpanded', () => {
         const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
         const face = {
             serverId: 'server-1',
+            accountId: 'account-1',
             sessionId: 'session-4',
             face: { seed: 'session-4', face: null },
             name: 'Flake hunter',

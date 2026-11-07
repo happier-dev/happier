@@ -3,6 +3,8 @@ import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessio
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 export type BotFaceSnapshot = SessionAddress & Readonly<{
+    /** The admitted Account of the face's Home: the shared open menu addresses a window with it. */
+    accountId: string;
     face: SessionBotFaceFacts;
     name: string;
     activity: BotActivity;

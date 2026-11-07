@@ -16,6 +16,8 @@ export function buildNotchBotFaces(params: Readonly<{
     mode: DesktopOverlayVisibilityMode;
     activityPolicy: ActivitySurfacePolicy;
     resolveCandidatePrivacyMode: ActivitySurfaceCandidatePrivacyModeResolver;
+    /** Admission's own Home → Account scopes; every admitted candidate has one. */
+    audienceScopes: ReadonlyMap<string, Readonly<{ accountId: string }>> | undefined;
 }>, previous?: NotchBotFaces): NotchBotFaces {
     const candidates = new Map(params.admission.candidates.flatMap(candidate => candidate.address
         ? [[sessionAddressKey(candidate.address), candidate] as const] : []));
@@ -23,13 +25,14 @@ export function buildNotchBotFaces(params: Readonly<{
     const faces: BotFaceSnapshot[] = [];
     for (const bot of params.orderedBots) {
         const candidate = candidates.get(sessionAddressKey(bot));
-        if (!candidate || !isNotchBotFaceMember(bot, params.mode,
+        const scope = params.audienceScopes?.get(bot.serverId);
+        if (!candidate || !scope || !isNotchBotFaceMember(bot, params.mode,
             params.railPinnedByServerId[bot.serverId]?.includes(bot.sessionId) === true)) continue;
         const view = buildActivitySurfaceViewModel({ candidate, policy: params.activityPolicy,
             showMachinePath: false, showPreviewText: true, isPrimary: false,
             resolveCandidatePrivacyMode: params.resolveCandidatePrivacyMode });
         const face: BotFaceSnapshot = {
-            serverId: bot.serverId, sessionId: bot.sessionId, face: bot.face,
+            serverId: bot.serverId, accountId: scope.accountId, sessionId: bot.sessionId, face: bot.face,
             name: view.title, activity: bot.activity, currentLine: view.previewText ?? view.statusText ?? null,
             meaningfulActivityAt: bot.meaningfulActivityAt,
             live: (candidate.presentationSource?.lifecycle.active ?? candidate.session.active) === true,

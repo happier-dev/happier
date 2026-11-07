@@ -17,6 +17,7 @@ import { prepareMountedTabPresentationTransfer } from '@/utils/navigation/runGua
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import { desktopSessionTargetForDestination, type AppWindowRecord } from './appWindowBoot';
 import { resolveWindowPlacement, type WindowRect } from './windowPlacement';
+import { emitDesktopWindowActionResult, executeDesktopWindowActionWithResult, listenDesktopWindowAction, type DesktopWindowActionRequest } from '@/utils/platform/desktopWindowActionBridge';
 import { getDesktopAppWindowMountedSurfaces, getFocusedDesktopAppWindowSurface } from './appWindowSurface';
 import { currentUiContextCommandClientRpcMethod, currentUiContextReadClientRpcMethod,
     mountedWorkReadClientRpcMethod, sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -488,7 +489,59 @@ function ensureLifecycle(): Promise<() => void> {
         listenDesktopHostEvent<readonly AppWindowRecord[]>('desktopAppWindow://records', snapshot => {
             adoptRecords(snapshot);
         }),
+        ...(getDesktopHostWindowLabel() === 'main' ? [listenDesktopWindowAction(request => {
+            if (request.windowLabel.startsWith('destination_') && request.actionIdentifier === OPEN_IN_MAIN_ACTION && request.requestId) {
+                fireAndForget(answerOpenInMain(request), { tag: 'appWindow.openInMain' });
+            }
+        })] : []),
     ]).then(dispose => () => { for (const release of dispose) release(); });
+}
+
+/** A Session window's "Open in Happier" reaches main as this Action, carrying only the Session address. */
+const OPEN_IN_MAIN_ACTION = 'session.open';
+
+async function answerOpenInMain(request: DesktopWindowActionRequest): Promise<void> {
+    const address = { windowLabel: request.windowLabel, requestId: request.requestId! };
+    const { sessionId, serverId } = request.data;
+    if (typeof sessionId !== 'string' || typeof serverId !== 'string') {
+        await emitDesktopWindowActionResult({ ...address, phase: 'settled', ok: false, errorCode: 'invalid_input', error: 'invalid_input' });
+        return;
+    }
+    try {
+        // Main runs the same Action and UI admission as an in-app press, like the Capture window's Open.
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const result = await createFrontDoorActionExecute()('session.open', { sessionId, serverId, presentation: 'main' },
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId });
+        await emitDesktopWindowActionResult({ ...address, phase: 'settled', ...result });
+    } catch {
+        await emitDesktopWindowActionResult({ ...address, phase: 'settled', ok: false, errorCode: 'action_failed', error: 'action_failed' });
+    }
+}
+
+/**
+ * `session.open {presentation: 'main'}` on the desktop app: the main window presents the Session. A
+ * Session window showing it returns first (its source tab comes back; a no-source Session then opens
+ * as a main tab), and a Session window asks main to do this. Null leaves the ordinary open to the caller.
+ */
+export async function presentDesktopSessionInMain(session: Readonly<{ sessionId: string; serverId: string }>,
+    signal?: AbortSignal): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }> | null> {
+    if ((await getDesktopHostAvailability()).windows.kind !== 'available') return null;
+    const label = getDesktopHostWindowLabel();
+    if (label?.startsWith('destination_')) {
+        const result = await executeDesktopWindowActionWithResult({ windowLabel: label as `destination_${string}`,
+            actionIdentifier: OPEN_IN_MAIN_ACTION, data: { ...session } }, signal ? { signal } : {});
+        return result.ok ? { ok: true }
+            : { ok: false, errorCode: result.errorCode ?? 'action_failed', error: result.error ?? result.errorCode ?? 'action_failed' };
+    }
+    if (label !== 'main') return null;
+    await initialization;
+    const record = [...records.values()].find(candidate => candidate.chrome !== 'full' && candidate.homeId === session.serverId
+        && candidate.selectedAddress.kind === 'session' && candidate.selectedAddress.sessionId === session.sessionId);
+    if (record && !await returnWindow(record.windowId)) {
+        return { ok: false, errorCode: 'workspace_navigation_cancelled', error: 'workspace_navigation_cancelled' };
+    }
+    await invokeDesktopHost('desktop_show_main_window');
+    return null;
 }
 
 /** The mounted workspace retains placement authority; native records contain only restore addresses. */

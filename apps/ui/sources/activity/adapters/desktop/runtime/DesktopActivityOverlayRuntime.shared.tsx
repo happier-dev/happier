@@ -431,8 +431,8 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
         orderedBots, admission: ambientAdmission,
         railPinnedByServerId: Object.fromEntries(botHomeIds.map(serverId =>
             [serverId, organizations[serverId]?.railPinnedSessionIds ?? []])),
-        mode: desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode,
-    }, previousFaces.current), [orderedBots, ambientAdmission, botHomeIds, organizations, desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode]);
+        mode: desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode, audienceScopes: source.audienceScopes,
+    }, previousFaces.current), [orderedBots, ambientAdmission, botHomeIds, organizations, desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode, source.audienceScopes]);
     previousFaces.current = bots;
     const sharedActivity = React.useMemo(() => buildSharedActivityProjection({
         admission: ambientAdmission, policy: activityPolicy, selectedFaces: bots.faces,

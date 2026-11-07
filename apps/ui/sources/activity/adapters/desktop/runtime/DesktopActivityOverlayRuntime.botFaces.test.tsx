@@ -32,8 +32,10 @@ describe('notch.N3.F1.faces', () => {
             .filter(session => session.serverId === serverId).map(session => session.id)]));
         const policy = resolveActivitySurfacePolicy({});
         const input = { orderedBots: readOrder(botRows, 1_000), admission, railPinnedByServerId: pins,
-            mode: 'always_when_enabled' as const, activityPolicy: policy, resolveCandidatePrivacyMode: admission.privacyModeFor };
+            mode: 'always_when_enabled' as const, activityPolicy: policy, resolveCandidatePrivacyMode: admission.privacyModeFor,
+            audienceScopes: scopes };
         const faces = buildNotchBotFaces(input);
+        expect(faces.faces.every(face => face.accountId === `account-${face.serverId}`)).toBe(true);
         expect(faces.faces).toHaveLength(7); // 8 selected-Home pins, minus the muted Session.
         expect(faces.overflowCount).toBe(3);
         expect(faces.faces.some(face => face.sessionId === 'session-0' || face.serverId === 'home-c')).toBe(false);

@@ -278,6 +278,11 @@ describe('status words Settings declaration', () => {
   });
 });
 
+it('exposes the Session window Bot rail as one device-local switch', () => {
+    expect(readBuiltInSettingDeclarationV1('desktop.windowBotRail')).toMatchObject({ pageId: 'desktop', sectionId: 'desktop.windows',
+        storage: { scope: 'local', key: 'desktopWindowBotRailEnabled', access: 'read_write' } });
+});
+
 it('offers the contracted Notch controls and retires competing preference Actions', () => {
     const controls = BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.sectionId === 'desktop.overlay');
     expect(controls.map(value => value.anchor)).toEqual(['desktop.enabled', 'desktop.dock', 'desktop.display', 'desktop.idle',

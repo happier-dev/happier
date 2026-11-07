@@ -29,7 +29,7 @@ import {
     resolveDesktopAppWindowForAction, getDesktopAppWindowPlacedTabs, getDesktopAppWindowTabPresentations, subscribeDesktopAppWindows,
     waitForDesktopAppWindowPresentation,
     focusDesktopAppWindowTab, returnDesktopAppWindowTab, closeDesktopAppWindowTab,
-    retargetDesktopPaneWindow,
+    retargetDesktopPaneWindow, presentDesktopSessionInMain,
 } from './appWindowRuntime';
 
 afterEach(() => { vi.clearAllMocks(); host.events.clear(); });
@@ -707,5 +707,59 @@ describe('desktop app-window lifecycle', () => {
         expect((workspaceLayoutsState.read(key) as typeof original).groups).toEqual(original.groups);
         workspaceLayoutsState.remove(key);
         owner.dispose();
+    });
+});
+
+describe('Open in Happier (session.open presentation main)', () => {
+    function hostWithWindow(returned: boolean) {
+        const record = { windowId: 'bot-window', accountId: 'account', homeId: 'home', layoutId: 'bot-window',
+            selectedAddress: { kind: 'session', sessionId: 'bot' } };
+        host.listen.mockImplementation(async (event: string, handler: (payload: unknown) => void) => {
+            host.events.set(event, handler); return () => host.events.delete(event);
+        });
+        host.invoke.mockImplementation(async (command: string, args: { activeOnly?: boolean; payload?: { windowLabel: string; requestId: string } }) => {
+            if (command === 'desktop_app_window_restore') return args.activeOnly ? [record] : [];
+            if (command === 'desktop_window_emit_action' && args.payload) host.events.get('desktopWindow://action-result')?.({
+                windowLabel: args.payload.windowLabel, requestId: args.payload.requestId, phase: 'settled', ok: true,
+                result: { returned },
+            });
+        });
+        return record;
+    }
+    const commands = () => host.invoke.mock.calls.map(([command]) => command);
+
+    it('returns the Session window presenting it, then shows main for the ordinary open', async () => {
+        hostWithWindow(true);
+        const owner = mountWorkspace();
+        try {
+            await waitForDesktopAppWindowPresentation({ input: {}, serverId: 'home', accountId: 'account' });
+            expect(await presentDesktopSessionInMain({ sessionId: 'bot', serverId: 'home' })).toBeNull();
+            expect(host.invoke).toHaveBeenCalledWith('desktop_window_emit_action', expect.objectContaining({ payload: expect.objectContaining({
+                actionIdentifier: 'desktop.window.return', targetWindowLabel: 'destination_bot-window' }) }));
+            expect(commands().indexOf('desktop_app_window_close')).toBeLessThan(commands().indexOf('desktop_show_main_window'));
+            expect(resolveDesktopAppWindowForAction({ input: { sessionId: 'bot' }, serverId: 'home', accountId: 'account' })).toBeNull();
+        } finally { host.events.get('desktopAppWindow://records')?.([]); owner.dispose(); }
+    });
+
+    it('keeps the window and opens nothing when its guard keeps the Session there', async () => {
+        hostWithWindow(false);
+        const owner = mountWorkspace();
+        try {
+            await waitForDesktopAppWindowPresentation({ input: {}, serverId: 'home', accountId: 'account' });
+            expect(await presentDesktopSessionInMain({ sessionId: 'bot', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'workspace_navigation_cancelled' });
+            expect(commands()).not.toContain('desktop_app_window_close');
+            expect(commands()).not.toContain('desktop_show_main_window');
+        } finally { host.events.get('desktopAppWindow://records')?.([]); owner.dispose(); }
+    });
+
+    it('shows main for a Session no window presents', async () => {
+        hostWithWindow(true);
+        const owner = mountWorkspace();
+        try {
+            await waitForDesktopAppWindowPresentation({ input: {}, serverId: 'home', accountId: 'account' });
+            expect(await presentDesktopSessionInMain({ sessionId: 'other', serverId: 'home' })).toBeNull();
+            expect(commands()).toContain('desktop_show_main_window');
+            expect(commands()).not.toContain('desktop_app_window_close');
+        } finally { host.events.get('desktopAppWindow://records')?.([]); owner.dispose(); }
     });
 });
