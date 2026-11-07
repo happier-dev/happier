@@ -47,7 +47,7 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
-import { clearMachineRequestReachabilityForMachine, isMachineReachable, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForMachine, isMachineReachable, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderScreen as renderTestScreen, invokeTestInstanceHandler } from '@/dev/testkit/render/renderScreen';
@@ -520,6 +520,71 @@ async function renderRunScreen(overrides: Readonly<{
     await act(async () => {});
     return screen;
 }
+
+describe('wide Run opening selection', () => {
+    it.each([1440, 390])('opens the authoritative final output only when details fit beside the Run (%s)', async width => {
+        Object.assign(platformViewport, { width, height: 900 });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333' });
+        const final = createWorkflowInvocationIndexFixture({ parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });
+        const invocation = { index: final, parentRevision: 1, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: final.attempt,
+            logicalInvocationRecordId: final.id, invocationPath: { blockId: 'analyze', scope: [] }, result: 'The analysis is ready',
+        }) };
+        detailActions.getInvocation.mockResolvedValue({ invocation });
+        keyInvocationReads([root, final]);
+        const screen = await renderRunScreen({ invocations: [root, final], invocationDetails: [invocation],
+            result: 'The analysis is ready', finalOutputInvocationId: final.id });
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(width === 1440 ? final.id : null));
+        if (width === 1440) {
+            await vi.waitFor(() => expect(screen.findAllByType(WorkflowInvocationDetail)).toHaveLength(1));
+            await act(async () => readContentProps()?.onDeselectInvocation?.());
+            await screen.update(createRunScreenElement());
+            expect(readContentProps()?.selectedInvocationId).toBeNull();
+        }
+        expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('selects a hold arriving after mount without replacing an explicit choice (%s)', async explicitChoice => {
+        Object.assign(platformViewport, { width: 1440, height: 900 });
+        const run = createWorkflowRunSummaryFixture({ state: 'running' });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333' });
+        const held = createWorkflowInvocationIndexFixture({ parentRecordId: root.id, sequence: '1', lifecycle: 'waiting_for_review' });
+        const invocation = { index: held, parentRevision: 1, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: held.attempt,
+            logicalInvocationRecordId: held.id, invocationPath: { blockId: 'analyze', scope: [] }, result: 'Review this analysis',
+        }) };
+        detailActions.getInvocation.mockResolvedValue({ invocation });
+        keyInvocationReads([root, held]);
+        const page = createDeferred<ReturnType<typeof invocationPage>>();
+        await renderRunScreen({ run, wrap: screen => {
+            detailActions.listInvocations.mockImplementation(async (input: Readonly<{ lifecycles?: readonly string[] }>) => (
+                input.lifecycles === undefined ? invocationPage([root]) : page.promise
+            ));
+            return screen;
+        } });
+        await vi.waitFor(() => expect(readContentProps()?.run.id).toBe(run.id));
+        if (explicitChoice) await act(async () => readContentProps()?.onSelectInvocation(root.id));
+        await act(async () => page.resolve(invocationPage([held])));
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(explicitChoice ? root.id : held.id));
+        expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
+    it('opens the failed leaf instead of its aggregate frame or a completed output', async () => {
+        Object.assign(platformViewport, { width: 1440, height: 900 });
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', workflowCustodyState: 'settled' });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
+        const leaf = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', parentRecordId: root.id, sequence: '1' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            attempt: leaf.attempt, logicalInvocationRecordId: leaf.id, invocationPath: { blockId: 'analyze', scope: [] },
+            reason: { code: 'step_failed', message: 'The review could not finish.' } });
+        detailActions.getInvocation.mockResolvedValue({ invocation: { index: leaf, progress, parentRevision: run.revision } });
+        keyInvocationReads([root, leaf]);
+        await renderRunScreen({ run, invocations: [root, leaf], failedInvocation: root,
+            invocationDetails: [{ index: leaf, progress, parentRevision: run.revision }],
+            result: 'A partial result', finalOutputInvocationId: '88888888-8888-4888-8888-888888888888' });
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(leaf.id));
+    });
+});
 
 it.each(['flow', 'steps'] as const)('counts reads and commits for a 500-item %s Run arrival', async view => {
     const run = createWorkflowRunSummaryFixture({ id: routeState.runId, state: 'running', origin: { kind: 'direct' } });
@@ -1271,7 +1336,7 @@ describe('WorkflowRunScreen', () => {
         expect(storeState.state.workflowRunInvocationsByRunId[workflowRunStoreKey(index.runId)]?.factsById[index.id]?.opened?.progress.timing).toEqual(progress.timing);
         expect(detailActions.getInvocation).not.toHaveBeenCalled();
     });
-    it.each([false, true])('publishes an off-page failed leaf cause before selection through the real Action codec and page (miswired: %s)', async (miswired) => {
+    it.each([false, true])('publishes an off-page failed leaf cause through the real Action codec and opening selection (miswired: %s)', async (miswired) => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
         const failed = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', sequence: '90' });
         const progress = WorkflowProgressEnvelopeV1Schema.parse({
@@ -1286,8 +1351,8 @@ describe('WorkflowRunScreen', () => {
         const screen = await renderRunScreen({ run, invocations: [], failedInvocation: failed,
             failedInvocationDetails: [{ index: miswired ? { ...failed, id: '88888888-8888-4888-8888-888888888888' } : failed,
                 progress, parentRevision: run.revision }], historyNextCursor: 'more-history' });
-        expect(readContentProps()?.selectedInvocationId).toBeNull();
         if (miswired) {
+            expect(readContentProps()?.selectedInvocationId).toBeNull();
             expect(readContentProps()?.firstFailedInvocationResolution).toBe('error');
             expect(readContentProps()?.failurePresentation).toBeNull();
             expect(screen.getTextContent()).not.toContain('Usage limit reached');
@@ -1297,9 +1362,8 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.failurePresentation).toMatchObject({ invocationId: failed.id,
             step: { name: expect.any(String), ordinal: '1' },
             recovery: { failureCause: { kind: 'reported_failure', message: 'Usage limit reached', runtimeIssue: progress.reason?.runtimeIssueV1 } } });
-        expect(screen.getTextContent()).toContain('Usage limit reached');
         expect(detailActions.getInvocation).toHaveBeenCalledWith({ runId: run.id, invocationId: failed.id }, expect.any(AbortSignal));
-        await screen.pressByTestIdAsync('workflow-run-see-failures');
+        expect(readContentProps()?.selectedInvocationId).toBe(failed.id);
         expect(screen.findAllByType(WorkflowInvocationDetail)[0]?.props.recovery).toBe(readContentProps()?.failurePresentation?.recovery);
     });
     it('opens the failed leaf when failure discovery first finds its structural root', async () => {
@@ -1313,10 +1377,9 @@ describe('WorkflowRunScreen', () => {
             invocationDetails: [{ index: leaf, progress, parentRevision: run.revision }] });
         expect(readContentProps()?.failurePresentation).toMatchObject({ invocationId: leaf.id, step: { ordinal: '1' },
             recovery: { failureCause: { kind: 'reported_failure', message: 'The review could not finish.' } } });
-        await screen.pressByTestIdAsync('workflow-run-see-failures');
         expect(readContentProps()?.selectedInvocationId).toBe(leaf.id);
     });
-    it.each(['recorded', 'absent', 'miswired'] as const)('keeps R5 failure facts through stored producer → page → See failures (%s)', async evidence => {
+    it.each(['recorded', 'absent', 'miswired'] as const)('keeps R5 failure facts through stored producer → page → opening selection (%s)', async evidence => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled',
             finishedAt: '2026-10-19T04:58:00.000Z' });
         const failed = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', createdAt: '2026-10-19T03:42:00.000Z',
@@ -1342,7 +1405,7 @@ describe('WorkflowRunScreen', () => {
             : { kind: 'reported_failure', code: 'plugin_failed', message: 'Review process exited with an error' };
         expect(readContentProps()?.failurePresentation?.recovery.failureCause).toMatchObject(cause);
         expect(screen.getTextContent()).not.toContain('Lost contact');
-        await screen.pressByTestIdAsync('workflow-run-see-failures');
+        expect(readContentProps()?.selectedInvocationId).toBe(failed.id);
         const inspector = screen.findAllByType(WorkflowInvocationDetail)[0];
         expect(inspector?.props.recovery).toBe(readContentProps()?.failurePresentation?.recovery);
         expect(inspector?.props.recovery.failureCause).toMatchObject(cause);
@@ -1805,9 +1868,6 @@ describe('WorkflowRunScreen', () => {
             access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }).access,
             daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
         getStorage().getState().applyMachines([machine], true, { sourceServerId: servedHomeId });
-        // Withdraw after publication so its real ingress observers cannot
-        // supply presence to the deliberately misbound case below.
-        withdrawMachinePresenceForScope({ serverId: servedHomeId, accountId: 'account-a' });
         // Plugin catalogs are daemon facts, not Artifact HTTP list fields.
         machineRpcSpy.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
             ? { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
@@ -1822,8 +1882,7 @@ describe('WorkflowRunScreen', () => {
 
     it.each(['builtin:review-and-converge', 'plugin:com.example/workflow'])('opens catalog source %s through the existing source route', async (ref) => {
         serveCatalogSourceMachine();
-        // A fresh ingress observes this Home's presence after connection setup.
-        // A retained row alone no longer admits a catalog carrier (079bd4e056).
+        // The catalog reader consumes this Home's pushed Machine activity.
         observeMachinePresenceForTest({ serverId: servedHomeId, accountId: 'account-a' }, ['machine-1']);
         await renderRunScreen({ acceptedContext: {
             ...ACCEPTED_CONTEXT, source: { kind: 'catalog', ref, version: 1 },
@@ -1836,15 +1895,13 @@ describe('WorkflowRunScreen', () => {
         expect(catalogResponse).not.toHaveBeenCalled();
     });
 
-    it('keeps a plugin catalog source unavailable when only another Home has fresh Machine presence', async () => {
-        // Exact/batch Machine reads would be genuine source-Home presence.
-        // Keep this fixture retained-only even when the real Account bootstrap
-        // asks for current Machine facts during the Screen mount.
+    it('keeps a plugin catalog source unavailable after a source Home request failure despite another Home presence', async () => {
+        // A later activity heartbeat cannot clear this Home's failed request verdict.
         catalogMachineReadUnavailable = true;
         serveCatalogSourceMachine();
         const foreignScope = { serverId: 'other-home', accountId: 'account-a' };
-        withdrawMachinePresenceForScope(foreignScope);
         observeMachinePresenceForTest(foreignScope, ['machine-1']);
+        recordMachineRequestFailed({ serverId: servedHomeId, accountId: 'account-a', machineId: 'machine-1' });
         const retained = getStorage().getState().machines['machine-1']!;
         expect(isMachineReachable(foreignScope, retained)).toBe(true);
         expect(isMachineReachable({ serverId: servedHomeId, accountId: 'account-a' }, retained)).toBe(false);
@@ -3081,6 +3138,8 @@ describe('WorkflowRunScreen', () => {
     });
 
     it.each(['unknown', 'offline', 'unavailable', 'denied', 'supplemental503', 'supplemental403', 'supplementalCancelled', 'supplementalRetired', 'supplementalFocusRetired'] as const)('keeps recovery content readable without inventing native continuation evidence (%s)', async (state) => {
+        // This probe starts in the phone overview, then explicitly selects or reads the step.
+        Object.assign(platformViewport, { width: 390, height: 844 });
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
         const step = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444',
             parentRecordId: root.id, sequence: '1', lifecycle: 'needs_attention' });
@@ -3119,7 +3178,8 @@ describe('WorkflowRunScreen', () => {
                 // Measure heartbeat ingress before pending Sync work can advance lastSyncAt.
                 expect(getStorage().getState()).toBe(retainedRoot);
             });
-            expect(readContentProps()?.machineLastSeenAt).toBe(activeAt);
+            // Fresh activity remains online even though its failed request blocks reads.
+            expect(readContentProps()?.machineLastSeenAt).toBeNull();
             expect(readContentProps()?.machineReachable).toBe(false);
             expect(machine.activeAt).toBe(activeAt - 1);
         }
@@ -3575,7 +3635,7 @@ describe('WorkflowRunScreen', () => {
         }));
     });
 
-    it('leaves a queued Action approval request answerable when no detached response was issued', async () => {
+    it('answers a person\'s permission decision directly despite Account Ask for the Action', async () => {
         await renderSelectedPermissionRequests();
         approvalRequired = true;
         const state = getStorage().getState();
@@ -3586,9 +3646,13 @@ describe('WorkflowRunScreen', () => {
 
         await act(async () => { await respondToRequest({ requestId: 'permission-1', approved: true })?.catch(() => {}); });
 
-        expect(machineRpcSpy).not.toHaveBeenCalled();
-        expect(approvalArtifacts.list()).toHaveLength(1);
-        expect([...(readContentProps()?.pendingRequestIds ?? [])]).toEqual([]);
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+            payload: { runId: 'exec-1', requestId: 'permission-1', approved: true },
+        }));
+        expect(approvalArtifacts.list()).toHaveLength(0);
+        // The exact content still carries the request, so the issued answer stays pending.
+        expect([...(readContentProps()?.pendingRequestIds ?? [])]).toEqual(['permission-1']);
     });
 
     it('reconciles a not-found response and suppresses the opposite answer while canonical content still has the request', async () => {

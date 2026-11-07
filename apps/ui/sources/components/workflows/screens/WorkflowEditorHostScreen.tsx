@@ -100,13 +100,11 @@ import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, WorkflowTrigger
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
-import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
 import { createWorkflowStartWhereChip } from '../run/workflowStartWhereChip';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
-import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
+import { readWorkflowActionFieldRequests } from '@/components/workflows/presentation/workflowActionFieldRequests';
 import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { exportWorkflowDocumentViaAction, importWorkflowDocumentViaAction, type WorkflowImportResult } from '@/sync/domains/workflows/workflowInterchange';
 import {
@@ -231,26 +229,6 @@ function WorkflowEditorTriggerSection(props: React.ComponentProps<typeof Workflo
 const keepShownDraft = (): boolean => true;
 /** Equal content keeps the previous value (and identity). */
 const sameRetainedValue = <T,>(left: T, right: T): boolean => retainDeep(left, right) === left;
-
-/**
- * What each Action step's field options read: its effective fields and the literal inputs those
- * options depend on (the options owner's own projection), so typing a free-text value changes nothing.
- */
-function readActionFieldRequests(draft: WorkflowEditorDraft | null) {
-    const blocks = draft === null ? [] : walkWorkflowBlocks(draft.blocks);
-    return {
-        hasActionBlocks: blocks.some((block) => block.kind === 'action'),
-        requests: blocks.flatMap((block) => {
-            if (block.kind !== 'action') return [];
-            const spec = findWorkflowActionSpec(block.actionId);
-            if (!spec) return [];
-            const input = Object.fromEntries(Object.entries(block.input).flatMap(([path, binding]) =>
-                binding.kind === 'literal' ? [[path, binding.value]] : []));
-            const draftInput = projectInputOptionsDependencies(input, undefined, spec.id);
-            return resolveEffectiveActionInputFields(spec, input).map((field) => ({ field, actionId: spec.id, draftInput }));
-        }),
-    };
-}
 
 /**
  * The stable semantic identity of an editor source.
@@ -1465,7 +1443,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // Action-step field options are read for the Where Machine only while an
     // Action step exists, so an editor without one issues no capabilities read.
     // The requests change only with an Action step's literal inputs, so a prompt keystroke keeps them.
-    const actionFieldRequests = useWorkflowEditorSelector(draftStore, readActionFieldRequests, sameRetainedValue);
+    const actionFieldRequests = useWorkflowEditorSelector(draftStore, readWorkflowActionFieldRequests, sameRetainedValue);
     const resolveActionFieldOptions = useActionFieldOptionsForMachine({
         machineId: projectTarget?.machineId ?? null,
         serverId: activeAccountScope?.serverId ?? null,

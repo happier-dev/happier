@@ -618,7 +618,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         });
     }, [props.view]);
     const flowProjection = React.useMemo(
-        () => (props.definition === null ? null : projectWorkflowFlow(props.definition, props.frozenChildren)),
+        () => (props.definition === null ? null : projectWorkflowFlow(props.definition, props.frozenChildren, undefined, { presentation: 'run' })),
         [props.definition, props.frozenChildren],
     );
     const structureProgressById = React.useMemo(() => {
@@ -724,7 +724,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         const block = blockId == null || blockId === '$root' || props.definition === null ? null : findWorkflowBlock(props.definition, blockId);
         if (block !== null && !block.name?.trim()) {
             if (block.kind === 'step') return workflowStepPromptLabel(block) ?? invocationLabel(invocation);
-            if (block.kind === 'if') return t('workflows.page.inspector.ifSentence', { condition: resolveWorkflowConditionHeadline(props.definition!, block.when).sentence });
+            if (block.kind === 'if') {
+                const headline = resolveWorkflowConditionHeadline(props.definition!, block.when, 'run');
+                return headline.unconditional === true ? headline.sentence : t('workflows.page.inspector.ifSentence', { condition: headline.sentence });
+            }
         }
         return invocationLabel(invocation);
     }, [derivedStructure, invocationLabel, props.definition]);
@@ -803,7 +806,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         testIDPrefix,
     ]);
     const flowRunStates = React.useMemo(() => {
-        if (props.view !== 'flow' || flowProjection === null) return undefined;
+        if ((props.view !== 'flow' && props.view !== 'steps') || flowProjection === null) return undefined;
         // Which authored node a row belongs to is the structure owner's answer,
         // so an occurrence stays selectable before its private detail has ever
         // been opened.
@@ -1731,7 +1734,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const selectedAttentionIndex = attentionRows.findIndex((row) => row.id === props.selectedInvocationId);
     const previousHold = attentionRows[selectedAttentionIndex - 1];
     const nextHold = selectedAttentionIndex < 0 ? undefined : attentionRows[selectedAttentionIndex + 1];
-    const selectedHeaderTrailing = selectedAttentionIndex < 0 ? null : <View style={styles.actions}>
+    const selectedHeaderTrailing = selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={styles.actions}>
         <Text variant="meta">{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>
         {nextHold === undefined ? null : <Text variant="meta">{t('workflows.run.nextHoldOccurrence', {
             step: [invocationLabel(nextHold), invocationOccurrenceLabel(nextHold)].filter(Boolean).join(' · ') || t('workflows.contentUnavailable'),
@@ -1841,6 +1844,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 invocationStatusContext={invocationStatusContext}
                 notStartedLabel={notStartedLabel}
                 definition={props.definition} invocations={props.invocations} structure={derivedStructure}
+                flowProjection={flowProjection ?? undefined} flowRunStates={flowRunStates}
                 progressById={structureProgressById}
                 materializedLeaves={props.materializedLeaves}
                 inputs={props.inputs}

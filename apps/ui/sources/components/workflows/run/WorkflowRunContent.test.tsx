@@ -2154,6 +2154,19 @@ describe('WorkflowRunContent', () => {
   });
 
   describe('a held step, said once and reviewed in one scroller', () => {
+    it('omits hold navigation when only one hold is loaded', async () => {
+      const screen = await renderContent({
+        run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
+        selectedInvocationId: 'only-hold',
+        invocations: [createWorkflowInvocationIndexFixture({ id: 'only-hold', parentRecordId: 'root', lifecycle: 'waiting_for_review' })],
+        invocationProgressById: openedLeafProgress('only-hold'),
+        renderReviewCard: () => React.createElement('ReviewSlot'),
+      });
+      expect(screen.findByTestId('workflow-run-previous-hold')).toBeNull();
+      expect(screen.findByTestId('workflow-run-next-hold')).toBeNull();
+      expect(screen.findAllByType('ReviewSlot')).toHaveLength(1);
+    });
+
     it('walks the loaded attention window in its published order', async () => {
       const onSelectInvocation = vi.fn();
       const screen = await renderContent({
@@ -2988,6 +3001,25 @@ describe('WorkflowRunContent', () => {
     expect(row?.props.accessibilityLabel).not.toContain(
       'workflows.contentUnavailable',
     );
+  });
+
+  it('reads an unconditional Activity branch as the condition that ran', async () => {
+    const { WORKFLOW_CONDITION_UNSET } = await import('../presentation/workflowConditionRules');
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'choice-row', lifecycle: 'completed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({
+      kind: 'happier.workflow-progress.v1', blockKind: 'if', attempt: '0',
+      logicalInvocationRecordId: invocation.id, invocationPath: { blockId: 'choice', scope: [] },
+    });
+    const screen = await renderContent({
+      definition: createWorkflowDefinitionFixture({ blocks: [{
+        kind: 'if', id: 'choice', when: WORKFLOW_CONDITION_UNSET,
+        then: [{ kind: 'wait', id: 'check', document: { text: 'Check', references: [], attachments: [] } }],
+      }] }),
+      invocations: [invocation], invocationProgressById: new Map([[invocation.id, progress]]),
+    });
+    const row = screen.findByTestId('workflow-run-invocations-row-choice-row');
+    expect(row?.props.accessibilityLabel).toContain('workflows.condition.always');
+    expect(row?.props.accessibilityLabel).not.toContain('workflows.condition.unsetSentence');
   });
 
   it('marks an unopened authored Flow node unavailable instead of activating a guessed invocation', async () => {

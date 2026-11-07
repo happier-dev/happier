@@ -458,7 +458,9 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const [invocationInvalidationToken, setInvocationInvalidationToken] = React.useState(0);
     const summaryInvalidationRef = React.useRef<'materialized' | 'refresh' | null>(null);
     const [view, setView] = React.useState<WorkflowRunDetailView>('flow');
-    const [selectedInvocationId, setSelectedInvocationId] = React.useState<string | null>(requestedInvocationId);
+    // Undefined has not chosen a step yet; null is the person's explicit close.
+    const [invocationSelection, setSelectedInvocationId] = React.useState<string | null | undefined>(requestedInvocationId ?? undefined);
+    const selectedInvocationId = invocationSelection ?? null;
     const [pendingOperation, setPendingOperation] = React.useState<PendingRunOperation | null>(null);
     /**
      * The issuing authority for the mutex. Two presses can land in one frame,
@@ -574,7 +576,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         setRunAgainValues({});
         setRunAgainRawTextValues({});
         setAcknowledgedUncertainInvocation(null);
-        setSelectedInvocationId(requestedInvocationId);
+        setSelectedInvocationId(requestedInvocationId ?? undefined);
         setView('flow');
         setLoadState('loading');
         previousLifecyclesRef.current = new Map();
@@ -1079,6 +1081,16 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         invocationHistoryComplete: invocationWindow?.loaded === true && invocationWindow.nextCursor == null,
     }), [summary, failureInvocation, visibleProgressByInvocationId, recoveryAvailabilityByInvocationId, invocationStructure,
         announcementProjection, runMachineName, runMachineHomeDir, runMachineReachable, runMachineLastSeenAt, allInvocations, invocationWindow?.loaded, invocationWindow?.nextCursor]);
+    // Open the same exact outcome/attention identity the Run already presents. Wait for terminal
+    // failure discovery so a completed output cannot briefly displace the failed step.
+    const openingInvocationId = summary !== null && isTerminalWorkflowRunState(summary.state)
+        && firstFailedInvocationResolution !== 'resolved' ? null
+        : failurePresentation?.invocationId ?? (summary?.state === 'succeeded' ? visibleFinalOutputInvocationId : null);
+    React.useEffect(() => {
+        if (!activelyViewed || !detailsPaneAvailable || openingInvocationId === null) return;
+        setSelectedInvocationId(current => current === undefined ? openingInvocationId : current);
+    }, [activelyViewed, detailsPaneAvailable, openingInvocationId]);
+
     const announcementState = React.useMemo(() => ({
         blockIds: announcementProjection?.nodes.map((node) => node.nodeId) ?? [],
         selectedBlockId: selectedInvocationId === null

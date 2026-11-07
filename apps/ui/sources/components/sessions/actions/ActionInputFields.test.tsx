@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-    ActionInputFieldHintSchema,
-    QualifiedConnectedAccountRefSchema,
-    type EffectiveActionInputField,
-} from '@happier-dev/protocol';
+    InputFieldHintSchema as ActionInputFieldHintSchema} from '@happier-dev/protocol/inputs/inputFields';
+import {
+    QualifiedConnectedAccountRefSchema} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import {
+    type EffectiveInputField as EffectiveActionInputField,
+    resolveEffectiveInputFields as resolveEffectiveActionInputFields,
+} from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import {
+    getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSessionActionsCommonModuleMocks } from './sessionActionsTestHelpers';
 
 installSessionActionsCommonModuleMocks();
+const { ActionInputFields } = await import('./ActionInputFields');
 
 function effectiveField(
     field: unknown,
@@ -40,6 +46,52 @@ const choiceRow = (screen: Awaited<ReturnType<typeof renderScreen>>, label: stri
 vi.mock('@/components/ui/popover/Popover', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal as never) as never);
 describe('ActionInputFields', () => {
+    it('keeps an absent choice distinct from an unavailable saved choice', async () => {
+        const { formatActionInputFieldChoice } = await import('./ActionInputFields');
+        const field = effectiveField({ path: 'profileId', title: 'Profile', widget: 'select', optionsSourceId: 'browser.profiles.available' });
+        expect(formatActionInputFieldChoice(field, null, () => [])).toBeNull();
+        expect(formatActionInputFieldChoice(field, '', () => [])).toBeNull();
+        expect(formatActionInputFieldChoice(field, 'missing-definition', () => [])).not.toBeNull();
+        expect(formatActionInputFieldChoice(field, null, () => [{ value: null, label: 'Use default' }])).toBe('Use default');
+    });
+
+    it('writes a new Browser profile name from the shared suggested-choice control', async () => {
+        const field = effectiveField({ path: 'profileId', title: 'Profile', widget: 'select',
+            optionsSourceId: 'browser.profiles.available', allowCustomValue: true });
+        const onPatch = vi.fn();
+        const screen = await renderScreen(<ActionInputFields fields={[field]} input={{ profileId: 'work' }} editable
+            resolveFieldOptions={() => [{ value: 'work', label: 'Work' }, { value: 'personal', label: 'Personal' }]}
+            resolveFieldTestID={() => 'profile-name'} onPatch={onPatch} />);
+        await openChoices(screen, 'Profile');
+        screen.changeTextByTestId('profile-name', 'new-profile');
+        expect(onPatch).toHaveBeenCalledWith({ profileId: 'new-profile' });
+    });
+    it('chooses Software without replacing prepared target arrays or their other items', async () => {
+        const current = { pluginId: 'fixture.software', recipeId: 'fonts', revision: '1' };
+        const chosen = { ...current, recipeId: 'ffmpeg' };
+        const item = { kind: 'softwareRecipe', selection: { ref: current, inputs: {} } };
+        const first = { homeId: 'home', machineId: 'first', desiredRevision: 0, recipePlans: [],
+            sources: [{ kind: 'direct', setup: { items: [item, item] } }] };
+        const second = { ...first, machineId: 'second' };
+        const input = { homeId: 'home', machineId: 'host', targets: [first, second] };
+        const spec = getActionSpec('machines.setup.apply');
+        const fields = resolveEffectiveActionInputFields(spec, input)
+            .filter(field => field.optionsSourceId === 'machines.setup.software.available');
+        const onPatch = vi.fn();
+        const screen = await renderScreen(<ActionInputFields fields={fields} input={input} editable
+            resolveFieldOptions={() => [{ value: current, label: 'Fonts' }, { value: chosen, label: 'FFmpeg' }]}
+            onPatch={onPatch} />);
+        await pressTestInstanceAsync(choiceRow(screen, 'FFmpeg'));
+        expect(onPatch).toHaveBeenCalledTimes(1);
+        const changed = { ...input, ...onPatch.mock.calls[0]?.[0] };
+        expect(spec.inputSchema.safeParse(changed).success).toBe(true);
+        expect(changed.targets).toEqual([{ ...first, sources: [{ ...first.sources[0], setup: {
+            items: [{ ...item, selection: { ...item.selection, ref: chosen } }, item],
+        } }] }, second]);
+        expect(changed.targets[1]).toBe(second);
+        expect(changed.targets[0]?.sources[0]?.setup.items[1]).toBe(item);
+        expect(input.targets[0]?.sources[0]?.setup.items[0]).toBe(item);
+    });
     it('retains one array-valued group choice and writes its replacement as one choice', async () => {
         const { ActionInputFields } = await import('./ActionInputFields');
         const onPatch = vi.fn();

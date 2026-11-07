@@ -6,11 +6,13 @@ import {
     isSameActionInputOptionValue,
     readActionInputOptionValue,
     type ActionInputFieldHint,
+    type ActionInputOption,
     type ActionInputOptionValue,
     type EffectiveActionInputField,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import {
     HappierForm,
+    happierFormMarksOptionalFields,
     HappierInputField,
     patchHappierActionInputPath,
     readHappierActionInputPath,
@@ -26,13 +28,7 @@ import type { ResolveSessionActionFieldOptions } from './sessionActionFieldOptio
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { InputTypePickerHostProvider } from './InputTypePickerHostProvider';
 
-export type ActionFieldOption = Readonly<{
-    value: ActionInputOptionValue;
-    label: string;
-    /** Host-resolved account labels can include a bounded, safe subtitle. */
-    description?: string;
-    disabled?: boolean;
-}>;
+export type ActionFieldOption = ActionInputOption;
 
 const FIELD_STYLE = { marginTop: 10 } as const;
 
@@ -53,14 +49,7 @@ function readActionInputSelectionForPresentation(
     });
 }
 
-/**
- * The presentation this file renders a field from, for a given input record.
- *
- * Exported so the transcript row's height-bearing descriptor
- * (`resolveSessionActionDraftHeightBearingPaint`) reads the SAME resolution — including the exact
- * `text` value a `HappierTextField` displays — instead of restating the widget/display rule in a
- * second place where it can drift from the paint.
- */
+/** The presentation this file renders a field from, for a given input record. */
 export function resolveActionFieldPresentationForInput(
     field: ActionInputFieldHint,
     input: Record<string, unknown>,
@@ -74,6 +63,25 @@ export function resolveActionFieldPresentationForInput(
         value,
         readActionInputSelectionForPresentation(field, value),
     );
+}
+
+/** A declared choice reads by the same options as its picker; unavailable choices never become raw identifiers. */
+export function formatActionInputFieldChoice(
+    field: ActionInputFieldHint,
+    value: unknown,
+    resolveOptions: ResolveSessionActionFieldOptions,
+): string | null {
+    if (field.widget !== 'select' && field.widget !== 'multiselect') return null;
+    const selection = readActionInputSelectionForPresentation(field, value);
+    const values = field.widget === 'multiselect' && Array.isArray(selection) ? selection
+        : selection === undefined ? [] : [selection];
+    if (values.length === 0) return null;
+    const options = resolveOptions(field);
+    const labels = values.map(selected => options.find(option => isSameActionInputOptionValue(selected, option.value))?.label);
+    if (labels.every(label => label !== undefined)) return labels.join(', ');
+    if (selection === null || selection === '') return null;
+    if (field.allowCustomValue === true) return null;
+    return resolveOptions.state?.(field).status === 'loading' ? t('common.loading') : t('common.unavailable');
 }
 
 export function ActionInputFields(props: Readonly<{
@@ -102,9 +110,10 @@ export function ActionInputFields(props: Readonly<{
 
     return (
         <InputTypePickerHostProvider enabled={props.fields.some((field) => field.inputType !== undefined)}
+            requiresPluginTypes={props.fields.some(field => field.inputType !== undefined && 'pluginId' in field.inputType)}
             {...props.resolveFieldOptions.pickerContext}>
         <CoreCollectionScope>
-        <HappierForm busy={props.busy}>
+        <HappierForm busy={props.busy} marksOptionalFields={happierFormMarksOptionalFields(props.fields)}>
             {props.fields.map((field) => {
                 const path = typeof field?.path === 'string' ? field.path : '';
                 const widget = typeof field?.widget === 'string' ? field.widget : '';

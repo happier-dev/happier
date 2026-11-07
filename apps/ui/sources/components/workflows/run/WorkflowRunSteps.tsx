@@ -28,7 +28,9 @@ import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } f
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
+import { resolveWorkflowFlowScopedNodeId, listWorkflowFlowNotTakenNodeIds, type WorkflowFlowProjection, type WorkflowFlowNodeRunState } from '@/components/workflows/flow/workflowFlowProjection';
+import { readWorkflowActionFieldRequests } from '@/components/workflows/presentation/workflowActionFieldRequests';
+import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
 
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { readWorkflowLoopOccurrenceItem } from './workflowInvocationStructure';
@@ -44,6 +46,7 @@ type StepPresentation = Readonly<{
     context: object;
     facts: readonly StepOccurrenceFact[];
     selectedInvocationId: string | null;
+    notTaken: boolean;
     slots: WorkflowDocumentStepSlots;
 }>;
 
@@ -112,6 +115,8 @@ export function WorkflowRunSteps(props: Readonly<{
     machineId: string;
     serverId?: string | null;
     definition: WorkflowDefinitionV1;
+    flowProjection?: WorkflowFlowProjection;
+    flowRunStates?: ReadonlyMap<string, readonly WorkflowFlowNodeRunState[]>;
     frozenChildren?: Readonly<Record<string, WorkflowDefinitionV1>>;
     materializedLeaves?: readonly WorkflowMaterializedLeafV1[];
     inputs?: Readonly<Record<string, JsonValue>>;
@@ -134,6 +139,11 @@ export function WorkflowRunSteps(props: Readonly<{
     const draft = React.useMemo(() => buildWorkflowEditorDraftFromDefinition({
         draftId: `run:${props.runId}:${scopeKey}`, name: '', definition: props.definition,
     }), [props.definition, props.runId, scopeKey]);
+    const actionFieldRequests = React.useMemo(() => readWorkflowActionFieldRequests(draft), [draft]);
+    const resolveActionFieldOptions = useActionFieldOptionsForMachine({ machineId: props.machineId,
+        serverId: props.serverId ?? null, enabled: actionFieldRequests.hasActionBlocks, requests: actionFieldRequests.requests });
+    const notTaken = React.useMemo(() => props.flowProjection === undefined ? undefined
+        : listWorkflowFlowNotTakenNodeIds(props.flowProjection, props.flowRunStates), [props.flowProjection, props.flowRunStates]);
     const acceptedByBlockId = React.useMemo(() => new Map(props.materializedLeaves
         ?.filter(leaf => leaf.sourceKey === sourceKey).map(leaf => [leaf.blockId, leaf])), [props.materializedLeaves, sourceKey]);
     const blocksById = React.useMemo(() => new Map(walkWorkflowBlocks(draft.blocks).map((block) => [block.id, block])), [draft.blocks]);
@@ -192,8 +202,10 @@ export function WorkflowRunSteps(props: Readonly<{
     const renderStep = (blockId: string): WorkflowDocumentStepSlots => {
             const facts = factsByBlock.get(blockId) ?? NO_OCCURRENCE_FACTS;
             const selectedInvocationId = facts.some(fact => fact.invocation.id === props.selectedInvocationId) ? props.selectedInvocationId : null;
+            const blockNotTaken = notTaken?.has(resolveWorkflowFlowScopedNodeId(blockId, workflowPath)) === true;
             const previous = previousPresentations.current.get(blockId);
             if (previous?.context === presentationContext && previous.selectedInvocationId === selectedInvocationId
+                && previous.notTaken === blockNotTaken
                 && previous.facts.length === facts.length && facts.every((fact, index) => {
                     const before = previous.facts[index]!;
                     return before.invocation === fact.invocation && before.progress === fact.progress && before.label === fact.label;
@@ -288,7 +300,9 @@ export function WorkflowRunSteps(props: Readonly<{
                 ...(block?.kind === 'workflow' ? { nestedDefinition: child ?? null } : {}),
                 settled: displayedOccurrence !== null && isTerminalWorkflowInvocationLifecycle(displayedOccurrence.lifecycle),
                 state: displayedOccurrence === null
-                    ? props.notStartedLabel === undefined ? null : <Text style={styles.provenance}>{props.notStartedLabel}</Text>
+                    ? blockNotTaken
+                        ? <Text style={styles.provenance}>{t('workflows.map.notTaken')}</Text>
+                        : props.notStartedLabel === undefined ? null : <Text style={styles.provenance}>{props.notStartedLabel}</Text>
                     : <>
                     {elapsed === null ? null : <Text style={styles.provenance}>{elapsed}</Text>}
                     <WorkflowLifecycleStatus lifecycle={displayedOccurrence.lifecycle} blockKind={block?.kind ?? null} context={props.invocationStatusContext}
@@ -308,7 +322,7 @@ export function WorkflowRunSteps(props: Readonly<{
                         testIDPrefix={`${props.testIDPrefix}-${blockId}`} />
                 </>,
             };
-            nextPresentations.set(blockId, { context: presentationContext, facts, selectedInvocationId, slots });
+            nextPresentations.set(blockId, { context: presentationContext, facts, selectedInvocationId, notTaken: blockNotTaken, slots });
             return slots;
     };
     for (const blockId of blockIds) renderStep(blockId);
@@ -330,5 +344,6 @@ export function WorkflowRunSteps(props: Readonly<{
         onChange={ignoreDocumentEdit} onCustomize={ignoreDocumentEdit}
         onSelect={selectBlock}
         presentation={presentation} testIDPrefix={props.testIDPrefix}
+        resolveActionFieldOptions={resolveActionFieldOptions}
     />;
 }

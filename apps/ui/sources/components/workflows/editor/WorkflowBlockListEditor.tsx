@@ -755,8 +755,10 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       : { id: row.previousId, kind: row.previousKind };
   const ifHeadline =
     block.kind === 'if'
-      ? resolveWorkflowConditionHeadline(draft, block.when)
+      ? resolveWorkflowConditionHeadline(draft, block.when, editable ? 'authoring' : 'run')
       : null;
+  const onlyWhenHeadline = !editable && block.kind !== 'if' && block.onlyWhen !== undefined
+    ? resolveWorkflowConditionHeadline(draft, block.onlyWhen, 'run') : null;
   // A named If states its condition where its branch starts ("Only when …", lab round 1106 F1); an
   // unnamed one keeps the sentence as its title, so the condition is said once either way.
   const ifConditionOnLane =
@@ -765,7 +767,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
     block.kind === 'if' && ifHeadline !== null ? (
       <Text
         testID={`${testIDPrefix}-if-${block.id}-sentence`}
-        accessibilityLabel={t(
+        accessibilityLabel={ifHeadline.unconditional === true ? ifHeadline.sentence : t(
           ifConditionOnLane
             ? 'workflows.page.inspector.onlyWhenSentence'
             : 'workflows.page.inspector.ifSentence',
@@ -774,7 +776,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       >
         <WorkflowReferenceSentence
           draft={draft}
-          sentence={t(
+          sentence={ifHeadline.unconditional === true ? ifHeadline.sentence : t(
             ifConditionOnLane
               ? 'workflows.page.inspector.onlyWhenSentence'
               : 'workflows.page.inspector.ifSentence',
@@ -1462,7 +1464,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
               testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
               style={workflowEditorStyles.groupSummary}
             >
-              {t('workflows.page.inspector.onlyWhenSentence', {
+              {onlyWhenHeadline?.unconditional === true ? onlyWhenHeadline.sentence : t('workflows.page.inspector.onlyWhenSentence', {
                 condition: row.actionPresentation?.condition ?? formatWorkflowConditionSentence(
                   draft,
                   block.onlyWhen,

@@ -15,7 +15,7 @@ import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/wor
 import { isWorkflowActionLiteralFieldV1 } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { ActionInputFields, formatActionInputFieldChoice } from '@/components/sessions/actions/ActionInputFields';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { Text } from '@/components/ui/text/Text';
@@ -236,10 +236,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                             const execution = formatWorkflowExecutionLiteral(value, row.key);
                             if (execution !== null) return execution;
                             if (row.hint === null) return null;
-                            const options = resolveFieldOptions(row.hint);
-                            const label = (item: unknown) => options.find((option) => option.value === item)?.label;
-                            const labels = (Array.isArray(value) ? value : [value]).map(label);
-                            return labels.length > 0 && labels.every((entry) => entry !== undefined) ? labels.join(', ') : null;
+                            return formatActionInputFieldChoice(row.hint, value, resolveFieldOptions);
                         }}
                         onSet={() => { setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
                         renderEditor={() => binding === undefined ? null : binding.kind === 'list' ? (

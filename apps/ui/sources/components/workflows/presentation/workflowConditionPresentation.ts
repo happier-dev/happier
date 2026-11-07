@@ -114,13 +114,16 @@ function formatConditionValue(draft: WorkflowValuePresentationContext, value: Wo
  * and how many more, never a paragraph of arms under the heading; every arm is in Step options'
  * condition editor, and the accessible label carries the whole sentence.
  */
-export function resolveWorkflowConditionHeadline(draft: WorkflowValuePresentationContext, authored: WorkflowCondition): Readonly<{
+export function resolveWorkflowConditionHeadline(draft: WorkflowValuePresentationContext, authored: WorkflowCondition, presentation: 'authoring' | 'run' = 'authoring'): Readonly<{
     sentence: string;
     references: readonly WorkflowValueReference[];
+    unconditional?: true;
 }> {
     const condition = foldWorkflowConditionGuards(authored);
     // Nothing chosen yet: the heading says what to do, never "Yes has a value".
-    if (isWorkflowConditionUnset(condition)) return { sentence: t('workflows.condition.unsetSentence'), references: [] };
+    if (isWorkflowConditionUnset(condition)) return presentation === 'run'
+        ? { sentence: t('workflows.condition.always'), references: [], unconditional: true }
+        : { sentence: t('workflows.condition.unsetSentence'), references: [] };
     if (condition.kind !== 'all' && condition.kind !== 'any') {
         return { sentence: formatWorkflowConditionSentence(draft, condition), references: collectWorkflowConditionValueReferences(condition) };
     }
@@ -128,7 +131,7 @@ export function resolveWorkflowConditionHeadline(draft: WorkflowValuePresentatio
     if (first === undefined) {
         return { sentence: condition.kind === 'all' ? t('workflows.page.inspector.conditionAll') : t('workflows.page.inspector.conditionAny'), references: [] };
     }
-    const head = resolveWorkflowConditionHeadline(draft, first);
+    const head = resolveWorkflowConditionHeadline(draft, first, presentation);
     return rest.length === 0 ? head
         : { sentence: `${head.sentence} · ${t('workflows.page.inspector.conditionMore', { count: rest.length })}`, references: head.references };
 }

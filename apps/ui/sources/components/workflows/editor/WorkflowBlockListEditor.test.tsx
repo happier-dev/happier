@@ -5,7 +5,7 @@ import { StyleSheet as NativeStyleSheet } from 'react-native';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -138,6 +138,78 @@ async function loadHarness() {
 }
 
 type Harness = Awaited<ReturnType<typeof loadHarness>>;
+
+it('reads frozen Action choices by their saved names through the editor options owner', async () => {
+    const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const definitionId = '00000000-0000-4000-8000-000000000061';
+    await createWorkflowDefinition({ definitionId, definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review release', references: [], attachments: [] } }] }),
+        metadata: { title: 'Release rehearsal' }, context: { serverId: MACHINE_COMPOSER_SCOPE.serverId } });
+    const definition = createWorkflowDefinitionFixture({ blocks: Array.from({ length: 8 }, (_, index) => ({
+        kind: 'action' as const, id: `saved-${index}`, actionId: 'workflow.definition.get',
+        input: { definitionId: { kind: 'literal' as const, value: definitionId } },
+    })) });
+    const requestsBeforeOpen = home.requests.length;
+    const screen = await renderScreen(<WorkflowRunSteps runId="saved-names" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={definition} invocations={[]} structure={new Map()} selectedInvocationId={null}
+        onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="saved-steps" />);
+    expect(screen.getTextContent()).not.toContain(definitionId);
+    await waitForHomeGovernance(() => {
+        expect(screen.getTextContent()).toContain('Release rehearsal');
+    });
+    expect(screen.getTextContent()).not.toContain(definitionId);
+    const inventoryReads = home.requests.slice(requestsBeforeOpen).filter(request => request.method === 'GET'
+        && request.path.split('?')[0] === '/v1/artifacts');
+    expect(inventoryReads).toHaveLength(1);
+});
+
+it('keeps missing declared choices distinct from ordinary literal Action values', async () => {
+    const harness = await loadHarness();
+    const missingId = '00000000-0000-4000-8000-000000000062';
+    const draft = buildDraft(harness, [{ kind: 'action', id: 'saved', actionId: 'workflow.definition.get',
+        input: { definitionId: { kind: 'literal', value: missingId } } },
+    { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Release ready' } } }]);
+    const screen = await renderList(harness, { draft, presentation: { editable: false }, resolveActionFieldOptions: () => [] });
+    expect(screen.getTextContent()).not.toContain(missingId);
+    expect(screen.getTextContent()).toContain('Release ready');
+    expect(screen.getTextContent()).toContain('common.unavailable');
+});
+
+it('reads unconditional Run branches and distinguishes an untaken branch from future work', async () => {
+    const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { WorkflowProgressEnvelopeV1Schema } = await import('@happier-dev/protocol/workflows/workflowProgressV1');
+    const { projectWorkflowInvocationStructure, projectWorkflowFlowRunStates } = await import('../run/workflowInvocationStructure');
+    const { projectWorkflowFlow } = await import('../flow/workflowFlowProjection');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const { WORKFLOW_CONDITION_UNSET } = await import('../presentation/workflowConditionRules');
+    const { Text } = await import('@/components/ui/text/Text');
+    const wait = (id: string) => ({ kind: 'wait' as const, id, document: { text: id, references: [], attachments: [] } });
+    const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'if', id: 'choice', name: 'Release choice', when: WORKFLOW_CONDITION_UNSET,
+        then: [wait('taken')], otherwise: [wait('untaken')] }, wait('future')] });
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'taken-invocation', lifecycle: 'completed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', attempt: '0',
+        logicalInvocationRecordId: invocation.id, blockKind: 'wait', invocationPath: { blockId: 'taken', scope: [] } });
+    const progressById = new Map([[invocation.id, progress]]);
+    const structure = projectWorkflowInvocationStructure({ definition, invocations: [invocation], progressByInvocationId: progressById });
+    const flowProjection = projectWorkflowFlow(definition);
+    const flowRunStates = projectWorkflowFlowRunStates({ invocations: [invocation], structure, progressByInvocationId: progressById,
+        projection: flowProjection, formatOccurrence: () => undefined });
+    const screen = await renderScreen(<WorkflowRunSteps runId="choice-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={definition} invocations={[invocation]} structure={structure} progressById={progressById}
+        flowProjection={flowProjection} flowRunStates={flowRunStates} notStartedLabel="Future work"
+        selectedInvocationId={null} onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="choice-steps" />);
+    expect(screen.getTextContent()).toContain('workflows.condition.always');
+    expect(screen.getTextContent()).toContain('workflows.map.notTaken');
+    expect(screen.getTextContent()).toContain('Future work');
+    const untaken = screen.findByTestId('choice-steps-wait-untaken-label-heading-actions')!;
+    const future = screen.findByTestId('choice-steps-wait-future-label-heading-actions')!;
+    expect(findTestInstanceByTypeContainingText(untaken, Text, 'workflows.map.notTaken')).toBeDefined();
+    expect(findTestInstanceByTypeContainingText(future, Text, 'Future work')).toBeDefined();
+    expect(findTestInstanceByTypeContainingText(future, Text, 'workflows.map.notTaken')).toBeUndefined();
+    expect(screen.getTextContent()).not.toContain('workflows.condition.unsetSentence');
+});
 
 it('identifies the exact model participant in a selected frozen occurrence', async () => {
     const harness = await loadHarness();
