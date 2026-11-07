@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+import { defineProtocolLiteral, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 
 /**
  * What a Triage Session start knows about the working directory it is about to
@@ -124,6 +125,11 @@ export const TRIAGE_WORKSPACE_MODES_V1 = [
     'repository',
     'pull_request',
 ] as const;
+export const TriageWorkspaceModeV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(TRIAGE_WORKSPACE_MODES_V1[0]),
+    defineProtocolLiteral(TRIAGE_WORKSPACE_MODES_V1[1]),
+    ...TRIAGE_WORKSPACE_MODES_V1.slice(2).map(mode => defineProtocolLiteral(mode)),
+]);
 /**
  * The closed vocabulary and the type are one declaration.
  *
@@ -167,7 +173,7 @@ export type TriageEntrySessionWorkspaceFactsV1 =
  * even by accident.
  */
 export type TriageWorkspaceMaterializationV1 =
-    | Readonly<{ kind: 'referenceOnly'; directory: string }>
+    | Readonly<{ kind: 'referenceOnly'; directory: string | Readonly<{ kind: 'managed' }> }>
     | Readonly<{ kind: 'selectedProject'; directory: string }>
     | Readonly<{
         kind: 'reviewWorkspace';
@@ -180,7 +186,7 @@ export type TriageWorkspaceMaterializationV1 =
  * the user selected or one the source prepared.
  */
 export type TriageResolvedMaterializationV1 =
-    | Readonly<{ kind: 'referenceOnly'; directory: string }>
+    | Readonly<{ kind: 'referenceOnly'; directory: string | Readonly<{ kind: 'managed' }> }>
     | Readonly<{ kind: 'selectedProject'; directory: string }>
     | Readonly<{
         kind: 'preparedReviewWorkspace';
@@ -190,7 +196,7 @@ export type TriageResolvedMaterializationV1 =
 /** The single directory authority for one start: the generic spawn never carries a second one. */
 export function materializationDirectory(
     materialization: TriageResolvedMaterializationV1,
-): string {
+): string | Readonly<{ kind: 'managed' }> {
     return materialization.kind === 'preparedReviewWorkspace'
         ? materialization.facts.directory
         : materialization.directory;
