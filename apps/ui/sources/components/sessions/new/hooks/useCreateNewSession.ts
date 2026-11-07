@@ -8,6 +8,10 @@ import { Modal } from '@/modal';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { presentMachineAgentStartRefusal } from '@/components/machines/agents/presentMachineAgentStartRefusal';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { confirmAgentInstallChange } from '@/components/settings/agents/install/agentInstallChangeConfirm';
+import { readMachineAgentsForScope, type MachineAgentsSnapshot } from '@/agents/machineAgents/useMachineAgents';
+import { resolveMachineAgentAcquireIntentV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { sync } from '@/sync/sync';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -57,7 +61,7 @@ import {
 import type { AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
 import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
-import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { SessionSpawnNewInitialInputV1, SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { awaitManualSessionSpawnOperation, readManualSessionSpawnOperation } from '@/sync/domains/session/spawn/manualSessionSpawnOperation';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -705,6 +709,22 @@ export function useCreateNewSession(params: Readonly<{
         };
         const settings = storage.getState().settings;
         let managedCreation: SessionManagedCreationV1 | undefined;
+        let agentInstallConsent: SessionSpawnNewInputV2['agentInstallConsent'];
+        const collectAgentInstallConsent = async (machineName: string, knownAgents?: MachineAgentsSnapshot): Promise<boolean> => {
+            if (agentInstallConsent?.vendorRecipe) return true;
+            const target = current.backendTarget ?? current.spawnBackendTarget ?? { kind: 'backend', backendId: current.agentType };
+            const agent = resolveAgentCatalogProjection(resolveBackendTargetKeyV2(target), {
+                enabledAgentIds: [], ...current.daemonMergedProjectionInputs,
+            });
+            if (agent.cli?.install.manual.kind !== 'vendor_recipe') return true;
+            const definitionId = 'definitionId' in target ? target.definitionId : undefined;
+            const knownAgent = knownAgents?.status === 'ready' ? knownAgents.agents.find(row =>
+                row.agentId === agent.agentId && row.definitionId === definitionId) : undefined;
+            if (knownAgent && resolveMachineAgentAcquireIntentV1(knownAgent) === null) return true;
+            if (!await confirmAgentInstallChange({ name: agent.title, nowMachines: [], firstUseMachines: [machineName], vendorRecipe: true })) return false;
+            agentInstallConsent = { vendorRecipe: true };
+            return true;
+        };
         const submittedSessionName = current.getSessionName?.() ?? current.authoringDraft?.sessionName;
         const submittedInstructionsDraft = current.getInstructionsDraft
             ? current.getInstructionsDraft() : current.authoringDraft?.instructionsDraft;
@@ -841,6 +861,10 @@ export function useCreateNewSession(params: Readonly<{
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
+                if (!acquisition.managedId && (!await collectAgentInstallConsent(managedDraft.receipt.launch.name) || !isCurrent())) {
+                    reportAfterCreatedSettlement({ status: 'rejected' });
+                    return;
+                }
                 const preparedOrganizationPlacement = !acquisition.managedId ? await prepareNewSessionSpaceMembership({
                     spaceMembership: submitted.spaceMembership,
                     organizationPlacement: submitted.authoringDraft?.organizationPlacement ?? { folderId: null, tagIds: [] },
@@ -862,6 +886,7 @@ export function useCreateNewSession(params: Readonly<{
                             initialStructuredInput: opts.initialInputStructuredInput,
                             initialReviewComments: opts.initialInputReviewComments,
                             sourceContext: submitted.sourceContext ?? null,
+                            agentInstallConsent,
                         }),
                     } : {}),
                     retryInstallation: opts.managedMachineRetryInstallation,
@@ -892,6 +917,19 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
                 if (!isCurrent() || result.kind !== 'enrolled') {
+                    if (isCurrent() && result.kind === 'failed' && result.agentStartFailure) {
+                        const { machineId, agentId } = result.agentStartFailure;
+                        const machine = resolveServerScopedMachine(storage.getState(), scope.serverId, machineId);
+                        presentMachineAgentStartRefusal({
+                            code: result.code,
+                            agentTitle: resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title,
+                            machineName: machine ? getMachineSentenceName(machine) : managedDraft.receipt.launch.name,
+                            setupOwnerName: !machine ? null
+                                : machine.access?.role === 'use' ? machine.access.custodian.displayName?.trim() || null : undefined,
+                            setupTarget: presentsInPlaceRef.current ? null : { machineId, serverId: scope.serverId },
+                            openSetup: href => submitted.router.push(href as never),
+                        });
+                    }
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
@@ -1305,6 +1343,17 @@ export function useCreateNewSession(params: Readonly<{
             if (shouldPrepareInitialMessage && invocationScope && canInvokePromptTemplate(sessionPrompt)) await refreshPromptLibraryCatalog(invocationScope);
             if (!isLaunchScopeStillActive() || (invocationScope && !areServerAccountScopesEqual(invocationScope,
                 latestParamsRef.current.draftScope ?? selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), resolvedTargetServerId)))) return;
+            const inventoryLifetime = capturedOrdinaryTargetAccount?.accountLifetime
+                ?? capturedOrdinarySourceAccount?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
+            const knownAgents = inventoryLifetime && areServerAccountScopesEqual(inventoryLifetime.scope, executionAccountScope)
+                ? readMachineAgentsForScope(inventoryLifetime, selectedMachineId) : undefined;
+            if (!await collectAgentInstallConsent(current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId, knownAgents)
+                || !isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted
+                || readLaunchIntent(latestParamsRef.current) !== submittedIntent.signature) {
+                reportAfterCreatedSettlement({ status: 'rejected' });
+                current.setIsCreating(false);
+                return;
+            }
             await prepareSubmittedInstructions();
             if (!isLaunchScopeStillActive()) return;
             const preparedOrganizationPlacement = await prepareNewSessionSpaceMembership({
@@ -1752,6 +1801,7 @@ export function useCreateNewSession(params: Readonly<{
                         initialStructuredInput: opts?.initialInputStructuredInput,
                         initialReviewComments: opts?.initialInputReviewComments,
                         sourceContext: current.sourceContext ?? null,
+                        agentInstallConsent,
                         secretReferenceOverlay,
                     });
                 const birthOrigin = current.authoringOrigin && supportsMachineOperationProtocolCapabilityV1(
@@ -2133,6 +2183,8 @@ export function useCreateNewSession(params: Readonly<{
                             code: actionResult.result.code,
                             agentTitle: resolveAgentCatalogProjection(refusedAgentId, { enabledAgentIds: [] }).title,
                             machineName: current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId,
+                            setupOwnerName: current.selectedMachine?.access?.role === 'use'
+                                ? current.selectedMachine.access.custodian.displayName?.trim() || null : undefined,
                             setupTarget: presentsInPlaceRef.current ? null : { machineId: selectedMachineId, serverId: resolvedTargetServerId },
                             openSetup: (href) => current.router.push(href as never),
                         })

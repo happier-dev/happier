@@ -8,7 +8,7 @@ import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
 import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -175,6 +175,7 @@ async function createHarness() {
     if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
       return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
         codex: { id: 'codex', title: 'Codex', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex },
+        claude: { id: 'claude', title: 'Claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude },
       } } };
     }
     if (method === RPC_METHODS.CAPABILITIES_INVOKE) {
@@ -403,6 +404,26 @@ async function setupTaskHarness(options: Readonly<{ httpsHome?: boolean; current
   // Accepted creation also hydrates the destination through the real request
   // owner. Keep its propagation/recovery timers running through completion.
   return { ...result, scope, homeConnectionDescriptor, get storageState() { return storage.getState(); } };
+}
+
+/** Current Account launches use the installed HTTP Action carrier, not raw spawn RPC. */
+async function setupCurrentAccountSessionActionHarness(custodian?: Readonly<{ accountId: string; displayName: string }>) {
+  await selectNewSessionTestHome();
+  const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+  const identified = await setServerProfileIdentityForUrl('https://server-a', 'srv_session_fixture');
+  if (!identified) throw new Error('The synthetic Home identity must be established before Account restore');
+  const context = await setupTaskHarness({ currentAccount: true });
+  const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+  const profile = getServerProfileById(context.scope.serverId);
+  if (!profile?.serverIdentityId) throw new Error('The synthetic Home must have its published identity');
+  const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  const boundary = await createExternalActionAccountHttpBoundary({
+    serverUrl: profile.serverUrl, serverIdentityId: profile.serverIdentityId, accountId: context.scope.accountId,
+    machineId: 'm1', actionId: 'session.spawn_new', tokenEpoch: 0, ...(custodian ? { custodian } : {}),
+    execute: input => context.sessionSpawnNewActionBoundarySpy(admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input))),
+  });
+  context.additionalBoundary.http = (url, init) => boundary.handle(url, init);
+  return { ...context, machineAccess: boundary.machine.access };
 }
 
 type CreateSessionParams = Parameters<(typeof import('./useCreateNewSession'))['useCreateNewSession']>[0];
@@ -702,6 +723,94 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await harness?.disposeAuth();
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it('requires vendor consent before first Session readiness and restores the editable draft when declined', async () => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, modalAlertSpy, scope } = await setupCurrentAccountSessionActionHarness();
+    const { Modal } = await import('@/modal');
+    const confirm = vi.mocked(Modal.confirm);
+    confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { getSessionDraftSnapshot, writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { useNewSessionComposerDocument } = approvalAttachmentModules[2];
+    const draftId = 'canceled-vendor-consent';
+    writeNewSessionDraft({ scope, draftId, patch: { text: 'Read this project' }, materializationIntent: 'userEdit' });
+    const promptStore = createNewSessionPromptStore('Read this project');
+    const persistedAttachments: readonly import('@happier-dev/protocol/runtime/input/composerAttachmentV1').ComposerAttachmentDraftV1[] = [];
+    const composerAttachmentEntriesById = {};
+    const canSubmitRef = { current: true };
+    const hook = await renderHook(() => {
+      const [isCreating, setIsCreating] = React.useState(false);
+      const composerDocument = useNewSessionComposerDocument({
+        draftId, draftScope: scope, promptStore, persistedAttachments, composerAttachmentEntriesById,
+        scopeKey: `consent:${scope.serverId}:${scope.accountId}`, canSubmitRef, isSubmitting: isCreating,
+      });
+      const creator = useCreateNewSession(createRetryParams(storageState.settings, {
+        agentType: 'claude', modelMode: 'claude-haiku-4-5', promptStore, draftId, draftScope: scope,
+        targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId], setIsCreating,
+      }));
+      return { ...creator, isCreating, composerDocument };
+    });
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+      expect(confirm, JSON.stringify({ alerts: modalAlertSpy.mock.calls, spawnCount: sessionSpawnNewActionBoundarySpy.mock.calls.length })).toHaveBeenCalledTimes(1);
+      expect(hook.getCurrent().isCreating, 'Cancel must unlock the New Session composer').toBe(false);
+      expect(hook.getCurrent().composerDocument.readCurrentDocumentSnapshot()).toMatchObject({
+        text: 'Read this project', state: { editable: true, submitting: false, submittable: true },
+      });
+      expect(promptStore.getPrompt()).toBe('Read this project');
+      expect(readDraftComposerText(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))).toBe('Read this project');
+      promptStore.setPrompt('Read this project and explain it');
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]).toMatchObject({
+        agentInstallConsent: { vendorRecipe: true },
+      });
+    } finally {
+      await hook.unmount();
+    }
+  });
+
+  it.each(['pending', 'failed'] as const)('creates the Session and shows the optional Agent update notice (%s)', async status => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, modalAlertSpy, scope } = await setupCurrentAccountSessionActionHarness();
+    const sessionId = `session-update-${status}`;
+    storageState.applySessions([createSessionFixture({ id: sessionId, serverId: scope.serverId, encryptionMode: 'plain' })]);
+    sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({ ...spawnSuccess(sessionId),
+      executionTarget: { serverId: scope.serverId, machineId: 'm1' }, agentUpdate: { agentId: 'codex', status } });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {
+      router, draftScope: scope, targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/session/${sessionId}?serverId=${scope.serverId}`, expect.anything()));
+      expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(modalAlertSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+    } finally { await hook.unmount(); }
+  });
+
+  it('starts a current vendor Agent without install consent', async () => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, scope, modalAlertSpy, machineAccess } = await setupCurrentAccountSessionActionHarness({ accountId: 'machine-owner', displayName: 'Alex' });
+    const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+    const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+    const { Modal } = await import('@/modal');
+    const key = serverAccountScopedResourceKey(scope, 'machine-agents', 'm1');
+    const item = { agentId: 'claude', title: 'Claude', installed: true, version: '2.0.0', latestVersion: '2.0.0',
+      update: { supported: true, command: null }, signIn: { status: 'signedIn' as const, loginSupport: 'login_terminal' as const },
+      platform: { supported: true as const }, install: { available: true, mode: 'vendor_recipe' as const, sizeBytes: null, guideUrl: null }, dependencies: [] };
+    machineAgentInventoryStore.publish(key, { status: 'ready', items: [item], lastCheckedAt: Date.now() });
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {
+      agentType: 'claude', selectedMachine: createMachineFixture({ id: 'm1', access: machineAccess }),
+      draftScope: scope, targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(Modal.confirm).not.toHaveBeenCalled();
+      expect(sessionSpawnNewActionBoundarySpy, JSON.stringify(modalAlertSpy.mock.calls)).toHaveBeenCalled();
+      expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0].agentInstallConsent).toBeUndefined();
+    } finally {
+      await hook.unmount();
+      machineAgentInventoryStore.publish(key, { status: 'idle', items: [{ ...item, installed: false }], lastCheckedAt: null });
+    }
   });
 
   it('completes the retained attachment and first turn only after the launch approval executes', async () => {
@@ -2423,9 +2532,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       modalAlertSpy,
       sessionSpawnNewActionBoundarySpy,
       storageState,
-    } = await setupHarness();
+      scope,
+    } = await setupCurrentAccountSessionActionHarness();
 
-    harness.storageState.applySessions([createSessionFixture({ id: 'session-after-retry', serverId: 'server-a', encryptionMode: 'plain' })]);
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-after-retry', serverId: scope.serverId, encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy
       .mockResolvedValueOnce({
         type: 'pending',
@@ -2470,7 +2580,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         resolveSavedSecretReference,
         sessionOnlySecretValueByProfileIdByEnvVarName: {},
         selectedMachineCapabilities: {},
-        targetServerId: undefined,
+        draftScope: scope,
+        targetServerId: scope.serverId,
         allowedTargetServerIds: undefined,
       }),
     );
@@ -2478,7 +2589,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runOnlyPendingTimers: true });
+    await flushHookEffects();
 
     expect(router.replace).not.toHaveBeenCalled();
     const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
@@ -2491,7 +2602,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       creationKey: firstSpawnOptions.creationKey,
     }));
-    expect(router.replace).toHaveBeenCalledWith('/session/session-after-retry?serverId=server-a', expect.anything());
+    expect(router.replace).toHaveBeenCalledWith(`/session/session-after-retry?serverId=${scope.serverId}`, expect.anything());
 
     await hook.unmount();
   });
