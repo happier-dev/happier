@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -12,7 +13,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
@@ -55,11 +56,12 @@ const pickerMachineMetadata = {
     happyHomeDir: '/Users/tester/.happy-dev',
     homeDir: '/home/test',
 } as const;
-const pickerMachine = createMachineFixture({
+const defaultPickerMachine = createMachineFixture({
     id: 'machine-1',
     storageMode: 'plain',
     metadata: pickerMachineMetadata,
 });
+let pickerMachine = defaultPickerMachine;
 let pathSelectionProps: (() => React.ComponentProps<typeof import('@/components/sessions/new/components/PathSelectionList').PathSelectionList>) | null = null;
 let localSearchParams: Record<string, string> = {
     machineId: 'machine-1',
@@ -119,7 +121,9 @@ const picker = installPickerCommonModuleMocks({
         };
     },
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
-    projectionSeam: { describe: machineContributionRegistryProjectionDescribe, serverProfiles: [
+    projectionSeam: { describe: machineContributionRegistryProjectionDescribe,
+        ownIsolationStatus: () => ({ protection: 'member_separated', status: { kind: 'effective', platform: 'linux' },
+            directories: { home: '/member/home', workspace: '/member/workspace' } }), serverProfiles: [
         { id: 'srv_picker_2', serverUrl: 'https://server-2.example.test' },
         { id: 'server-legacy', serverUrl: 'https://server-legacy.example.test' },
     ] },
@@ -131,6 +135,7 @@ describe('PathPickerScreen', () => {
     });
 
     beforeEach(() => {
+        pickerMachine = defaultPickerMachine;
         pathSelectionProps = null;
         localSearchParams = {
             machineId: 'machine-1',
@@ -164,7 +169,7 @@ describe('PathPickerScreen', () => {
             status: 'present', revision: 3, content: { t: 'plain', v: { v: 1, definitions: acpDefinitions } },
         }) });
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse({ ...settingsState.current, usePathPickerSearch: false, favoriteDirectories: [] }));
+        await applyPickerFixtureSettings(settingsParse({ ...settingsState.current, usePathPickerSearch: false, favoriteDirectories: [] }));
         storage.getState().applyMachines([pickerMachine], true, { sourceServerId: scope.serverId });
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
         const screen = await renderScreen(React.createElement(PathPickerScreen));
@@ -192,6 +197,23 @@ describe('PathPickerScreen', () => {
         };
         return { PathPickerScreen, screen };
     }
+
+    it.each([false, true])('resolves requester folders for member placement (shared %s)', async isShared => {
+        pickerMachine = createMachineFixture({ ...defaultPickerMachine, isShared,
+            access: { custodian: { accountId: isShared ? 'custodian-account' : picker.accountScope.accountId, displayName: 'Machine owner' },
+                role: isShared ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' }, metadata: { ...pickerMachineMetadata,
+            platform: 'linux', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        localSearchParams = { machineId: 'machine-1' };
+        await renderPathPicker();
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(pathSelectionProps?.().machineHomeDir).toBe('/member/home');
+        });
+        await act(async () => { await pathSelectionProps?.().onCommit(''); });
+        expect(routerMock.replace).toHaveBeenCalledWith(expect.objectContaining({
+            params: expect.objectContaining({ directoryKind: 'path', directory: '/member/workspace' }),
+        }));
+    });
 
     it('replaces to new session with path params when confirming without a previous route', async () => {
         await renderPathPicker();

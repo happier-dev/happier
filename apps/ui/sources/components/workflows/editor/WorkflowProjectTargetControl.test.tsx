@@ -11,15 +11,23 @@ import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirecto
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
+import { getPathBrowserRowTestId } from '@/components/ui/pathBrowser/pathBrowserTestIds';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { storage } from '@/sync/domains/state/storage';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 /**
  * The Workflow "Where" row consumes New Session's project/checkout owners.
@@ -79,6 +87,9 @@ const MACHINES = [
     createMachineFixture({ id: 'machine-1', metadata: { ...createMachineFixture().metadata!, displayName: 'Mac Studio', homeDir: '/Users/me', platform: 'darwin' } }),
     createMachineFixture({ id: 'machine-2', metadata: { ...createMachineFixture().metadata!, displayName: 'Linux box', homeDir: '/home/me', platform: 'linux' } }),
 ];
+const HOME_ID = 'srv_workflow_where';
+const RECENT_MACHINE_PATHS = [{ machineId: 'machine-2', path: '/home/me/service' }];
+const browserReadRequests: Array<Readonly<{ actionId: string; requestId?: string; surface: string; authority: string }>> = [];
 
 function repoSnapshot() {
     return ScmWorkingSnapshotSchema.parse({
@@ -103,12 +114,13 @@ function repoSnapshot() {
     });
 }
 
-function workspaceRef(id: string, rootPath: string) {
-    return { id, machineId: 'machine-1', serverId: account!.home.id, rootPath, createdAtMs: 1 };
+function workspaceRef(id: string, rootPath: string, serverId = HOME_ID) {
+    return { id, machineId: 'machine-1', serverId, rootPath, createdAtMs: 1 };
 }
 
 beforeEach(async () => {
     restorePopoverGlobals = withPopoverWebGlobals();
+    browserReadRequests.length = 0;
     machineRpc.mockReset();
     machineRpc.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
         if (method === RPC_METHODS.SCM_WORKTREES_ENRICHMENT) return { success: true, entries: [] };
@@ -118,9 +130,11 @@ beforeEach(async () => {
         if (method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) {
             const request = DaemonFilesystemListDirectoryRequestSchema.parse(payload);
             return DaemonFilesystemListDirectoryResponseSchema.parse({ ok: true, path: request.path, truncated: false,
-                entries: request.path === '/' ? [{ name: 'Users', path: '/Users', type: 'directory' }]
+                entries: request.path === '/' ? [{ name: 'Users', path: '/Users', type: 'directory' }, { name: 'repo', path: '/repo', type: 'directory' }]
                     : request.path === '/Users' ? [{ name: 'me', path: '/Users/me', type: 'directory' }]
                     : request.path === '/Users/me' ? [{ name: 'unbound', path: '/Users/me/unbound', type: 'directory' }]
+                    : request.path === '/repo' ? [{ name: 'payments', path: '/repo/payments', type: 'directory' },
+                        { name: 'payments-feature-auth', path: '/repo/payments-feature-auth', type: 'directory' }]
                     : [],
             });
         }
@@ -128,26 +142,51 @@ beforeEach(async () => {
         throw new Error(`Unexpected native Machine RPC: ${method}`);
     });
     const transport = createWorkflowActionHttpTransport({ fixtureResponse: async () => ({ ok: true, result: { definitions: [] } }), accountId: () => 'account-a' });
+    const readActions = await Promise.all(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(actionId =>
+        createExternalActionAccountHttpBoundary({ serverUrl: 'https://workflow-where.test', serverIdentityId: HOME_ID,
+            accountId: 'account-a', machineId: 'machine-1', actionId, tokenEpoch: 0,
+            execute: async (input, context) => {
+                browserReadRequests.push({ actionId, requestId: context.requestId,
+                    surface: context.invocation.surface, authority: context.invocation.authority });
+                const method = actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots ? RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS
+                    : actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory ? RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
+                        : RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST;
+                return machineRpc({ method, payload: input });
+            },
+        })));
+    const settings = { ...settingsDefaults, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+        approvalWaivedSurfaces: Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(id => [id, ['ui', 'agent']])),
+    }) };
     const machineRows = MACHINES.map(machine => ({
         ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }),
+        ...(machine.id === 'machine-1' ? { installationPublicKey: readActions[0]!.machine.installationPublicKey } : {}),
         metadata: encodePlainMachineStoredContent(machine.metadata),
     }));
-    account = await restoreServerAccountForTest({ serverUrl: 'https://workflow-where.test', accountId: 'account-a', request: async (url, init) => {
+    account = await restoreServerAccountForTest({ serverUrl: 'https://workflow-where.test', serverIdentityId: HOME_ID, accountId: 'account-a', request: async (url, init) => {
         const path = new URL(String(url)).pathname;
+        if (path === '/v2/account/settings' && (init?.method ?? 'GET') === 'GET') return Response.json(
+            AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 }));
+        if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [
+            workspaceRef('ref-main', '/repo/payments', HOME_ID),
+            workspaceRef('ref-feature', '/repo/payments-feature-auth', HOME_ID),
+        ] }));
+        if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [
+            { key: 'recentMachinePaths', revision: 0, content: { t: 'plain', v: RECENT_MACHINE_PATHS } },
+        ] }));
         if (path === '/v1/machines') return Response.json(machineRows);
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
             id => machineRows.find(row => row.id === id) ?? null);
         const machine = machineRows.find(row => path === `/v1/machines/${row.id}`);
         if (machine) return Response.json({ machine });
-        if (path === '/health' || path.startsWith('/v1/features') || path.startsWith('/v1/account/encryption')
-            || path === '/v2/account/settings' || path === '/v1/artifacts' || path.startsWith('/v3/automations')) {
-            return transport.fetch(url, init);
+        for (const readAction of readActions) {
+            const response = await readAction.handle(new URL(String(url)), init);
+            if (response) return response;
         }
-        // Unrelated bootstrap domains are absent on this Home, not network failures.
-        // Throwing here would retire reachability and stall the real Machine census.
-        return new Response('{}', { status: 404 });
+        // Keep the restored Account's real profile/bootstrap contracts intact;
+        // the canonical HTTP fixture owns all otherwise empty Account domains.
+        return transport.fetch(url, init);
     } });
-    const scope = { serverId: account.home.id, accountId: 'account-a' };
+    const scope = { serverId: HOME_ID, accountId: 'account-a' };
     // Hydrate through Sync so the plain Machine content mode is available to
     // active RPC as well as scoped RPC; a display fixture has no storage-mode authority.
     await (await import('@/sync/sync')).sync.refreshMachines();
@@ -162,8 +201,8 @@ beforeEach(async () => {
     storage.setState({ profileScope: scope,
         projectAccountRows: { scope, status: 'ready', coverage: 'complete', workspaceRefs,
             relationships: [], organizations: [], revisionsByPhysicalKey: {} },
-        settings: settingsDefaults,
-        authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: [{ machineId: 'machine-2', path: '/home/me/service' }] } });
+        settings,
+        authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: RECENT_MACHINE_PATHS } });
 });
 
 afterEach(async () => {
@@ -189,6 +228,87 @@ function stepOptions(step: SelectionListStep, sectionId: string) {
 }
 
 describe('workflow project target control', () => {
+    it.each([false, true])('selects the requester workspace for member placement (shared %s)', async isShared => {
+        const memberMachine = createMachineFixture({ ...MACHINES[1], isShared,
+            access: { custodian: { accountId: isShared ? 'custodian-account' : 'account-a', displayName: 'Machine owner' },
+                role: isShared ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
+            metadata: { ...MACHINES[1]!.metadata!, agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        const machines = [MACHINES[0]!, memberMachine];
+        storage.getState().applyMachines(machines, true, { sourceServerId: account!.home.id });
+        machineRpc.mockImplementation(async ({ method }) => {
+            if (method === RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS) return {
+                protection: 'member_separated', status: { kind: 'effective', platform: 'linux' },
+                directories: { home: '/member/home', workspace: '/member/workspace' },
+            };
+            if (method === RPC_METHODS.SCM_WORKTREES_ENRICHMENT) return { success: true, entries: [] };
+            if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: repoSnapshot() };
+            throw new Error(`Unexpected native Machine RPC: ${method}`);
+        });
+        const onChange = vi.fn();
+        const screen = await renderControl({ machines, target: null, onChange });
+        await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
+        await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/member/workspace' }));
+    });
+
+    it('opens placement and edits its directory through mounted commands using the same project adapter', async () => {
+        const { WorkflowProjectTargetControl } = await import('./WorkflowProjectTargetControl');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const onChange = vi.fn();
+        function Controlled() {
+            const [target, setTarget] = React.useState<import('@/sync/domains/workflows/workflowProjectTarget').WorkflowAuthoringTarget>(
+                { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' });
+            return <WorkflowProjectTargetControl machineName="Mac Studio" machines={MACHINES} target={target}
+                presentation="field" currentUiContextCommandScope="coach-placement" testIDPrefix="coach-placement"
+                onChange={next => { onChange(next); setTarget(next); }} />;
+        }
+        const screen = await renderMountedCurrentUiContext(<Controlled />, { withModalProvider: true });
+        const executor = createDefaultActionExecutor();
+        let invocationNumber = 0;
+        const invoke = async (key: string, input?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
+            const command = await vi.waitFor(() => {
+                const commands = readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands;
+                const selected = commands.find(row => row.description?.includes(`coach-placement.${key}`));
+                expect(selected, JSON.stringify({ key, commands })).toBeDefined();
+                return selected!;
+            });
+            await act(async () => {
+                expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id,
+                    ...(input === undefined ? {} : { input }) }, { surface: 'agent', authority: 'account_automation',
+                    expectedAccountId: 'account-a', actionRequestId: `trigger-placement-agent-${++invocationNumber}` })).toMatchObject({ ok: true });
+            });
+        };
+        expect(screen.findByTestId('coach-placement-where-popover')).toBeNull();
+        await invoke('open');
+        expect(screen.findByTestId('coach-placement-where-popover')).not.toBeNull();
+        await invoke('browse');
+        await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/repo/payments-feature-auth'))).not.toBeNull());
+        expect(browserReadRequests.length).toBeGreaterThan(0);
+        expect(browserReadRequests).toEqual(expect.arrayContaining([expect.objectContaining({
+            actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory,
+            requestId: 'trigger-placement-agent-2', surface: 'agent', authority: 'account_automation',
+        })]));
+        expect(browserReadRequests.every(request => request.surface === 'agent' && request.authority === 'account_automation')).toBe(true);
+        await invoke('browser.activate', { path: '/repo/payments-feature-auth' });
+        await invoke('browser.confirm');
+        expect(onChange, JSON.stringify({ profileScope: storage.getState().profileScope,
+            projectAccountRows: storage.getState().projectAccountRows })).toHaveBeenLastCalledWith({
+            machineId: 'machine-1', directory: '/repo/payments-feature-auth', workspaceRefId: 'ref-feature' });
+        await vi.waitFor(() => expect(screen.findByTestId('coach-placement-project-checkout')).not.toBeNull());
+        await invoke('checkout.open');
+        const picker = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
+        const main = stepOptions(picker.props.rootStep as SelectionListStep, 'worktree:quick-actions')
+            .find(option => option.id === 'current_path');
+        expect(main).toBeDefined();
+        await invoke('checkout.list.activate', { id: main!.id });
+        expect(onChange).toHaveBeenLastCalledWith({ machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' });
+        await invoke('machine.activate', { id: 'machine-2' });
+        expect(onChange).toHaveBeenLastCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
+        await invoke('close');
+        expect(screen.findByTestId('coach-placement-where-popover')).toBeNull();
+    });
     it('picks an existing checkout through the New Session picker and rebinds its project', async () => {
         const onChange = vi.fn();
         const screen = await renderControl({
@@ -215,7 +335,8 @@ describe('workflow project target control', () => {
         if (!feature) throw new Error('Expected the alternate checkout in the real picker');
         await screen.pressByTestIdAsync(`selection-list:${rootStep.id}:option:${feature.id}`);
 
-        expect(onChange).toHaveBeenCalledWith({
+        expect(onChange, JSON.stringify({ profileScope: storage.getState().profileScope,
+            projectAccountRows: storage.getState().projectAccountRows })).toHaveBeenCalledWith({
             machineId: 'machine-1',
             directory: '/repo/payments-feature-auth',
             workspaceRefId: 'ref-feature',

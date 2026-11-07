@@ -27,6 +27,19 @@ function fixture(protocolVersion = 4) {
 }
 
 describe('CLI reset start admission', () => {
+  it.each([undefined, 'run/one'])('restores discarded Pending through CLI composition for recipient %s', async targetExecutionRunId => {
+    const { deps } = fixture();
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    const controller = new AbortController();
+    expect(await createActionExecutor(deps).execute('session.pending.requeue', {
+      sessionId: 'session/one', localId: 'input/one', ...(targetExecutionRunId ? { targetExecutionRunId } : {}),
+    }, { surface: 'cli', authority: 'present_user', signal: controller.signal,
+      presentUserConfirmation: { actionId: 'session.pending.requeue' } })).toEqual({ ok: true, result: { ok: true } });
+    const recipient = targetExecutionRunId ? '/execution-runs/run%2Fone' : '';
+    expect(post).toHaveBeenCalledWith(expect.stringContaining(`/v2/sessions/session%2Fone${recipient}/pending/input%2Fone/restore`), {},
+      expect.objectContaining({ signal: controller.signal, headers: expect.objectContaining({ Authorization: 'Bearer account-token' }) }));
+  });
+
   it.each([false, undefined])('preserves the explicit inactive-resume choice (%s) through the pending Action', async resumeWhenAvailable => {
     const { deps } = fixture();
     const requestedAction = { v: 1, kind: 'enqueue' } as const;

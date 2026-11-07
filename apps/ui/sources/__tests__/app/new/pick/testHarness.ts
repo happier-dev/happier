@@ -1,6 +1,10 @@
+import type { Settings } from '@/sync/domains/settings/settings';
 import React from 'react';
 import { afterEach, beforeAll, beforeEach, vi } from 'vitest';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, RPC_ERROR_CODES, RPC_METHODS, SOCKET_RPC_EVENTS } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -87,6 +91,7 @@ type PickerStorageModuleFactory = (importOriginal: <T>() => Promise<T>) => unkno
  */
 export type PickerProjectionSeamOptions = Readonly<{
     describe: MachineContributionRegistryProjectionDescribeFn;
+    ownIsolationStatus?: (machineId: string) => import('@happier-dev/protocol/machines/agentIsolationV1').MachineAgentIsolationOwnStatusV1;
     /** Home profiles the account-scope resolver may bind; defaults to `srv_picker_2`. */
     serverProfiles?: readonly ServerProfileMockProfile[];
 }>;
@@ -203,6 +208,9 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
                     const { parseToken } = await import('@/utils/auth/parseToken');
                     const accountId = parseToken(token);
                     machineRpcRequests.push({ serverId: profile.id, accountId, machineId, method, params: payload.params });
+                    if (method === RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS && seam.ownIsolationStatus) {
+                        return { ok: true, result: await seam.ownIsolationStatus(machineId) };
+                    }
                     if (method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
                         return { ok: false, error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
                     }
@@ -650,4 +658,13 @@ export function createDiscoveredPluginBackendDescribeResult() {
         supported: true,
         projection: createSupportedClaudeProjection(createReviewBotPluginProjectionContributions()),
     } as const;
+}
+
+/** Seed each real owner at the picker fixture boundary. */
+export async function applyPickerFixtureSettings(delta: Partial<Settings>): Promise<void> {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+    rememberLastUsedBackendSelection(storage.getState().settingsScope, settingsParse({ ...storage.getState().settings, ...delta }));
+    storage.getState().applySettingsLocal(delta);
 }

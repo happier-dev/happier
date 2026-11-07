@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import axios from '@/api/client/credentialAxios';
 import { nullable } from 'zod/mini';
 import type { Socket } from 'socket.io-client';
 import type { SessionMessageAcceptedDeliveryContentV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
@@ -71,6 +72,7 @@ export async function updatePendingQueueV2RequestedAction(params: Readonly<{
         const initialInput = input.initialInput!;
         const result = await enqueuePendingQueueV2MessageViaHttp({ token: params.token, sessionId: input.sessionId,
             body: { localId: input.localId, messageRole: 'user', requestedAction,
+                ...(initialInput.usageTimingV1 === undefined ? {} : { usageTimingV1: initialInput.usageTimingV1 }),
                 ...(initialInput.content.t === 'encrypted' ? { ciphertext: initialInput.content.c } : { content: initialInput.content }),
                 ...(initialInput.targetMachineId ? { targetMachineId: initialInput.targetMachineId } : {}),
             }, ...(params.signal ? { signal: params.signal } : {}),
@@ -94,6 +96,24 @@ export async function updatePendingQueueV2RequestedAction(params: Readonly<{
     }
     return SessionPendingActionSetResultV1Schema.parse({ didUpdate: Reflect.get(data, 'didUpdate'), requestedAction: Reflect.get(data, 'requestedAction') });
 }
+/** Restore the existing discarded input, using the same Pending owner as UI restore. */
+export async function restoreDiscardedPendingMessage(params: Readonly<{
+    token: string; sessionId: string; localId: string; targetExecutionRunId?: string; signal?: AbortSignal;
+    resolveAuthorizationHeaders: (request: Readonly<{ method: 'POST'; path: string; body: Readonly<Record<string, never>> }>) => Readonly<Record<string, string>> | null;
+}>): Promise<void> {
+    const path = `${pendingMessageHttpPath(params)}/restore`;
+    const body = {};
+    const authorization = params.resolveAuthorizationHeaders({ method: 'POST', path, body });
+    if (!authorization) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+    const response = await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorization },
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (!response.data || typeof response.data !== 'object' || Reflect.get(response.data, 'ok') !== true) {
+        throw new Error('Invalid Pending restore acknowledgement');
+    }
+}
+
 /** Semantic withdrawal reuses ordinary pending deletion, including its delivery fence. */
 export async function withdrawPendingQueueV2Message(params: Readonly<{
     token: string; sessionId: string; localId: string; targetExecutionRunId?: string; signal?: AbortSignal;
@@ -298,6 +318,7 @@ export type PendingQueueWriteBody = Readonly<(
     | { localId: string; ciphertext: string; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
     | { localId: string; content: { t: 'plain'; v: unknown }; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
 ) & Readonly<{
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     targetMachineId?: string;
     deliveryMode?: 'continuation_if_no_queued_user_input';
     /** Host-derived only. Account/plugin authors never receive this value. */
@@ -792,10 +813,11 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
 
 /** Reads the incumbent durable queue; claimed, withdrawn and ordinary inputs are not reset demand. */
 export async function listPendingQueueV2ResetStartDemands(params: Readonly<{
-    token: string; sessionId: string;
+    token: string; sessionId: string; signal?: AbortSignal;
 }>): Promise<readonly Readonly<{ localId: string; reset: PendingResetStartBindingV1 }>[]> {
     const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`, {
         headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+        ...(params.signal ? { signal: params.signal } : {}),
     });
     const data = response.data;
     if (!data || typeof data !== 'object' || !Array.isArray(Reflect.get(data, 'pending'))) {
@@ -852,18 +874,25 @@ export async function readPendingQueueV2MessageContentByLocalIdFromServer(params
     token: string;
     sessionId: string;
     localId: string;
+    signal?: AbortSignal;
+    resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<SessionMessageContent | null> {
     const localId = readPendingLocalId(params.localId);
     if (localId === null) throw new Error('Invalid pending local id');
     const serverUrl = resolveServerHttpBaseUrl();
+    const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`;
+    const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
+        ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
+    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
     const response = await axios.get(
-        `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
+        `${serverUrl}${path}`,
         {
             headers: {
                 ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-                Authorization: `Bearer ${params.token}`,
+                ...authorizationHeaders,
             },
             timeout: 10_000,
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     const data = response?.data;
@@ -887,6 +916,8 @@ export type PendingQueueV2DeliveryStatusEntry = Readonly<{
     localId: string;
     status: PendingDeliveryStatusV1['status'];
     deliveryStatus: PendingDeliveryStatusV1;
+    /** Exact persisted intent; only a declared recovery action can resume a Run. */
+    requestedAction?: PendingRequestedActionV1;
 }>;
 
 type ResolvePendingQueueAuthorizationHeaders = (request: Readonly<{
@@ -908,6 +939,7 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
     sessionId: string;
     includeDiscarded?: boolean;
     recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
+    signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<PendingQueueV2DeliveryStatusEntry[]> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -924,6 +956,7 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
     const response = await axios.get(`${serverUrl}${path}`, {
         headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders },
         timeout: 10_000,
+        ...(params.signal ? { signal: params.signal } : {}),
     });
     const data = response?.data as { pending?: unknown; recipient?: unknown } | null | undefined;
     if (recipient) {
@@ -942,7 +975,9 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
         if (!localId || seen.has(localId)) continue;
         seen.add(localId);
         const deliveryStatus = readPendingDeliveryStatusFromRecord(record);
-        entries.push({ localId, status: deliveryStatus.status, deliveryStatus });
+        const requestedAction = PendingRequestedActionV1Schema.safeParse(record.requestedAction);
+        entries.push({ localId, status: deliveryStatus.status, deliveryStatus,
+            ...(requestedAction.success ? { requestedAction: requestedAction.data } : {}) });
     }
     return entries;
 }
@@ -990,46 +1025,18 @@ export async function readPendingQueueV2DeliveryFailureByLocalIdFromServer(param
     token: string;
     sessionId: string;
     localId: string;
+    recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
+    signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<PendingQueueDeliveryFailure | null> {
-    try {
-        const serverUrl = resolveServerHttpBaseUrl();
-        const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending?includeDiscarded=true`;
-        const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
-            ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-        if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
-        const response = await axios.get(`${serverUrl}${path}`, {
-            headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders },
-            timeout: 10_000,
-        });
-        const data = response?.data as { pending?: unknown } | null | undefined;
-        const pending = Array.isArray(data?.pending) ? data.pending : [];
-        for (const row of pending) {
-            if (!row || typeof row !== 'object') continue;
-            const record = row as Record<string, unknown>;
-            const localId = record.localId;
-            const deliveryStatus = readPendingDeliveryStatusFromRecord(record);
-            if (localId === params.localId && record.status === 'discarded'
-                && deliveryStatus.status === 'discarded' && deliveryStatus.reason === 'session_input_cancelled') {
-                return { localId: params.localId, reason: 'session_input_cancelled' };
-            }
-            if (
-                localId !== params.localId
-                || record.status === 'discarded'
-                || deliveryStatus.status !== 'blocked'
-            ) {
-                continue;
-            }
-            const reason = deliveryStatus.reason ?? normalizePendingDeliveryBlockedReason(record.deliveryBlockedReason);
-            return reason ? { localId: params.localId, reason } : null;
-        }
-        return null;
-    } catch (error) {
-        if (isAuthenticationError(error)) {
-            throw error;
-        }
-        throw error;
+    const entries = await listPendingQueueV2DeliveryStatusesFromServer({ ...params, includeDiscarded: true });
+    const entry = entries.find(row => row.localId === params.localId);
+    if (entry?.deliveryStatus.status === 'discarded' && entry.deliveryStatus.reason === 'session_input_cancelled') {
+        return { localId: params.localId, reason: 'session_input_cancelled' };
     }
+    if (entry?.deliveryStatus.status !== 'blocked') return null;
+    const reason = entry.deliveryStatus.reason;
+    return reason ? { localId: params.localId, reason } : null;
 }
 
 export async function discardPendingQueueV2Messages(params: {
@@ -1149,6 +1156,7 @@ export async function resolveAcceptedPendingQueueV2Delivery(params: {
     sessionId: string;
     localId: string;
     acceptedDelivery?: SessionMessageAcceptedDeliveryContentV1;
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     acceptedTurn?: { kind: 'newTurn' | 'followUp' | 'steer'; turnId: string };
     signal?: AbortSignal;
 }): Promise<{ didResolve: boolean; pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
@@ -1164,6 +1172,7 @@ export async function resolveAcceptedPendingQueueV2Delivery(params: {
         payload: AcceptedPendingSettlementRequestV1Schema.parse({
             v: 1, sessionId: params.sessionId, localId,
             ...(params.acceptedDelivery === undefined ? {} : { acceptedDelivery: params.acceptedDelivery }),
+            ...(params.usageTimingV1 === undefined ? {} : { usageTimingV1: params.usageTimingV1 }),
             ...(params.acceptedTurn === undefined ? {} : { acceptedTurn: params.acceptedTurn }),
         }),
     });

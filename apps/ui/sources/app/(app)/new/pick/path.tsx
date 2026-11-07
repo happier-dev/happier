@@ -1,11 +1,12 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import React, { useState, useMemo } from 'react';
-import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { View, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -16,20 +17,25 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useMachineOwnIsolationStatus } from '@/hooks/machine/useMachineOwnIsolationStatus';
+import { hasUnresolvedRequesterDirectories, resolveDefaultDirectoryForMachine, resolveMachineHomeDirectory } from '@/utils/sessions/machineDefaultDirectory';
 
 
 export default React.memo(function PathPickerScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
@@ -43,16 +49,15 @@ export default React.memo(function PathPickerScreen() {
         path?: string;
         spawnServerId?: string;
     }>();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const sessions = useAllSessionListRenderables();
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
@@ -68,16 +73,17 @@ export default React.memo(function PathPickerScreen() {
         || (typeof params.path === 'string' && params.path.trim().length > 0),
     );
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: machineIdParam,
         serverId: spawnServerId,
         enabled: Boolean(machineIdParam),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
@@ -86,8 +92,8 @@ export default React.memo(function PathPickerScreen() {
         daemonMergedProjection.inputs,
         acpCatalog,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
     ]);
 
     const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
@@ -112,7 +118,11 @@ export default React.memo(function PathPickerScreen() {
         return machines.find(m => m.id === params.machineId);
     }, [machines, params.machineId]);
 
-    const machineHomeDir = machine?.metadata?.homeDir || '/home';
+    const ownIsolation = useMachineOwnIsolationStatus({ machineId: machineIdParam, machine, serverId: spawnServerId,
+        enabled: machine?.isShared === true || hasUnresolvedRequesterDirectories({ machine }) });
+    const machineHomeDir = resolveMachineHomeDirectory({ machine, ownStatus: ownIsolation.status });
+    const defaultDirectory = resolveDefaultDirectoryForMachine({ machineId: machineIdParam, machines,
+        recentPaths: [], ownStatus: ownIsolation.status });
 
     // Get recent paths for this machine - prioritize from settings, then fall back to sessions
     const recentPaths = useStableRecentPathsForMachine({
@@ -150,6 +160,7 @@ export default React.memo(function PathPickerScreen() {
                 ...directoryParams,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(dataId ? { dataId } : {}),
@@ -167,8 +178,9 @@ export default React.memo(function PathPickerScreen() {
     });
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
-        handleSelectDirectory({ kind: 'path', path: rawPath.trim() || machineHomeDir });
-    }, [handleSelectDirectory, machineHomeDir]);
+        const path = rawPath.trim() || defaultDirectory;
+        if (path) handleSelectDirectory({ kind: 'path', path });
+    }, [handleSelectDirectory, defaultDirectory]);
 
     const handleBackPress = useEventCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
@@ -194,7 +206,7 @@ export default React.memo(function PathPickerScreen() {
     // NOTE: Keep the header actions stable across keystrokes.
     // On iOS containedModal, frequently re-creating `headerRight` as the user types can cause
     // the picker to dismiss/re-present (losing the in-progress TextInput value).
-    // The confirm action is safe even when the input is empty because we fall back to homeDir.
+    // Empty confirmation uses the requester's default once its existing own read settles.
     const headerRight = React.useCallback(() => {
         return (
             <Pressable

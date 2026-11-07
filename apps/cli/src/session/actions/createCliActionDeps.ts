@@ -875,8 +875,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { homeRuntimeTaskRpc, prepareLocalServiceStartApproval, runtimeActionExecute } = createCliLocalServiceActionDeps(params, {
     callMachineAction, projectHomeId, projectHomeAdmission, withProjectHome, executionRunActionFailure,
   });
-  const { sessionTerminalComposerClear, sessionPendingInputInterruptAndRun, sessionPendingActionSet, sessionPendingWithdraw, sessionPendingMarkHandled, sessionPendingDismiss, sessionPendingSendAsNew, sessionPendingResetStartSet, sessionPendingResetStartCancel } = createCliPendingActionDeps(params, { assertProjectRequesterCurrent, callResolvedSessionRpc, executionRunActionFailure, projectHomeAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, withProjectHome });
-  const tasksDeps = createCliTasksActionDeps(params, { homeAccountId, resolveServerRequestHeaders, todoHomeBaseUrl, todoHomeServerId });
+  const { sessionTerminalComposerClear, sessionPendingInputInterruptAndRun, sessionPendingRequeue, sessionPendingActionSet, sessionPendingWithdraw, sessionPendingMarkHandled, sessionPendingDismiss, sessionPendingSendAsNew, sessionPendingResetStartSet, sessionPendingResetStartCancel } = createCliPendingActionDeps(params, { assertProjectRequesterCurrent, callResolvedSessionRpc, executionRunActionFailure, projectHomeAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, withProjectHome });
+  const tasksDeps = createCliTasksActionDeps(params, { homeAccountId, resolveServerRequestHeaders, todoHomeBaseUrl, todoHomeServerId, actionHomeId });
   const { sessionUpdatePost, sessionManagerSet, sessionOrganizationPinSet, sessionAttentionSet, sessionApprovalReviewerSet, sessionStateFieldSet, currentSessionPresentationApply } = createCliMetadataActionDeps(params, { callSessionActionRpc, executionRunActionFailure, isSameActionHomeId, normalizeStringValue, prepareSourceKeyAfterCommit, projectHomeId, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const launchProfilesDeps = createCliLaunchProfilesActionDeps(params, { artifactCallerContext, projectAccountAdmission, roleArtifactStore });
   const { sessionModelUnarm, sessionModelSet } = createCliSessionModelActionDeps(params, { projectHomeId, resolveServerRequestHeaders });
@@ -1411,6 +1411,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionWorkStateGet,
     sessionTerminalComposerClear,
     sessionPendingInputInterruptAndRun,
+    sessionPendingRequeue,
     sessionPendingActionSet,
     sessionPendingWithdraw,
     sessionPendingMarkHandled,

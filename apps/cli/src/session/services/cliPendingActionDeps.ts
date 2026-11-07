@@ -10,7 +10,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliProjectAdmission } from '@/session/actions/cliActionDeps/projectAdmission';
 
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionTerminalComposerClear' | 'sessionPendingInputInterruptAndRun' | 'sessionPendingActionSet' | 'sessionPendingWithdraw' | 'sessionPendingMarkHandled' | 'sessionPendingDismiss' | 'sessionPendingSendAsNew' | 'sessionPendingResetStartSet' | 'sessionPendingResetStartCancel'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionTerminalComposerClear' | 'sessionPendingInputInterruptAndRun' | 'sessionPendingRequeue' | 'sessionPendingActionSet' | 'sessionPendingWithdraw' | 'sessionPendingMarkHandled' | 'sessionPendingDismiss' | 'sessionPendingSendAsNew' | 'sessionPendingResetStartSet' | 'sessionPendingResetStartCancel'>;
 
 export function createCliPendingActionDeps(
   params: CliActionDepsParams,
@@ -39,6 +39,18 @@ export function createCliPendingActionDeps(
         sessionId,
         localId,
         ...(typeof expectedStateAtMs === 'number' ? { expectedStateAtMs } : {}),
+      });
+    },
+    sessionPendingRequeue: async ({ sessionId, localId, serverId, targetExecutionRunId, context }) => {
+      const denied = await projectHomeAdmission(serverId, context);
+      if (denied) return denied;
+      return withProjectHome(async () => {
+        const { restoreDiscardedPendingMessage } = await import("@/api/session/pendingQueueV2Transport");
+        await restoreDiscardedPendingMessage({ token: params.token, sessionId, localId,
+          ...(targetExecutionRunId ? { targetExecutionRunId } : {}), ...(context.signal ? { signal: context.signal } : {}),
+          resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.pending.requeue', request),
+        });
+        return { ok: true };
       });
     },
     sessionPendingActionSet: async ({ sessionId, localId, requestedAction, resumeWhenAvailable, serverId, context }) => {
@@ -121,7 +133,7 @@ export function createCliPendingActionDeps(
           }
           const headers = authorizeRequest({ method: 'GET', path: '/v1/account/encryption/currentness' });
           const [{ fetchAccountEncryptionCurrentness }, { readProviderAccountUsageQuotaV4, readProviderAccountUsageHistoryWitnessV4 }, { updatePendingQueueV2RequestedAction }] = await Promise.all([import("@/api/client/connectedServiceCredentialApi"), import("@/daemon/connectedServices/accountUsage/readQuota"), import("@/api/session/pendingQueueV2Transport")]);
-          const authority = await fetchAccountEncryptionCurrentness({ token: credentials.token, authorizationHeaders: headers,
+          const authority = await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, authorizationHeaders: headers,
             ...(context.signal ? { signal: context.signal } : {}) });
           await assertCurrent();
           const options = { credentials, accountMode: authority.mode, assertCurrent, authorizeRequest,
