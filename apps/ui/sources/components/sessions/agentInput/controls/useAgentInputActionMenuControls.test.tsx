@@ -35,7 +35,7 @@ describe('useAgentInputActionMenuControls', () => {
         const chips = [chip('shortcuts:first'), chip('shortcuts:hidden'), chip('shortcuts:second')];
         const controlLines = resolved(['shortcuts:second', 'shortcuts:first']);
         const hook = await renderHook(({ open }: { open: boolean }) => useAgentInputActionMenuControls({
-            resolvedControls: controlLines, showActionMenu: open, setShowActionMenu: vi.fn(),
+            resolvedControls: controlLines, actionMenuOpen: open, setShowActionMenu: vi.fn(),
             closeSelectionOverlay: vi.fn(), openSelectionOverlay: vi.fn(), resetSelectionOverlays: vi.fn(),
             inputRef: { current: null }, hasAgentPickerOptions: false, tint: '#fff', agentId: 'codex',
             profileLabel: null, profileIcon: 'user-circle', openCollapsedOptionsPopover: vi.fn(),
@@ -67,7 +67,7 @@ describe('useAgentInputActionMenuControls', () => {
                 ...controller,
                 ...useAgentInputActionMenuControls({
                     resolvedControls: resolved(['engine']),
-                    showActionMenu: true,
+                    actionMenuOpen: true,
                     setShowActionMenu: vi.fn(),
                     closeSelectionOverlay: controller.closeSelectionOverlay,
                     openSelectionOverlay: controller.openSelectionOverlay,
@@ -88,11 +88,14 @@ describe('useAgentInputActionMenuControls', () => {
             };
         });
 
+        const agentAction = hook.getCurrent().actionMenuActions.find((action) => action.id === 'agent');
+        // The engine row opens its picker beside the menu (a submenu), not in place of it.
+        expect(agentAction?.opensPicker).toBe(true);
         await act(async () => {
-            hook.getCurrent().actionMenuActions.find((action) => action.id === 'agent')?.onPress?.();
+            agentAction?.onPress?.();
         });
 
-        expect(hook.getCurrent().activeSelectionOverlay).toEqual({ id: 'agent', anchor: 'actionMenu' });
+        expect(hook.getCurrent().activeSelectionOverlay).toEqual({ id: 'agent', anchor: 'actionMenuRow' });
         await hook.unmount();
     });
 
@@ -114,7 +117,7 @@ describe('useAgentInputActionMenuControls', () => {
 
             const menu = useAgentInputActionMenuControls({
                 resolvedControls: resolved(['path']),
-                showActionMenu: true,
+                actionMenuOpen: true,
                 setShowActionMenu: vi.fn(),
                 closeSelectionOverlay: controller.closeSelectionOverlay,
                 openSelectionOverlay: controller.openSelectionOverlay,
@@ -146,7 +149,7 @@ describe('useAgentInputActionMenuControls', () => {
         });
 
         const pathAction = hook.getCurrent().actionMenuActions.find((action) => action.id === 'path');
-        expect(pathAction).toBeTruthy();
+        expect(pathAction?.opensPicker).toBe(true);
 
         await act(async () => {
             pathAction?.onPress?.();
@@ -155,7 +158,7 @@ describe('useAgentInputActionMenuControls', () => {
         expect(onPathClick).not.toHaveBeenCalled();
         expect(hook.getCurrent().activeSelectionOverlay).toEqual({
             id: 'path',
-            anchor: 'actionMenu',
+            anchor: 'actionMenuRow',
         });
 
         await hook.unmount();

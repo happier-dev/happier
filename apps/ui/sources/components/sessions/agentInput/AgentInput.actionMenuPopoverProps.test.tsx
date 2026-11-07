@@ -557,7 +557,7 @@ describe('AgentInput (action menu popover props)', () => {
         expect(onStorageChange).toHaveBeenCalledWith('direct');
     });
 
-    it('routes overflow content actions through the shared content popover anchored to the action menu button', async () => {
+    it('routes overflow content actions through the shared content popover beside their + menu row', async () => {
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSelectionListPopover.last = null;
@@ -602,7 +602,9 @@ describe('AgentInput (action menu popover props)', () => {
         const mcpAction = actionMenuActions.find((action: { id?: string }) => action.id === 'new-session-mcp');
         expect(mcpAction).toBeTruthy();
 
+        const mcpRow = { focus: vi.fn() };
         act(() => {
+            (mcpAction as { rowRef?: (element: unknown) => void } | undefined)?.rowRef?.(mcpRow);
             mcpAction?.onPress?.();
         });
 
@@ -614,10 +616,32 @@ describe('AgentInput (action menu popover props)', () => {
         }) | null;
 
         expect(contentPopoverProps?.open).toBe(true);
-        expect(contentPopoverProps?.anchorRef).toEqual(settingsButton.props.ref);
+        expect((contentPopoverProps?.anchorRef as React.RefObject<unknown> | undefined)?.current).toBe(mcpRow);
         expect(contentPopoverProps?.maxHeightCap).toBeGreaterThan(0);
         expect(contentPopoverProps?.maxWidthCap).toBeGreaterThan(0);
         expect(contentPopoverProps?.boundaryRef).toBeNull();
+    });
+
+    it('opens an overflowed chip when another surface asks for it, instead of closing it at once', async () => {
+        captured.last = null;
+        const { AgentInput } = await import('./AgentInput');
+        const chip = {
+            key: 'session-account',
+            controlId: 'capabilities',
+            placement: { id: 'capabilities', title: 'newSession.mcpChipLabel', defaultPlacement: 'overflow' as const },
+            collapsedContentPopover: {
+                title: 'newSession.mcpChipLabel', maxHeightCap: 520, maxWidthCap: 480,
+                renderContent: () => React.createElement('View', { testID: 'account-chooser' }),
+            },
+            render: () => React.createElement('View', { testID: 'session-account-chip' }),
+        };
+        const props = { value: '', placeholder: 'Type', onChangeText: () => {}, onSend: () => {}, autocompleteKinds: [],
+            autocompleteSuggestions: async () => [], agentType: 'codex' as any, onAgentClick: () => {},
+            extraActionChips: [chip], onMachineClick: () => {}, machineName: 'Builder' };
+        const screen = await renderScreen(<AgentInput {...props} />);
+        await screen.update(<AgentInput {...props} openActionChipRequest={{ chipKey: 'session-account', key: '1' }} />);
+        expect(screen.findByTestId('account-chooser')).toBeTruthy();
+        expect((captured.last as CapturedPopoverProps | null)?.open).toBe(true);
     });
 
     it('toggles a visible extra-chip content popover closed when the chip is pressed twice', async () => {
@@ -757,12 +781,13 @@ describe('AgentInput (action menu popover props)', () => {
         }
     });
 
-    it('routes an overflow machine through the shared content popover anchored to the action menu button', async () => {
+    it('opens an overflow machine as a submenu beside its + menu row, keeping the menu open', async () => {
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSelectionListPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
         setComposerPlacements({ machine: 'overflow' });
+        const requestCloses: Array<() => void> = [];
 
         const screen = await renderScreen(<AgentInput
                     value=""
@@ -774,45 +799,87 @@ describe('AgentInput (action menu popover props)', () => {
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
                     machinePopover={{
-                        renderContent: () => React.createElement('View', { testID: 'machine-content' }),
+                        renderContent: ({ requestClose }: { requestClose: () => void }) => {
+                            requestCloses.push(requestClose);
+                            return React.createElement('View', { testID: 'machine-content' });
+                        },
                     }}
                     machineName="Builder"
                     onMachineClick={() => {}}
                 />);
 
-        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
-        const machinePressable = screen.findByTestId('agent-input-machine-chip');
-
-        expect(settingsButton).toBeTruthy();
-        expect(machinePressable).toBeNull();
-        if (!settingsButton) {
-            return;
-        }
-
+        expect(screen.findByTestId('agent-input-machine-chip')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-action-menu-button');
+        const menuExpanded = () => screen.findByTestId('agent-input-action-menu-button')?.props.accessibilityState?.expanded;
+        expect(menuExpanded()).toBe(true);
 
-        const actionMenuActions = getCapturedActionMenuActions();
-        const machineAction = actionMenuActions.find((action: { id?: string }) => action.id === 'machine');
-        expect(machineAction).toBeTruthy();
+        const machineAction = getCapturedActionMenuActions().find((action: { id?: string }) => action.id === 'machine') as
+            ({ onPress?: () => void; rowRef?: (element: unknown) => void } | undefined);
+        const row = { focus: vi.fn() };
+        act(() => machineAction?.rowRef?.(row));
+        act(() => machineAction?.onPress?.());
 
-        act(() => {
-            machineAction?.onPress?.();
-        });
-
-        const contentPopoverProps = captured.last as (Record<string, unknown> & {
-            open?: boolean;
-            anchorRef?: unknown;
-            maxHeightCap?: number;
-            maxWidthCap?: number;
+        const picker = captured.last as (Record<string, unknown> & {
+            open?: boolean; anchorRef?: React.RefObject<unknown>; placement?: string; onRequestClose?: () => void;
         }) | null;
+        // The machine picker hangs beside the row that opened it, and the + menu stays open.
+        expect(picker?.open).toBe(true);
+        expect(picker?.anchorRef?.current).toBe(row);
+        expect(picker?.placement).toBe('auto-horizontal');
+        expect(menuExpanded()).toBe(true);
 
-        expect(contentPopoverProps?.open).toBe(true);
-        expect(contentPopoverProps?.anchorRef).toStrictEqual(settingsButton.props.ref);
-        expect(contentPopoverProps?.maxHeightCap).toBeGreaterThan(0);
-        expect(contentPopoverProps?.maxWidthCap).toBeGreaterThan(0);
+        // A dismissal (Escape, an outside press) returns to the + menu.
+        act(() => picker?.onRequestClose?.());
+        expect(screen.findByTestId('machine-content')).toBeNull();
+        expect(menuExpanded()).toBe(true);
+
+        // Reopened, a choice made in the picker closes both.
+        act(() => machineAction?.onPress?.());
+        expect(screen.findByTestId('machine-content')).toBeTruthy();
+        act(() => requestCloses[requestCloses.length - 1]?.());
+        expect(screen.findByTestId('machine-content')).toBeNull();
+        expect(menuExpanded()).toBe(false);
     });
 
-    it('routes an overflow resume through the shared content popover anchored to the action menu button', async () => {
+    it('opens a + menu row picker with Right and on hover intent', async () => {
+        vi.useFakeTimers();
+        try {
+            capturedActionMenuContent.last = null;
+            const { AgentInput } = await import('./AgentInput');
+            setComposerPlacements({ machine: 'overflow' });
+            const screen = await renderScreen(<AgentInput
+                        value=""
+                        placeholder="Type"
+                        onChangeText={() => {}}
+                        onSend={() => {}}
+                        autocompleteKinds={[]}
+                        autocompleteSuggestions={async () => []}
+                        machinePopover={{ renderContent: () => React.createElement('View', { testID: 'machine-content' }) }}
+                        machineName="Builder"
+                        onMachineClick={() => {}}
+                    />);
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
+            const machineRow = () => getCapturedActionMenuActions().find((action: { id?: string }) => action.id === 'machine') as
+                ({ onHover?: () => void; onKeyDown?: (event: unknown) => void } | undefined);
+
+            act(() => machineRow()?.onKeyDown?.({ nativeEvent: { key: 'ArrowRight' }, preventDefault: () => {} }));
+            expect(screen.findByTestId('machine-content')).toBeTruthy();
+
+            const picker = captured.last as ({ onRequestClose?: () => void } | null);
+            act(() => picker?.onRequestClose?.());
+            expect(screen.findByTestId('machine-content')).toBeNull();
+
+            // Hover opens it only after the shared submenu dwell.
+            act(() => machineRow()?.onHover?.());
+            expect(screen.findByTestId('machine-content')).toBeNull();
+            act(() => { vi.advanceTimersByTime(200); });
+            expect(screen.findByTestId('machine-content')).toBeTruthy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('routes an overflow resume through the shared content popover beside its + menu row', async () => {
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSelectionListPopover.last = null;
@@ -849,7 +916,9 @@ describe('AgentInput (action menu popover props)', () => {
         const resumeAction = actionMenuActions.find((action: { id?: string }) => action.id === 'resume');
         expect(resumeAction).toBeTruthy();
 
+        const resumeRow = { focus: vi.fn() };
         act(() => {
+            (resumeAction as { rowRef?: (element: unknown) => void } | undefined)?.rowRef?.(resumeRow);
             resumeAction?.onPress?.();
         });
 
@@ -861,7 +930,7 @@ describe('AgentInput (action menu popover props)', () => {
         }) | null;
 
         expect(contentPopoverProps?.open).toBe(true);
-        expect(contentPopoverProps?.anchorRef).toEqual(settingsButton.props.ref);
+        expect((contentPopoverProps?.anchorRef as React.RefObject<unknown> | undefined)?.current).toBe(resumeRow);
         expect(contentPopoverProps?.maxHeightCap).toBe(420);
         expect(contentPopoverProps?.maxWidthCap).toBe(520);
     });

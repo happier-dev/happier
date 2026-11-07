@@ -53,7 +53,11 @@ export type AgentInputExtraActionChipRenderContext = Readonly<{
     toggleCollapsedPopover?: (chipKey: string) => void;
 }>;
 
-export type AgentInputPopoverAnchor = 'chip' | 'actionMenu';
+/**
+ * Where a composer picker hangs: its chip, the + button (a picker opened from outside the + menu, such
+ * as a command), or `actionMenuRow`, the + menu row that opened it, as a submenu beside that menu.
+ */
+export type AgentInputPopoverAnchor = 'chip' | 'actionMenu' | 'actionMenuRow';
 
 /**
  * Private bridge from an admitted extra chip to the incumbent overlay owner.
@@ -245,6 +249,8 @@ export function hasAgentInputCollapsedOptionsPopoverContent(
 
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
+    /** Publish this chip's existing popover through the mounted current-context command owner. */
+    currentUiContextCommandScope?: string;
     /** The owning form's missing requirement, presented at the control that can satisfy it. */
     requirement?: Readonly<{ code: string; fieldPath: string }> | null;
     placement?: import('./controls/agentInputControlTypes').AgentInputControlPlacement;

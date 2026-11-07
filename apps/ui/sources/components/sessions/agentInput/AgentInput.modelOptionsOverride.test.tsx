@@ -1130,7 +1130,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
         const overlay = findRolesOverlay(screen);
         expect(overlay.props.selectedValue).toBe('orchestrator');
-        expect(overlay.props.effectiveLabel).toBe('Orchestrator');
+        // The text mock returns keys; RolesRailDetail.test owns the "Uses {role} · {model}" wording.
+        expect(overlay.props.summary).toBe('roles.rail.uses');
         const builder = overlay.props.options.find((option: { value: string }) => option.value === 'builder');
         expect(builder.description).toContain('roles.rail.startsNewSession');
 
@@ -1142,7 +1143,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         await next.pressByTestIdAsync('agent-input-agent-chip');
         await next.pressByTestIdAsync('agent-input-chip-picker.option:roles');
         expect(findRolesOverlay(next).props.selectedValue).toBe('builder');
-        expect(findRolesOverlay(next).props.effectiveLabel).toBe('Builder · Codex');
+        expect(findRolesOverlay(next).props.summary).toBe('roles.rail.uses');
 
         // No role: the rail row carries no "in use" mark and nothing is checked.
         const none = await renderWithRole(null);
@@ -1704,9 +1705,11 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
             await screen.pressByTestIdAsync('agent-input-action-menu-action:agent');
 
-            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
+            // The engine picker opens beside its + menu row as a submenu; the menu stays open.
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
             expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
-            expect(lastPopoverProps?.anchorRef).toBe(screen.findByTestId('agent-input-action-menu-button')!.props.ref);
+            expect(lastPopoverProps?.anchorRef).not.toBe(screen.findByTestId('agent-input-action-menu-button')!.props.ref);
+            expect(lastPopoverProps?.placement).toBe('auto-horizontal');
             expect((lastOptionPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
         } finally {
             mockAgentInputActionBarLayout = 'wrap';

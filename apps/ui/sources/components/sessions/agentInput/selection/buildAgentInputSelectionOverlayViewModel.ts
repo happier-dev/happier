@@ -13,6 +13,7 @@ export function buildAgentInputSelectionOverlayViewModel(params: Readonly<{
     sessionModePickerAnchor: AgentInputPopoverAnchor;
     closeSessionModePicker: () => void;
     showPermissionPopover: boolean;
+    permissionPopoverAnchor: AgentInputPopoverAnchor;
     closePermissionPopover: () => void;
     showMachinePopover: boolean;
     machinePopoverAnchor: AgentInputPopoverAnchor;
@@ -43,6 +44,7 @@ export function buildAgentInputSelectionOverlayViewModel(params: Readonly<{
         sessionModePickerAnchor: activeOverlay?.id === 'sessionMode' ? activeOverlay.anchor : 'chip',
         closeSessionModePicker: () => params.closeSelectionOverlay('sessionMode'),
         showPermissionPopover: activeOverlay?.id === 'permission',
+        permissionPopoverAnchor: activeOverlay?.id === 'permission' ? activeOverlay.anchor : 'chip',
         closePermissionPopover: () => params.closeSelectionOverlay('permission'),
         showMachinePopover: activeOverlay?.id === 'machine',
         machinePopoverAnchor: activeOverlay?.id === 'machine' ? activeOverlay.anchor : 'chip',

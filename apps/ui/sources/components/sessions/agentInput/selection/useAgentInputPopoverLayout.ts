@@ -10,6 +10,8 @@ import { useComposerKeyboardLayout } from '@/components/sessions/keyboardAvoidan
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
+import { SUBMENU_POPOVER_GAP_PX } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
+import { AgentInputActionMenuSubmenuContext } from './agentInputActionMenuSubmenu';
 
 const MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING = 12;
 const DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING = 16;
@@ -47,11 +49,14 @@ export const AgentInputPopoverWidthContext = React.createContext<'column' | 'win
 export type AgentInputPopoverLayout = Readonly<{
     maxHeightCap?: number;
     keyboardBottomInset: number;
-    /** Chip pickers: always directly above the chip. Caret menus on web: the roomier side of the composer. */
-    placement: 'top' | 'bottom';
+    /**
+     * Chip popovers: above the chip unless that room cannot hold them. Caret menus on web: the roomier side.
+     * A + menu row's picker: beside its row, on the side with room, like every shared submenu.
+     */
+    placement: 'top' | 'bottom' | 'auto-horizontal';
     /** See `Popover.placementMinSpace`: for a caret menu on web, the roomier side always wins. */
     placementMinSpace?: number;
-    /** See `Popover.flip`: a chip picker never flips; it scrolls inside the room above its chip. */
+    /** See `Popover.flip`: a chip popover moves below its chip when the room above is short of `placementMinSpace`. */
     flip: boolean;
     gap: number;
     edgePadding: Readonly<{ horizontal: number; vertical: number; top?: number }>;
@@ -75,8 +80,8 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const composerKeyboardLayout = useComposerKeyboardLayout();
     const clearanceRef = React.useContext(AgentInputPopoverClearanceContext);
     const columnRef = React.useContext(AgentInputPopoverColumnContext);
-    const documentPanel = React.useContext(AgentInputDocumentPanelContext);
     const pickerWidth = React.useContext(AgentInputPopoverWidthContext);
+    const submenu = React.useContext(AgentInputActionMenuSubmenuContext) !== null;
     const retainedNativeKeyboardHeightRef = React.useRef(0);
     const { height: windowHeight, width: windowWidth } = useWindowDimensions();
     const normalizedKeyboardHeight = Number.isFinite(keyboardHeight)
@@ -151,7 +156,9 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         return composerKeyboardLayout?.retainKeyboardLift?.();
     }, [composerKeyboardLayout, effectiveKeyboardHeight, input.open]);
 
-    const portal = React.useMemo(() => {
+    const portal = React.useMemo((): PopoverPortalOptions => {
+        // A submenu starts at its row's top edge, as the shared dropdown's submenus do.
+        if (submenu) return { ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, anchorAlignVertical: 'start' };
         if (!input.portalTopBottomLayout) {
             return MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS;
         }
@@ -159,19 +166,32 @@ export function useAgentInputPopoverLayout(input: Readonly<{
             ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
             topBottomLayout: input.portalTopBottomLayout,
         };
-    }, [input.portalTopBottomLayout]);
+    }, [input.portalTopBottomLayout, submenu]);
+
+    if (submenu) {
+        return {
+            maxHeightCap,
+            keyboardBottomInset: effectiveKeyboardHeight,
+            placement: 'auto-horizontal',
+            placementMinSpace: POPOVER_PREFERRED_ROOM_PX,
+            flip: true,
+            gap: SUBMENU_POPOVER_GAP_PX,
+            edgePadding,
+            portal,
+        };
+    }
 
     const caretAnchored = input.anchor === 'caret';
-    // A document composer's chip picker still opens above its chip, but a form hung near the window's top
-    // (the Run now form under the page header) leaves no room there: it drops below instead of cramping.
-    const documentChip = !caretAnchored && documentPanel;
+    // A chip's popover opens above its chip (owner 2026-10-18). A composer high in the window (first-run Home,
+    // New Session, a Run now form under the page header) leaves less room there than a popover's content needs:
+    // it then opens below instead of clipping to a sliver (calm-shell ruling 2026-11-01). One rule for every chip.
     return {
         maxHeightCap,
         keyboardBottomInset: effectiveKeyboardHeight,
         placement: caretAnchored && Platform.OS === 'web' ? 'bottom' : 'top',
         ...(caretAnchored && Platform.OS === 'web' ? { placementMinSpace: AGENT_INPUT_CARET_MENU_ROOMIER_SIDE_WINS }
-            : documentChip ? { placementMinSpace: POPOVER_PREFERRED_ROOM_PX } : {}),
-        flip: caretAnchored || documentChip,
+            : { placementMinSpace: POPOVER_PREFERRED_ROOM_PX }),
+        flip: true,
         // The popover now anchors correctly on every platform (Popover resolves the portal-relative
         // anchor via window-deltas on Android — see `resolvePortalRelativeAnchorRect`), so the gap is
         // the same snug value everywhere. Previously Android over-padded (32) to mask an anchor that

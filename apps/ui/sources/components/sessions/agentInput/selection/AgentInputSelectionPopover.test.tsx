@@ -144,7 +144,7 @@ describe('AgentInputSelectionPopover', () => {
         windowWidthState.value = 480;
     });
 
-    it('opens every composer picker directly above its chip, never flipped below or pushed past the composer (0.2 placement, owner 2026-10-18)', async () => {
+    it('opens every composer popover above its chip (owner 2026-10-18) and below it only when the room above cannot hold its content', async () => {
         windowWidthState.value = 1440;
         const { resolveHappierPopoverPlacement } = await import('@happier-dev/plugin-ui/presentation');
         const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
@@ -171,10 +171,33 @@ describe('AgentInputSelectionPopover', () => {
             flip: capturedPopoverProps.current?.flip !== false,
             available: { ...available, left: 0, right: 0 },
         });
-        // The Home composer at 1440×900.
+        // The Home composer at 1440×900, and the chat composer at the window's bottom: above.
         expect(decide({ top: 400, bottom: 256 })).toBe('top');
-        // A New Session composer high in the window: still above, scrolling inside itself.
-        expect(decide({ top: 120, bottom: 640 })).toBe('top');
+        expect(decide({ top: 360, bottom: 12 })).toBe('top');
+        // A composer high in the window (first-run Home, New Session): the room above cannot hold the
+        // popover's content, so it opens below rather than clipping it to a sliver (calm-shell ruling 2026-11-01).
+        expect(decide({ top: 75, bottom: 640 })).toBe('bottom');
+        expect(decide({ top: 120, bottom: 640 })).toBe('bottom');
+        windowWidthState.value = 480;
+    });
+
+    it('lets a chip picker use the window\'s width where the composer floats as a narrow card (Docked New)', async () => {
+        windowWidthState.value = 1440;
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const { AgentInputPopoverColumnContext, AgentInputPopoverWidthContext } = await import('./useAgentInputPopoverLayout');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+        const columnRef = { current: { nodeType: 'View' } } as any;
+        await renderScreen(
+            <AgentInputPopoverWidthContext.Provider value="window">
+                <AgentInputPopoverColumnContext.Provider value={columnRef}>
+                    <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={() => {}}>
+                        {() => <React.Fragment />}
+                    </AgentInputSelectionPopover>
+                </AgentInputPopoverColumnContext.Provider>
+            </AgentInputPopoverWidthContext.Provider>,
+        );
+        // The card is narrower than the pickers it opens: they extend past it, bounded by the window only.
+        expect(capturedPopoverProps.current?.horizontalBoundaryRef).toBeUndefined();
         windowWidthState.value = 480;
     });
 
@@ -222,5 +245,42 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.portal).toMatchObject({
             topBottomLayout: 'boundary',
         });
+    });
+    it('opens a + menu row picker beside its row; Left and dismissals return to the menu', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const { AgentInputActionMenuSubmenuContext } = await import('./agentInputActionMenuSubmenu');
+        const row = { focus: vi.fn() };
+        const anchorRef = { current: row } as any;
+        const requestClose = vi.fn();
+        const returnToMenu = vi.fn();
+        const onSurfacePointerChange = vi.fn();
+
+        const screen = await renderScreen(<AgentInputActionMenuSubmenuContext.Provider value={{ returnToMenu, onSurfacePointerChange }}>
+            <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={requestClose}>
+                {() => React.createElement('View', { testID: 'picker' })}
+            </AgentInputSelectionPopover>
+        </AgentInputActionMenuSubmenuContext.Provider>);
+
+        expect(capturedPopoverProps.current?.placement).toBe('auto-horizontal');
+        expect(capturedPopoverProps.current?.portal).toMatchObject({ anchorAlignVertical: 'start' });
+        // Focus moves into the submenu as it opens, so Left and Escape work from inside it.
+        expect(capturedPopoverProps.current?.autoFocusOnOpen).toBe(true);
+
+        const surface = screen.findByTestId('agent-input-submenu-surface');
+        // Left inside a field keeps its caret.
+        surface?.props.onKeyDown({ nativeEvent: { key: 'ArrowLeft' }, target: { tagName: 'INPUT' } });
+        expect(returnToMenu).not.toHaveBeenCalled();
+        surface?.props.onKeyDown({ nativeEvent: { key: 'ArrowLeft' }, target: { tagName: 'DIV' }, preventDefault: () => {} });
+        expect(returnToMenu).toHaveBeenCalledTimes(1);
+        expect(requestClose).toHaveBeenCalledTimes(1);
+        expect(row.focus).toHaveBeenCalled();
+
+        // The popover's own dismissal (Escape, an outside press) returns to the menu too.
+        (capturedPopoverProps.current as { onRequestClose?: () => void } | null)?.onRequestClose?.();
+        expect(returnToMenu).toHaveBeenCalledTimes(2);
+        expect(requestClose).toHaveBeenCalledTimes(2);
+
+        surface?.props.onPointerEnter({ pointerType: 'mouse' });
+        expect(onSurfacePointerChange).toHaveBeenCalledWith(true, { pointerType: 'mouse' });
     });
 });

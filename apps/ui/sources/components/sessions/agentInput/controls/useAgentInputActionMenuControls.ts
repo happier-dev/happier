@@ -4,7 +4,7 @@ import * as React from 'react';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 
 import type { ChipOptionInteraction } from '../chipOptionInteraction';
-import type { AgentInputExtraActionChip } from '../agentInputContracts';
+import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
 import { useAgentInputActionMenuActions } from './useAgentInputActionMenuActions';
 import type { AgentInputSelectionOverlayId } from '../selection/agentInputSelectionOverlayTypes';
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -17,12 +17,13 @@ const EMPTY_ACTIONS: readonly AgentInputActionMenuAction[] = [];
 export function useAgentInputActionMenuControls(params: Readonly<{
     resolvedControls: AgentInputResolvedControlLines;
     canCustomizeComposer?: boolean;
-    showActionMenu: boolean;
+    /** The + menu is presented: opened on purpose, or held open by the picker its row opened beside it. */
+    actionMenuOpen: boolean;
     setShowActionMenu: React.Dispatch<React.SetStateAction<boolean>>;
     closeSelectionOverlay: (id?: AgentInputSelectionOverlayId) => void;
     openSelectionOverlay: (
         id: AgentInputSelectionOverlayId,
-        anchor: 'chip' | 'actionMenu',
+        anchor: AgentInputPopoverAnchor,
         chipKey?: string,
     ) => void;
     resetSelectionOverlays: () => void;
@@ -57,6 +58,8 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     sessionModeLabel?: string | null;
     permissionLabel?: string | null;
     onPermissionClick?: () => void;
+    /** The permission row opens the permission picker (rather than the host's own permission action). */
+    permissionOpensPicker?: boolean;
     sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
     onSessionModeChange?: (modeId: string) => void;
     onMachineClick?: () => void;
@@ -81,79 +84,98 @@ export function useAgentInputActionMenuControls(params: Readonly<{
 
     const handleActionMenuPress = React.useCallback(() => {
         hapticsLight();
-        params.setShowActionMenu((prev) => {
-            const next = !prev;
-            if (next) {
-                params.closeSelectionOverlay('permission');
-            }
-            return next;
-        });
-    }, [params.closeSelectionOverlay, params.setShowActionMenu]);
+        if (params.actionMenuOpen) {
+            // Closing the + menu closes the picker open beside it too.
+            params.setShowActionMenu(false);
+            params.closeSelectionOverlay();
+            return;
+        }
+        params.closeSelectionOverlay('permission');
+        params.setShowActionMenu(true);
+    }, [params.actionMenuOpen, params.closeSelectionOverlay, params.setShowActionMenu]);
+
+    // Which + menu rows open a picker beside the menu (a submenu: hover intent, Right) rather than act.
+    // The row handlers below decide with these same facts.
+    const opensPicker = {
+        engine: params.hasAgentPickerOptions,
+        permission: params.permissionOpensPicker === true,
+        profile: Boolean(params.profilePopover),
+        env: Boolean(params.envVarsPopover),
+        mode: params.sessionModeChipInteraction?.kind === 'picker',
+        machine: Boolean(params.machinePopover),
+        path: Boolean(params.pathPopover),
+        resume: Boolean(params.resumePopover),
+    } as const;
+    const pickerControlIds = React.useMemo(() => new Set(
+        (Object.keys(opensPicker) as Array<keyof typeof opensPicker>).filter((id) => opensPicker[id]),
+    ), [opensPicker.engine, opensPicker.permission, opensPicker.profile, opensPicker.env, opensPicker.mode,
+        opensPicker.machine, opensPicker.path, opensPicker.resume]);
 
     const handleActionMenuProfileClick = React.useCallback(() => {
-        if (params.profilePopover) {
-            params.openSelectionOverlay('profile', 'actionMenu');
+        if (opensPicker.profile) {
+            params.openSelectionOverlay('profile', 'actionMenuRow');
             return;
         }
         params.onProfileClick?.();
-    }, [params.onProfileClick, params.openSelectionOverlay, params.profilePopover]);
+    }, [params.onProfileClick, params.openSelectionOverlay, opensPicker.profile]);
 
     const handleActionMenuEnvVarsClick = React.useCallback(() => {
-        if (params.envVarsPopover) {
-            params.openSelectionOverlay('envVars', 'actionMenu');
+        if (opensPicker.env) {
+            params.openSelectionOverlay('envVars', 'actionMenuRow');
             return;
         }
         params.onEnvVarsClick?.();
-    }, [params.envVarsPopover, params.onEnvVarsClick, params.openSelectionOverlay]);
+    }, [opensPicker.env, params.onEnvVarsClick, params.openSelectionOverlay]);
 
     const handleActionMenuMachineClick = React.useCallback(() => {
-        if (params.machinePopover) {
-            params.openSelectionOverlay('machine', 'actionMenu');
+        if (opensPicker.machine) {
+            params.openSelectionOverlay('machine', 'actionMenuRow');
             return;
         }
         params.onMachineClick?.();
-    }, [params.machinePopover, params.onMachineClick, params.openSelectionOverlay]);
+    }, [opensPicker.machine, params.onMachineClick, params.openSelectionOverlay]);
 
     const handleActionMenuPathClick = React.useCallback(() => {
-        if (params.pathPopover) {
-            params.openSelectionOverlay('path', 'actionMenu');
+        if (opensPicker.path) {
+            params.openSelectionOverlay('path', 'actionMenuRow');
             return;
         }
         params.onPathClick?.();
-    }, [params.onPathClick, params.openSelectionOverlay, params.pathPopover]);
+    }, [params.onPathClick, params.openSelectionOverlay, opensPicker.path]);
 
     const handleActionMenuResumeClick = React.useCallback(() => {
-        if (params.resumePopover) {
-            params.openSelectionOverlay('resume', 'actionMenu');
+        if (opensPicker.resume) {
+            params.openSelectionOverlay('resume', 'actionMenuRow');
             return;
         }
         params.onResumeClick?.();
-    }, [params.onResumeClick, params.openSelectionOverlay, params.resumePopover]);
+    }, [params.onResumeClick, params.openSelectionOverlay, opensPicker.resume]);
 
     const handleActionMenuAgentClick = React.useCallback(() => {
-        if (params.hasAgentPickerOptions) {
+        if (opensPicker.engine) {
             params.closeSelectionOverlay('permission');
-            params.openSelectionOverlay('agent', 'actionMenu');
+            params.openSelectionOverlay('agent', 'actionMenuRow');
             return;
         }
         params.onAgentClick?.();
-    }, [params.closeSelectionOverlay, params.hasAgentPickerOptions, params.onAgentClick, params.openSelectionOverlay]);
+    }, [params.closeSelectionOverlay, opensPicker.engine, params.onAgentClick, params.openSelectionOverlay]);
 
     const handleActionMenuSessionModeClick = React.useCallback(() => {
         if (params.sessionModeChipInteraction?.kind === 'cycle') {
             params.onSessionModeChange?.(params.sessionModeChipInteraction.nextOptionId);
             return;
         }
-        if (params.sessionModeChipInteraction?.kind !== 'picker') {
+        if (!opensPicker.mode) {
             return;
         }
         params.closeSelectionOverlay('permission');
-        params.openSelectionOverlay('sessionMode', 'actionMenu');
+        params.openSelectionOverlay('sessionMode', 'actionMenuRow');
     }, [
         params.closeSelectionOverlay,
         params.onSessionModeChange,
         params.openSelectionOverlay,
         params.sessionModeChipInteraction,
+        opensPicker.mode,
     ]);
 
     const buildActionMenuActions = useAgentInputActionMenuActions({
@@ -189,17 +211,18 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         onPathClick: (params.onPathClick || params.pathPopover) ? handleActionMenuPathClick : undefined,
         onResumeClick: (params.onResumeClick || params.resumePopover) ? handleActionMenuResumeClick : undefined,
         onFileViewerPress: params.onFileViewerPress,
+        pickerControlIds,
     });
 
-    const actionMenuActions = React.useMemo(() => params.showActionMenu ? buildActionMenuActions() : EMPTY_ACTIONS,
-        [buildActionMenuActions, params.showActionMenu]);
+    const actionMenuActions = React.useMemo(() => params.actionMenuOpen ? buildActionMenuActions() : EMPTY_ACTIONS,
+        [buildActionMenuActions, params.actionMenuOpen]);
     const hasActionMenuPopoverSections = params.resolvedControls.collapsed.length > 0 || params.canCustomizeComposer === true;
 
     React.useEffect(() => {
-        if (!hasActionMenuPopoverSections && params.showActionMenu) {
+        if (!hasActionMenuPopoverSections && params.actionMenuOpen) {
             params.setShowActionMenu(false);
         }
-    }, [hasActionMenuPopoverSections, params.setShowActionMenu, params.showActionMenu]);
+    }, [hasActionMenuPopoverSections, params.setShowActionMenu, params.actionMenuOpen]);
 
     return {
         handleActionMenuPress,

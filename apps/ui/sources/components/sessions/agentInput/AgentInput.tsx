@@ -1,4 +1,5 @@
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import type { PromptPickerOpenRequest } from './commandMenu/promptPickerActionPort';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
@@ -246,6 +247,7 @@ import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { readExternalFileDragItems, type WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
 import { useEntityDragDropRuntime, useEntityDropDomBinding, readWindowBounds, measureWindowBounds,
@@ -2962,9 +2964,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
     } = useAgentInputSelectionAnchors();
     const [showActionMenu, setShowActionMenu] = React.useState(false);
-    const closeActionMenu = React.useCallback(() => {
-        setShowActionMenu(false);
-    }, []);
     const onSelectionOverlayDismiss = React.useCallback((id: AgentInputSelectionOverlayId) => {
         if (id === 'machine') props.machinePopover?.onRequestClose?.();
     }, [props.machinePopover]);
@@ -3027,13 +3026,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             openSelectionOverlay('agent', 'chip');
         }, [hasAgentPickerOptions, openSelectionOverlay]),
     });
-    const openActionChipRequest = props.openActionChipRequest ?? null;
-    useAgentInputExternalPickerRequest({
-        requestKey: openActionChipRequest?.key,
-        open: React.useCallback(() => {
-            if (!openActionChipRequest) return;
-            openSelectionOverlay('collapsedExtra', 'chip', openActionChipRequest.chipKey);
-        }, [openActionChipRequest, openSelectionOverlay]),
+    // A picker opened from a + menu row is that row's submenu: the + menu stays presented beside it.
+    // On a phone the + menu is the shared bottom sheet (Popover `phonePresentation`), which has no in-sheet
+    // push: there a row's picker replaces the menu from the + button, as before.
+    const actionMenuPresentsSubmenus = useDeviceType() !== 'phone';
+    const actionMenuRowAnchorRef = React.useRef<View | null>(null);
+    const actionMenuSubmenuOpen = actionMenuPresentsSubmenus && activeSelectionOverlay?.anchor === 'actionMenuRow';
+    const actionMenuOpen = showActionMenu || actionMenuSubmenuOpen;
+    const returnToActionMenu = useEventCallback(() => {
+        if (!actionMenuSubmenuOpen || !activeSelectionOverlay) return;
+        setShowActionMenu(true);
+        closeSelectionOverlay(activeSelectionOverlay.id);
+    });
+    const closeActionMenu = useEventCallback(() => {
+        setShowActionMenu(false);
+        if (actionMenuSubmenuOpen && activeSelectionOverlay) closeSelectionOverlay(activeSelectionOverlay.id);
     });
     const {
         showAgentPicker,
@@ -3043,6 +3050,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionModePickerAnchor,
         closeSessionModePicker,
         showPermissionPopover,
+        permissionPopoverAnchor,
         closePermissionPopover,
         showMachinePopover,
         machinePopoverAnchor,
@@ -3449,6 +3457,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closeSelectionOverlay(activeSelectionOverlay.id);
         requestComposerFocus();
     }, [activeSelectionOverlay, extraActionChips, resolvedControls, closeSelectionOverlay, requestComposerFocus]);
+    // Another surface (a recovery line, the Goal control) asks for a chip: open it where it is placed,
+    // from its row when shown there, otherwise from the + button as a command would.
+    const openActionChipRequest = props.openActionChipRequest ?? null;
+    useAgentInputExternalPickerRequest({
+        requestKey: openActionChipRequest?.key,
+        open: React.useCallback(() => {
+            if (!openActionChipRequest) return;
+            const chip = extraActionChips.find(candidate => candidate.key === openActionChipRequest.chipKey);
+            const id = chip?.placement?.id;
+            const inRow = id !== undefined && (resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id));
+            if (!inRow) chip?.onIntent?.();
+            openSelectionOverlay('collapsedExtra', inRow ? 'chip' : 'actionMenu', openActionChipRequest.chipKey);
+        }, [extraActionChips, openActionChipRequest, openSelectionOverlay, resolvedControls]),
+    });
     const showPromptLibraryButton = resolvedControls.accessories.includes('promptLibrary');
     const fieldAccessory = !ownsFieldDictation || resolvedControls.accessories.includes('dictate') ? availableFieldAccessory : null;
     const fieldAccessoryGeometry = resolveAgentInputFieldAccessoryGeometry({
@@ -3608,7 +3630,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Identity-stable handlers: these feed the action-menu and control-row memos, which an inline
     // arrow would invalidate on every keystroke render.
     const handleActionMenuPermissionClick = React.useCallback(() => {
-        if (props.onPermissionModeChange) openSelectionOverlay('permission', 'actionMenu');
+        if (props.onPermissionModeChange) openSelectionOverlay('permission', 'actionMenuRow');
         else props.onPermissionClick?.();
     }, [props.onPermissionModeChange, props.onPermissionClick, openSelectionOverlay]);
     const openCollapsedExtraChipOptionsPopover = React.useCallback((chipKey: string | null) => {
@@ -3616,8 +3638,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             closeSelectionOverlay('collapsedExtra');
             return;
         }
-        openSelectionOverlay('collapsedExtra', 'actionMenu', chipKey);
+        openSelectionOverlay('collapsedExtra', 'actionMenuRow', chipKey);
     }, [closeSelectionOverlay, openSelectionOverlay]);
+    useCurrentUiContextLocalCommands(extraActionChips.flatMap(chip => {
+        const popover = chip.collapsedContentPopover;
+        if (!chip.currentUiContextCommandScope || !popover || popover.disabled) return [];
+        return [{ key: chip.key, title: popover.title,
+            description: `${chip.currentUiContextCommandScope}.open`,
+            invoke: () => {
+                if (popover.isEnabled?.() === false) return false;
+                chip.onIntent?.();
+                setShowActionMenu(false);
+                // A command opens the chip's picker from the + button: no + menu row is there to hang from.
+                openSelectionOverlay('collapsedExtra', 'actionMenu', chip.key);
+            } }];
+    }), { contextKey: 'composer.extraChips' });
     const handleToggleExtraChipCollapsedPopover = React.useCallback((chipKey: string) => {
         toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
     }, [toggleSelectionOverlay]);
@@ -3653,8 +3688,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         canCustomizeComposer,
         permissionLabel: permissionChipLabel,
         onPermissionClick: showPermissionChip ? handleActionMenuPermissionClick : undefined,
+        permissionOpensPicker: Boolean(props.onPermissionModeChange),
         actionMenuAnchorRef,
-        showActionMenu,
+        actionMenuOpen,
         setShowActionMenu,
         closeSelectionOverlay,
         openSelectionOverlay,
@@ -3738,7 +3774,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasActionMenuPopoverSections,
         actionMenuAnchorRef,
         onActionMenuPress: handleActionMenuPress,
-        actionMenuOpen: showActionMenu,
+        actionMenuOpen,
         actionChipOpenStyle: styles.actionChipOpen,
         sessionModeChipControl,
         shouldRenderSessionModeChip,
@@ -3984,6 +4020,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             overlayAnchorRef={overlayAnchorRef}
             screenWidth={screenWidth}
             showPermissionPopover={showPermissionPopover && Boolean(props.onPermissionModeChange)}
+            permissionPopoverAnchor={permissionPopoverAnchor}
             permissionChipAnchorRef={permissionChipAnchorRef}
             onPermissionPopoverRequestClose={closePermissionPopover}
             onPermissionSelect={handlePermissionSelect}
@@ -3993,9 +4030,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             effectivePermissionLabel={effectivePermissionLabel}
             effectivePermissionPolicy={effectivePermissionPolicy}
             styles={styles}
-            showActionMenu={showActionMenu}
+            showActionMenu={actionMenuOpen}
             hasActionMenuPopoverSections={hasActionMenuPopoverSections}
             actionMenuAnchorRef={actionMenuAnchorRef}
+            actionMenuRowAnchorRef={actionMenuRowAnchorRef}
+            actionMenuPresentsSubmenus={actionMenuPresentsSubmenus}
+            actionMenuSubmenuOpen={actionMenuSubmenuOpen}
+            onActionMenuSubmenuReturn={returnToActionMenu}
             onActionMenuRequestClose={closeActionMenu}
             onCustomizeComposer={canCustomizeComposer ? handleCustomizeComposer : undefined}
             actionMenuActions={actionMenuActions}

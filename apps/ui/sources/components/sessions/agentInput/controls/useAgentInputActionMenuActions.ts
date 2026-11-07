@@ -42,6 +42,8 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
+    /** Controls whose + menu row opens a picker beside the menu rather than acting. */
+    pickerControlIds?: ReadonlySet<string>;
 }>): () => ReadonlyArray<AgentInputActionMenuAction> {
     return React.useCallback(() => {
         const overflowIds = new Set(params.resolvedControls.collapsed);
@@ -82,6 +84,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
             onPathClick: params.onPathClick,
             onResumeClick: params.onResumeClick,
             onFileViewerPress: params.onFileViewerPress,
+            pickerControlIds: params.pickerControlIds,
             extraControlActions,
             dismiss: params.dismissActionMenu,
             blurInput: params.blurInput,
@@ -106,6 +109,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
         params.onPermissionClick,
         params.onEnvVarsClick,
         params.onFileViewerPress,
+        params.pickerControlIds,
         params.onMachineClick,
         params.onPathClick,
         params.onProfileClick,

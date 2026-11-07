@@ -5,8 +5,11 @@ import type { AgentInputResolvedControlLines } from './controls/agentInputContro
 import { buildCoreCollapsedControlActions } from './controls/buildCoreCollapsedControlActions';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
+/** A + menu row; `opensPicker`: activating it opens a picker beside the menu (a submenu) instead of acting. */
+export type AgentInputActionMenuRow = ActionListItem & Readonly<{ opensPicker?: boolean }>;
+
 /** The visual owner separates actual add operations from the remaining overflow controls. */
-export type AgentInputActionMenuAction = ActionListItem & Readonly<{ section: 'add' | 'controls' }>;
+export type AgentInputActionMenuAction = AgentInputActionMenuRow & Readonly<{ section: 'add' | 'controls' }>;
 
 export function buildAgentInputActionMenuActions(opts: {
     resolvedControls: AgentInputResolvedControlLines;
@@ -35,11 +38,13 @@ export function buildAgentInputActionMenuActions(opts: {
     onPathClick?: () => void;
     onResumeClick?: () => void;
     onFileViewerPress?: () => void;
-    extraControlActions?: Readonly<Record<string, ActionListItem | ReadonlyArray<ActionListItem>>>;
+    /** Controls whose row opens a picker beside the menu (decided by the + menu's row handlers). */
+    pickerControlIds?: ReadonlySet<string>;
+    extraControlActions?: Readonly<Record<string, AgentInputActionMenuRow | ReadonlyArray<AgentInputActionMenuRow>>>;
     dismiss: () => void;
     blurInput: () => void;
 }): AgentInputActionMenuAction[] {
-    const controlActionsById: Partial<Record<string, ReadonlyArray<ActionListItem>>> = {
+    const controlActionsById: Partial<Record<string, ReadonlyArray<AgentInputActionMenuRow>>> = {
         ...buildCoreCollapsedControlActions({ ...opts, placementIds: opts.resolvedControls.collapsed }),
     };
     for (const [controlId, actionOrActions] of Object.entries(opts.extraControlActions ?? {})) {
@@ -51,9 +56,13 @@ export function buildAgentInputActionMenuActions(opts: {
     const orderedIds = [...overflow.filter(isAdd), ...overflow.filter((id) => !isAdd(id))];
     const descriptorsById = new Map(opts.resolvedControls.controls.map((control) => [control.id, control]));
     return orderedIds.flatMap((id) => {
-        const actions = controlActionsById[id] ?? [];
+        const [rowAction, ...supplementaryActions] = controlActionsById[id] ?? [];
+        // The control's own row opens its picker beside the menu when its handler does (not a removal row).
+        const controlAction = rowAction && opts.pickerControlIds?.has(id) && !rowAction.disabled
+            ? { ...rowAction, opensPicker: true }
+            : rowAction;
+        const actions = controlAction ? [controlAction, ...supplementaryActions] : [];
         const descriptor = descriptorsById.get(id);
-        const [controlAction, ...supplementaryActions] = actions;
         const section: AgentInputActionMenuAction['section'] = isAdd(id) ? 'add' : 'controls';
         if (!descriptor || !controlAction) return actions.map(action => ({ ...action, section }));
         const subtitle = [valueBesideName(controlAction.label, descriptor.title), controlAction.subtitle]

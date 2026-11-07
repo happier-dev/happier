@@ -1,8 +1,10 @@
 import * as React from 'react';
 
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Popover } from '@/components/ui/popover';
 import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
+import { isEditableKeyboardTarget } from '@/components/ui/keyboard/isEditableKeyboardTarget';
+import { AgentInputActionMenuSubmenuContext } from './agentInputActionMenuSubmenu';
 import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
@@ -40,10 +42,34 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
     // Native popovers render through the overlay portal host, outside the composer's subtree, so the
     // composer's browse hand-off is read here and provided again inside the portalled content.
     const modelSourceBrowseHandoff = React.useContext(SessionModelSourceBrowseHandoffContext);
+    // A picker opened from a + menu row is that row's submenu. The popover's own dismissals (Escape, an
+    // outside press, the sheet's close) return to the menu; a choice made in the content (its own
+    // `onRequestClose`) closes both.
+    const submenu = React.useContext(AgentInputActionMenuSubmenuContext);
+    const { onRequestClose, anchorRef } = props;
+    const requestPopoverClose = React.useMemo(() => submenu ? () => {
+        submenu.returnToMenu();
+        onRequestClose();
+    } : onRequestClose, [onRequestClose, submenu]);
+    // Left from inside the submenu returns to its row, unless the content used the key (a field's caret,
+    // a list stepping back).
+    const handleSubmenuKeyDown = React.useCallback((event: unknown) => {
+        const keyEvent = event as {
+            nativeEvent?: { key?: unknown }; key?: unknown; target?: unknown;
+            defaultPrevented?: boolean; isDefaultPrevented?: () => boolean; preventDefault?: () => void;
+        };
+        if ((keyEvent.nativeEvent?.key ?? keyEvent.key) !== 'ArrowLeft') return;
+        if (keyEvent.defaultPrevented || keyEvent.isDefaultPrevented?.()) return;
+        if (isEditableKeyboardTarget(keyEvent.target)) return;
+        keyEvent.preventDefault?.();
+        requestPopoverClose();
+        anchorRef.current?.focus?.();
+    }, [anchorRef, requestPopoverClose]);
     return (
         <Popover
             open={props.open}
-            autoFocusOnOpen={props.autoFocusOnOpen}
+            // A submenu takes focus as it opens, like the shared dropdown's, so Left and Escape work from inside it.
+            autoFocusOnOpen={props.autoFocusOnOpen ?? (submenu ? true : undefined)}
             anchorRef={props.anchorRef}
             // IMPORTANT:
             // Forward `undefined` so Popover can fall back to PopoverBoundaryProvider context.
@@ -69,7 +95,7 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             // management will block interaction with inputs rendered outside the modal subtree.
             // Let Popover pick the best target (screen-local modal host from PopoverPortalTargetProvider).
             portal={popoverLayout.portal}
-            onRequestClose={props.onRequestClose}
+            onRequestClose={requestPopoverClose}
             consumeOutsidePointerDown={false}
             // On web, agent input popovers must NOT block outside pointer events: users should be
             // able to switch between chips in one click (no "click outside to close first").
@@ -82,11 +108,24 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             containerStyle={{ paddingHorizontal: 0 }}
             keyboardBottomInset={popoverLayout.keyboardBottomInset}
         >
-            {({ maxHeight, presentation }) => (
-                <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
-                    {props.children({ maxHeight, presentation: presentation === 'sheet' ? 'sheet' : 'popover' })}
-                </SessionModelSourceBrowseHandoffContext.Provider>
-            )}
+            {({ maxHeight, presentation }) => {
+                const content = props.children({ maxHeight, presentation: presentation === 'sheet' ? 'sheet' : 'popover' });
+                return (
+                    <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
+                        {submenu && Platform.OS === 'web' && presentation !== 'sheet' ? (
+                            <View
+                                testID="agent-input-submenu-surface"
+                                onPointerEnter={(event: unknown) => submenu.onSurfacePointerChange(true, event)}
+                                onPointerLeave={(event: unknown) => submenu.onSurfacePointerChange(false, event)}
+                                // react-native-web forwards key events on a View; RN's ViewProps does not declare them.
+                                {...{ onKeyDown: handleSubmenuKeyDown }}
+                            >
+                                {content}
+                            </View>
+                        ) : content}
+                    </SessionModelSourceBrowseHandoffContext.Provider>
+                );
+            }}
         </Popover>
     );
 }

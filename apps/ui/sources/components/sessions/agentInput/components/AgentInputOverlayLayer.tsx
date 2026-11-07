@@ -17,6 +17,9 @@ import type { PermissionModePickerStyles } from './permissionModePickerStyles';
 import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerTypes';
 import type { SelectionListStep } from '@/components/ui/selectionList';
+import { DROPDOWN_MENU_MAX_WIDTH_PX } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { AgentInputActionMenuSubmenuContext, type AgentInputActionMenuSubmenu } from '../selection/agentInputActionMenuSubmenu';
+import { useAgentInputActionMenuSubmenu } from './useAgentInputActionMenuSubmenu';
 
 type SimpleOption = Readonly<{
     id: string;
@@ -46,6 +49,8 @@ type AgentInputContentPopoverEntry = Readonly<{
     key: string;
     open: boolean;
     anchorRef: React.RefObject<View | null>;
+    /** Opened from a + menu row: rendered as that row's submenu. */
+    submenu?: boolean;
     boundaryRef?: React.RefObject<View | null> | null;
     content: AgentInputContentPopoverConfig['renderContent'];
     header?: AgentInputContentPopoverConfig['header'];
@@ -60,17 +65,34 @@ type AgentInputContentPopoverEntry = Readonly<{
     initialVisibility?: AgentInputContentPopoverConfig['initialVisibility'];
 }>;
 
+type AgentInputMenuAnchorRefs = Readonly<{
+    actionMenu: React.RefObject<View | null>;
+    actionMenuRow: React.RefObject<View | null>;
+}>;
+
+/** The one place a composer picker's anchor kind becomes the view it hangs from. */
 function resolvePopoverAnchorRef(
     anchor: AgentInputPopoverAnchor,
-    chipAnchorRef: React.RefObject<View | null>,
-    actionMenuAnchorRef: React.RefObject<View | null>,
+    chipAnchorRef: React.RefObject<View | null> | undefined,
+    menuAnchors: AgentInputMenuAnchorRefs,
 ): React.RefObject<View | null> {
-    return anchor === 'chip' ? chipAnchorRef : actionMenuAnchorRef;
+    if (anchor === 'actionMenuRow') return menuAnchors.actionMenuRow;
+    return anchor === 'chip' && chipAnchorRef ? chipAnchorRef : menuAnchors.actionMenu;
 }
 
-function renderContentPopover(entry: AgentInputContentPopoverEntry): React.ReactNode {
+/** A picker a + menu row opened is that row's submenu (`AgentInputActionMenuSubmenuContext`). */
+function withActionMenuSubmenu(
+    anchor: AgentInputPopoverAnchor,
+    submenu: AgentInputActionMenuSubmenu | null,
+    node: React.ReactNode,
+): React.ReactNode {
+    if (anchor !== 'actionMenuRow' || !submenu || node === null) return node;
+    return <AgentInputActionMenuSubmenuContext.Provider value={submenu}>{node}</AgentInputActionMenuSubmenuContext.Provider>;
+}
+
+function renderContentPopover(entry: AgentInputContentPopoverEntry, submenu: AgentInputActionMenuSubmenu | null): React.ReactNode {
     if (!entry.open) return null;
-    return (
+    return withActionMenuSubmenu(entry.submenu ? 'actionMenuRow' : 'chip', submenu,
         <AgentInputContentPopover
             key={entry.key}
             open={entry.open}
@@ -87,7 +109,7 @@ function renderContentPopover(entry: AgentInputContentPopoverEntry): React.React
             edgeFades={entry.edgeFades}
             edgeIndicators={entry.edgeIndicators}
             initialVisibility={entry.initialVisibility}
-        />
+        />,
     );
 }
 
@@ -123,6 +145,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     screenWidth: number;
 
     showPermissionPopover: boolean;
+    permissionPopoverAnchor: AgentInputPopoverAnchor;
     permissionChipAnchorRef: React.RefObject<View | null>;
     onPermissionPopoverRequestClose: () => void;
     onPermissionSelect: (mode: PermissionMode) => void;
@@ -143,8 +166,17 @@ export function AgentInputOverlayLayer(props: Readonly<{
     showActionMenu: boolean;
     hasActionMenuPopoverSections: boolean;
     actionMenuAnchorRef: React.RefObject<View | null>;
+    /** The + menu row a picker opened from it hangs from (`actionMenuRow`). */
+    actionMenuRowAnchorRef: React.RefObject<View | null>;
+    /** The + menu opens its rows' pickers beside it (false where the menu is a phone sheet). */
+    actionMenuPresentsSubmenus: boolean;
+    /** A picker opened from a + menu row is open beside the menu. */
+    actionMenuSubmenuOpen: boolean;
+    /** Close the picker open beside the + menu and keep the menu open. */
+    onActionMenuSubmenuReturn: () => void;
     onActionMenuRequestClose: () => void;
     actionMenuActions: React.ComponentProps<typeof AgentInputActionMenuPopoverContent>['actionMenuActions'];
+    onCustomizeComposer?: () => void;
     maxWidthCap: number;
 
     showAgentPicker: boolean;
@@ -203,11 +235,25 @@ export function AgentInputOverlayLayer(props: Readonly<{
     envVarsPopover?: SharedContentPopoverLike;
     onEnvVarsPopoverRequestClose: () => void;
 }>): React.ReactNode {
+    // Where the menu does not present submenus (a phone sheet), a row's picker hangs from the + button.
+    const menuAnchors: AgentInputMenuAnchorRefs = {
+        actionMenu: props.actionMenuAnchorRef,
+        actionMenuRow: props.actionMenuPresentsSubmenus ? props.actionMenuRowAnchorRef : props.actionMenuAnchorRef,
+    };
+    const actionMenuSubmenu = useAgentInputActionMenuSubmenu({
+        actions: props.actionMenuActions,
+        menuOpen: props.showActionMenu,
+        submenuOpen: props.actionMenuSubmenuOpen,
+        rowAnchorRef: props.actionMenuRowAnchorRef,
+        returnToMenu: props.onActionMenuSubmenuReturn,
+    });
+    const submenu = props.actionMenuPresentsSubmenus ? actionMenuSubmenu.submenu : null;
     const sharedContentPopovers: AgentInputContentPopoverEntry[] = [
         {
             key: 'permission',
             open: props.showPermissionPopover,
-            anchorRef: props.permissionChipAnchorRef,
+            anchorRef: resolvePopoverAnchorRef(props.permissionPopoverAnchor, props.permissionChipAnchorRef, menuAnchors),
+            submenu: props.permissionPopoverAnchor === 'actionMenuRow',
             content: (
                 <PermissionModePicker
                     title={getPermissionModeTitleForAgentType(props.agentId)}
@@ -228,11 +274,19 @@ export function AgentInputOverlayLayer(props: Readonly<{
             open: props.showActionMenu && props.hasActionMenuPopoverSections,
             anchorRef: props.actionMenuAnchorRef,
             content: (
-                <AgentInputActionMenuPopoverContent actionMenuActions={props.actionMenuActions} />
+                <AgentInputActionMenuPopoverContent
+                    actionMenuActions={actionMenuSubmenu.actions}
+                    onCustomizeComposer={props.onCustomizeComposer}
+                    onPointerLeave={actionMenuSubmenu.onMenuPointerLeave}
+                />
             ),
             onRequestClose: props.onActionMenuRequestClose,
-            maxHeightCap: 400,
-            maxWidthCap: props.maxWidthCap,
+            // Tall enough for the lab's whole menu (add actions, every control placed In +, Customize) without scrolling.
+            maxHeightCap: 560,
+            // On a phone the menu is the shared bottom sheet (lab C2pp), like every other composer picker.
+            phonePresentation: 'sheet',
+            // The + menu is a menu (lab C2plus), never as wide as the composer it opens from.
+            maxWidthCap: Math.min(DROPDOWN_MENU_MAX_WIDTH_PX, props.maxWidthCap),
             scrollEnabled: true,
             keyboardShouldPersistTaps: 'always',
             edgeFades: { top: true, bottom: true, size: 28 },
@@ -248,9 +302,9 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: `collapsedExtra:${props.activeExtraCollapsedPopoverChip.key}`,
             open: true,
-            anchorRef: props.activeExtraCollapsedPopoverAnchor === 'chip'
-                ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
-                : props.actionMenuAnchorRef,
+            anchorRef: resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+                props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key], menuAnchors),
+            submenu: props.activeExtraCollapsedPopoverAnchor === 'actionMenuRow',
             content: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.renderContent,
             header: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.header,
             phonePresentation: props.activeExtraCollapsedPopoverChip.collapsedContentPopover.phonePresentation,
@@ -270,7 +324,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: 'machine',
             open: props.showMachinePopover,
-            anchorRef: resolvePopoverAnchorRef(props.machinePopoverAnchor, props.machineChipAnchorRef, props.actionMenuAnchorRef),
+            anchorRef: resolvePopoverAnchorRef(props.machinePopoverAnchor, props.machineChipAnchorRef, menuAnchors),
+            submenu: props.machinePopoverAnchor === 'actionMenuRow',
             content: props.machinePopover.renderContent,
             onRequestClose: props.onMachinePopoverRequestClose,
             ...resolveSharedContentPopoverOptions(props.machinePopover),
@@ -281,7 +336,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: 'profile',
             open: props.showProfilePopover,
-            anchorRef: resolvePopoverAnchorRef(props.profilePopoverAnchor, props.profileChipAnchorRef, props.actionMenuAnchorRef),
+            anchorRef: resolvePopoverAnchorRef(props.profilePopoverAnchor, props.profileChipAnchorRef, menuAnchors),
+            submenu: props.profilePopoverAnchor === 'actionMenuRow',
             content: props.profilePopover.renderContent,
             onRequestClose: props.onProfilePopoverRequestClose,
             ...resolveSharedContentPopoverOptions(props.profilePopover),
@@ -292,7 +348,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: 'path',
             open: props.showPathPopover,
-            anchorRef: resolvePopoverAnchorRef(props.pathPopoverAnchor, props.pathChipAnchorRef, props.actionMenuAnchorRef),
+            anchorRef: resolvePopoverAnchorRef(props.pathPopoverAnchor, props.pathChipAnchorRef, menuAnchors),
+            submenu: props.pathPopoverAnchor === 'actionMenuRow',
             content: props.pathPopover.renderContent,
             onRequestClose: props.onPathPopoverRequestClose,
             ...resolveSharedContentPopoverOptions(props.pathPopover),
@@ -303,7 +360,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: 'resume',
             open: props.showResumePopover,
-            anchorRef: resolvePopoverAnchorRef(props.resumePopoverAnchor, props.resumeChipAnchorRef, props.actionMenuAnchorRef),
+            anchorRef: resolvePopoverAnchorRef(props.resumePopoverAnchor, props.resumeChipAnchorRef, menuAnchors),
+            submenu: props.resumePopoverAnchor === 'actionMenuRow',
             content: props.resumePopover.renderContent,
             onRequestClose: props.onResumePopoverRequestClose,
             ...resolveSharedContentPopoverOptions(props.resumePopover),
@@ -314,7 +372,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
         sharedContentPopovers.push({
             key: 'envVars',
             open: props.showEnvVarsPopover,
-            anchorRef: resolvePopoverAnchorRef(props.envVarsPopoverAnchor, props.envVarsChipAnchorRef, props.actionMenuAnchorRef),
+            anchorRef: resolvePopoverAnchorRef(props.envVarsPopoverAnchor, props.envVarsChipAnchorRef, menuAnchors),
+            submenu: props.envVarsPopoverAnchor === 'actionMenuRow',
             content: props.envVarsPopover.renderContent,
             onRequestClose: props.onEnvVarsPopoverRequestClose,
             ...resolveSharedContentPopoverOptions(props.envVarsPopover),
@@ -323,12 +382,14 @@ export function AgentInputOverlayLayer(props: Readonly<{
 
     return (
         <>
-            {sharedContentPopovers.map(renderContentPopover)}
+            {sharedContentPopovers.map((entry) => (
+                <React.Fragment key={entry.key}>{renderContentPopover(entry, submenu)}</React.Fragment>
+            ))}
 
-            {props.showAgentPicker && props.hasAgentPickerOptions ? (
+            {props.showAgentPicker && props.hasAgentPickerOptions ? withActionMenuSubmenu(props.agentPickerAnchor, submenu,
                 <AgentInputChipPickerPopover
                     open={props.showAgentPicker}
-                    anchorRef={props.agentPickerAnchor === 'chip' ? props.agentChipAnchorRef : props.actionMenuAnchorRef}
+                    anchorRef={resolvePopoverAnchorRef(props.agentPickerAnchor, props.agentChipAnchorRef, menuAnchors)}
                     title={props.agentPickerTitle}
                     options={props.agentPickerOptions}
                     selectedOptionId={props.effectiveAgentPickerSelectedOptionId}
@@ -345,7 +406,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     // The lab's engine popover height (MP3); like every chip picker it hangs from its
                     // chip on the roomier side (owner 2026-10-12).
                     maxHeightCap={640}
-                />
+                />,
             ) : null}
 
             {props.showSessionModePicker && props.shouldRenderSessionModeChip ? (() => {
@@ -364,10 +425,10 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         },
                     ],
                 };
-                return (
+                return withActionMenuSubmenu(props.sessionModePickerAnchor, submenu,
                     <AgentInputSelectionListPopover
                         open={props.showSessionModePicker}
-                        anchorRef={props.sessionModePickerAnchor === 'chip' ? props.sessionModeChipAnchorRef : props.actionMenuAnchorRef}
+                        anchorRef={resolvePopoverAnchorRef(props.sessionModePickerAnchor, props.sessionModeChipAnchorRef, menuAnchors)}
                         rootStep={sessionModeRootStep}
                         selectedOptionId={props.sessionModeSelectedOptionId ?? null}
                         onSelect={(selectedId) => {
@@ -375,7 +436,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         }}
                         onRequestClose={props.onSessionModeRequestClose}
                         maxHeightCap={360}
-                    />
+                    />,
                 );
             })() : null}
 
@@ -383,21 +444,19 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 const chip = props.activeExtraCollapsedPopoverChip;
                 const renderCollapsedPopover = chip.renderCollapsedPopover;
                 if (!renderCollapsedPopover) return null;
-                const anchorRef = props.activeExtraCollapsedPopoverAnchor === 'chip'
-                    ? (props.extraChipAnchorRefsByKey[chip.key] ?? props.actionMenuAnchorRef)
-                    : props.actionMenuAnchorRef;
-                return renderCollapsedPopover({
+                const anchorRef = resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+                    props.extraChipAnchorRefsByKey[chip.key], menuAnchors);
+                return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu, renderCollapsedPopover({
                     anchorRef,
                     onRequestClose: props.onActiveExtraCollapsedPopoverChipClose,
-                });
+                }));
             })() : null}
 
             {!props.activeExtraCollapsedPopoverChip?.renderCollapsedPopover
                 && props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
                 const popover = props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover;
-                const anchorRef = props.activeExtraCollapsedPopoverAnchor === 'chip'
-                    ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
-                    : props.actionMenuAnchorRef;
+                const anchorRef = resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
+                    props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key], menuAnchors);
 
                 if (popover.presentation === 'list') {
                     // R5's discriminated union enforces `rootStep` is present
@@ -433,7 +492,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     // Calling `deferAgentInputPopoverClose(...)` here as well
                     // would schedule a duplicate close on top of the
                     // wrapper's own deferred close.
-                    return (
+                    return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu,
                         <AgentInputSelectionListPopover
                             open
                             anchorRef={anchorRef}
@@ -451,7 +510,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                             maxHeightCap={popover.maxHeightCap}
                             maxWidthCap={popover.maxWidthCap}
                             heightBehavior={popover.heightBehavior}
-                        />
+                        />,
                     );
                 }
 
@@ -467,7 +526,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     return null;
                 }
 
-                return (
+                return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu,
                     <AgentInputChipPickerPopover
                         open
                         anchorRef={anchorRef}
@@ -490,7 +549,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
                         maxHeightCap={popover.maxHeightCap ?? 420}
                         maxWidthCap={popover.maxWidthCap ?? 360}
-                    />
+                    />,
                 );
             })() : null}
 

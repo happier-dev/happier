@@ -22,6 +22,9 @@ export type ActionListItemContent = Readonly<{
     rightElementOutsidePressable?: boolean;
     selected?: boolean;
     onPress?: () => void;
+    /** The pointer rests on the row (web): a menu that opens a submenu beside a row reads its intent here. */
+    onHover?: () => void;
+    onKeyDown?: (event: unknown) => void;
     disabled?: boolean;
     destructive?: boolean;
     /** The row's press target, for a menu that moves focus between its own steps. */
@@ -97,6 +100,8 @@ export function ActionListSection(props: {
             destructive={action.destructive}
             disabled={action.disabled}
             onPress={action.onPress}
+            onHover={action.onHover}
+            onKeyDown={action.onKeyDown}
             left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
             right={action.right ?? null}
             rightElementOutsidePressable={action.rightElementOutsidePressable}

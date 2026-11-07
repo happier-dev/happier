@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
+import type { AgentInputActionMenuRow } from '../actionMenuActions';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 import {
@@ -17,14 +18,14 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
     resetCorePopovers?: () => void;
     /** The action menu's own anchor, so a chip that opens a native dialog can return focus to it. */
     focusReturnRef?: FocusReturnRef;
-}>): Readonly<Record<string, ReadonlyArray<ActionListItem>>> {
-    const extraControlActions: Record<string, ReadonlyArray<ActionListItem>> = {};
+}>): Readonly<Record<string, ReadonlyArray<AgentInputActionMenuRow>>> {
+    const extraControlActions: Record<string, ReadonlyArray<AgentInputActionMenuRow>> = {};
 
     for (const chip of params.chips ?? []) {
         const placementId = chip.placement?.id;
         if (!placementId) continue;
 
-        let actions: ActionListItem | ReadonlyArray<ActionListItem> | null = null;
+        let actions: AgentInputActionMenuRow | ReadonlyArray<ActionListItem> | null = null;
         if (typeof chip.collapsedAction === 'function') {
             actions = chip.collapsedAction({
                 tint: params.tint,
@@ -47,7 +48,7 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                     ? {}
                     : { accessibilityLabel: chip.collapsedOptionsPopover.accessibilityLabel }),
                 icon: chip.collapsedOptionsPopover.icon?.(params.tint) ?? null,
-                ...(disabled ? { disabled: true } : {}),
+                ...(disabled ? { disabled: true } : { opensPicker: true }),
                 onPress: () => {
                     if (isDisabled()) return;
                     chip.onIntent?.();
@@ -67,7 +68,7 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                     ? {}
                     : { accessibilityLabel: chip.collapsedContentPopover.accessibilityLabel }),
                 icon: chip.collapsedContentPopover.icon?.(params.tint) ?? null,
-                ...(disabled ? { disabled: true } : {}),
+                ...(disabled ? { disabled: true } : { opensPicker: true }),
                 onPress: () => {
                     if (isDisabled()) return;
                     chip.onIntent?.();

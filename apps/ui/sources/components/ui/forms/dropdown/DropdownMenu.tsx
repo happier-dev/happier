@@ -25,23 +25,9 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { iconMatchedSpinnerSize } from '@happier-dev/plugin-ui/presentation';
+import { SUBMENU_POPOVER_GAP_PX, useSubmenuHoverIntent } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
 
 const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
-/**
- * Submenu hover intent (pointer only; touch opens on tap). A row must hold the pointer this long before
- * its submenu opens, so passing over it toward another item opens nothing.
- */
-const SUBMENU_HOVER_OPEN_DELAY_MS = 150;
-/**
- * How long an open submenu survives the pointer leaving it or crossing a sibling row: long enough for
- * diagonal travel from the parent row into the submenu, short enough to read as a response.
- */
-const SUBMENU_HOVER_CLOSE_GRACE_MS = 300;
-
-function isTouchPointerEvent(event: unknown): boolean {
-    const value = event as { nativeEvent?: { pointerType?: unknown }; pointerType?: unknown } | null;
-    return (value?.nativeEvent?.pointerType ?? value?.pointerType) === 'touch';
-}
 
 
 
@@ -753,56 +739,19 @@ export function DropdownMenu(props: DropdownMenuProps) {
         retryWhenAnchorSettles(0);
     }, [findMenuItem, isSubmenuAnchorReady]);
     handleOpenSubmenuRef.current = handleOpenSubmenu;
-    const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingHoverIdRef = React.useRef<string | null>(null);
-    const clearHoverTimer = React.useCallback(() => {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = null;
-        pendingHoverIdRef.current = null;
-    }, []);
-    React.useEffect(() => clearHoverTimer, [clearHoverTimer]);
-    React.useEffect(() => {
-        if (!props.open) clearHoverTimer();
-    }, [clearHoverTimer, props.open]);
-    const activeSubmenuIdRef = React.useRef<string | null>(null);
-    activeSubmenuIdRef.current = activeSubmenu?.itemId ?? null;
-    const scheduleSubmenuClose = React.useCallback(() => {
-        clearHoverTimer();
-        if (!activeSubmenuIdRef.current) return;
-        hoverTimerRef.current = setTimeout(() => {
-            hoverTimerRef.current = null;
-            setActiveSubmenu(null);
-        }, SUBMENU_HOVER_CLOSE_GRACE_MS);
-    }, [clearHoverTimer]);
-    // The pointer rests on a row: open its submenu after a dwell, or close another open one after the
-    // grace period. Entering the open submenu cancels either, which lets diagonal travel reach it.
+    const closeActiveSubmenu = React.useCallback(() => setActiveSubmenu(null), []);
+    const submenuHover = useSubmenuHoverIntent({
+        activeItemId: activeSubmenu?.itemId ?? null,
+        enabled: props.open,
+        closeSubmenu: closeActiveSubmenu,
+    });
+    // The pointer rests on a row: the shared hover intent opens its submenu after a dwell, or closes
+    // another open one after the grace period.
     const handleHoverItem = React.useCallback((item: SelectableMenuItem, anchorRef: React.RefObject<unknown>) => {
-        if (pendingHoverIdRef.current === item.id) return;
-        if (activeSubmenuIdRef.current === item.id) {
-            clearHoverTimer();
-            return;
-        }
-        clearHoverTimer();
-        pendingHoverIdRef.current = item.id;
         const opensSubmenu = item.hasSubmenu === true && item.disabled !== true;
-        if (!opensSubmenu && !activeSubmenuIdRef.current) {
-            pendingHoverIdRef.current = null;
-            return;
-        }
-        // Switching from an open submenu waits the grace period, so crossing a row on the way in is harmless.
-        const delay = activeSubmenuIdRef.current ? SUBMENU_HOVER_CLOSE_GRACE_MS : SUBMENU_HOVER_OPEN_DELAY_MS;
-        hoverTimerRef.current = setTimeout(() => {
-            hoverTimerRef.current = null;
-            pendingHoverIdRef.current = null;
-            if (opensSubmenu) handleOpenSubmenu(item.id, anchorRef);
-            else setActiveSubmenu(null);
-        }, delay);
-    }, [clearHoverTimer, handleOpenSubmenu]);
-    const handleSubmenuSurfacePointerChange = React.useCallback((inside: boolean, event: unknown) => {
-        if (isTouchPointerEvent(event)) return;
-        if (inside) clearHoverTimer();
-        else scheduleSubmenuClose();
-    }, [clearHoverTimer, scheduleSubmenuClose]);
+        submenuHover.hoverItem(item.id, opensSubmenu ? () => handleOpenSubmenu(item.id, anchorRef) : null);
+    }, [handleOpenSubmenu, submenuHover]);
+    const handleSubmenuSurfacePointerChange = submenuHover.surfacePointerChange;
 
     const handlePressMenuItem = React.useCallback((item: SelectableMenuItem) => {
         if (item.id === CREATE_ITEM_ID) {
@@ -893,7 +842,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                             onPointerLeave={Platform.OS === 'web' || props.onSurfacePointerChange ? (event: unknown) => {
                                 props.onSurfacePointerChange?.(false, event);
                                 // Leaving this menu for anywhere but its open submenu closes that submenu after the grace.
-                                if (!isTouchPointerEvent(event)) scheduleSubmenuClose();
+                                submenuHover.scheduleClose(event);
                             } : undefined}
                         >
                         <FloatingOverlay
@@ -973,7 +922,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 onSelect={handleSubmenuSelect}
                                 trigger={null}
                                 placement={activeSubmenuItem.submenu.placement ?? 'auto-horizontal'}
-                                gap={4}
+                                gap={SUBMENU_POPOVER_GAP_PX}
                                 maxHeightCap={activeSubmenuItem.submenu.maxHeightCap ?? props.maxHeightCap}
                                 maxWidthCap={activeSubmenuItem.submenu.maxWidthCap ?? props.maxWidthCap}
                                 matchTriggerWidth={false}
