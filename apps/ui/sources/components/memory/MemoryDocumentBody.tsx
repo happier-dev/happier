@@ -23,7 +23,7 @@ import {
 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import * as React from 'react';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -41,10 +41,11 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { motionTokens } from '@/components/ui/motion';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Text } from '@/components/ui/text/Text';
+import { showArtifactHistorySheet } from '@/components/artifacts/ArtifactHistorySheet';
+import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import {
@@ -61,14 +62,16 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { memoryDocumentHref } from './memoryDocumentRoutes';
 import type { MemoryDocumentSource } from './useMemoryDocument';
-import type { MemoryDocumentSummary } from '@/sync/domains/memory/fetchDaemonMemoryStatus';
 import { MemoryDuplicateSavedFact } from './MemoryDuplicateSavedFact';
 import { MemoryMachineChoice } from './MemoryMachineChoice';
 import { memoryDecisionSheetRowStyle } from './SaveMemoryDecisionTarget';
 import { useMemoryDocumentSummary } from './useMemoryDocumentSummary';
+import { useMemoryOffline } from './useMemoryOffline';
+import { MemoryDocumentNotices } from './MemoryDocumentNotices';
 import { readMemoryFactSource } from './useMemoryFactSource';
 import { formatMemoryDate, useMemoryFactAttribution } from './useMemoryFactAttribution';
 import type { MemorySearchScope } from '@happier-dev/protocol/memory/memorySearch';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export { formatMemoryDate } from './useMemoryFactAttribution';
 
@@ -229,28 +232,16 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   const view = source.view;
   const target = source.target;
   const topic = view?.topic ?? null;
-  const readSummary = useMemoryDocumentSummary({ source, serverId,
+  const summary = useMemoryDocumentSummary({ source, serverId,
     scope: props.preparationScope, preparationBasis: props.preparationBasis, inUse: props.inUse,
     enabled: topic === null });
-  // Counts being read again keep their last-known values for this document. Without known
-  // counts, the caller-lived status read reports unavailability rather than reserving a spinner.
   const fresh = source.status === 'ready' && !source.stale;
-  const countsKey = view ? JSON.stringify(view.ref) : null;
-  const lastKnownCounts = React.useRef<Readonly<{ key: string; summary: MemoryDocumentSummary }> | null>(null);
-  React.useEffect(() => {
-    if (countsKey !== null && fresh && readSummary.state === 'ready') lastKnownCounts.current = { key: countsKey, summary: readSummary };
-  }, [countsKey, fresh, readSummary]);
-  const countsPending = readSummary.state === 'pending' || (readSummary.state === 'unavailable'
-    && (readSummary.cause?.reason === 'status_pending' || readSummary.cause?.reason === 'coverage_pending'));
-  const summary: MemoryDocumentSummary = !fresh ? { state: 'unavailable' }
-    : countsPending && lastKnownCounts.current?.key === countsKey
-      ? lastKnownCounts.current.summary
-      : readSummary;
   const countLabel = (count: number) => t('memoryContext.memory.factCount', { count });
   const archive = topic?.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1;
   const writable = !props.readOnly && !archive;
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<Notice>(null);
+  const [conflictTarget, setConflictTarget] = React.useState<MemoryDocumentTarget | null>(null);
   const [storedEditingId, setEditingId] = React.useState<string | null>(null);
   const [storedDraft, setDraft] = React.useState('');
   const [storedDraftTopic, setDraftTopic] = React.useState('');
@@ -306,6 +297,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         }
         // A refusal is said in place, beside what it did not change, until the next attempt.
         if (outcome === 'pending' || outcome === 'conflict' || outcome === 'refused') setNotice(outcome);
+        if (outcome === 'conflict') setConflictTarget(source.target);
         // A saved-but-unattached result is not an unsaved revision conflict. Keep its exact document reachable,
         // and close its draft so retrying cannot create a second copy of that fact.
         if (receipt) onCreatedMemory?.(receipt);
@@ -320,7 +312,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         setBusy(false);
       }
     },
-    [onCreatedMemory, props.onDuplicateReview, refresh],
+    [onCreatedMemory, props.onDuplicateReview, refresh, source.target],
   );
 
   const closeDraft = React.useCallback(() => {
@@ -566,6 +558,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   }, [router, view]);
 
   const status = source.status;
+  const connection = useMemoryOffline(view?.ref.serverId ?? props.serverId);
   const facts = orderedFacts;
   const limit = props.collapsedFactCount;
   const shown =
@@ -748,45 +741,19 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         );
   const leading = (
     <>
-      {notice === 'pending' ? (
-        <SurfaceFreshnessLine
-          testID={`${testID}.pending`}
-          busy
-          reason={t('memoryContext.memory.pending')}
-        />
-      ) : notice === 'conflict' ? (
-        <SurfaceFreshnessLine
-          testID={`${testID}.conflict`}
-          tone="warning"
-          reason={t('memoryContext.memory.conflict')}
-        />
-      ) : notice === 'refused' ? (
-        <SurfaceFreshnessLine
-          testID={`${testID}.refused`}
-          tone="warning"
-          reason={t('memoryContext.memory.refused')}
-        />
-      ) : status === 'unavailable' ? (
-        <SurfaceFreshnessLine
-          testID={`${testID}.unavailable`}
-          tone="warning"
-          reason={
-            view
-              ? t('memoryContext.memory.offlineStale')
-              : t('memoryContext.memory.offline')
-          }
-          action={{
-            label: t('common.retry'),
-            onPress: () => {
-              fireAndForget(refresh(), { tag: 'MemoryDocumentBody.retry' });
-            },
-          }}
-        />
-      ) : null}
+      <MemoryDocumentNotices testID={testID} offline={connection.offline} since={connection.since}
+        source={source} notice={notice}
+        onReviewConflict={conflictTarget ? () => showArtifactHistorySheet({
+          artifactId: conflictTarget.ref.artifactId,
+          name: view?.title,
+          canRestore: false,
+          compareFromBodyVersion: conflictTarget.expectedRevision.bodyVersion,
+          client: createArtifactActionsClient({ serverId: conflictTarget.serverId, accountId: conflictTarget.accountId }),
+        }) : undefined} />
       {/* A stale view keeps its facts; it has no counts to reserve a line for, so the line steps aside. */}
       {/* An open duplicate comparison is the one thing in progress; the count line steps aside until it closes. */}
       {/* A topic page counts its facts on its section title; only the index reports what agents load. */}
-      {view && !topic && (fresh || summary.state === 'ready') && !review ? (
+      {view && !topic && !connection.offline && (fresh || summary.state === 'ready') && !review ? (
         summary.state === 'unavailable' && fresh && summary.cause?.reason === 'machine_not_chosen' ? (
           <MemoryMachineChoice testID={`${testID}.machine`} invitation={t('memoryContext.memory.countsNeedMachine')} />
         ) : summary.state === 'unavailable' && fresh && summary.cause?.reason === 'not_in_use' ? (
@@ -990,15 +957,14 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
               : t('memoryContext.memory.expiredFacts', { count: expiredFacts.length })}
             titleStyle={styles.footer}
             rightElement={(
-              <Pressable
+              <HappierPressable
                 testID={`${testID}.expired.toggle`}
                 accessibilityRole="button"
-                accessibilityState={{ expanded: showExpired }}
+                expanded={showExpired}
                 onPress={() => setShowExpired((open) => !open)}
-                hitSlop={8}
               >
                 <Text style={styles.showAll}>{showExpired ? t('memoryContext.memory.hideExpired') : t('memoryContext.memory.showExpired')}</Text>
-              </Pressable>
+              </HappierPressable>
             )}
           />
         ) : null}
@@ -1097,7 +1063,7 @@ export function MemoryDuplicateChoice(props: Readonly<{
       Text={DuplicateChoiceText}
       Choice={DuplicateChoiceControl}
       style={styles.duplicate}
-      colors={{ chosen: theme.colors.surface.selected, hover: theme.colors.surface.pressed }}
+      colors={{ chosen: theme.colors.surface.selected, hover: theme.colors.surface.hover }}
       radius={theme.borderRadius.md}
       space={theme.space}
     />
@@ -1294,15 +1260,14 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
           <View style={stylesheet.rowActions}>
             {/* An expired fact names its one next step beside its menu (lab L9 expired: Renew). */}
             {props.renewable ? (
-              <Pressable
+              <HappierPressable
                 testID={`${props.testID}.renew`}
                 accessibilityRole="button"
                 disabled={props.disabled}
                 onPress={() => onEdit(fact)}
-                hitSlop={8}
               >
                 <Text style={stylesheet.showAll}>{t('memoryContext.memory.renew')}</Text>
-              </Pressable>
+              </HappierPressable>
             ) : null}
             {actions.length > 0 ? (
               <ItemRowActions

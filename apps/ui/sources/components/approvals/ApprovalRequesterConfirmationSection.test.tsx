@@ -7,12 +7,12 @@ import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
 import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { t } from '@/text';
 
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({
-  text: async () =>
-    (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+  text: () => vi.importActual<typeof import('@/text')>('@/text'),
 });
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
@@ -114,7 +114,7 @@ describe('ApprovalRequesterConfirmationSection operation actor', () => {
       />,
     );
 
-    expect(screen.getTextContent()).toContain('message.accountActorFormerMember');
+    expect(screen.getTextContent()).toContain(t('message.accountActorFormerMember'));
     expect(screen.getTextContent()).not.toContain('Retained Bob');
   });
 
@@ -130,13 +130,28 @@ describe('ApprovalRequesterConfirmationSection operation actor', () => {
     );
     expect(screen.findByTestId('approval-operation-actor')).toBeTruthy();
     expect(screen.getTextContent()).toContain(
-      'detailPages.approval.requester.thread.using(label=Acme GitHub)',
+      t('detailPages.approval.requester.thread.using', { label: 'Acme GitHub' }),
     );
     expect(
       screen.findByTestId('approvals.requester-confirmation.writes-with'),
-    ).toBeNull();
+    ).toBeTruthy();
     expect(screen.getTextContent()).not.toContain('setupOf');
-    expect(screen.getTextContent()).not.toContain('writesWith');
+  });
+
+  it('shows the execution Account independently of the asker and the exact reviewed Action', async () => {
+    const screen = await renderScreen(
+      <ApprovalRequesterConfirmationSection
+        subject={subject()}
+        serverId="server-1"
+        open
+        decision={null}
+        actionId="session.title.set"
+      />,
+    );
+    expect(screen.findByTestId('approvals.requester-confirmation.runs-as')).toBeTruthy();
+    expect(screen.findByTestId('approvals.requester-confirmation.action')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('session.title.set');
+    expect(screen.findByTestId('approvals.requester-confirmation.writes-with')).toBeNull();
   });
 
   it('draws no actor row without admitted evidence', async () => {
@@ -154,7 +169,8 @@ describe('ApprovalRequesterConfirmationSection operation actor', () => {
       expect(
         screen.findByTestId('approvals.requester-confirmation.asked-by'),
       ).toBeTruthy();
-      expect(screen.getTextContent()).not.toContain('writesWith');
+      expect(screen.findByTestId('approvals.requester-confirmation.writes-with')).toBeNull();
+      expect(screen.findByTestId('approvals.requester-confirmation.action')).toBeNull();
     }
   });
 });

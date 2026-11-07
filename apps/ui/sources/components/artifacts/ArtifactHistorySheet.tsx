@@ -28,7 +28,7 @@ import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
 import { createArtifactActionsClient, type ArtifactActionsClient } from './artifactActionsClient';
-import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
+import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
@@ -225,6 +225,10 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const chosen = earlier.find((revision) => revision.bodyVersion === selected) ?? (sideBySide ? earlier[0] ?? null : null);
     const versionNumber = (revision: Revision) => revision.bodyVersion;
     const currentBody = history.data.revisions.find(revision => revision.bodyVersion === current)?.body ?? artifact?.body ?? null;
+    const compareUnavailableReason = compareFrom === undefined ? null
+        : currentBody === null ? 'artifacts.browser.history.compareCurrentUnavailable'
+            : !history.data.revisions.some(revision => revision.bodyVersion === compareFrom)
+                ? 'artifacts.browser.history.compareReviewedUnavailable' : null;
 
     const list = (
         <HappierArtifactRevisionList
@@ -266,11 +270,11 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                 {`${t('artifacts.browser.history.version', { n: versionNumber(chosen) })} · ${formatRelativeTimeShort(chosen.createdAt, Date.now())}`}
             </Text>
             <ScrollView style={styles.previewScroll}>
-                {compareFrom !== undefined && typeof chosen.body === 'string' && typeof currentBody === 'string'
+                {compareFrom !== undefined && !compareUnavailableReason && typeof chosen.body === 'string' && typeof currentBody === 'string'
                     ? <ProseDiffViewer mode="text" testID="artifact-history:changes" oldText={chosen.body} newText={currentBody}
                         prose={{ oldLabel: t('artifacts.browser.history.version', { n: versionNumber(chosen) }), newLabel: t('artifacts.browser.history.now') }} />
                     : typeof chosen.body === 'string' ? <MarkdownView markdown={chosen.body} />
-                    : chosen.body ? <ArtifactBinaryBody artifactId={props.artifactId} reference={chosen.body} name={artifact?.title || t('artifacts.untitled')} readBytes={readBinary} />
+                    : chosen.body ? <ArtifactBinaryBody artifactId={props.artifactId} reference={chosen.body} name={artifact?.title || t('artifacts.untitled')} readBytes={readBinary} scope={client.scope} />
                         : <Text style={styles.caption}>{t('artifacts.noContent')}</Text>}
             </ScrollView>
         </View>
@@ -285,6 +289,17 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                     busy={history.loading}
                     tone={history.failed ? 'warning' : 'neutral'}
                     action={history.failed ? { label: t('common.retry'), onPress: requestRefresh } : undefined}
+                />
+            ) : null}
+            {compareUnavailableReason ? (
+                <SurfaceStateCard
+                    testID="artifact-history:compare-unavailable"
+                    kind="unavailable"
+                    layout="inline"
+                    replacesContent={false}
+                    title={t('artifacts.browser.history.compareUnavailable')}
+                    reason={t(compareUnavailableReason)}
+                    accessibilitySemantics="status"
                 />
             ) : null}
             <View style={sideBySide ? styles.columns : styles.stack}>
@@ -319,7 +334,9 @@ function ArtifactHistoryModal(props: HistoryModalProps): React.ReactElement {
 
 /** `compareFromBodyVersion` opens History on that version, showing its changes up to the current text. */
 export function showArtifactHistorySheet(params: Readonly<{
-    artifactId: string; name: string; canRestore: boolean; compareFromBodyVersion?: number;
+    artifactId: string;
+    /** The Doc's title; when the caller has not read it, the one the app already holds. */
+    name?: string; canRestore: boolean; compareFromBodyVersion?: number;
     client?: ArtifactActionsClient;
     /** Already admitted through this client's canonical Doc reader, including direct Discussion entry. */
     currentDoc?: CurrentDoc;
@@ -341,7 +358,7 @@ export function showArtifactHistorySheet(params: Readonly<{
             kind: 'card',
             testID: 'artifact-history-modal',
             title: t('artifacts.browser.history.title'),
-            subtitle: params.name,
+            subtitle: params.name ?? currentArtifact?.title ?? t('artifacts.untitled'),
             scrollHost: 'body',
             phonePresentation: 'fullscreen',
             bodyScroll: 'none',

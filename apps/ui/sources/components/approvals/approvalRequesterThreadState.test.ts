@@ -36,6 +36,11 @@ const teamCredentialUse: ActionOperationCredentialUseV1 = {
 };
 
 describe('resolveApprovalRequesterThreadState', () => {
+    it('projects a terminal unknown outcome as uncertain rather than pending or failed', () => {
+        expect(stateOf(request => ({ ...approved(request), status: 'outcome_unknown', updatedAtMs: 30,
+            execution: { executedAtMs: 30, ok: false, effectAttempted: true, errorCode: 'outcome_unknown', error: 'outcome_unknown' } })))
+            .toEqual({ kind: 'uncertain', decidingAccountId: 'bob' });
+    });
     it('asks while open, and says the answer this device recorded until the request catches up', () => {
         expect(stateOf()).toEqual({ kind: 'open' });
         expect(stateOf(undefined, 'reject')).toEqual({ kind: 'declined', decidingAccountId: null });
@@ -95,6 +100,6 @@ describe('resolveApprovalRequesterThreadState', () => {
             .toEqual({ kind: 'done', decidingAccountId: 'bob' });
         expect(stateOf((request) => ({ ...approved(request), status: 'failed', updatedAtMs: 30,
             execution: { executedAtMs: 30, ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' } })))
-            .toEqual({ kind: 'failed', decidingAccountId: 'bob', errorCode: 'approval_stale' });
+            .toEqual({ kind: 'stale', decidingAccountId: 'bob' });
     });
 });

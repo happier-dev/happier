@@ -26,6 +26,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         workflow: string;
         role: string;
         launchProfile: string;
+        dashboard: string;
     }>;
     sort: Readonly<{
         label: string;
@@ -122,6 +123,9 @@ export type ArtifactsBrowserTranslations = Readonly<{
         empty: string;
         versionsLabel: string;
         restoreFailed: string;
+        compareUnavailable: string;
+        compareCurrentUnavailable: string;
+        compareReviewedUnavailable: string;
         savedByUser: string;
         savedByAgentSession: string;
         restoredVersion: (params: Readonly<{ n: number }>) => string;
@@ -138,6 +142,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     facts: Readonly<{
         edited: (params: Readonly<{ age: string }>) => string;
         acceptedEdit: (params: Readonly<{ who: string; age: string }>) => string;
+        suggestions: (params: Readonly<{ count: number }>) => string;
         version: (params: Readonly<{ n: number }>) => string;
         sharedWithTeam: (params: Readonly<{ team: string }>) => string;
         shared: string;
@@ -158,6 +163,9 @@ export type ArtifactsBrowserTranslations = Readonly<{
         count: (params: Readonly<{ count: number }>) => string;
         countUnavailable: string;
         refineHint: string;
+        noComments: string;
+        noCommentsHint: string;
+        commentsUnavailable: string;
         threadsTitle: string;
         refineFailed: string;
         threadDetail: (params: Readonly<{ who: string; n: number }>) => string;
@@ -187,7 +195,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         undo: string;
         undone: (params: Readonly<{ n: number }>) => string;
         undoConflict: string;
-        openDocument: string;
+        openHistory: string;
         someone: string;
         askRedo: string;
         redoRequest: string;
@@ -221,6 +229,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             workflow: 'Workflow',
             role: 'Role',
             launchProfile: 'Launch profile',
+            dashboard: 'Dashboard',
         },
         sort: {
             label: 'Sort',
@@ -276,7 +285,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         emptyBody: 'Plans, notes, code and boards you or your agents save land here — readable on every device and ready to share with your Teams.',
         emptyHint: 'Or ask an agent to “save that as an artifact”.',
         loadFailedTitle: 'Couldn’t load your artifacts',
-        loadFailedBody: 'Check your connection, then try again. Nothing was lost.',
+        loadFailedBody: 'Try again in a moment. Nothing was lost.',
         retainedBody: "Couldn’t refresh. Showing the last loaded artifacts.",
         loadingBody: 'Still loading the rest.',
         countSoFar: ({ count }) => `${count} loaded so far`,
@@ -319,6 +328,9 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             empty: 'No earlier versions yet. Each save keeps one.',
             versionsLabel: 'Versions',
             restoreFailed: 'Couldn’t restore this version. Try again.',
+            compareUnavailable: 'Comparison unavailable',
+            compareCurrentUnavailable: 'The current version isn’t available in this History view. You can still read earlier versions.',
+            compareReviewedUnavailable: 'The reviewed version is no longer in the retained history. You can still read the available versions.',
             savedByUser: 'Saved by user',
             savedByAgentSession: 'Saved by agent session',
             restoredVersion: ({ n }) => `Restored from version ${n}`,
@@ -339,6 +351,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             shared: 'Shared',
             onlyYou: 'Only you',
             acceptedEdit: ({ who, age }) => `${who} · ${age}`,
+            suggestions: ({ count }) => count === 1 ? '1 suggestion' : `${count} suggestions`,
         },
         passage: {
             comment: 'Comment',
@@ -355,6 +368,9 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             count: ({ count }) => `${count} ${count === 1 ? 'conversation' : 'conversations'}`,
             countUnavailable: 'Comment count unavailable',
             refineHint: 'Select the words to comment on',
+            noComments: 'No comments yet',
+            noCommentsHint: 'Select text to comment, or mention an agent to have it answer or propose an edit.',
+            commentsUnavailable: 'Comments aren’t available right now.',
             threadsTitle: 'Conversations',
             refineFailed: 'Couldn’t place that selection. Select the words again.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} ${n === 1 ? 'reply' : 'replies'}`,
@@ -383,8 +399,8 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             declinedBy: ({ who }) => `${who} declined the suggestion · the document didn’t change`,
             undo: 'Undo',
             undone: ({ n }) => `Undone · now version ${n}`,
-            undoConflict: 'The document changed after this edit, so Undo can’t restore it. Open its history to pick a version.',
-            openDocument: 'Open document',
+            undoConflict: 'The document changed after this edit, so Undo can’t restore it.',
+            openHistory: 'Open history',
             someone: 'Someone',
             askRedo: 'Ask to redo',
             redoRequest: 'The document changed after your suggestion. Could you suggest it again on the current version?',

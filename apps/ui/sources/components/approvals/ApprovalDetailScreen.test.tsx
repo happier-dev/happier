@@ -1886,27 +1886,29 @@ describe('ApprovalDetailScreen', () => {
     expect(clientExecutionEffects()).toHaveLength(0);
   });
 
-  it('refreshes a typed stale target refusal and removes its decision controls', async () => {
+  it.each(['approval_stale', 'action_failed'] as const)('refreshes a typed %s target refusal and only alerts non-stale failures', async (errorCode) => {
     currentArtifact = await createApiTargetActionApprovalArtifact();
     const request = TargetActionApprovalRequestV1Schema.parse({
       ...JSON.parse(currentArtifact.body), status: 'failed', updatedAtMs: 2,
       decision: { kind: 'approve', decidedAtMs: 2 },
-      execution: { executedAtMs: 2, ok: false, errorCode: 'approval_stale', error: 'Current policy differs' },
+      execution: { executedAtMs: 2, ok: false, errorCode, error: 'Current policy differs' },
     });
     const failedArtifact = { ...currentArtifact, header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
-    daemonReply = { ok: false, errorCode: 'approval_stale', error: 'Current policy differs' };
+    daemonReply = { ok: false, errorCode, error: 'Current policy differs' };
     remoteArtifact = failedArtifact;
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-api-artifact-1" />);
     await screen.pressByTestIdAsync('approvals.approve');
 
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('approvals.staleFailure');
+    if (errorCode === 'approval_stale') expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('approvals.staleFailure');
+    else expect(approvalItem(screen, 'approvals.execution-failure')).toBeTruthy();
     expect(readRenderedText(screen)).toContain('approvals.status.failed');
     expect(readRenderedText(screen)).not.toContain('approvals.status.approved');
     expect(screen.findByTestId('approvals.approve')).toBeNull();
     expect(screen.findByTestId('approvals.reject')).toBeNull();
     const { Modal } = await import('@/modal');
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.staleFailure'));
+    if (errorCode === 'approval_stale') expect(Modal.alert).not.toHaveBeenCalled();
+    else expect(Modal.alert).toHaveBeenCalled();
     expect(clientExecutionEffects()).toHaveLength(0);
     expect(artifactWrites()).toHaveLength(0);
   });
@@ -1997,7 +1999,7 @@ describe('ApprovalDetailScreen', () => {
     expect(homes.requestsFor('/v2/sessions/session-1').filter(request => request.input !== null)).toEqual([]);
     expect(clientExecutionEffects()).toEqual([]);
     const { Modal } = await import('@/modal');
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.staleFailure'));
+    expect(Modal.alert).not.toHaveBeenCalled();
   });
 
   it('routes a signed Session stop approval through this device profile to its exact daemon', async () => {

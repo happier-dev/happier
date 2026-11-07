@@ -7,6 +7,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMemoryDecisionHomeFixture } from '@/dev/testkit/harness/memoryDecisionHomeFixture';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
+import { memoryDocumentActions } from '@/sync/ops/promptLibrary/memoryDocuments';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 installDisconnectedServerSocketBoundary();
@@ -28,6 +29,37 @@ async function save(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('Save as decision from a Discussion message', () => {
+  it('opens the reviewed revision after a CAS conflict without losing the decision draft', async () => {
+    const f = await createMemoryDecisionHomeFixture();
+    const first = await mount(f);
+    await save(first.screen);
+    await first.screen.unmount();
+    const { screen } = await mount(f);
+    try {
+      await act(async () => { screen.changeTextByTestId('save-memory-decision.text', 'Retry cap stays at 6'); });
+      await save(screen);
+      expect(screen.findByTestId('save-memory-decision.duplicate')).toBeTruthy();
+      const row = f.home.boundary.list()[0];
+      if (!row) throw new Error('Missing saved memory');
+      const body = MemoryDocBodyV1Schema.parse(JSON.parse(f.home.boundary.readPlainBody(row.id)!));
+      f.home.boundary.beforeNextUpdate(async () => {
+        expect(await memoryDocumentActions.update({ ref: { kind: 'doc', serverId: f.serverId, artifactId: row.id },
+          serverId: f.serverId, accountId: row.ownerAccountId, isCurrent: () => true,
+          expectedRevision: { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } },
+        { factId: body.index[0]!.id, text: 'Concurrent decision' })).toMatchObject({ ok: true });
+      });
+      await save(screen);
+      expect(screen.findByTestId('save-memory-decision.conflict'), screen.getTextContent()).toBeTruthy();
+      const { Modal } = await import('@/modal');
+      vi.spyOn(Modal, 'show').mockReturnValue('decision-history');
+      await screen.pressByTestIdAsync('save-memory-decision.conflict-action');
+      expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+        artifactId: row.id, compareFromBodyVersion: row.bodyVersion, canRestore: false,
+      }) }));
+      expect(screen.findByTestId('save-memory-decision.text')?.props.value).toBe('Retry cap stays at 6');
+    } finally { await screen.unmount(); await f.home.dispose(); }
+  });
+
   it('saves into the person’s own memory with the exact Discussion message as its source', async () => {
     const f = await createMemoryDecisionHomeFixture();
     const { screen, onSaved, source } = await mount(f);
@@ -79,6 +111,40 @@ describe('Save as decision from a Discussion message', () => {
         expect(after.index).toHaveLength(1);
         expect(after.index[0]).toMatchObject({ supersedes: before.index[0]!.id, decision: { sourceMessageRef: source } });
         expect(after.topics.find(topic => topic.title === 'archive')?.facts).toContainEqual(before.index[0]);
+      } finally { await reopened.screen.unmount(); }
+    } finally { await f.home.dispose(); }
+  });
+
+  it('opens the saved fact a duplicate review names, then Back keeps the typed decision and chosen effect', async () => {
+    const f = await createMemoryDecisionHomeFixture();
+    const { screen, onSaved } = await mount(f);
+    try {
+      await save(screen);
+      const saved = f.home.boundary.list()[0];
+      if (!saved) throw new Error('Missing persisted initial decision');
+      const before = MemoryDocBodyV1Schema.parse(JSON.parse(f.home.boundary.readPlainBody(saved.id)!));
+      const existing = before.index[0]!;
+      await screen.unmount();
+      const reopened = await mount(f, onSaved);
+      const press = async (testID: string) => {
+        const node = reopened.screen.find(entry => entry.props?.testID === testID && typeof entry.props.onPress === 'function');
+        await act(async () => { node.props.onPress(); });
+      };
+      try {
+        await save(reopened.screen);
+        await act(async () => { reopened.screen.changeTextByTestId('save-memory-decision.text', 'Retry cap stays at 6'); });
+        await press('save-memory-decision.duplicate.choice:replace');
+        await press(`save-memory-decision.duplicate.candidate.${existing.id}.view`);
+        // The saved fact opens in the same sheet, in place of the comparison and fields.
+        expect(reopened.screen.findByTestId('save-memory-decision.savedFact')).toBeTruthy();
+        await press('save-memory-decision.savedFact.back');
+        expect(reopened.screen.findByTestId('save-memory-decision.savedFact')).toBeNull();
+        expect(reopened.screen.findByTestId('save-memory-decision.text')?.props.value).toBe('Retry cap stays at 6');
+        await save(reopened.screen);
+        const after = MemoryDocBodyV1Schema.parse(JSON.parse(f.home.boundary.readPlainBody(saved.id)!));
+        // Replace, as chosen before looking: the old decision is history, the new one supersedes it.
+        expect(after.index).toHaveLength(1);
+        expect(after.index[0]).toMatchObject({ text: 'Retry cap stays at 6', supersedes: existing.id });
       } finally { await reopened.screen.unmount(); }
     } finally { await f.home.dispose(); }
   });

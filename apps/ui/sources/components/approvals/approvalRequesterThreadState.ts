@@ -11,6 +11,7 @@ import type { DiscussionRequesterApproval } from '@/sync/domains/artifacts/appro
 export type ApprovalRequesterThreadState =
     | Readonly<{ kind: 'open' }>
     | Readonly<{ kind: 'confirmed_pending' | 'declined'; decidingAccountId: string | null }>
+    | Readonly<{ kind: 'stale'; decidingAccountId: string | null }>
     | Readonly<{ kind: 'done' | 'uncertain'; decidingAccountId: string | null; operationCredentialUses?: readonly ActionOperationCredentialUseV1[] }>
     | Readonly<{ kind: 'failed'; decidingAccountId: string | null; errorCode: string | null; operationCredentialUses?: readonly ActionOperationCredentialUseV1[] }>
     | Readonly<{ kind: 'canceled' }>;
@@ -46,6 +47,7 @@ export function resolveApprovalRequesterThreadState(
         case 'canceled':
             return { kind: 'canceled' };
         case 'executed':
+        case 'outcome_unknown':
         case 'failed': {
             const execution = request.execution;
             if (!execution) return { kind: 'confirmed_pending', decidingAccountId };
@@ -53,13 +55,14 @@ export function resolveApprovalRequesterThreadState(
                 : parsed.request.v === 2 ? parsed.request.execution : undefined;
             const uses = readApprovalOperationCredentialUses(currentExecution);
             const credentialUse = uses ? { operationCredentialUses: uses } : {};
-            if (execution.errorCode === OUTCOME_UNKNOWN) return { kind: 'uncertain', decidingAccountId, ...credentialUse };
+            if (request.status === 'outcome_unknown' || execution.errorCode === OUTCOME_UNKNOWN) return { kind: 'uncertain', decidingAccountId, ...credentialUse };
             const failure = !execution.ok ? { errorCode: execution.errorCode ?? null }
                 : parsed.family === 'built_in' ? (() => {
                     const domainFailure = readApprovalExecutionFailure(parsed.request);
                     return domainFailure ? { errorCode: domainFailure.errorCode ?? null } : null;
                 })() : null;
             if (failure?.errorCode === OUTCOME_UNKNOWN) return { kind: 'uncertain', decidingAccountId, ...credentialUse };
+            if (failure?.errorCode === 'approval_stale') return { kind: 'stale', decidingAccountId };
             return failure ? { kind: 'failed', decidingAccountId, errorCode: failure.errorCode, ...credentialUse }
                 : { kind: 'done', decidingAccountId, ...credentialUse };
         }

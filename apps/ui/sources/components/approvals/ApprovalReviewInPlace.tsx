@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
@@ -23,11 +26,11 @@ type ApprovalReviewModalProps = CustomModalInjectedProps &
 /**
  * An approval reviewed where it was asked for: the same review and decision controller as the Inbox page
  * (`useApprovalReview`), in a dialog (a bottom sheet on a phone). What is decided fills the body and the
- * decision stays in the card's footer. Who asked and the request's bookkeeping are left to the Inbox page:
- * the person who pressed the control is the one reading this.
+ * decision stays in the card's footer. The requester facts identify who asked and which Account runs it.
  */
 function ApprovalReviewModal(props: ApprovalReviewModalProps) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const { onClose, onDismissed, setChrome } = props;
   const close = React.useCallback(() => {
     onDismissed();
@@ -82,6 +85,24 @@ function ApprovalReviewModal(props: ApprovalReviewModalProps) {
         {review.open && !review.requestNotice ? null : review.requestGroup}
         {review.sections}
         {review.confidential}
+        {review.requesterConfirmationSection}
+        {review.requesterContext}
+        {review.requesterConfirmationSection ? (
+          <View style={styles.recordFooter}>
+            <Text variant="meta" style={styles.recordText}>
+              {t('approvals.requesterRecord')}
+            </Text>
+            <TextLinkButton
+              testID="approvals.in-place.actions-settings"
+              label={t('approvals.requesterActionsSettings')}
+              size="meta"
+              onPress={() => {
+                close();
+                router.push('/settings/actions');
+              }}
+            />
+          </View>
+        ) : null}
         {/* Without card chrome (an embedding host), the decision ends the body. */}
         {setChrome ? null : decision}
       </View>
@@ -186,5 +207,12 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 160,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  recordFooter: {
+    gap: theme.space.s4,
+    alignItems: 'flex-start',
+  },
+  recordText: {
+    color: theme.colors.text.secondary,
   },
 }));

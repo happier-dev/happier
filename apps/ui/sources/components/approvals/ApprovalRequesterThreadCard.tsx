@@ -3,9 +3,13 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
 import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { ApprovalOpenButton } from '@/components/tools/shell/approvals/ApprovalOpenButton';
@@ -16,7 +20,8 @@ import {
 import type { DiscussionRequesterApproval } from '@/sync/domains/artifacts/approvalArtifacts';
 import { t } from '@/text';
 import { resolveAccountActorName, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
-import { ApprovalInlineDecisionBar, ApprovalInlineFields, useInlineApprovalDecision } from './ApprovalInlineDecision';
+import { ApprovalInlineDecisionBar, useInlineApprovalDecision } from './ApprovalInlineDecision';
+import { useInPlaceApprovalReview } from './ApprovalReviewInPlace';
 import { ApprovalOperationActorLine } from './ApprovalOperationActorLine';
 import {
   useApprovalAccountLabel,
@@ -32,9 +37,8 @@ import { resolveApprovalRequesterThreadState } from './approvalRequesterThreadSt
 /**
  * C7 "External write needs confirmation", in the thread that asked: a shared Bot's outward request,
  * the exact operation, and who confirms. A receipt adds "Using <credential>" only from the operation's admitted evidence. Only the person who asked decides:
- * a request the shared review shows whole is approved or declined here, in the Session approval card's anatomy
- * (declared verb, details behind a disclosure, the request page one tap away); anything the page must show
- * (a specialized review, a withheld approval) keeps "Review and confirm…". Everyone else who can read the request sees who can act. Once decided the card is the receipt in
+ * a request opens the shared review in place, with its full page one tap away. Everyone else who can
+ * read the request sees who can act. Once decided the card is the receipt in
  * place: done only with effect evidence, and an unknown effect never reads as success.
  */
 export const ApprovalRequesterThreadCard = React.memo(
@@ -59,6 +63,10 @@ export const ApprovalRequesterThreadCard = React.memo(
       'approve' | 'reject' | null
     >(null);
     const state = resolveApprovalRequesterThreadState(parsed, recordedDecision);
+    const executor = resolveApprovalExecutor(parsed.request);
+    const executionMachineId = executor.kind === 'daemon' ? executor.machineId
+      : executor.kind === 'live_invocation' ? executor.daemonMachineId : null;
+    const executionMachine = useMachinePresenceSummary(props.serverId, executionMachineId);
     const entitled = useApprovalRequesterViewer(subject, props.serverId);
     const viewerName = t('session.collaboration.discussion.attribution.you');
     const knownRequester = useApprovalAccountLabel(
@@ -105,7 +113,16 @@ export const ApprovalRequesterThreadCard = React.memo(
       props.serverId,
       setRecordedDecision,
     );
-    const decidesHere = state.kind === 'open' && entitled && decision.decidesHere;
+    const [reviewRequested, setReviewRequested] = React.useState(false);
+    const review = useInPlaceApprovalReview({
+      approvalId: artifact.id,
+      approvalPending: reviewRequested && (state.kind === 'open' || state.kind === 'stale'),
+      serverId: props.serverId,
+    });
+    const openReview = React.useCallback(() => {
+      setReviewRequested(true);
+      review.reopen();
+    }, [review.reopen]);
     const openPage = React.useCallback(() => {
       router.push(
         buildApprovalHref(
@@ -145,6 +162,8 @@ export const ApprovalRequesterThreadCard = React.memo(
                   text: t('detailPages.approval.requester.thread.canceled'),
                   tone: 'neutral',
                 }
+              : state.kind === 'stale'
+                ? { icon: 'warning-circle', text: t('approvals.staleFailure'), tone: 'neutral' }
               : state.kind === 'failed'
                 ? {
                     icon: 'warning-circle',
@@ -187,10 +206,10 @@ export const ApprovalRequesterThreadCard = React.memo(
             </View>
             <View style={phone ? styles.decisionStacked : styles.decision}>
             <ApprovalInlineDecisionBar
-              decision={decision}
+              decision={{ ...decision, decidesHere: false }}
               testIDPrefix="approval-requester-thread"
               layout={phone ? 'stacked' : 'inline'}
-              onOpenPage={openPage}
+              onOpenPage={openReview}
               openPageLabel={t('detailPages.approval.requester.thread.review')}
             />
             </View>
@@ -207,6 +226,7 @@ export const ApprovalRequesterThreadCard = React.memo(
           </Text>
         )
       ) : outcome ? (
+        <>
         <View
           testID={`approval-requester-thread-receipt-${state.kind}`}
           style={styles.note}
@@ -235,6 +255,12 @@ export const ApprovalRequesterThreadCard = React.memo(
             {outcome.text}
           </Text>
         </View>
+        {state.kind === 'stale' ? <RoundButton
+          testID="approval-requester-thread-review-again"
+          size="small" display="secondary" title={t('approvals.review')}
+          onPress={openReview}
+        /> : null}
+        </>
       ) : null;
 
     return (
@@ -251,12 +277,15 @@ export const ApprovalRequesterThreadCard = React.memo(
               : undefined
         }
         icon={state.kind === 'failed' ? 'warning-circle' : undefined}
-        headerAccessory={decidesHere ? (
+        headerAccessory={(
           <ApprovalOpenButton testID="approval-requester-thread-open" onPress={openPage} />
-        ) : null}
+        )}
         footer={footer}
       >
-        {decidesHere ? <ApprovalInlineFields decision={decision} serverId={props.serverId} collapsed={phone} /> : null}
+        {state.kind === 'open' && executionMachine.reachability === 'unreachable' ? <SurfaceFreshnessLine
+          testID="approval-requester-thread-machine-offline" glyph="cloud-slash"
+          reason={t('approvals.requestMachineOffline', { machine: executionMachine.sentenceName ?? executionMachine.name ?? t('session.thisMachine') })}
+        /> : null}
         {operationUses?.length ? (
           <ApprovalOperationActorLine
             uses={operationUses}

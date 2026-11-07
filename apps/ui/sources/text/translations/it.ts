@@ -19934,6 +19934,8 @@ settingsSession: {
         accessPrivate: 'Solo tu puoi vederla',
         sharingUnknown: "Condivisione sconosciuta",
         sharingUnknownDescription: "Non è stato possibile verificare chi può vedere questa memoria. Non è considerata privata. Il salvataggio è disattivato fino alla verifica.",
+    decisionsFollow: "Decisioni che seguono i tuoi agenti",
+    addDecision: "Aggiungi una decisione",
         reviewChange: "Esamina la modifica",
         accessShared: 'Condivisa',
         writesWithoutAsking: 'salvato senza chiedere',

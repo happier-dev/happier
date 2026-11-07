@@ -2,7 +2,9 @@ import * as React from 'react';
 import * as ReactNative from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ApprovalRequestSchema, encodePlainArtifactStoredContent, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { HappierArtifactRevisionList } from '@happier-dev/plugin-ui/presentation';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -36,6 +38,7 @@ import { createArtifactActionsClient } from './artifactActionsClient';
 import { setActiveServer, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { DocEditProposalV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const initialState = getStorage().getState();
 const artifact: DecryptedArtifact = { id: 'document', title: 'Notes', isDecrypted: true,
@@ -81,6 +84,38 @@ async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], set
 }
 
 describe('Artifact History continuity', () => {
+    it.each([900, 390])('explains unavailable comparison without reading a foreign Home current Doc (%s)', async width => {
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+        const served = await serveActionHomes({ homes: [
+            { key: 'b', serverUrl: 'https://history-unavailable-b.test', accountId: 'reader-b', currentAccount: true },
+            { key: 'a', serverUrl: 'https://history-unavailable-a.test', accountId: 'reader-a', currentAccount: true },
+        ], route: request => request.path.endsWith('/revisions') ? Response.json({ retentionCount: 10, revisions: [2, 1].map(bodyVersion => ({
+            bodyVersion, body: encodePlainArtifactStoredContent({ body: `B earlier prose ${bodyVersion}` }), createdAt: bodyVersion, sizeBytes: 20,
+        })) }) : request.path === '/v1/artifacts/document' ? Response.json(storedHead) : undefined });
+        disposeHome = served.dispose;
+        await served.restoreActiveConnection();
+        getStorage().getState().addArtifact({ ...artifact, title: 'Foreign A title', body: 'Foreign A body' });
+        const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+        await act(async () => showArtifactHistorySheet({ artifactId: 'document', name: 'B notes', canRestore: false,
+            compareFromBodyVersion: 1, client: createArtifactActionsClient({ serverId: served.homes.b!.id, accountId: 'reader-b' }) }));
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'artifact-history:compare-unavailable')?.props)
+                .toMatchObject({ kind: 'unavailable', title: 'artifacts.browser.history.compareUnavailable',
+                    reason: 'artifacts.browser.history.compareCurrentUnavailable' });
+        });
+        expect(screen.findAllByType(ProseDiffViewer)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('B earlier prose 1');
+        expect(screen.getTextContent()).not.toContain('Foreign A');
+        // The Action's admission and retained-body reader each read B's head. History adds no Doc read.
+        const headReads = served.requests.filter(request => request.path === '/v1/artifacts/document');
+        expect(headReads.map(request => [request.home, request.accountId])).toEqual([['b', 'reader-b'], ['b', 'reader-b']]);
+        if (width === 390) await screen.pressByTestIdAsync('artifact-history:versions');
+        await screen.pressByTestIdAsync('artifact-history:version:2');
+        expect(screen.getTextContent()).toContain('B earlier prose 2');
+        expect(served.requests.filter(request => request.path === '/v1/artifacts/document')).toEqual(headReads);
+        expect(served.requests.filter(request => request.path.endsWith('/revisions')).map(request => [request.home, request.accountId]))
+            .toEqual([['b', 'reader-b']]);
+    });
     it('does not fetch retained binary History from a different active Home', async () => {
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 900, height: 900, scale: 1, fontScale: 1 });
         const reference = { blobId: 'dd983306-d7e5-4ce6-a09c-d33f1a4828a1', mime: 'application/octet-stream', sizeBytes: 1, sha256: 'a'.repeat(64) };
@@ -96,8 +131,7 @@ describe('Artifact History continuity', () => {
         const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
         await act(async () => showArtifactHistorySheet({ artifactId: 'document', name: 'B file', canRestore: false,
             client: createArtifactActionsClient({ serverId: served.homes.b!.id, accountId: 'reader-b' }) }));
-        await flushHookEffects();
-        expect(screen.findByTestId('artifact:download')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('artifact:download')).not.toBeNull());
         await screen.pressByTestIdAsync('artifact:download');
         await vi.waitFor(() => expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull());
         expect(served.requests.filter(request => request.home === 'a' && request.path.startsWith('/v1/artifacts/document'))).toEqual([]);
@@ -149,11 +183,12 @@ describe('Artifact History continuity', () => {
             proposal={proposal} disposition={{ state: 'open' }} viewerAccountId={scope.accountId} resolveAccountLabel={() => null} /></ModalProvider>);
         await vi.waitFor(() => expect(screen.findByTestId('captured-proposal.compare')).not.toBeNull());
         await screen.pressByTestIdAsync('captured-proposal.compare');
-        await flushHookEffects();
-        expect(served.requests.filter(request => request.path.endsWith('/revisions')).map(request => [request.home, request.accountId]))
-            .toEqual([['b', 'reader-b']]);
-        expect(screen.findAllByType(ProseDiffViewer).find(node => node.props.testID === 'artifact-history:changes')?.props)
-            .toMatchObject({ oldText: 'B original prose', newText: 'B current prose' });
+        await waitForHomeGovernance(() => {
+            expect(served.requests.filter(request => request.path.endsWith('/revisions')).map(request => [request.home, request.accountId]))
+                .toEqual([['b', 'reader-b']]);
+            expect(screen.findAllByType(ProseDiffViewer).find(node => node.props.testID === 'artifact-history:changes')?.props)
+                .toMatchObject({ oldText: 'B original prose', newText: 'B current prose' });
+        });
         expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ chrome: expect.objectContaining({ subtitle: 'B notes' }) }));
         expect(screen.getTextContent()).not.toContain('Foreign');
         expect(getActiveServerSnapshot().serverId).toBe(served.homes.a!.id);
@@ -207,6 +242,17 @@ describe('Artifact History continuity', () => {
             expect(screen.findAllByType(HappierArtifactRevisionList).map(list => list.props.selectedVersion)).toEqual(width === 900 ? [1] : []);
             await act(async () => { Modal.hideAll(); await disposeHome?.(); disposeHome = undefined; });
         }
+    });
+
+    it.each([true, false])('explains when the reviewed version is no longer retained, with other earlier versions: %s', async hasEarlierVersions => {
+        const retained = { retentionCount: 2, revisions: revisions.revisions.filter(revision => hasEarlierVersions ? revision.bodyVersion !== 1 : revision.bodyVersion === 3) };
+        const { screen } = await setup(request => request.path.endsWith('/revisions') ? Response.json(retained) : undefined, undefined, 900, 1);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('artifact-history:loading')).toBeNull());
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'artifact-history:compare-unavailable')?.props)
+            .toMatchObject({ kind: 'unavailable', reason: 'artifacts.browser.history.compareReviewedUnavailable' });
+        expect(screen.findAllByType(ProseDiffViewer)).toHaveLength(0);
+        if (hasEarlierVersions) expect(screen.getTextContent()).toContain('Notes 2');
+        else expect(screen.findByTestId('artifact-history:preview')).toBeNull();
     });
 
     it('uses the body measured during initial loading at 200% text size and retains the selected revision', async () => {
@@ -324,7 +370,7 @@ describe('Artifact History continuity', () => {
             : request.path.endsWith('/restore') ? Response.json({ success: false, error: 'version-mismatch' }) : undefined);
         await screen.pressByTestIdAsync('artifact-history:version:1');
         await screen.pressByTestIdAsync('artifact-history:restore');
-        await flushHookEffects();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('artifacts.browser.history.restoreFailed'));
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Notes 1');
         expect(screen.getTextContent()).toContain('artifacts.browser.history.restoreFailed');

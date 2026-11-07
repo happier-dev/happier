@@ -5,7 +5,6 @@ import type { TranscriptAccountActor } from '@happier-dev/session-core/messages'
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useKnownAccountActor } from '@/components/account/useKnownAccountActor';
 import { resolveAccountActorPresentation, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -78,6 +77,8 @@ export const ApprovalRequesterConfirmationSection = React.memo(
       serverId: string | null;
       requesterAccountActor?: TranscriptAccountActor | null;
       decidingAccountActor?: TranscriptAccountActor | null;
+      /** The exact Action identified by the parsed approval request. */
+      actionId?: string;
       open: boolean;
       decision: Readonly<{
         kind: 'approve' | 'reject';
@@ -101,6 +102,10 @@ export const ApprovalRequesterConfirmationSection = React.memo(
       'value',
       props.decidingAccountActor,
     );
+    const executor = useApprovalAccountLabel(
+      serverId,
+      props.subject.executionAccountId,
+    );
     const requesterName = requester ?? resolveUnknownAccountActorName('value');
     const description = !props.open
       ? undefined
@@ -123,6 +128,37 @@ export const ApprovalRequesterConfirmationSection = React.memo(
           mode="info"
           showChevron={false}
         />
+        <Item
+          testID="approvals.requester-confirmation.runs-as"
+          title={t('approvals.requesterRunsAs')}
+          detail={executor ?? resolveUnknownAccountActorName('value')}
+          mode="info"
+          showChevron={false}
+        />
+        {props.operationCredentialUses?.length ? (
+          <Item
+            testID="approvals.requester-confirmation.writes-with"
+            title={t('approvals.requesterWritesWith')}
+            mode="info"
+            showChevron={false}
+            bottomElementOutsidePressable
+            bottomElement={
+              <ApprovalOperationActorLine
+                uses={props.operationCredentialUses}
+                serverId={serverId ?? props.subject.personaSessionRef.serverId}
+              />
+            }
+          />
+        ) : null}
+        {props.actionId ? (
+          <Item
+            testID="approvals.requester-confirmation.action"
+            title={t('approvals.requesterAction')}
+            detail={props.actionId}
+            mode="info"
+            showChevron={false}
+          />
+        ) : null}
         {props.decision && decider ? (
           <Item
             testID="approvals.requester-confirmation.decided-by"
@@ -144,14 +180,6 @@ export const ApprovalRequesterConfirmationSection = React.memo(
             mode="info"
             showChevron={false}
           />
-        ) : null}
-        {props.operationCredentialUses?.length ? (
-          <SectionContentRow>
-            <ApprovalOperationActorLine
-              uses={props.operationCredentialUses}
-              serverId={serverId ?? props.subject.personaSessionRef.serverId}
-            />
-          </SectionContentRow>
         ) : null}
       </ItemGroup>
     );

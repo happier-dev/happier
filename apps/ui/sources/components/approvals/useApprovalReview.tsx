@@ -504,7 +504,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
           }
         }
         if (isVersionConflict) Modal.alert(t('common.error'), err.message);
-        else alertApprovalFailure(err);
+        else if (!isStaleDecision) alertApprovalFailure(err);
       } finally {
         decisionInFlightRef.current = false;
         setIsDeciding(false);
@@ -801,6 +801,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const requesterConfirmationSection = requesterConfirmation ? (
     <ApprovalRequesterConfirmationSection
       subject={requesterConfirmation}
+      actionId={parsed.kind === 'built_in' ? parsed.request.actionId
+        : parsed.kind === 'target' ? parsed.request.qualifiedActionId : undefined}
       serverId={approvalServerId}
       requesterAccountActor={requesterAccountActor}
       decidingAccountActor={decidingAccountActor}

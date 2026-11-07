@@ -20,10 +20,14 @@ import { Popover } from '@/components/ui/popover';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { showArtifactHistorySheet } from '@/components/artifacts/ArtifactHistorySheet';
+import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { MemoryCreationReceipt } from '@/sync/ops/promptLibrary/memoryDocuments';
 import { t } from '@/text';
 
 import { MemoryDuplicateChoice } from './MemoryDocumentBody';
+import { MemoryDuplicateSavedFact } from './MemoryDuplicateSavedFact';
 import { SaveMemoryDecisionSaved } from './SaveMemoryDecisionSaved';
 import {
   memoryDecisionChosenLabel,
@@ -94,6 +98,10 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
     ? targets.find(row => memoryDecisionTargetId(row.target) === memoryDecisionTargetId(selectedTarget)) ?? null
     : null;
   const chosenLabel = memoryDecisionChosenLabel(model);
+  // A saved fact the review is looking at, in place of the form; everything typed and chosen stays.
+  const [viewingFactId, setViewingFactId] = React.useState<string | null>(null);
+  const viewing = review && review.candidates.some((entry) => entry.factId === viewingFactId) ? viewingFactId : null;
+  const { binding: reviewScope } = useServerCredentialAccountScopeBinding(review?.ref.serverId);
 
   const expiryOptions = React.useMemo(
     (): ReadonlyArray<SegmentedChoiceOption<Expiry>> => [
@@ -145,6 +153,13 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             testID="save-memory-decision.conflict"
             tone="warning"
             reason={t('memoryContext.memory.sheetConflict')}
+            action={review?.ref.serverId && reviewScope ? { label: t('memoryContext.memory.reviewChange'),
+              testID: 'save-memory-decision.conflict-action', onPress: () => showArtifactHistorySheet({
+              artifactId: review.ref.artifactId,
+              canRestore: false,
+              compareFromBodyVersion: review.revision.bodyVersion,
+              client: createArtifactActionsClient(reviewScope),
+            }) } : undefined}
           />
         ) : notice === 'disclosure' ? (
           <SurfaceFreshnessLine
@@ -173,6 +188,18 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             onDone={props.onSaved}
           />
         ) : null}
+        {review && viewing ? (
+          <MemoryDuplicateSavedFact
+            testID="save-memory-decision.savedFact"
+            review={review}
+            factId={viewing}
+            serverId={review.ref.serverId ?? ''}
+            viewerAccountId={null}
+            onBack={() => setViewingFactId(null)}
+          />
+        ) : null}
+        {/* The form stays mounted while a saved fact is open, so its fields and choices come back as left. */}
+        <View style={viewing ? styles.hidden : styles.formFields}>
         {review ? (
           <MemoryDuplicateChoice
             testID="save-memory-decision.duplicate"
@@ -182,6 +209,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             onCandidateChange={setCandidateId}
             choice={choice}
             onChoiceChange={setChoice}
+            onViewCandidate={setViewingFactId}
             disabled={busy}
           />
         ) : null}
@@ -244,6 +272,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             }}
           />
         ) : null}
+        </View>
       </ScrollView>
       <View style={styles.footer}>
         <Text style={[styles.meta, styles.approval]} numberOfLines={1}>
@@ -355,6 +384,9 @@ const styles = StyleSheet.create((theme) => ({
   meta: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
   scroll: { flexShrink: 1 },
   body: { paddingHorizontal: theme.space.s16, gap: theme.space.s12 },
+  // The form's own fields keep the body's rhythm inside their wrapper.
+  formFields: { gap: theme.space.s12 },
+  hidden: { display: 'none' },
   source: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
   footer: {
     flexDirection: 'row',

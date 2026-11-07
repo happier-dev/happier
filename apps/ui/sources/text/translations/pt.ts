@@ -20038,6 +20038,8 @@ settingsSession: {
         accessPrivate: 'Só você pode ver',
         sharingUnknown: "Partilha desconhecida",
         sharingUnknownDescription: "Não foi possível verificar quem pode ver esta memória. Não é considerada privada. Guardar está desativado até à verificação.",
+    decisionsFollow: "Decisões que seus agentes seguem",
+    addDecision: "Adicionar uma decisão",
         reviewChange: "Rever a alteração",
         accessShared: 'Compartilhada',
         writesWithoutAsking: 'salvo sem perguntar',

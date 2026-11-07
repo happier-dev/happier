@@ -19547,6 +19547,8 @@ settingsSession: {
         accessPrivate: '仅你可见',
         sharingUnknown: "共享状态未知",
         sharingUnknownDescription: "无法确认谁能查看此记忆。它不会被视为私密内容，确认前无法保存。",
+    decisionsFollow: "代理遵循的决策",
+    addDecision: "添加决策",
         reviewChange: "查看更改",
         accessShared: '已共享',
         writesWithoutAsking: '无需询问即保存',

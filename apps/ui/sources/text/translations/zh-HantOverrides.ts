@@ -14899,6 +14899,8 @@ settingsSession: {
         accessPrivate: '僅你可見',
         sharingUnknown: "共享狀態未知",
         sharingUnknownDescription: "無法確認誰能查看此記憶。它不會被視為私人內容，確認前無法儲存。",
+    decisionsFollow: "代理遵循的決策",
+    addDecision: "新增決策",
         reviewChange: "檢視變更",
         accessShared: '已分享',
         writesWithoutAsking: '無需詢問即儲存',

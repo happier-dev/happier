@@ -19806,6 +19806,8 @@ settingsSession: {
         accessPrivate: 'Visible par toi seul',
         sharingUnknown: "Partage inconnu",
         sharingUnknownDescription: "Impossible de vérifier qui peut voir cette mémoire. Elle n’est pas considérée comme privée. L’enregistrement est désactivé en attendant.",
+    decisionsFollow: "Les décisions que suivent vos agents",
+    addDecision: "Ajouter une décision",
         reviewChange: "Examiner la modification",
         accessShared: 'Partagée',
         writesWithoutAsking: 'enregistré sans demander',

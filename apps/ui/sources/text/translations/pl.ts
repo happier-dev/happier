@@ -19757,6 +19757,8 @@ settingsSession: {
         accessPrivate: 'Tylko ty ją widzisz',
         sharingUnknown: "Udostępnianie nieznane",
         sharingUnknownDescription: "Nie udało się sprawdzić, kto widzi tę pamięć. Nie jest traktowana jako prywatna. Zapisywanie pozostaje wyłączone do czasu sprawdzenia.",
+    decisionsFollow: "Decyzje, którymi kierują się Twoi agenci",
+    addDecision: "Dodaj decyzję",
         reviewChange: "Przejrzyj zmianę",
         accessShared: 'Udostępniona',
         writesWithoutAsking: 'zapisywane bez pytania',

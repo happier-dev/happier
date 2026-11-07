@@ -1,5 +1,6 @@
 import {
   MEMORY_ARCHIVE_TOPIC_TITLE_V1,
+  isMemoryFactRenewableV1,
   type MemoryFactV1,
 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '@happier-dev/plugin-ui/advanced';
@@ -13,6 +14,7 @@ import { View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
@@ -34,6 +36,7 @@ import type { MemorySearchScope } from '@happier-dev/protocol/memory/memorySearc
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 
 import { MemoryDocumentBody, memoryTopicLabel } from './MemoryDocumentBody';
 import { MemoryFactDetail } from './MemoryFactDetail';
@@ -121,7 +124,7 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
     ? (view?.topic?.summary ?? '')
     : project ? t('memoryContext.memory.projectPageDescription', { project: project.name })
     : t('memoryContext.memory.pageDescription');
-  // Who can see it and what this reader may do, from the admitted audience; unknown says nothing.
+  // Who can see it and what this reader may do, from the admitted audience.
   const meta = React.useMemo((): PageHeaderMetaFact[] => {
     const facts: PageHeaderMetaFact[] = [];
     // The Project is known before its memory is read, so its line holds while the rest arrives.
@@ -133,6 +136,13 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
         testID: 'memory-document.scope',
       });
     if (!view) return facts;
+    if (view.shared === null) {
+      facts.push({ key: 'audience', icon: 'question', text: t('memoryContext.memory.sharingUnknown'),
+        testID: 'memory-document.audience' });
+      facts.push({ key: 'retry-audience', text: t('common.retry'), onPress: () => {
+        fireAndForget(source.refresh(), { tag: 'MemoryDocumentScreen.retryAudience' });
+      }, testID: 'memory-document.retryAudience' });
+    }
     // Project placement says nothing about which principals hold Artifact grants.
     if (view.shared === true)
       facts.push({
@@ -160,7 +170,7 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
         testID: 'memory-document.access',
       });
     return facts;
-  }, [documentAccess, project, view]);
+  }, [documentAccess, project, view, source.refresh]);
   const selectedFact = React.useMemo(
     () =>
       props.factId
@@ -216,9 +226,10 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
   ) : undefined;
   // Sharing is the document's own share sheet, offered to whoever may change who sees it.
   const canShare = !props.topic && (documentAccess === 'owner' || documentAccess === 'admin');
-  const share = React.useCallback(() => {
+  const share = React.useCallback((event?: unknown) => {
     if (!view) return;
     showDocumentShareSheet({
+      anchor: resolvePressTriggerAnchor(event),
       artifactId: props.artifactId,
       kind: null,
       name: view.title,
@@ -245,6 +256,11 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
       composing={composing}
       onComposingChange={setComposing}
       emptyText={t('memoryContext.memory.empty')}
+      renderEmpty={props.topic ? undefined : ({ testID }) => <SurfaceStateCard
+        testID={testID} kind="empty" title={t('memoryContext.memory.decisionsFollow')}
+        action={canRemember ? { testID: 'memory-document.add-decision', label: t('memoryContext.memory.addDecision'),
+          onPress: () => setComposing(true) } : undefined}
+      />}
       onOpenSession={openSession}
       // Beside the detail the selection moves in place; a phone pushes the fact's own page.
       onOpenFact={(fact) => openFact(fact, split)}
@@ -267,6 +283,7 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
       {props.topic ? (
         <ItemGroup
           title={t('memoryContext.memory.factsTitle')}
+          titleAccessory={view ? <ManagedSectionCount count={view.facts.length} /> : undefined}
           actionLayout="trailing"
           // Facts sit in their own slots; the group still knows how many can be selected.
           selectableItemCountOverride={view?.facts.length ?? 0}
@@ -280,6 +297,7 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
           testID="memory-document.search"
           serverId={serverId ?? ''}
           scope={project.searchScope}
+          scopeName={project.name}
           autoFocus={false}
           placement="page"
           placeholder={t('memoryContext.memory.searchProjectPlaceholder', { project: project.name })}
@@ -345,7 +363,9 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
                   onOpenSession={openSession}
                   onOpenDiscussion={openDiscussion}
                   // Beside the list the form opens in place; a phone's fact page returns to the list to edit.
-                  onEdit={canRemember ? () => openFact(split ? selectedFact : null, true, selectedFact.id) : undefined}
+                  onEdit={canRemember || (archive && Boolean(source.target) && !readOnly
+                    && isMemoryFactRenewableV1(selectedFact, nowMs))
+                    ? () => openFact(split ? selectedFact : null, true, selectedFact.id) : undefined}
                 />
               )}
             </FactDetailChrome>
@@ -358,7 +378,9 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
             <SurfaceStateCard testID="memory-document.factDetail.loading" kind="loading" title={t('common.loading')} />
           </ItemList>
         ) : null}
-        stackedPane="detail"
+        // Stacked, an edit requested from the fact (its form lives in the list) shows the list; a wide
+        // window that narrows mid-edit otherwise keeps the auto-selected fact's page over the form.
+        stackedPane={props.editFactId ? 'list' : 'detail'}
       />
     </View>
   );

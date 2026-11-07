@@ -19880,6 +19880,8 @@ settingsSession: {
         accessPrivate: 'Видите только вы',
         sharingUnknown: "Доступ неизвестен",
         sharingUnknownDescription: "Не удалось проверить, кто видит эту память. Она не считается личной. Сохранение отключено до проверки.",
+    decisionsFollow: "Решения, которым следуют ваши агенты",
+    addDecision: "Добавить решение",
         reviewChange: "Посмотреть изменение",
         accessShared: 'Общая',
         writesWithoutAsking: 'сохраняется без запроса',

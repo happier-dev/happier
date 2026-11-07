@@ -15,6 +15,7 @@ import type { DecryptedArtifact } from './artifactTypes';
 export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
     id?: string;
     serverId?: string;
+    serverIdentityId?: string;
     discussionId?: string;
     originMessageId?: string;
     requestRef?: string;
@@ -24,25 +25,27 @@ export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
     origin?: CoordinationMessageRefV1 | null;
     summary?: string;
     preview?: unknown;
+    actionId?: 'session.title.set' | 'session.stop';
     settle?: (request: ApprovalRequestV2) => ApprovalRequestV2;
 }> = {}): Extract<DecryptedArtifact, { isDecrypted: true }> {
     const serverId = input.serverId ?? 'server-1';
+    const serverIdentityId = input.serverIdentityId ?? 'stable-home';
     const botSessionId = input.botSessionId ?? 's1';
     const executionAccountId = input.executionAccountId ?? 'alice';
     const requestRef = input.requestRef ?? 'bob-input';
-    const actionId = 'session.title.set' as const;
-    const actionArgs = { sessionId: botSessionId, title: 'Release 0.3' };
+    const actionId = input.actionId ?? 'session.title.set';
+    const actionArgs = actionId === 'session.stop' ? { sessionId: botSessionId } : { sessionId: botSessionId, title: 'Release 0.3' };
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
     const caller = { kind: 'session' as const, sessionId: botSessionId, starterDepth: 0, turnDepth: 0 };
     const target = { kind: 'session' as const, sessionId: botSessionId };
     const context: ActionExecutorContext = {
         surface: 'agent', authority: 'account_automation', runtimeAccountId: executionAccountId,
-        defaultSessionId: botSessionId, serverId, serverIdentityId: 'stable-home', actionRequestId: 'action-1',
+        defaultSessionId: botSessionId, serverId, serverIdentityId, actionRequestId: 'action-1',
         actionCaller: caller, callerPermissionMode: 'yolo',
         sessionInputSource: { sourceSessionId: botSessionId, sourceTurnId: 'turn-1', via: 'action' },
         externalActionTarget: target,
         externalActionExecutionAuthorization: { v: 1, token: 'home-admitted-source', binding: {
-            serverIdentityId: 'stable-home', accountId: executionAccountId, custodianAccountId: executionAccountId,
+            serverIdentityId, accountId: executionAccountId, custodianAccountId: executionAccountId,
             machineId: 'machine-1', installationId: 'installation', actionId, requestId: 'action-1', target,
             authentication: { kind: 'account', tokenEpoch: 0 },
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-1', target, input: actionArgs }),

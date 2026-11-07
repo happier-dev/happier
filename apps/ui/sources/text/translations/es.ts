@@ -19932,6 +19932,8 @@ settingsSession: {
         accessPrivate: 'Solo tú puedes verla',
         sharingUnknown: "Uso compartido desconocido",
         sharingUnknownDescription: "No se pudo comprobar quién puede ver esta memoria. No se considera privada. No se puede guardar hasta comprobarlo.",
+    decisionsFollow: "Decisiones que siguen tus agentes",
+    addDecision: "Añadir una decisión",
         reviewChange: "Revisar el cambio",
         accessShared: 'Compartida',
         writesWithoutAsking: 'se guarda sin preguntar',

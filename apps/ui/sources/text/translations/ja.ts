@@ -19842,6 +19842,8 @@ settingsSession: {
         accessPrivate: 'あなただけが見られます',
         sharingUnknown: "共有状態が不明",
         sharingUnknownDescription: "このメモリを閲覧できる人を確認できませんでした。非公開とは扱われません。確認できるまで保存は無効です。",
+    decisionsFollow: "エージェントが従う決定",
+    addDecision: "決定を追加",
         reviewChange: "変更を確認",
         accessShared: '共有中',
         writesWithoutAsking: '確認なしで保存',

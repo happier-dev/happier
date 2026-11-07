@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -13,6 +14,11 @@ import {
   type MemoryDuplicateChoiceRequiredV1,
 } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
+import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
+import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import type { Socket } from 'socket.io-client';
+import { createArtifactBodyUpdateFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import {
   PROMPT_LIBRARY_ROWS_ROUTE_V1,
   PromptLibraryCatalogKeyV1Schema,
@@ -25,13 +31,14 @@ import {
   ProjectAccountRowMutationRequestV1Schema,
   PROJECT_ACCOUNT_ROWS_ROUTE_V1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { V2SessionRecordSchema } from '@happier-dev/protocol';
+import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   createMachineFixture,
   createPlainMachineRowFixture,
 } from '@/dev/testkit/fixtures/machineFixtures';
-import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
@@ -60,6 +67,7 @@ import { HappierDisclosure } from '@happier-dev/plugin-ui/presentation';
 import { readPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import type { MemoryDocumentSource } from './useMemoryDocument';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -99,9 +107,12 @@ vi.mock('socket.io-client', async (importOriginal) =>
 
 // HTTP, persistence, device credentials and the reachable cold Socket transport are the boundaries.
 // The memory hook, Actions front door, codecs, admission and Artifact CAS owners stay real.
-installDisconnectedServerSocketBoundary((socket) => {
+const memorySockets: Array<Readonly<{ socket: Socket; serverUrl: string | undefined }>> = [];
+function configureMemorySocket(socket: Socket, serverUrl?: string) {
   configureConnectedServerSocketBoundary(socket);
-});
+  memorySockets.push({ socket, serverUrl });
+}
+installDisconnectedServerSocketBoundary(configureMemorySocket);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
@@ -156,6 +167,7 @@ beforeEach(async ({ signal }) => {
     serverUrl: 'https://memory-body.test',
     accountId: 'account-a',
     request: homes.request,
+    configureSocket: configureMemorySocket,
   });
   installHomeGovernanceBoundaries(homes);
   const scope = { serverId, accountId: 'account-a' };
@@ -188,9 +200,10 @@ function selectSummaryDaemon(
   homeId: string,
   serverIdentityId: string,
   accountId = 'account-a',
+  machineId = 'memory-machine',
 ) {
   const machine = createMachineFixture({
-    id: 'memory-machine',
+    id: machineId,
     activeAt: Date.now(),
   });
   // Real inventory refresh must retain the same explicitly selected daemon.
@@ -277,6 +290,38 @@ async function settleInitialArtifactInventory() {
   // measuring the separate document-body read, rather than waiting for a viewer.
   await sync.fetchArtifactsList({ signal: caseSignal });
   expect(storage.getState().artifactsLoaded).toBe(true);
+}
+/** Count physical body demand across both authenticated Artifact read forms. */
+function bodyReadsSince(start: number): string[] {
+  return homes.requests.slice(start).flatMap(request => {
+    if (request.path === '/v1/artifacts/read') {
+      const input = ArtifactReadBatchHttpInputV1Schema.parse(request.input);
+      return 'projection' in input ? [] : input.artifactIds;
+    }
+    const match = /^\/v1\/artifacts\/([^/]+)$/.exec(request.path);
+    return match && request.method === 'GET' ? [decodeURIComponent(match[1]!)] : [];
+  });
+}
+async function deliverMemoryBodyUpdate(ref: PromptDocArtifactRefV1) {
+  const boundary = homes.artifacts(ref.serverId ?? serverId);
+  const row = boundary.read(ref.artifactId);
+  if (!row) throw new Error('Expected a committed Memory Artifact');
+  const cursorResponse = await boundary.handle('/v2/cursor');
+  if (!cursorResponse?.ok) throw new Error('Expected the committed Home Account cursor');
+  const { cursor } = CurrentCursorResponseSchema.parse(await cursorResponse.json());
+  const packet = createArtifactBodyUpdateFixture(row, cursor);
+  const home = getServerProfileById(ref.serverId ?? serverId);
+  if (!home) throw new Error('Expected the qualified Memory Home');
+  // Sync uses Socket.onAny. Deliver through that real network listener on this exact Home.
+  const readSocket = () => memorySockets.slice().reverse().find(candidate => candidate.socket.connected && candidate.serverUrl
+    && canonicalizeServerUrl(candidate.serverUrl) === canonicalizeServerUrl(home.serverUrl)
+    && candidate.socket.listenersAny().length > 0)?.socket;
+  await settled(() => expect(readSocket(), 'The restored Home must have its real Sync update listener').toBeDefined());
+  const socket = readSocket();
+  if (!socket) throw new Error('Expected the qualified Home Socket');
+  await act(async () => {
+    await Promise.all(socket.listenersAny().map(listener => listener('update', packet)));
+  });
 }
 function storedBody(ref: PromptDocArtifactRefV1): MemoryDocBodyV1 {
   return MemoryDocBodyV1Schema.parse(
@@ -550,6 +595,134 @@ it.each(['private', 'grant', 'public', 'unknown'] as const)(
   },
 );
 
+it('invites a first decision on an empty Memory page and opens the existing draft', async () => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [], topics: [] });
+  const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+    <MemoryDocumentScreen artifactId={ref.artifactId} serverId={serverId} />
+  </InjectedAuthProvider>);
+  await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+  await screen.pressByTestIdAsync('memory-document.add-decision');
+  expect(screen.findByTestId('memory-document.draft')).toBeTruthy();
+  await screen.unmount();
+});
+
+it('explains an unknown audience, keeps saving unavailable and retries the admitted audience read', async () => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'Keep this decision.')], topics: [] });
+  const grantsPath = `/v1/artifacts/${ref.artifactId}/access/grants`;
+  homes.answer(serverId, grantsPath, { status: 503, body: { error: 'database_connection_unavailable' } });
+  const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+    <MemoryDocumentScreen artifactId={ref.artifactId} serverId={serverId} />
+  </InjectedAuthProvider>);
+  await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+  expect(screen.findByTestId('memory-document.sharingUnknown')).toBeTruthy();
+  expect(screen.findByTestId('memory-document.remember')).toBeNull();
+  const reads = homes.requests.filter(request => request.path === grantsPath).length;
+  const retry = screen.findByTestId('memory-document.retryAudience')!.find(node => typeof node.props?.onPress === 'function');
+  await act(async () => { await retry.props.onPress(); });
+  await settled(() => expect(homes.requests.filter(request => request.path === grantsPath).length).toBeGreaterThan(reads));
+  expect(screen.findByTestId('memory-document.remember')).toBeNull();
+  await screen.unmount();
+});
+
+it('does not reread a cold displayed Memory when its unchanged inventory header arrives', async () => {
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'Verify payment signatures.')], topics: [] });
+  // Model a direct URL before the header inventory arrives, rather than seeding beyond the read boundary.
+  storage.setState({ artifacts: {} });
+  const start = homes.requests.length;
+  const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  expect(hook.getCurrent().view?.facts).toMatchObject([{ id: 'one' }]);
+  await act(async () => { await settleInitialArtifactInventory(); });
+  expect(storage.getState().artifacts[ref.artifactId]).toMatchObject({ headerVersion: 1, access: 'owner' });
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  expect(bodyReadsSince(start)).toEqual([ref.artifactId]);
+  expect(homes.requests.slice(start).filter(request => request.path === `/v1/artifacts/${ref.artifactId}/access/grants`)).toHaveLength(1);
+  await hook.unmount();
+});
+
+it('opens only the displayed Memory body for a permitted non-owner reader', async () => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [fact('permitted', 'Keep the shared policy.')], topics: [] });
+  // The real Artifact boundary admits this reader by its stored grant, not by a hand-built read result.
+  const artifacts = homes.artifacts(serverId);
+  artifacts.replaceStoredRow({ ...artifacts.read(ref.artifactId)!, ownerAccountId: 'memory-author' });
+  artifacts.seedAccountGrant(ref.artifactId, 'account-a', 'view');
+  const start = homes.requests.length;
+  const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  expect(hook.getCurrent().view).toMatchObject({ access: 'view', shared: true,
+    facts: [{ id: 'permitted', text: 'Keep the shared policy.' }] });
+  expect(hook.getCurrent().target).toBeNull();
+  expect(bodyReadsSince(start)).toEqual([ref.artifactId]);
+  await hook.unmount();
+});
+
+it('reads one changed Memory body through the real socket wake and ignores unrelated Artifact wakes', async () => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'Keep the original policy.')], topics: [] });
+  const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  const start = homes.requests.length;
+  const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+  await act(async () => {
+    for (let index = 0; index < 5; index++) publishHomeAccountChange(serverId, [`unrelated-${index}`], { changeKinds: ['artifact'] });
+  });
+  expect(bodyReadsSince(start)).toEqual([]);
+  const artifacts = homes.artifacts(serverId);
+  const original = artifacts.read(ref.artifactId)!;
+  if (original.bodyVersion === undefined) throw new Error('Expected the remote body revision');
+  const { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
+  const provenance = await openArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId: original.id,
+    bodyVersion: original.bodyVersion, provenance: original.provenance });
+  // Remote writes must advance the private metadata's bound revision with the body.
+  const privateMetadata = provenance ? { provenance: await sealArtifactPrivateRevisionMetadata({ mode: 'plain',
+    artifactId: original.id, bodyVersion: original.bodyVersion + 1, provenance }),
+    provenanceDataEncryptionKey: original.provenanceDataEncryptionKey } : {};
+  const response = await artifacts.handle(`/v1/artifacts/${ref.artifactId}`, { method: 'POST', body: JSON.stringify({
+    expectedBodyVersion: original.bodyVersion,
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify(MemoryDocBodyV1Schema.parse({
+      v: 1, index: [fact('two', 'Use the revised policy.')], topics: [],
+    })) }), ...privateMetadata,
+  }) });
+  expect(response?.ok).toBe(true);
+  const changed = artifacts.read(ref.artifactId)!;
+  await deliverMemoryBodyUpdate(ref);
+  await settled(() => expect(hook.getCurrent().view?.facts).toMatchObject([{ id: 'two', text: 'Use the revised policy.' }]));
+  expect(storage.getState().artifacts[ref.artifactId]?.bodyVersion).toBe(changed.bodyVersion);
+  expect(bodyReadsSince(start)).toEqual([ref.artifactId]);
+  expect(homes.requests.slice(start).filter(request => request.path === `/v1/artifacts/${ref.artifactId}/access/grants`)).toHaveLength(1);
+  await hook.unmount();
+});
+
+it.each(['reviewed', 'project'] as const)('keeps Memory save preparation (%s) to one body and one fresh exposure read without refreshing the displayed document', async target => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'Verify payment signatures.')], topics: [] });
+  const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  const displayed = hook.getCurrent().view!;
+  if (target === 'project') serveProjectContext(false, false, [{ id: 'project.memory', ref, enabled: true, placement: 'system_append' }]);
+  const executor = createDefaultActionExecutor();
+  const requestStart = homes.requests.length;
+  let prepared: Awaited<ReturnType<typeof executor.prepare>> | undefined;
+  await act(async () => {
+    prepared = await executor.prepare('memory.remember', {
+      ...(target === 'project' ? { scope: 'project' as const, projectRef: { serverId, projectKey: 'project' } }
+        : { ref, expectedRevision: displayed.revision }),
+      text: 'Keep the reviewed webhook policy.',
+    }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } });
+  });
+  expect(prepared).toMatchObject({ kind: 'ready' });
+  await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+  const requests = homes.requests.slice(requestStart);
+  expect(bodyReadsSince(requestStart)).toEqual([ref.artifactId]);
+  expect(requests.filter(request => request.path === `/v1/artifacts/${ref.artifactId}/access/grants`)).toHaveLength(1);
+  expect(hook.getCurrent().view).toBe(displayed);
+  expect(storedBody(ref).index).toHaveLength(1);
+  await hook.unmount();
+});
+
 it.each(['Build', MEMORY_ARCHIVE_TOPIC_TITLE_V1])(
   'reads %s facts and their audience from one admitted body',
   async (topic) => {
@@ -652,7 +825,7 @@ it('refreshes the admitted Memory audience after a grant-only Account change', a
 it.each([
   {
     title:
-      'does not adopt a successor read across replacement credentials for the same Account',
+      'cancels pending Memory reads across bearer renewal while retaining the displayed Account',
     replaceCredentials: true,
   },
   {
@@ -731,7 +904,7 @@ it.each([
     expect(await first).toBe(target);
     expect(reads() - before).toBe(2);
   }
-  expect(originalTarget?.isCurrent()).toBe(!replaceCredentials);
+  expect(originalTarget?.isCurrent()).toBe(true);
   await settled(() => expect(hook.getCurrent().status).toBe('ready'));
   expect(hook.getCurrent().target?.accountId).toBe('account-a');
   expect(hook.getCurrent().target?.isCurrent()).toBe(true);
@@ -810,6 +983,90 @@ it('keeps an honest error with Retry when the chosen Memory Machine fails to ans
   await screen.unmount();
 });
 
+it('says it is offline once and keeps the retained facts, instead of an error with Retry on the counts', async () => {
+  const ref = await seedDocument({
+    v: 1,
+    index: [fact('one', 'One')],
+    topics: [],
+  });
+  await setServerProfileIdentityForUrl(
+    'https://memory-body.test',
+    'srv_memory_body',
+  );
+  selectSummaryDaemon(serverId, 'srv_memory_body');
+  await sync.refreshMachines();
+  machineRpc.mockRejectedValue(new Error('daemon failed'));
+  await act(async () =>
+    storage.getState().setEndpointConnectivity({
+      status: 'offline',
+      reason: null,
+      attempt: 1,
+      nextRetryAt: null,
+      lastConnectedAt: Date.UTC(2026, 9, 28, 10, 40),
+      lastDisconnectedAt: Date.UTC(2026, 9, 28, 10, 42),
+      lastErrorMessage: null,
+    }),
+  );
+  const screen = await renderDocument(ref);
+  await settled(() =>
+    expect(screen.findByTestId('memory.offline')).toBeTruthy(),
+  );
+  expect(screen.getTextContent()).toContain('memoryContext.memory.offlineHeld');
+  expect(screen.getTextContent()).toContain('One');
+  // Retained rows keep full strength: the one offline line carries the state (SurfaceFreshnessLine: rows never dim).
+  const slot = factSlot(screen, 'one');
+  expect(slot).not.toBeNull();
+  const dimmed = slot!.findAll((node) => {
+    const opacity = StyleSheet.flatten(node.props.style)?.opacity;
+    return typeof opacity === 'number' && opacity < 1;
+  });
+  expect(dimmed).toEqual([]);
+  expect(screen.findByTestId('memory.summaryUnavailable')).toBeNull();
+  await screen.unmount();
+});
+
+describe('a save that cannot be written', () => {
+  async function saveWithWriteRefused(offline: boolean) {
+    const ref = await seedDocument({ v: 1, index: [fact('one', 'One')], topics: [] });
+    const screen = await renderDocument(ref, { composing: true });
+    if (offline) {
+      await act(async () =>
+        storage.getState().setEndpointConnectivity({
+          status: 'offline', reason: null, attempt: 1, nextRetryAt: null,
+          lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null,
+        }),
+      );
+    }
+    homes.answer(serverId, 'POST /v1/artifacts/' + ref.artifactId, { status: 500, body: { error: 'write_failed' } });
+    await act(async () => {
+      screen.changeTextByTestId('memory.draft', 'A fact that cannot be saved');
+    });
+    const path = '/v1/artifacts/' + ref.artifactId;
+    const writes = () => homes.requests.filter((request) => request.path === path && request.input !== null).length;
+    const before = writes();
+    await screen.pressByTestIdAsync('memory.draft.save');
+    await settled(() => expect(writes()).toBeGreaterThan(before));
+    // The attempt has ended once the form is editable again.
+    await settled(() => expect(screen.findByType(InlineAddExpander).props.saveDisabled).toBe(false));
+    return screen;
+  }
+
+  it('is told in place when the Home is reachable', async () => {
+    const screen = await saveWithWriteRefused(false);
+    await settled(() => expect(screen.findByTestId('memory.refused')).toBeTruthy());
+    await screen.unmount();
+  });
+
+  it('is part of the one offline line while offline: the draft stays, no second notice', async () => {
+    const screen = await saveWithWriteRefused(true);
+    await flushHookEffects();
+    expect(screen.findByTestId('memory.offline')).toBeTruthy();
+    expect(screen.findByTestId('memory.refused')).toBeNull();
+    expect(screen.findByTestId('memory.draft')).toBeTruthy();
+    await screen.unmount();
+  });
+});
+
 it('says a switched-off memory has no counts, instead of an error with Retry, a Machine choice or invented counts', async () => {
   const ref = await seedDocument({
     v: 1,
@@ -855,7 +1112,7 @@ it('shows unavailable counts instead of a permanent skeleton when the selected d
   await screen.unmount();
 });
 
-it('keeps last-known counts for the same document while a later status read has no answer', async () => {
+it('keeps last-known counts for the same document and preparation basis while a later revision has no status answer', async () => {
   const ref = await seedDocument({
     v: 1,
     index: [fact('one', 'One')],
@@ -902,11 +1159,13 @@ it('keeps last-known counts for the same document while a later status read has 
   ).toContain('7 facts');
   const readsBeforeRefresh = statusReads().length;
   refreshing = true;
-  await screen.update(
-    <InjectedAuthProvider credentials={connection!.credentials}>
-      <Host documentRef={ref} preparationBasis="changed" />
-    </InjectedAuthProvider>,
-  );
+  const current = screen.findByType(MemoryDocumentBody).props.source.target.expectedRevision;
+  await act(async () => {
+    expect(await createDefaultActionExecutor().execute('memory.remember', {
+      ref, expectedRevision: current, text: 'Another fact in the same context.',
+    }, { serverId, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
+  });
+  await deliverMemoryBodyUpdate(ref);
   await settled(() =>
     expect(statusReads().length).toBeGreaterThan(readsBeforeRefresh),
   );
@@ -968,6 +1227,56 @@ it('reads summary status only for a changed Account, custody, target, scope or d
   expect(reads().at(-1)?.[0]).toMatchObject({ machineId: 'successor-machine' });
   await hook.unmount();
   expect(reads().at(-1)?.[0].signal.aborted).toBe(true);
+  await document.unmount();
+});
+
+it('owns last-known counts in the summary reader and retires them with Account custody', async () => {
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'One')], topics: [] });
+  await setServerProfileIdentityForUrl('https://memory-body.test', 'srv_memory_body');
+  selectSummaryDaemon(serverId, 'srv_memory_body');
+  await sync.refreshMachines();
+  const document = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(document.getCurrent().status).toBe('ready'));
+  const source = document.getCurrent();
+  if (!source.view || !source.draftCustody) throw new Error('Expected admitted Memory document');
+  const response = summaryStatus(ref, source.view.revision);
+  machineRpc.mockResolvedValue({ ...response, documents: { ...response.documents, facts: response.documents.facts.slice(1) } });
+  const hook = await renderHook((props: { source: MemoryDocumentSource; basis: string }) =>
+    useMemoryDocumentSummary({ source: props.source, serverId, preparationBasis: props.basis }),
+  { initialProps: { source, basis: 'initial' } });
+  await settled(() => expect(hook.getCurrent()).toMatchObject({ state: 'ready', indexedFactCount: 7 }));
+  machineRpc.mockReturnValue(new Promise(() => {}));
+  const revised = { ...source, view: { ...source.view,
+    revision: { ...source.view.revision, bodyVersion: source.view.revision.bodyVersion + 1 } } };
+  await hook.rerender({ source: revised, basis: 'initial' });
+  expect(hook.getCurrent()).toMatchObject({ state: 'ready', indexedFactCount: 7 });
+  const replacement = { ...revised, draftCustody: { ...source.draftCustody,
+    scope: { ...source.draftCustody.scope, accountId: 'account-b' } } };
+  await hook.rerender({ source: replacement, basis: 'initial' });
+  expect(hook.getCurrent().state).toBe('unavailable');
+  await hook.unmount();
+  await document.unmount();
+});
+
+it('does not present one Machine coverage count while its replacement Machine status is pending', async () => {
+  const ref = await seedDocument({ v: 1, index: [fact('one', 'One')], topics: [] });
+  await setServerProfileIdentityForUrl('https://memory-body.test', 'srv_memory_body');
+  selectSummaryDaemon(serverId, 'srv_memory_body');
+  await sync.refreshMachines();
+  const document = await renderHook(() => useMemoryDocument({ ref, serverId }));
+  await settled(() => expect(document.getCurrent().status).toBe('ready'));
+  const source = document.getCurrent();
+  if (!source.view) throw new Error('Expected admitted Memory document');
+  const response = summaryStatus(ref, source.view.revision);
+  machineRpc.mockResolvedValue({ ...response, documents: { ...response.documents, facts: response.documents.facts.slice(1) } });
+  const hook = await renderHook(() => useMemoryDocumentSummary({ source, serverId }));
+  await settled(() => expect(hook.getCurrent()).toMatchObject({ state: 'ready', indexedFactCount: 7 }));
+  machineRpc.mockReturnValue(new Promise(() => {}));
+  await act(async () => selectSummaryDaemon(serverId, 'srv_memory_body', 'account-a', 'replacement-machine'));
+  await sync.refreshMachines();
+  await settled(() => expect(machineRpc.mock.calls.at(-1)?.[0].machineId).toBe('replacement-machine'));
+  expect(hook.getCurrent()).toMatchObject({ state: 'unavailable', cause: { reason: 'status_pending', target: { machineId: 'replacement-machine' } } });
+  await hook.unmount();
   await document.unmount();
 });
 
@@ -1273,7 +1582,7 @@ describe('MemoryDocumentBody', () => {
       await screen.unmount();
     },
   );
-  it('keeps foreign Context navigation on its admitted Home while its write target is withdrawn', async () => {
+  it('keeps foreign Context navigation on its admitted Home while its write target is withdrawn and the active Home is offline', async () => {
     const original = await seedDocument({
       v: 1,
       index: Array.from({ length: 5 }, (_, i) =>
@@ -1334,6 +1643,12 @@ describe('MemoryDocumentBody', () => {
       screen.findByType(MemoryDocumentBody).props.source.status,
       boundaryDiagnostic(),
     ).toBe('ready');
+    const bodyTestId = screen.findByType(MemoryDocumentBody).props.testID;
+    await act(async () => storage.getState().setEndpointConnectivity({
+      status: 'offline', reason: null, attempt: 1, nextRetryAt: null,
+      lastConnectedAt: 1, lastDisconnectedAt: 2, lastErrorMessage: null,
+    }));
+    expect(screen.findByTestId(`${bodyTestId}.offline`)).toBeNull();
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -1352,6 +1667,7 @@ describe('MemoryDocumentBody', () => {
         expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe(
           status,
         );
+        if (status === 'unavailable') expect(screen.findByTestId(`${bodyTestId}.unavailable`)).not.toBeNull();
         expect(
           screen.findByType(MemoryDocumentBody).props.source.target,
         ).toBeNull();
@@ -1604,6 +1920,31 @@ describe('MemoryDocumentBody', () => {
     });
   });
 
+  it('preserves an unpublished Memory draft when the same Account renews its bearer', async () => {
+    if (!connection) throw new Error('Missing admitted Account fixture');
+    const ref = await seedDocument({ v: 1, index: [fact('one', 'Published fact')], topics: [] });
+    const screen = await renderDocument(ref);
+    const actions: readonly ItemAction[] = screen.findByType(ItemRowActions).props.actions;
+    await act(async () => actions.find(action => action.id === 'edit')!.onPress!());
+    await act(async () => screen.changeTextByTestId('memory.draft', 'Unpublished revision'));
+    // Same parsed principal and identical Plain Account material; only the bearer bytes change.
+    const renewed = { ...connection.credentials, token: connection.credentials.token.replace(/\.[^.]+$/, '.renewed') };
+    const renewal: { rollback: Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>> } = { rollback: null };
+    try {
+      await act(async () => {
+        renewal.rollback = await TokenStorage.setCredentialsForServerUrlWithRollback('https://memory-body.test',
+          { serverId, preserveHistoricalEncryption: true }, renewed);
+      });
+      expect(renewal.rollback).not.toBeNull();
+      await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+      expect(screen.findByTestId('memory.draft')?.props.value).toBe('Unpublished revision');
+      expect(storedBody(ref).index[0]?.text).toBe('Published fact');
+    } finally {
+      await screen.unmount();
+      await renewal.rollback?.rollback();
+    }
+  });
+
   it('retires a mounted memory view and reviewed revision when the same Home replaces its Account', async () => {
     const ref = await seedDocument({
       v: 1,
@@ -1770,6 +2111,39 @@ describe('MemoryDocumentBody', () => {
     },
   );
 
+  it.each(['old', 'displayed'] as const)('qualifies retained Memory custody by the displayed Home after an in-place switch (%s Account changes)', async changedHome => {
+    const original = await seedDocument({ v: 1, index: [fact('private', 'Home-qualified content')], topics: [] });
+    const foreignHome = await homes.addHome({ name: 'Other Memory Home', serverUrl: 'https://memory-custody.test',
+      accountId: 'foreign-a', active: false });
+    homes.answer(foreignHome, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+    const stored = homes.artifacts(serverId).read(original.artifactId)!;
+    const created = await homes.artifacts(foreignHome).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+      id: stored.id, header: stored.header, body: stored.body, dataEncryptionKey: stored.dataEncryptionKey,
+    }) });
+    expect(created?.ok).toBe(true);
+    await homes.addHome({ name: 'Viewing Home', serverUrl: 'https://memory-viewer.test', accountId: 'viewer', active: false });
+    await connection?.dispose();
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://memory-viewer.test', accountId: 'viewer', request: homes.request });
+    const viewingScope = storage.getState().profileScope;
+    installHomeGovernanceBoundaries(homes);
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(homes.request);
+    const hook = await renderHook((ref: PromptDocArtifactRefV1) => useMemoryDocument({ ref, serverId }), { initialProps: original });
+    await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+    const previous = hook.getCurrent();
+    await hook.rerender({ ...original, serverId: foreignHome });
+    await settled(() => expect(hook.getCurrent().target?.accountId).toBe('foreign-a'));
+    expect.soft(previous.target?.isCurrent()).toBe(false);
+    const displayed = hook.getCurrent();
+    expect(displayed.target?.isCurrent()).toBe(true);
+    await act(async () => homes.switchAccount(changedHome === 'old' ? serverId : foreignHome, 'replacement-account'));
+    expect(storage.getState().profileScope).toEqual(viewingScope);
+    expect.soft(displayed.target?.isCurrent()).toBe(changedHome === 'old');
+    expect.soft(displayed.draftCustody?.isCurrent()).toBe(changedHome === 'old');
+    await hook.unmount();
+    expect(displayed.target?.isCurrent()).toBe(false);
+  });
+
   it('retires a foreign Home memory view when its credentials change without changing the focused Account', async () => {
     const original = await seedDocument({
       v: 1,
@@ -1831,6 +2205,8 @@ describe('MemoryDocumentBody', () => {
       status: 503,
       body: { error: 'offline' },
     });
+    // Work projects the admitted rows; the Account Sync owner performs acquisition.
+    await expect(sync.refreshProjectAccountRows()).rejects.toThrow();
     const metadata = {
       machineId: 'machine',
       workspaceId: 'workspace',
@@ -1872,7 +2248,7 @@ describe('MemoryDocumentBody', () => {
     );
     await settled(() =>
       expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe(
-        'loading',
+        'unavailable',
       ),
     );
     expect(screen.findByType(MemoryDocumentBody).props.footer).toBeUndefined();
@@ -1893,10 +2269,8 @@ describe('MemoryDocumentBody', () => {
         ],
       }),
     });
-    const { publishHomeAccountChange } =
-      await import('@/sync/runtime/orchestration/homeAccountChange');
     await React.act(async () => {
-      publishHomeAccountChange(serverId);
+      await sync.refreshProjectAccountRows();
     });
     await settled(() => {
       expect(hook.getCurrent().project.status).toBe('ready');
@@ -1924,6 +2298,7 @@ describe('MemoryDocumentBody', () => {
                 },
                 title: null,
                 kind: 'unknown',
+                presentationStatus: 'loading',
                 on: false,
                 off: null,
                 currentPresentation: () => ({
@@ -1997,11 +2372,12 @@ describe('MemoryDocumentBody', () => {
         <SessionMemorySection session={session} serverId={serverId} />
       </InjectedAuthProvider>,
     );
-    await flushHookEffects();
-    expect(
-      screen.findByTestId('session-work-memory.remember')?.props.disabled,
-      boundaryDiagnostic(),
-    ).toBe(false);
+    await settled(() =>
+      expect(
+        screen.findByTestId('session-work-memory.remember')?.props.disabled,
+        boundaryDiagnostic(),
+      ).toBe(false),
+    );
     await screen.pressByTestIdAsync('session-work-memory.remember');
     await React.act(async () => {
       screen.changeTextByTestId(
@@ -2021,9 +2397,10 @@ describe('MemoryDocumentBody', () => {
       screen.findByTestId('session-work-memory.doc.conflict'),
       boundaryDiagnostic(),
     ).toBeNull();
-    await flushHookEffects();
-    expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe(
-      'ready',
+    await settled(() =>
+      expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe(
+        'ready',
+      ),
     );
     const rows = homes.artifacts(serverId).list();
     expect(rows).toHaveLength(1);
@@ -2101,6 +2478,7 @@ describe('MemoryDocumentBody', () => {
     const project = serveProjectContext(false, true);
     serveAccountContext();
     const ref = await seedDocument({ v: 1, index: [], topics: [] });
+    await sync.refreshProjectAccountRows();
     const metadata = {
       machineId: 'machine',
       workspaceId: 'workspace',
@@ -2475,6 +2853,13 @@ describe('MemoryDocumentBody', () => {
       expect(screen.findByTestId('memory.draft')?.props.value).toBe(
         'Updated preference',
       );
+      // Comparing the version we edited must not discard or resubmit our draft.
+      await screen.pressByTestIdAsync('memory.conflict-action');
+      expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+        props: expect.objectContaining({ artifactId: ref.artifactId,
+          compareFromBodyVersion: target.expectedRevision.bodyVersion, canRestore: false }),
+      }));
+      expect(screen.findByTestId('memory.draft')?.props.value).toBe('Updated preference');
       await screen.pressByTestIdAsync('memory.draft.cancel');
       expect(Boolean(screen.findByTestId('memory.draft'))).toBe(false);
       expect(storedBody(ref)).toEqual(current);
@@ -2858,6 +3243,7 @@ describe('MemoryDocumentBody', () => {
       );
     });
     expect(written, JSON.stringify(written)).toMatchObject({ ok: true });
+    await deliverMemoryBodyUpdate(ref);
     await settled(() =>
       expect(
         screen.findByType(MemoryDocumentBody).props.source.view.facts,
@@ -2912,6 +3298,7 @@ describe('MemoryDocumentBody', () => {
       );
     });
     expect(concurrent, JSON.stringify(concurrent)).toMatchObject({ ok: true });
+    await deliverMemoryBodyUpdate(ref);
     const beforeUndo = storedBody(ref);
     const revisionBeforeUndo = (await readMemory(ref)).revision;
     await settled(() => {
@@ -3190,6 +3577,40 @@ describe('MemoryDocumentBody', () => {
     },
   );
 
+  it('offers the first fact as one empty state on a page of its own memory, and the section once writing starts', async () => {
+    serveAccountContext();
+    if (!connection) throw new Error('Missing admitted test Account');
+    const screen = await renderScreen(
+      <InjectedAuthProvider credentials={connection.credentials}>
+        <ItemList>
+          <ContextMemorySection
+            testID="context.memory"
+            title="Key facts"
+            description="Facts any session can use"
+            serverId={serverId}
+            entry={null}
+            scopeTarget={{ scope: 'account' }}
+            footer="Account"
+            emptyText="empty"
+            firstUse={{ title: 'Nothing yet', reason: 'Save a decision from any message.' }}
+          />
+        </ItemList>
+      </InjectedAuthProvider>,
+    );
+    await settled(() =>
+      expect(screen.findByTestId('context.memory.firstUse')).toBeTruthy(),
+    );
+    // One state replaces the section: no section chrome, no second line of nothing.
+    expect(screen.findByTestId('context.memory.search')).toBeNull();
+    expect(screen.findByTestId('context.memory.none')).toBeNull();
+    await screen.pressByTestIdAsync('context.memory.firstUse-action');
+    await settled(() =>
+      expect(screen.findByTestId('context.memory.draft')).toBeTruthy(),
+    );
+    expect(screen.findByTestId('context.memory.firstUse')).toBeNull();
+    await screen.unmount();
+  });
+
   it('Context displays the exact saved document after attachment conflict and retires it when its Home Account changes', async () => {
     const account = serveAccountContext(true);
     if (!connection) throw new Error('Missing admitted test Account');
@@ -3286,5 +3707,22 @@ describe('MemoryDocumentBody', () => {
     );
     // The Account boundary clears the receipt in the same mounted surface; a remount would hide that bug.
     expect(screen.findByType(MemoryDocumentBody) === mountedBody).toBe(true);
+  });
+
+  it('keeps a failed first Memory read and Retry visible while offline without retained content', async () => {
+    if (!connection) throw new Error('Missing admitted Account fixture');
+    const source = { status: 'unavailable', view: null, stale: false, target: null,
+      draftCustody: null, refresh: async () => null } satisfies MemoryDocumentSource;
+    const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+      <MemoryDocumentBody testID="unretained-memory" source={source} serverId={serverId}
+        composing={false} onComposingChange={() => {}} emptyText="empty" />
+    </InjectedAuthProvider>);
+    await act(async () => storage.getState().setEndpointConnectivity({
+      status: 'offline', reason: null, attempt: 1, nextRetryAt: null,
+      lastConnectedAt: 1, lastDisconnectedAt: 2, lastErrorMessage: null,
+    }));
+    expect(screen.findByTestId('unretained-memory.unavailable')).not.toBeNull();
+    expect(screen.findByTestId('unretained-memory.unavailable-action')).not.toBeNull();
+    expect(screen.findByTestId('unretained-memory.offline')).toBeNull();
   });
 });
