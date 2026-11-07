@@ -126,7 +126,7 @@ export function useApplySettings(): (change: SettingsWrite) => void {
 export function useApplyVoiceSettingsEdit(): (before: VoiceSettings, next: VoiceSettings) => Promise<void> {
   const expectedScope = useAccountSettingsScope();
   const { execute } = useMountedActionExecution(expectedScope);
-  const providerId = getStorage()((state) => state.settings.voice.providerId);
+  const providerId = getStorage()((state) => state.settings.voice.providerId, { settings: ['voice'] });
   const registryRevision = React.useSyncExternalStore(
     voiceSettingsEditRegistry.subscribe ?? (() => () => {}),
     voiceSettingsEditRegistry.getRevision ?? (() => 0),
@@ -213,7 +213,7 @@ export function useProfileActionExecute(options?: ProfileActionExecutionOptions)
 /** Favorite callers retain their Settings projection; each changed id is an admitted semantic intent. */
 export function useProfileFavoriteIdsMutable(): [Settings['favoriteProfiles'],
   (value: Settings['favoriteProfiles'] | ((current: Settings['favoriteProfiles']) => Settings['favoriteProfiles'] | null)) => Promise<void>] {
-  const favorites = getStorage()(state => state.settings.favoriteProfiles);
+  const favorites = getStorage()(state => state.settings.favoriteProfiles, { settings: ['favoriteProfiles'] });
   const execute = useProfileActionExecute();
   const replace = React.useCallback(async (value: Settings['favoriteProfiles'] | ((current: Settings['favoriteProfiles']) => Settings['favoriteProfiles'] | null)) => {
     const next = typeof value === 'function' ? value(favorites) : value;

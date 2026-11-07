@@ -1,18 +1,19 @@
 import type {
     DaemonContributionRegistryProjection,
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
-import type { PluginContributionClientPlatform } from '@happier-dev/protocol';
-import type { PluginActionContributionV2 } from '@happier-dev/protocol';
-import { readPluginUiAccountExecutableOrigin } from './projectionOrigins';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import type { PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginContributionIntrospectionPresentationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetAreas';
+import { PluginUiResourceLinkV1Schema, type PluginUiResourceLinkV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { PluginLocalizedStringV2Schema, PluginPolicyExpressionV2Schema, type PluginPolicyExpressionV2, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginUiIconTokenV1Schema, type PluginUiIconTokenV1 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
@@ -23,6 +24,9 @@ import { type PluginProjectedDragSourceEntryV1, type PluginProjectedDropTargetEn
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginJsonSchemaValidator } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readPluginUiAccountExecutableOrigin } from './projectionOrigins';
+import { publishPluginUiProjectionModel } from './projectionPublication';
+import type { PluginUiDeclaredExecution } from '../availability/bundledPluginUiArtifactInventory';
 import {
     createPluginSessionInfoSectionRendererIdV1,
     isPluginUiSurfaceBindingPotentiallySupportedOnPlatformV1,
@@ -32,6 +36,8 @@ import {
     PluginUiQualifiedActionReferenceV1Schema,
     PluginUiSurfaceBindingV1Schema,
     PluginUiDestinationReferenceV1Schema,
+    PluginUiCountsBindingV1Schema,
+    type PluginUiCountsBindingV1,
     type PluginUiDestinationBindingV1,
     type PluginUiInlineSurfaceBindingV1,
     type PluginUiPlatformV1,
@@ -40,7 +46,11 @@ import {
     type PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
 
+export type { PluginUiDeclaredExecution } from '../availability/bundledPluginUiArtifactInventory';
+
 type UnknownRecord = Readonly<Record<string, unknown>>;
+
+export { reconcilePluginUiProjectionValue } from './projectionPublication';
 
 /** Observation time remains an Availability fact, not an input to UI declarations. */
 export function samePluginUiMaterializationFacts(left: PluginMachineMaterializationV1 | undefined, right: PluginMachineMaterializationV1 | undefined): boolean {
@@ -61,11 +71,6 @@ export function arePluginUiMaterializationsEquivalent(
         && keys.every(key => Object.hasOwn(right ?? {}, key) && samePluginUiMaterializationFacts(left?.[key], right?.[key]));
 }
 
-/** Declaration facts for cold presentation; never an occurrence or execution grant. */
-export type PluginUiDeclaredExecution = Readonly<{
-    daemonActions: boolean;
-    contributionPoints: boolean;
-}>;
 export type PluginUiInstalledPackageProjection = PluginProjectionInstalledPackageV2 & Readonly<{
     declaredExecution?: PluginUiDeclaredExecution;
     /** Host-private coverage fact from a full describe, never restored presentation. */
@@ -75,12 +80,22 @@ export type PluginUiDragSourceProjection = PluginProjectedDragSourceEntryV1 & Un
 export type PluginUiDropTargetProjection = PluginProjectedDropTargetEntryV1 & UnknownRecord;
 export type PluginUiWorkItemsProjection = PluginProjectedWorkItemsEntryV1 & UnknownRecord;
 export type PluginUiInputTypeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['inputTypes']>['entriesById'][string];
+export type PluginUiNotificationCategoryProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['notificationCategories']>['entriesById'][string];
 export type PluginUiAtmospherePictureProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['atmospherePictures']>['entriesById'][string];
 export type PluginUiRegistrySourceProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['registrySources']>['entriesById'][string];
 export type PluginUiStoreKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['storeKinds']>['entriesById'][string];
+export type PluginUiBackupDestinationProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['backupDestinations']>['entriesById'][string];
 export type PluginUiMachineRecipeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['machineRecipes']>['entriesById'][string];
 export type PluginUiMachineSetupPresetProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['machineSetupPresets']>['entriesById'][string];
 export type PluginUiSkillProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['skills']>['entriesById'][string];
+/** Registry-admitted data only; acquiring Resource-backed facts stays with the collection host. */
+export type PluginUiListExtensionProjection = Readonly<{
+    id: string;
+    pluginId: string;
+    contributionKind: 'listExtension';
+    identity: PluginContributionIdentityV1;
+    listExtension: PluginCollectionListExtensionV1;
+}> & UnknownRecord;
 export type PluginUiComposerReferenceProjection = Readonly<{
     id: string;
     pluginId: string;
@@ -170,6 +185,7 @@ export type PluginUiSurfaceAvailabilityProjection = Readonly<{
     diagnostics: readonly string[];
     when?: PluginPolicyExpressionV2;
     disabledWhen?: PluginPolicyExpressionV2;
+    disabledReason?: PluginLocalizedStringV2;
 }>;
 
 /**
@@ -204,7 +220,7 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     binding: PluginUiSurfaceBindingV1;
     target: UnknownRecord;
     renderer: UnknownRecord;
-    display: UnknownRecord;
+    display: UnknownRecord & Readonly<{ counts?: PluginUiCountsBindingV1 }>;
     /**
      * Admitted runtime facts projected by the daemon (including Resource
      * capability). UI retains this record verbatim; it is not a second runtime
@@ -217,6 +233,7 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     /** An app page's own shell column: its admitted binding, renderer and availability. */
     column?: PluginUiAppPageColumnProjection;
     widgetAreas?: readonly PluginUiWidgetAreaDeclarationV1[];
+    resourceLinks?: readonly PluginUiResourceLinkV1[];
 }>;
 
 export type PluginUiAppPageColumnProjection = Readonly<{
@@ -331,7 +348,7 @@ export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
     occurrenceId: string;
     contributionKey: string;
     definition: VoiceProviderContribution;
-    recipientContract?: import('@happier-dev/protocol').RecipientContractV1;
+    recipientContract?: import('@happier-dev/protocol/plugins/recipientContractV1').RecipientContractV1;
     recipientContractDigest?: string;
 }>;
 
@@ -447,12 +464,15 @@ export type PluginUiProjectionModel = Readonly<{
     resourcesById: Readonly<Record<string, PluginUiResourceProjection>>;
     machineProvisionersById: NonNullable<DaemonContributionRegistryProjection['familiesById']['machineProvisioners']>['entriesById'];
     inputTypesById: Readonly<Record<string, PluginUiInputTypeProjection>>;
+    notificationCategoriesById: Readonly<Record<string, PluginUiNotificationCategoryProjection>>;
     atmospherePicturesById: Readonly<Record<string, PluginUiAtmospherePictureProjection>>;
     registrySourcesById: Readonly<Record<string, PluginUiRegistrySourceProjection>>;
     storeKindsById: Readonly<Record<string, PluginUiStoreKindProjection>>;
+    backupDestinationsById: Readonly<Record<string, PluginUiBackupDestinationProjection>>;
     machineRecipesById: Readonly<Record<string, PluginUiMachineRecipeProjection>>;
     machineSetupPresetsById: Readonly<Record<string, PluginUiMachineSetupPresetProjection>>;
     skillsById: Readonly<Record<string, PluginUiSkillProjection>>;
+    listExtensionsById: Readonly<Record<string, PluginUiListExtensionProjection>>;
     voiceProvidersById: Readonly<Record<string, PluginVoiceProviderProjection>>;
     dragSourcesById: Readonly<Record<string, PluginUiDragSourceProjection>>;
     workItemsById: Readonly<Record<string, PluginUiWorkItemsProjection>>;
@@ -483,12 +503,15 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     resourcesById: Object.freeze({}),
     machineProvisionersById: Object.freeze({}),
     inputTypesById: Object.freeze({}),
+    notificationCategoriesById: Object.freeze({}),
     atmospherePicturesById: Object.freeze({}),
     registrySourcesById: Object.freeze({}),
     storeKindsById: Object.freeze({}),
+    backupDestinationsById: Object.freeze({}),
     machineRecipesById: Object.freeze({}),
     machineSetupPresetsById: Object.freeze({}),
     skillsById: Object.freeze({}),
+    listExtensionsById: Object.freeze({}),
     voiceProvidersById: Object.freeze({}),
     dragSourcesById: Object.freeze({}),
     workItemsById: Object.freeze({}),
@@ -504,7 +527,10 @@ export function readCompletePluginUiResourceDeclarations(
 ): PluginUiProjectionModel['resourcesById'] | undefined {
     const installed = model?.installedPackagesById[pluginId];
     if (!model || installed?.resourceDeclarationsComplete !== true) return undefined;
-    if (installed.occurrenceId !== undefined && installed.occurrenceId !== expectedOccurrenceId) return undefined;
+    if (installed.occurrenceId !== undefined && installed.occurrenceId !== expectedOccurrenceId
+        && !Object.values(model.resourcesById).some(resource => resource.pluginId === pluginId
+            && resource.execution?.target === 'account'
+            && readPluginUiAccountExecutableOrigin(resource)?.custodyId === expectedOccurrenceId)) return undefined;
     return model.resourcesById;
 }
 
@@ -714,13 +740,15 @@ function readSurfaceAvailability(value: unknown): PluginUiSurfaceAvailabilityPro
     }
     const when = availability?.when === undefined ? null : PluginPolicyExpressionV2Schema.safeParse(availability.when);
     const disabledWhen = availability?.disabledWhen === undefined ? null : PluginPolicyExpressionV2Schema.safeParse(availability.disabledWhen);
-    if (when?.success === false || disabledWhen?.success === false) return null;
+    const disabledReason = availability?.disabledReason === undefined ? null : PluginLocalizedStringV2Schema.safeParse(availability.disabledReason);
+    if (when?.success === false || disabledWhen?.success === false || disabledReason?.success === false) return null;
     return Object.freeze({
         state,
         reason,
         diagnostics: Object.freeze(readStringArray(availability?.diagnostics)),
         ...(when?.success ? { when: when.data } : {}),
         ...(disabledWhen?.success ? { disabledWhen: disabledWhen.data } : {}),
+        ...(disabledReason?.success ? { disabledReason: disabledReason.data } : {}),
     });
 }
 
@@ -953,36 +981,20 @@ export function normalizePluginInstalledUiDeclarations(
     installedPackage?: PluginUiInstalledPackageProjection,
     registrySources?: readonly PluginUiRegistrySourceProjection[],
     skills?: readonly PluginUiSkillProjection[],
+    storeKinds?: readonly PluginUiStoreKindProjection[],
 ): PluginUiProjectionModel {
     return normalizePluginUiProjection({
         v: 2, generation: null,
         installedPackagesById: installedPackage ? { [installedPackage.id]: installedPackage } : {}, agentsById: {}, actionsById: {},
-         resourcesById: {}, settingsById: {},
+        resourcesById: {}, settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById }, ...(registrySources ? { registrySources: {
             family: 'registrySources' as const, entriesById: Object.fromEntries(registrySources.map(entry => [entry.id, entry])),
         } } : {}), ...(skills ? { skills: {
             family: 'skills' as const, entriesById: Object.fromEntries(skills.map(entry => [entry.id, entry])),
+        } } : {}), ...(storeKinds ? { storeKinds: {
+            family: 'storeKinds' as const, entriesById: Object.fromEntries(storeKinds.map(entry => [entry.id, entry])),
         } } : {}) }, diagnostics: [],
     }, platform);
-}
-
-/** Share unchanged presentation rows at publication, before any consumer reads them. */
-function reconcileProjectionValue<T>(previous: T | undefined, next: T): T {
-    if (previous === next) return next;
-    if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object'
-        || Array.isArray(previous) !== Array.isArray(next)) return next;
-    const previousRecord = previous as Readonly<Record<string, unknown>>;
-    const nextRecord = next as Readonly<Record<string, unknown>>;
-    const keys = Object.keys(nextRecord);
-    let unchanged = keys.length === Object.keys(previousRecord).length;
-    const values: Record<string, unknown> = {};
-    for (const key of keys) {
-        const value = reconcileProjectionValue(previousRecord[key], nextRecord[key]);
-        values[key] = value;
-        if (!Object.prototype.hasOwnProperty.call(previousRecord, key) || value !== previousRecord[key]) unchanged = false;
-    }
-    if (unchanged) return previous;
-    return Object.freeze(Array.isArray(next) ? keys.map(key => values[key]) : values) as T;
 }
 
 function retainProjectionEntry<T>(previous: Readonly<Record<string, T>> | undefined, next: Record<string, T>, id: string): void {
@@ -1067,9 +1079,11 @@ export function normalizePluginUiProjection(
     const resourcesById = previous && previousInput?.resourcesById === projection.resourcesById ? previous.resourcesById : Object.freeze({ ...projection.resourcesById });
     const machineProvisionersById = previous && sameFamily('machineProvisioners') ? previous.machineProvisionersById : Object.freeze({ ...(projection.familiesById.machineProvisioners?.entriesById ?? {}) });
     const inputTypesById = previous && sameFamily('inputTypes') ? previous.inputTypesById : Object.freeze({ ...(projection.familiesById.inputTypes?.entriesById ?? {}) });
+    const notificationCategoriesById = previous && sameFamily('notificationCategories') ? previous.notificationCategoriesById : Object.freeze({ ...(projection.familiesById.notificationCategories?.entriesById ?? {}) });
     const atmospherePicturesById = previous && sameFamily('atmospherePictures') ? previous.atmospherePicturesById : Object.freeze({ ...(projection.familiesById.atmospherePictures?.entriesById ?? {}) });
     const registrySourcesById = previous && sameFamily('registrySources') ? previous.registrySourcesById : Object.freeze({ ...(projection.familiesById.registrySources?.entriesById ?? {}) });
     const storeKindsById = previous && sameFamily('storeKinds') ? previous.storeKindsById : Object.freeze({ ...(projection.familiesById.storeKinds?.entriesById ?? {}) });
+    const backupDestinationsById = previous && sameFamily('backupDestinations') ? previous.backupDestinationsById : Object.freeze({ ...(projection.familiesById.backupDestinations?.entriesById ?? {}) });
     const machineRecipesById = previous && sameFamily('machineRecipes') ? previous.machineRecipesById : Object.freeze({ ...(projection.familiesById.machineRecipes?.entriesById ?? {}) });
     const machineSetupPresetsById = previous && sameFamily('machineSetupPresets') ? previous.machineSetupPresetsById : Object.freeze({ ...(projection.familiesById.machineSetupPresets?.entriesById ?? {}) });
     const skillsById = previous && sameFamily('skills') ? previous.skillsById : Object.freeze({ ...(projection.familiesById.skills?.entriesById ?? {}) });
@@ -1136,7 +1150,7 @@ export function normalizePluginUiProjection(
 
     const family = projection.familiesById.pluginUi;
     if (!family) {
-        return reconcileProjectionValue(previous, Object.freeze({
+        return publishPluginUiProjectionModel(previous, Object.freeze({
             ...EMPTY_PLUGIN_UI_PROJECTION,
             generation: projection.generation,
             diagnostics,
@@ -1149,9 +1163,11 @@ export function normalizePluginUiProjection(
             resourcesById,
             machineProvisionersById,
             inputTypesById,
+            notificationCategoriesById,
             atmospherePicturesById,
             registrySourcesById,
             storeKindsById,
+            backupDestinationsById,
             machineRecipesById,
             machineSetupPresetsById,
             skillsById,
@@ -1174,6 +1190,7 @@ export function normalizePluginUiProjection(
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = retainedUi?.settingsPagesById ?? {};
     const transcriptActivitiesById: Record<string, PluginUiTranscriptActivityProjection> = retainedUi?.transcriptActivitiesById ?? {};
     const sessionInfoSectionsById: Record<string, PluginUiSessionInfoSectionProjection> = retainedUi?.sessionInfoSectionsById ?? {};
+    const listExtensionsById: Record<string, PluginUiListExtensionProjection> = retainedUi?.listExtensionsById ?? {};
     const unknownEntriesById: Record<string, UnknownRecord> = retainedUi?.unknownEntriesById ?? {};
 
     if (!retainedUi) for (const [entryId, rawEntry] of Object.entries(family.entriesById)) {
@@ -1196,11 +1213,17 @@ export function normalizePluginUiProjection(
                 retainProjectionEntry(previous.settingsPagesById, settingsPagesById, id);
                 retainProjectionEntry(previous.transcriptActivitiesById, transcriptActivitiesById, id);
                 retainProjectionEntry(previous.sessionInfoSectionsById, sessionInfoSectionsById, id);
+                retainProjectionEntry(previous.listExtensionsById, listExtensionsById, id);
                 retainProjectionEntry(previous.unknownEntriesById, unknownEntriesById, id);
             }
             continue;
         }
-        if (isTranslations(entry)) {
+        if (entry.contributionKind === 'listExtension') {
+            // The strict Registry projection owns identity and descriptor admission.
+            // Carry its held declaration; never activate or acquire a Resource here.
+            const id = readString(entry.id);
+            if (id) listExtensionsById[id] = Object.freeze(entry) as PluginUiListExtensionProjection;
+        } else if (isTranslations(entry)) {
             translationsByPluginId[entry.pluginId] = Object.freeze({
                 ...entry,
                 locales: Object.freeze(readStringArray(entry.locales)),
@@ -1236,10 +1259,14 @@ export function normalizePluginUiProjection(
                 const target = asRecord(entry.target) ?? {};
                 const renderer = asRecord(entry.renderer) ?? {};
                 const display = asRecord(entry.display) ?? {};
+                const counts = display.counts === undefined ? undefined : PluginUiCountsBindingV1Schema.safeParse(display.counts);
+                if (counts && !counts.success) continue;
                 const runtime = asRecord(entry.runtime);
                 const rightSidebar = asRecord(entry.rightSidebar);
                 const headerActions = resolvePluginUiPageHeaderActions(entry.headerActions);
-                const { column: projectedColumn, widgetAreas: projectedWidgetAreas, ...entryFields } = entry;
+                const { column: projectedColumn, widgetAreas: projectedWidgetAreas, resourceLinks: projectedResourceLinks, ...entryFields } = entry;
+                const resourceLinks = Array.isArray(projectedResourceLinks)
+                    ? projectedResourceLinks.map(link => PluginUiResourceLinkV1Schema.safeParse(link)) : [];
                 const column = readAppPageColumn(projectedColumn);
                 const widgetAreas = binding.kind === 'destination' && binding.container === 'appPage'
                     ? PluginUiWidgetAreaDeclarationsV1Schema.safeParse(projectedWidgetAreas) : null;
@@ -1251,13 +1278,15 @@ export function normalizePluginUiProjection(
                     binding,
                     target: Object.freeze({ ...target }),
                     renderer: Object.freeze({ ...renderer }),
-                    display: Object.freeze({ ...display }),
+                    display: Object.freeze({ ...display, ...(counts?.success ? { counts: counts.data } : {}) }),
                     headerActions,
                     ...(runtime ? { runtime } : {}),
                     ...(rightSidebar ? { rightSidebar: Object.freeze({ ...rightSidebar }) } : {}),
                     // A malformed column is dropped, never passed through as an unknown record.
                     ...(column ? { column } : {}),
                     ...(widgetAreas?.success ? { widgetAreas: Object.freeze(widgetAreas.data) } : {}),
+                    ...(resourceLinks.length > 0 && resourceLinks.every(link => link.success)
+                        ? { resourceLinks: Object.freeze(resourceLinks.flatMap(link => link.success ? [link.data] : [])) } : {}),
                     availability,
                 }) as PluginUiPhysicalSurfacePlacementProjection;
                 surfacePlacementsById[entry.id] = normalized;
@@ -1309,7 +1338,7 @@ export function normalizePluginUiProjection(
         }
     }
 
-    const reconciled = reconcileProjectionValue(previous, Object.freeze({
+    const reconciled = publishPluginUiProjectionModel(previous, Object.freeze({
         generation: projection.generation,
         diagnostics,
         installedPackagesById,
@@ -1324,6 +1353,7 @@ export function normalizePluginUiProjection(
         settingsPagesById: Object.freeze(settingsPagesById),
         transcriptActivitiesById: Object.freeze(transcriptActivitiesById),
         sessionInfoSectionsById: Object.freeze(sessionInfoSectionsById),
+        listExtensionsById: Object.freeze(listExtensionsById),
         composerAttachmentsById,
         composerControlsById,
         composerRegionsById,
@@ -1332,9 +1362,11 @@ export function normalizePluginUiProjection(
         resourcesById,
         machineProvisionersById,
         inputTypesById,
+        notificationCategoriesById,
         atmospherePicturesById,
         registrySourcesById,
         storeKindsById,
+        backupDestinationsById,
         machineRecipesById,
         machineSetupPresetsById,
         skillsById,

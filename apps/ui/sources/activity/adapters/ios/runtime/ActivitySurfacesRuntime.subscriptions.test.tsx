@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import * as iosPolicies from './resolveIosActivitySurfacePolicies';
+import { ActivitySurfacesRuntime } from './ActivitySurfacesRuntime';
 
 // Native widgets are an OS boundary. Web still mounts the same policy and settings subscriptions.
 vi.mock('react-native', async () => {
@@ -31,8 +32,27 @@ describe('ActivitySurfacesRuntime settings subscriptions', () => {
         storage.getState().applySettings(settingsDefaults, 1);
     });
 
+    it('ignores unrelated local settings and refreshes consumed surface policy', async () => {
+        const commits = vi.fn();
+        const resolvePolicies = vi.spyOn(iosPolicies, 'resolveIosActivitySurfacePolicies');
+        await renderScreen(<React.Profiler id="activity-local" onRender={commits}>
+            <ActivitySurfacesRuntime />
+        </React.Profiler>);
+        const baseline = commits.mock.calls.length;
+        const computations = resolvePolicies.mock.calls.length;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ petsCompanionSizeScale: 1.5 }, { persist: false });
+        });
+        expect({ renders: commits.mock.calls.length - baseline,
+            computations: resolvePolicies.mock.calls.length - computations }).toEqual({ renders: 0, computations: 0 });
+        await act(async () => {
+            storage.getState().applyLocalSettings({ widgetsEnabled: !storage.getState().localSettings.widgetsEnabled }, { persist: false });
+        });
+        expect({ renders: commits.mock.calls.length - baseline,
+            computations: resolvePolicies.mock.calls.length - computations }).toEqual({ renders: 1, computations: 1 });
+    });
+
     it('ignores unrelated account settings and refreshes for feature preferences', async () => {
-        const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
         const commits = vi.fn();
         const resolvePolicies = vi.spyOn(iosPolicies, 'resolveIosActivitySurfacePolicies');
         await renderScreen(

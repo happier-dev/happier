@@ -4,7 +4,7 @@ import { LOCAL_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/local/
 import type { SettingsAnalyticsSnapshot } from './types';
 import { buildSettingsPropertiesFromArtifacts } from './buildSettingsPropertiesFromArtifacts';
 
-export function buildLocalSettingsSnapshot(localSettings: LocalSettings): SettingsAnalyticsSnapshot {
+export function buildLocalSettingsSnapshot(localSettings: Partial<LocalSettings>): SettingsAnalyticsSnapshot {
     return {
         properties: buildSettingsPropertiesFromArtifacts({
             artifacts: LOCAL_SETTING_ARTIFACTS,

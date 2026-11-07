@@ -32,6 +32,7 @@ import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivi
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { DesktopPetOverlayRouteProps } from './DesktopPetOverlayRoute';
+import { DesktopPetOverlayRoute } from './DesktopPetOverlayRoute';
 
 
 function createSessionFixture(
@@ -405,6 +406,26 @@ function installDesktopPetOverlayMeasurementHarness() {
 }
 
 describe('DesktopPetOverlayRoute selectors', () => {
+    it.each([false, true])('ignores unrelated local settings with admitted activity %s', async (hasActivity) => {
+        seedPetsStorage();
+        const commits = vi.fn();
+        const screen = await renderTestkitScreen(<React.Profiler id="desktop-pet-settings" onRender={commits}>
+            <DesktopPetOverlayRoute activitySource="native" activityModel={hasActivity
+                ? { state: 'quiet', address: null, sessionId: null, trayItems: [] } : undefined} />
+        </React.Profiler>);
+        const baseline = commits.mock.calls.length;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ paneArrangement: 'editor' }, { persist: false });
+        });
+        expect(commits.mock.calls.length - baseline).toBe(0);
+        const widthBefore = StyleSheet.flatten(screen.findByTestId('desktop-pet-overlay-root')?.props.style)?.width;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ petsCompanionSizeScale: 1.5 }, { persist: false });
+        });
+        expect(commits.mock.calls.length - baseline).toBeGreaterThan(0);
+        expect(StyleSheet.flatten(screen.findByTestId('desktop-pet-overlay-root')?.props.style)?.width).not.toBe(widthBefore);
+    });
+
     beforeEach(async () => {
         await upsertAndActivateServer({ serverUrl: 'https://server-pets', scope: 'tab' });
         vi.useFakeTimers();

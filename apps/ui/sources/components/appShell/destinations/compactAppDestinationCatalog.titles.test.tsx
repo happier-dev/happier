@@ -29,6 +29,7 @@ import {
     resolveCompactAppDestinations,
     resolveDestinationRefFromHref,
     useDestinationInstanceTitles,
+    useDestinationInstanceTitleSources,
 } from './compactAppDestinationCatalog';
 
 vi.mock('@/sync/sync', async () => ({ sync: (await import('@/dev/testkit/mocks/sync')).createSessionListHydrationSyncBoundary() }));
@@ -69,6 +70,28 @@ afterEach(() => {
 });
 
 describe('Project destination instance titles', () => {
+    it('does not notify tab title readers for Account preference changes', async () => {
+        const entries = [{ key: 'tab', ref: destination('/settings/appearance') }];
+        const hook = await renderHook(() => useDestinationInstanceTitleSources(catalog, entries));
+        const source = hook.getCurrent().get('tab');
+        expect(source).toBeDefined();
+        const notify = vi.fn();
+        const stop = source!.subscribe(notify);
+        try {
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionTmuxSessionName: 'title-unrelated' });
+            });
+            expect(notify).toHaveBeenCalledTimes(0);
+            await act(async () => {
+                storage.getState().activateProfileScope({ serverId: 'home-b', accountId: 'account-b' });
+            });
+            expect(notify).toHaveBeenCalledTimes(1);
+        } finally {
+            stop();
+            await hook.unmount();
+        }
+    });
+
     it('keeps destination titles when collection content publishes a headline or an automatic detail selection', () => {
         for (const [href, headline] of [
             ['/machines', 'Calm'], ['/settings/machines', 'Calm'], ['/settings', 'Alice'],

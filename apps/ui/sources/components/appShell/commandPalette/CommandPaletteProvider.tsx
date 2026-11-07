@@ -240,7 +240,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         keyboardSingleKeyShortcutsEnabled: state.settings.keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutDisabledCommandIdsV1: state.settings.keyboardShortcutDisabledCommandIdsV1,
         keyboardShortcutOverridesV1: state.settings.keyboardShortcutOverridesV1,
-    })));
+    })), { settings: ['commandPaletteEnabled', 'keyboardSingleKeyShortcutsEnabled',
+        'keyboardShortcutDisabledCommandIdsV1', 'keyboardShortcutOverridesV1'] });
     const navigateToSession = useNavigateToSession();
     const segments = useSegments();
     const routeParams = useGlobalSearchParams<{

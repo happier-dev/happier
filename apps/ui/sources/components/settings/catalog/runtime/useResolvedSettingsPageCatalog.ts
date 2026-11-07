@@ -1,7 +1,8 @@
 import * as React from 'react';
 import Fuse, { type FuseResult, type IFuseOptions } from 'fuse.js';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
+import { useGlobalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -55,7 +56,9 @@ function buildSettingDocs(params: Readonly<{
         const route = declaration.subpage?.route ?? params.pageRoute;
         const subpageTitle = declaration.subpage ? String(t(declaration.subpage.titleKey)) : null;
         const pagePath = subpageTitle ? [params.pageTitle, subpageTitle] : [params.pageTitle];
+        const rowAnchors = new Set(Object.values(declaration.sectionRefs).flatMap(section => section.settingAnchors));
         for (const ref of Object.values(declaration.settings) as readonly SettingRef[]) {
+            if (!rowAnchors.has(ref.anchor)) continue;
             if (ref.featureId && params.features[ref.featureId] !== true) continue;
             if (!settingRendersOnHost(ref, params.host)) continue;
             const href = buildSettingHref(route, ref, params.routeContext);
@@ -159,8 +162,15 @@ const SETTING_SEARCH_OPTIONS: IFuseOptions<SettingsPageSearchDoc> = {
 const SETTINGS_SEARCH_FEATURE_IDS: readonly FeatureId[] = collectDeclaredFeatureIds(SETTINGS_PAGE_DECLARATIONS)
     .filter(featureId => !SETTINGS_PAGE_FEATURE_IDS.includes(featureId));
 
-export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
-    const { tree, activePageId, featureSnapshot: pageFeatures, host, routeContext, teamRouteAdmitted, homeRouteAdmitted } = useResolvedSettingsPageTree(true);
+export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & Readonly<{ searchRevision: number }> {
+    const { tree, activePageId, featureSnapshot: pageFeatures, host, teamAdmittedServerIds, homeAdmittedServerIds } = useResolvedSettingsPageTree(true);
+    // Only the search index reads route params (route-function hrefs), so only its consumers follow them.
+    const pathname = usePathname();
+    const routeParams = useGlobalSearchParams();
+    const routeContext = React.useMemo<SettingsRouteContext>(() => ({ pathname: pathname ?? '/', params: routeParams }), [pathname, routeParams]);
+    const routeServerId = routeParams.serverId;
+    const teamRouteAdmitted = typeof routeServerId === 'string' && teamAdmittedServerIds.includes(routeServerId);
+    const homeRouteAdmitted = typeof routeServerId === 'string' && homeAdmittedServerIds.includes(routeServerId);
     const searchFeatures = useSettingsPageFeatureSnapshot(SETTINGS_SEARCH_FEATURE_IDS);
     const featureSnapshot = React.useMemo(() => ({ ...pageFeatures, ...searchFeatures }), [pageFeatures, searchFeatures]);
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
@@ -169,8 +179,12 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         voiceSettingsDeclarationRegistry.getRevision ?? (() => 0),
         voiceSettingsDeclarationRegistry.getRevision ?? (() => 0),
     );
-    const voiceProviderId = storage((state) => state.settings.voice.providerId);
-    const voiceLanguageKind = storage((state) => projectConversationLanguagePreference(state.settings.voice, voiceSettingsDeclarationRegistry).kind);
+    const voiceProviderId = storage((state) => state.settings.voice.providerId, { settings: ['voice'] });
+    // A selector runs on every render and Store publish; the language kind parses the selected
+    // service's stored config, so it is derived only when voice settings or their registry change.
+    const voiceSettings = storage((state) => state.settings.voice, { settings: ['voice'] });
+    const voiceLanguageKind = React.useMemo(() => projectConversationLanguagePreference(voiceSettings, voiceSettingsDeclarationRegistry).kind,
+        [voiceDeclarationRevision, voiceSettings]);
     const declarations = React.useMemo(() => getSettingsPageDeclarations(localizePluginText, storage.getState().settings), [localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind]);
 
     const searchDocs = React.useMemo(() => buildSearchDocs(tree, featureSnapshot, host, routeContext, {
@@ -214,9 +228,17 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         return literalResults.length > 0 ? literalResults : matches.flatMap(result => project(result, true));
     }, [fuses]);
 
+    // Query dispatchers invalidate only when the catalog's actual search inputs change,
+    // not when this hook's result object is recreated by an unrelated render.
+    const searchIdentity = React.useRef({ search, revision: 0 });
+    if (searchIdentity.current.search !== search) {
+        searchIdentity.current = { search, revision: searchIdentity.current.revision + 1 };
+    }
+
     return {
         tree,
         activePageId,
         search,
+        searchRevision: searchIdentity.current.revision,
     };
 }

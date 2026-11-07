@@ -14,7 +14,7 @@ import { MachineAdministrationTargetSelector } from '@/components/settings/machi
 import { usePetSelectionAction } from '@/components/pets/source/usePetSelectionAction';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
-import { storage, useLocalSettings, useSettingsSelector } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useSettingsSelector } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     useMachineAdministrationTargetSelection,
@@ -73,7 +73,10 @@ export function PetsSettingsScreen() {
         petsEnabled: settings.petsEnabled,
         petsDesktopOverlayDefaultEnabled: settings.petsDesktopOverlayDefaultEnabled,
     }), ["petsSelectedPetRef","petsEnabled","petsDesktopOverlayDefaultEnabled"]);
-    const localSettings = useLocalSettings();
+    const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
+    const petsSelectedPetOverride = useLocalSetting('petsSelectedPetOverride');
+    const petsEnabledOverride = useLocalSetting('petsEnabledOverride');
+    const desktopPetOverlayEnabledOverride = useLocalSetting('desktopPetOverlayEnabledOverride');
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.pets,
     );
@@ -128,7 +131,7 @@ export function PetsSettingsScreen() {
         };
     }, [executionTargetKey]);
     const showDesktopOverlaySettings = settingRendersOnHost(PETS_SETTINGS.settings.desktopOverlayEnabled);
-    const companionSizeScale = normalizePetCompanionSizeScale(localSettings.petsCompanionSizeScale);
+    const companionSizeScale = normalizePetCompanionSizeScale(petsCompanionSizeScale);
     const scopedDiscoveredPets = discoveredPetsTargetKey === executionTargetKey ? discoveredPets : [];
     const scopedImportedLocalPets = importedLocalPetsTargetKey === executionTargetKey ? importedLocalPets : [];
     const scopedCodexDetectionState = codexDetectionTargetKey === executionTargetKey
@@ -352,8 +355,8 @@ export function PetsSettingsScreen() {
 
         try {
             if (
-                localSettings.petsSelectedPetOverride.kind === 'happierManagedLocal'
-                && localSettings.petsSelectedPetOverride.sourceKey === pet.sourceKey
+                petsSelectedPetOverride.kind === 'happierManagedLocal'
+                && petsSelectedPetOverride.sourceKey === pet.sourceKey
             ) {
                 const selected = await selectPet({ deviceOverride: { kind: 'inherit' } }, { signal: request.signal });
                 if (!selected.ok) return;
@@ -379,7 +382,7 @@ export function PetsSettingsScreen() {
         } finally {
             finishRequest(requestKey, request);
         }
-    }, [selectPet, beginRequest, finishRequest, localSettings.petsSelectedPetOverride]);
+    }, [selectPet, beginRequest, finishRequest, petsSelectedPetOverride]);
 
     const handleSelectBuiltInPet = React.useCallback((petId: string) => {
         fireAndForget(selectPet({ petRef: { kind: 'builtIn', petId } }), { tag: 'PetsSettingsScreen.selectBuiltInPet' });
@@ -403,7 +406,7 @@ export function PetsSettingsScreen() {
     }, [resetPositionAction.execute]);
 
     const selectedBuiltInPetId =
-        localSettings.petsSelectedPetOverride.kind === 'inherit'
+        petsSelectedPetOverride.kind === 'inherit'
         && settings.petsSelectedPetRef.kind === 'builtIn'
             ? settings.petsSelectedPetRef.petId
             : null;
@@ -414,7 +417,7 @@ export function PetsSettingsScreen() {
         importAccountPet,
         importLocalPet,
         localPetRows,
-        petsSelectedPetOverride: localSettings.petsSelectedPetOverride,
+        petsSelectedPetOverride,
         removeLocalPet,
         syncEnabled,
         targetMachineId,
@@ -455,7 +458,7 @@ export function PetsSettingsScreen() {
                 onPetsEnabledOverrideChange={(override) => applyLocalSettings({ petsEnabledOverride: override })}
                 overrideOptions={overrideOptions}
                 petsEnabled={settings.petsEnabled}
-                petsEnabledOverride={localSettings.petsEnabledOverride}
+                petsEnabledOverride={petsEnabledOverride}
             />
 
             <PetsLocalLibrarySection
@@ -487,7 +490,7 @@ export function PetsSettingsScreen() {
             {showDesktopOverlaySettings ? (
                 <PetsDesktopOverlaySettingsSection
                     desktopOverlayDefaultEnabled={settings.petsDesktopOverlayDefaultEnabled}
-                    desktopPetOverlayEnabledOverride={localSettings.desktopPetOverlayEnabledOverride}
+                    desktopPetOverlayEnabledOverride={desktopPetOverlayEnabledOverride}
                     onDefaultEnabledChange={(value) => applySettings({ petsDesktopOverlayDefaultEnabled: value })}
                     onDesktopOverlayOverrideChange={(override) => applyLocalSettings({ desktopPetOverlayEnabledOverride: override })}
                     onResetPosition={handleResetDesktopOverlayPosition}

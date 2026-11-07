@@ -36,7 +36,7 @@ export function useInboxPluginSessionControls(rows: readonly InboxPluginSessionR
     const settings = storage(useShallow(state => ({
         current: areAccountSettingsScopesEqual(state.settingsScope, lifetime?.scope),
         raw: state.settings.actionsSettingsV1,
-    })));
+    })), { settings: ['actionsSettingsV1'], settingsScope: true });
     const policy = React.useMemo(() => resolveActionsSettingsV1FromState({ settings: { actionsSettingsV1: settings.raw } }), [settings.raw]);
     const active = presented && runtime.phase === 'current' && runtime.interactionEnabled && lifetime?.isCurrent() === true;
     const projectRow = React.useMemo(() => {

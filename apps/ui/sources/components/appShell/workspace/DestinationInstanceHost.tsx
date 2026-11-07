@@ -2,10 +2,12 @@ import * as React from 'react';
 import { useGlobalSearchParams, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { resolveHref } from 'expo-router/build/link/href';
 
-import { hrefForDestinationRef, type DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
+import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useOptionalWorkspaceNavigation, useWorkspaceFocusedPathname, useWorkspaceFocusedRoute, useWorkspaceFocusedRouteSelector, useWorkspaceRouterFacts, type WorkspaceFocusedRoute } from './WorkspaceNavigationContext';
+import { sameDestinationRef } from './workspaceState';
 import { qualifyPaneScopeId } from '@/components/appShell/panes/paneScopeIdentity';
 import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useRetainedPresentationEntryRetirement } from '@/components/ui/presentation/retainedPresentationEntryLifetime';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -16,6 +18,7 @@ import { useRootStackRouteOptions } from '@/components/navigation/root/useRootSt
 import { resolveRootStackRouteOptions } from '@/components/navigation/root/rootStackRouteOptions';
 import { matchWorkspaceDestinationRoute, workspaceRouteFiles } from './workspaceRoutes';
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
+import { HostedSessionRouteQualification } from '@/components/sessions/shell/HostedSessionRouteQualification';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstance, useDestinationInstanceIdentity, useDestinationInstanceKey, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
 export { useDestinationInstanceKey, useDestinationNavigation, type DestinationNavigation } from './destinationInstanceContext';
@@ -28,16 +31,49 @@ type DestinationRouter = ReturnType<typeof useRouter> & {
     retainCurrent: () => void;
 };
 
+type DestinationFocusIdentity = Pick<DestinationInstanceContextValue, 'tabId' | 'ref' | 'navigation'>;
+
+/** Delayed work keeps its identity while reading the current committed owner's focus query. */
+function useCurrentDestinationFocus(identity: DestinationFocusIdentity | null, query: () => boolean): () => boolean {
+    const current = React.useRef<(DestinationFocusIdentity & Readonly<{ query: () => boolean }>) | null>(null);
+    React.useLayoutEffect(() => {
+        current.current = identity ? { tabId: identity.tabId, ref: identity.ref, navigation: identity.navigation, query } : null;
+        return () => { current.current = null; };
+    });
+    const tabId = identity?.tabId;
+    const ref = identity?.ref;
+    const navigation = identity?.navigation;
+    return React.useCallback(() => {
+        const latest = current.current;
+        return latest !== null && latest.tabId === tabId && ref !== undefined && sameDestinationRef(latest.ref, ref)
+            && latest.navigation === navigation && latest.query();
+    }, [navigation, ref, tabId]);
+}
+
 function RetainedDestinationContext(props: Readonly<{
     captured: DestinationInstanceContextValue | null;
     children: React.ReactNode;
 }>): React.ReactElement {
     const presented = useLayoutPresentationActive();
+    const workspace = useOptionalWorkspaceNavigation();
+    const retire = useRetainedPresentationEntryRetirement();
+    // The portal remains under the live workspace owner even after its route/binder leaves.
+    // Only actual destination removal ends this lifetime; inactive workspaces still own their tabs.
+    const present = props.captured === null || workspace === null
+        || Object.hasOwn(workspace.state.tabs, props.captured.tabId);
+    React.useLayoutEffect(() => {
+        if (!present) retire?.();
+    }, [present, retire]);
+    const active = present && presented;
+    const canonicalQuery = props.captured?.isFocused;
+    const query = React.useCallback(() => active && canonicalQuery?.() === true, [active, canonicalQuery]);
+    const isFocused = useCurrentDestinationFocus(props.captured, query);
     const value = React.useMemo(() => props.captured ? {
         ...props.captured,
         visible: props.captured.visible && presented,
         focused: props.captured.focused && presented,
-    } : null, [presented, props.captured]);
+        isFocused,
+    } : null, [isFocused, presented, props.captured]);
     return <DestinationInstanceContext.Provider value={value}>{props.children}</DestinationInstanceContext.Provider>;
 }
 
@@ -60,21 +96,27 @@ export function DestinationInstanceHost(props: Readonly<{
 }>): React.ReactNode {
     const rootOptions = useRootStackRouteOptions();
     const match = matchWorkspaceDestinationRoute(props.pathname);
-    const sessionAddress = props.ref.kind === 'session' || props.ref.kind === 'sessionDetails'
-        || match?.routeKey.startsWith('session/[id]/')
-        ? normalizeSessionAddress(props.ref.params.serverId, props.ref.params.id) : null;
+    const sessionRoute = props.ref.kind === 'session' || props.ref.kind === 'sessionDetails'
+        || match?.routeKey.startsWith('session/[id]/') === true;
+    const sessionAddress = sessionRoute ? normalizeSessionAddress(props.ref.params.serverId, props.ref.params.id) : null;
     const baseOptions = resolveRootStackRouteOptions(rootOptions, match ? workspaceRouteFiles[match.routeKey] : undefined) ?? EMPTY_SCREEN_OPTIONS;
+    const focused = props.focused && props.visible;
+    const query = React.useCallback(() => focused, [focused]);
+    const isFocused = useCurrentDestinationFocus(props, query);
     const value = React.useMemo<DestinationInstanceContextValue>(() => ({
         tabId: props.tabId,
         ref: props.ref,
         pathname: props.pathname,
-        focused: props.focused && props.visible,
+        focused,
         visible: props.visible,
+        isFocused,
         ...(props.navigation ? { navigation: props.navigation } : {}),
-    }), [props.focused, props.navigation, props.pathname, props.ref, props.tabId, props.visible]);
+    }), [focused, isFocused, props.navigation, props.pathname, props.ref, props.tabId, props.visible]);
     return <DestinationInstanceContext.Provider value={value}>
         <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
             <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}>
+                {sessionRoute && !props.ref.params.serverId && props.navigation ? <HostedSessionRouteQualification
+                    params={props.ref.params} pathname={props.pathname} focused={focused} replace={props.navigation.replace} /> : null}
                 {sessionAddress ? <SessionViewerDestinationScope key={sessionAddressKey(sessionAddress)}
                     sessionId={sessionAddress.sessionId} serverId={sessionAddress.serverId}>
                     {props.children}
@@ -100,8 +142,7 @@ function DestinationNavigationChrome(props: Readonly<{
     const nativeShowsTitle = useNavigationTitleChromeShowsTitle();
     const nativeShowsBack = useNavigationChromeShowsBack();
     const ref = instance?.ref;
-    const workspace = useOptionalWorkspaceNavigation();
-    const publishTitle = workspace?.publishDestinationTitle;
+    const publishTitle = useOptionalWorkspaceNavigation(value => value?.publishDestinationTitle);
     // The publication owner changes with the Account even when a retained
     // route happens to reuse the same target object.
     type TitleIdentity = Readonly<{ ref: typeof ref; owner: typeof publishTitle }>;
@@ -213,25 +254,56 @@ export function useDestinationParams<T extends Record<string, string | string[] 
     return (instance ? instance.ref.params : useLocalSearchParams()) as T;
 }
 
+/** A hosted reader follows only its selected params; the Expo owner keeps its existing fallback. */
+export function useDestinationParamsSelector<T>(selector: (params: Readonly<Record<string, string | string[] | undefined>>) => T,
+    equal?: (left: T | null, right: T | null) => boolean): T {
+    const hosted = useDestinationInstanceKey() !== null;
+    const select = React.useCallback((instance: DestinationInstanceContextValue | null) => instance ? selector(instance.ref.params) : null, [selector]);
+    const selected = useDestinationInstance(select, equal);
+    if (hosted) return selected as T;
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- a mounted body keeps its route owner.
+    return selector(useLocalSearchParams());
+}
+
 export function useDestinationGlobalParams<T extends Record<string, string | string[] | undefined>>(): T {
     const instance = useDestinationInstance();
+    const focused = useWorkspaceFocusedRoute();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    return (instance ? instance.ref.params : useGlobalSearchParams()) as T;
+    const params = instance ? null : useGlobalSearchParams();
+    if (instance) return instance.ref.params as T;
+    if (focused) return focused.target.params as T;
+    return params as T;
 }
+
+type DestinationRouteParams = Readonly<Record<string, string | string[] | undefined>>;
+/**
+ * A selected fact of the params `useDestinationGlobalParams` returns. A hosted body selects its own tab's
+ * params; a shell reader selects the focused tab's, rendering only when its selection changes. `select`
+ * must keep its identity (a module-level function).
+ */
+export function useDestinationGlobalParamsSelector<T>(select: (params: DestinationRouteParams) => T): T {
+    const hosted = useDestinationInstanceKey() !== null;
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
+    if (hosted) return useDestinationParamsSelector(select);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
+    const focused = useWorkspaceFocusedRouteSelector(React.useCallback((route: WorkspaceFocusedRoute | null) =>
+        route ? select(route.target.params) : NO_FOCUSED_SELECTION, [select]));
+    // Without a focused tab Expo's route is current (no workspace leads it); it moves only on Expo navigation.
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
+    const params = useGlobalSearchParams();
+    return focused === NO_FOCUSED_SELECTION ? select(params) : focused as T;
+}
+const NO_FOCUSED_SELECTION: unique symbol = Symbol('no focused route');
 
 export function useDestinationPathname(): string {
     const instance = useDestinationInstance();
-    const workspace = useOptionalWorkspaceNavigation();
+    const focused = useWorkspaceFocusedPathname();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const pathname = instance ? null : usePathname();
+    const pathname = instance || focused !== null ? null : usePathname();
     if (instance) return instance.pathname;
-    if (workspace?.active) {
-        const group = workspace.state.groups[workspace.state.focusedGroupId];
-        const tab = workspace.state.tabs[group.activeTabId];
-        // The shell column follows the same tab owner as its body. Expo mirrors that route after
-        // navigation and must not retain a previous tab's selection in the meantime.
-        return hrefForDestinationRef(workspace.catalog ?? [], tab.target)?.split(/[?#]/, 1)[0] ?? '';
-    }
+    // The shell column follows the same tab owner as its body. Expo mirrors that route after
+    // navigation and must not retain a previous tab's selection in the meantime.
+    if (focused !== null) return focused;
     return pathname!;
 }
 
@@ -239,6 +311,18 @@ export { useDestinationFocus, useDestinationVisibility } from './destinationInst
 
 export function useDestinationPaneScopeId(resourceScopeId: string): string {
     return qualifyPaneScopeId(resourceScopeId, useDestinationInstanceKey());
+}
+
+/** Explicit section navigation is distinct from opening a page inside the selected section. */
+export function useOpenAppSection(): (href: string, replace?: boolean) => void {
+    const workspace = useWorkspaceRouterFacts();
+    const router = useDestinationRouter();
+    return React.useCallback((href, replace = false) => {
+        if (!workspace?.openHref(href, { section: true, replace })) {
+            if (replace) router.replace(href as never);
+            else router.navigate(href as never);
+        }
+    }, [router, workspace]);
 }
 
 export function useDestinationRouter(): DestinationRouter {
@@ -270,18 +354,13 @@ export function useDestinationRouter(): DestinationRouter {
 }
 
 function useWorkspaceOrExpoRouter() {
-    const workspace = useOptionalWorkspaceNavigation();
-    const router = useRouter();
     // Workspace publications include titles, history and focus. Those are
     // invocation-time facts, not a new navigation owner for every consumer.
-    const currentWorkspace = React.useRef(workspace);
-    currentWorkspace.current = workspace;
-    const active = workspace?.active === true;
-    const openHref = workspace?.openHref;
-    const navigationForTab = workspace?.navigationForTab;
-    const back = workspace?.back;
+    const workspace = useWorkspaceRouterFacts();
+    const router = useRouter();
     return React.useMemo(() => {
-        if (!openHref || !navigationForTab || !back) return { ...router, redirect: router.replace, pushRetainingCurrent: router.push, retainCurrent: () => {} };
+        if (!workspace) return { ...router, redirect: router.replace, pushRetainingCurrent: router.push, retainCurrent: () => {} };
+        const { active, openHref, navigationForTab, back, read } = workspace;
         const navigate: typeof router.push = (href, options) => {
             if (!openHref(resolveHref(href))) router.push(href, options);
         };
@@ -289,16 +368,16 @@ function useWorkspaceOrExpoRouter() {
             if (!openHref(resolveHref(href), { replace: true })) router.replace(href, options);
         };
         const pushRetainingCurrent: typeof router.push = (href, options) => {
-            const workspace = currentWorkspace.current;
-            if (!workspace?.active) { router.push(href, options); return; }
+            const workspace = read();
+            if (!workspace.active) { router.push(href, options); return; }
             const group = workspace.state.groups[workspace.state.focusedGroupId];
             const navigation = navigationForTab(group.activeTabId);
             if (!navigation.pushRetainingCurrent) throw new Error('The workspace navigation owner did not supply draft retention');
             navigation.pushRetainingCurrent(href, options);
         };
         const retainCurrent = () => {
-            const workspace = currentWorkspace.current;
-            if (!workspace?.active) return;
+            const workspace = read();
+            if (!workspace.active) return;
             const group = workspace.state.groups[workspace.state.focusedGroupId];
             const navigation = navigationForTab(group.activeTabId);
             if (!navigation.retainCurrent) throw new Error('The workspace navigation owner did not supply pane retention');
@@ -306,8 +385,8 @@ function useWorkspaceOrExpoRouter() {
         };
         return { ...router, push: navigate, navigate, replace, redirect: replace, pushRetainingCurrent, retainCurrent,
             back: active ? back : router.back,
-            canGoBack: active ? () => currentWorkspace.current?.canGoBack === true : router.canGoBack };
-    }, [active, back, navigationForTab, openHref, router]);
+            canGoBack: active ? () => read().canGoBack === true : router.canGoBack };
+    }, [router, workspace]);
 }
 
 export function useDestinationFocusEffect(effect: React.EffectCallback): void {

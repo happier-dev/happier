@@ -2,6 +2,8 @@ import * as React from 'react';
 import * as ExpoRouter from 'expo-router';
 import type { LinkProps, RedirectProps } from 'expo-router';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
+import { NavigatorSafeAreaBleed, ScreenSafeAreaFrame } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { composeAppStackScreenLayout } from '@/components/navigation/appStackScreenLayout';
 
 import {
     useDestinationFocus,
@@ -14,6 +16,7 @@ import {
     useDestinationScreenOptions,
 } from './DestinationInstanceHost';
 export { useDestinationRouteNavigation as useNavigation } from './destinationInstanceContext';
+export { useOpenAppSection } from './DestinationInstanceHost';
 
 export type { Href } from 'expo-router';
 export { useDestinationParams as useLocalSearchParams, useDestinationGlobalParams as useGlobalSearchParams,
@@ -39,7 +42,12 @@ function mapStackScreens(child: React.ReactNode): React.ReactNode {
 function StackRoot(props: React.ComponentProps<typeof ExpoRouter.Stack>) {
     const hosted = useDestinationInstanceKey() !== null;
     const outlet = React.useContext(WorkspaceRouteOutlet);
-    return hosted ? <>{outlet}</> : <ExpoRouter.Stack {...props}>{mapStackScreens(props.children)}</ExpoRouter.Stack>;
+    const screenLayout = React.useMemo(() => composeAppStackScreenLayout(props.screenLayout), [props.screenLayout]);
+    return <NavigatorSafeAreaBleed>
+        {hosted
+            ? <ScreenSafeAreaFrame presentation={undefined}>{outlet}</ScreenSafeAreaFrame>
+            : <ExpoRouter.Stack {...props} screenLayout={screenLayout}>{mapStackScreens(props.children)}</ExpoRouter.Stack>}
+    </NavigatorSafeAreaBleed>;
 }
 
 export const Stack = Object.assign(StackRoot, { Screen });

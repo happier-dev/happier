@@ -21,7 +21,8 @@ function readConsent(state: ReturnType<typeof storage.getState>, input: MachineR
 
 export function useMachineOfflineAlert(input: MachineResourceKey): MachineOfflineAlertState {
     const { machineId, serverId } = input;
-    const enabled = storage(React.useCallback((state: ReturnType<typeof storage.getState>) => readConsent(state, { machineId, serverId })?.enabled ?? null, [machineId, serverId]));
+    const enabled = storage(React.useCallback((state: ReturnType<typeof storage.getState>) => readConsent(state, { machineId, serverId })?.enabled ?? null, [machineId, serverId]),
+        { settings: ['machineOfflineAlertsV1'], settingsScope: true, profileScope: true });
     const set = React.useCallback(async (value: boolean): Promise<MachineOfflineAlertSetResult> => {
         const before = readConsent(storage.getState(), { machineId, serverId });
         const failed = (reason: string) => ({ saved: false, enabled: readConsent(storage.getState(), { machineId, serverId })?.enabled ?? null, reason });

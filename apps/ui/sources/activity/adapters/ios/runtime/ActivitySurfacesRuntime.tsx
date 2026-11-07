@@ -31,7 +31,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useLocalSettings, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { activityInstanceKey, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 import {
@@ -472,7 +472,57 @@ export function ActivitySurfacesRuntime(): React.ReactElement | null {
     const isDataReady = activitySource.isDataReady;
     const experiments = useSetting('experiments');
     const featureToggles = useSetting('featureToggles');
-    const localSettings = useLocalSettings();
+    const attentionDeviceOverridesV1 = useLocalSetting('attentionDeviceOverridesV1');
+    const activitySurfacesEnabled = useLocalSetting('activitySurfacesEnabled');
+    const liveActivitiesStrategy = useLocalSetting('liveActivitiesStrategy');
+    const liveActivitiesMode = useLocalSetting('liveActivitiesMode');
+    const liveActivitiesMaxConcurrent = useLocalSetting('liveActivitiesMaxConcurrent');
+    const liveActivitiesEnabled = useLocalSetting('liveActivitiesEnabled');
+    const widgetsEnabled = useLocalSetting('widgetsEnabled');
+    const widgetsPresetMode = useLocalSetting('widgetsPresetMode');
+    const widgetsShowPreviewText = useLocalSetting('widgetsShowPreviewText');
+    const widgetsShowMachinePath = useLocalSetting('widgetsShowMachinePath');
+    const liveActivitiesShowPreviewText = useLocalSetting('liveActivitiesShowPreviewText');
+    const liveActivitiesAllowActionButtons = useLocalSetting('liveActivitiesAllowActionButtons');
+    const liveActivitiesIncludeReady = useLocalSetting('liveActivitiesIncludeReady');
+    const liveActivitiesIncludeThinking = useLocalSetting('liveActivitiesIncludeThinking');
+    const activitySurfaceTapTarget = useLocalSetting('activitySurfaceTapTarget');
+    const activitySurfacePrivacyMode = useLocalSetting('activitySurfacePrivacyMode');
+    const localSettings = React.useMemo(() => ({
+        attentionDeviceOverridesV1,
+        activitySurfacesEnabled,
+        liveActivitiesStrategy,
+        liveActivitiesMode,
+        liveActivitiesMaxConcurrent,
+        liveActivitiesEnabled,
+        widgetsEnabled,
+        widgetsPresetMode,
+        widgetsShowPreviewText,
+        widgetsShowMachinePath,
+        liveActivitiesShowPreviewText,
+        liveActivitiesAllowActionButtons,
+        liveActivitiesIncludeReady,
+        liveActivitiesIncludeThinking,
+        activitySurfaceTapTarget,
+        activitySurfacePrivacyMode,
+    }), [
+        attentionDeviceOverridesV1,
+        activitySurfacesEnabled,
+        liveActivitiesStrategy,
+        liveActivitiesMode,
+        liveActivitiesMaxConcurrent,
+        liveActivitiesEnabled,
+        widgetsEnabled,
+        widgetsPresetMode,
+        widgetsShowPreviewText,
+        widgetsShowMachinePath,
+        liveActivitiesShowPreviewText,
+        liveActivitiesAllowActionButtons,
+        liveActivitiesIncludeReady,
+        liveActivitiesIncludeThinking,
+        activitySurfaceTapTarget,
+        activitySurfacePrivacyMode,
+    ]);
     const activityNowMs = Date.now();
     const [appStateStatus, setAppStateStatus] = React.useState(() => AppState.currentState);
     const [liveActivityAuthorizationCheck, setLiveActivityAuthorizationCheck] = React.useState(

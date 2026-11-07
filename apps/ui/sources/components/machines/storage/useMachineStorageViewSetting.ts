@@ -9,7 +9,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export function useMachineStorageViewSetting(serverId: string, machineId: string, compact: boolean) {
     const key = `${serverId}\u0000${machineId}`;
     const select = React.useCallback((state: ReturnType<typeof storage.getState>) => state.localSettings.machineStorageViewV1[key], [key]);
-    const own = storage(select) ?? MACHINE_STORAGE_VIEW_DEFAULT;
+    const own = storage(select, { localSettings: ['machineStorageViewV1'] }) ?? MACHINE_STORAGE_VIEW_DEFAULT;
     const { setSetting } = useSettingActionFeedback();
     const remember = React.useCallback((patch: MachineStorageViewSettingChange) => {
         fireAndForget(setSetting({ anchor: 'machines.storage.view', key }, patch));

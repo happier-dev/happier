@@ -3,8 +3,13 @@ import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui'
 import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
-import type { PluginUiDeclaredExecution } from '../ui/projection';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+
+/** Declaration facts for cold presentation; never an occurrence or execution grant. */
+export type PluginUiDeclaredExecution = Readonly<{
+    daemonActions: boolean;
+    contributionPoints: boolean;
+}>;
 
 export type PluginHostBundledUiDeclaration = Readonly<{
     pluginId: string;
@@ -14,6 +19,7 @@ export type PluginHostBundledUiDeclaration = Readonly<{
     displayName: string;
     /** Demand index from the canonical declaration projector; schemas stay lazy. */
     hasMachineProvisioners?: boolean;
+    hasDeploymentTargets?: boolean;
     entriesById: PluginDeclaredUiEntriesV1;
     /** Validated authored facts retained by the existing bundled declaration producer. */
     normalizedManifest?: PluginPortableReleaseManifestV1;

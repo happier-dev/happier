@@ -11,7 +11,7 @@ export function useCollectionRailWidth(resizeKey: string): Readonly<{
     const widthPx = getStorage()((state) => {
         const width = state.localSettings.collectionRailWidthsV1[resizeKey];
         return typeof width === 'number' && Number.isFinite(width) ? width : undefined;
-    });
+    }, { localSettings: ['collectionRailWidthsV1'] });
     const commit = React.useCallback((width: number) => {
         if (!Number.isFinite(width)) return;
         const state = getStorage().getState();

@@ -110,3 +110,13 @@ export function resolveNewSessionSecretRequirementRoutePresentation(params: Read
     if (params.mode === 'screen') return undefined;
     return params.platformOs === 'ios' ? 'containedTransparentModal' : 'modal';
 }
+
+/** New and its pickers share the route presentation selected by the root stack. */
+export function isNewSessionModalRoute(params: Readonly<{
+    pathname: string;
+    mode: NewSessionPresentationModeV1 | null | undefined;
+    platformOs: PlatformOs;
+}>): boolean {
+    return (params.pathname === '/new' || params.pathname.startsWith('/new/'))
+        && resolveNewSessionRoutePresentation(params) !== undefined;
+}

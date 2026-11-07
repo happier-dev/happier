@@ -1,11 +1,15 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { getTrackingAnonymousUserId, subscribeTrackingAnonymousUserId } from '@/track';
 import { tracking } from '@/track/tracking';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useLocalSettings, useSettingsSelector } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/hooks';
 import { ACCOUNT_SETTING_ANALYTICS_ARTIFACTS } from '@/sync/domains/settings/registry/account/accountSettingAnalytics';
+import { storage } from '@/sync/domains/state/storageStore';
+import { LOCAL_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
 
@@ -21,6 +25,12 @@ const accountAnalyticsKeys = [...new Set([
     ...Object.keys(ACCOUNT_SETTING_ANALYTICS_ARTIFACTS.trackedDerivedDefinitions),
 ])] as (keyof Settings)[];
 
+const localAnalyticsKeys = [...new Set([
+    ...Object.entries(LOCAL_SETTING_ARTIFACTS.trackedCurrentStateDefinitions),
+    ...Object.entries(LOCAL_SETTING_ARTIFACTS.trackedDerivedDefinitions),
+].filter(([, definition]) => definition?.analytics?.identityScope === 'device_user')
+    .map(([key]) => key))] as (keyof LocalSettings)[];
+
 function selectAnalyticsSettings(settings: Settings): Partial<Settings> & FeatureLocalPolicySettings {
     return {
         ...Object.fromEntries(accountAnalyticsKeys.map((key) => [key, settings[key]])),
@@ -31,7 +41,9 @@ function selectAnalyticsSettings(settings: Settings): Partial<Settings> & Featur
 
 export function SettingsAnalyticsRuntime() {
     const settings = useSettingsSelector(selectAnalyticsSettings, [...accountAnalyticsKeys, 'experiments', 'featureToggles']);
-    const localSettings = useLocalSettings();
+    const localSettings = storage(useShallow((state) => Object.fromEntries(
+        localAnalyticsKeys.map((key) => [key, state.localSettings[key]]),
+    )), { localSettings: localAnalyticsKeys });
     const selection = useEffectiveServerSelection();
     const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: true });
     const anonymousUserId = React.useSyncExternalStore(

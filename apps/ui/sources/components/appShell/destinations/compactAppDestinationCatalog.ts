@@ -1,17 +1,18 @@
 import * as React from 'react';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { reconcilePluginUiProjectionValue } from '@/sync/domains/plugins/ui/projection';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { readWorkflowRunTarget } from '@/sync/domains/workflows/workflowRunRoute';
-import { useShallow } from 'zustand/react/shallow';
+import { shallow } from 'zustand/shallow';
 import { stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
 import { parseQueryParams } from 'expo-router/build/fork/getStateFromPath-forks';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useOpenAppSection } from '@/components/appShell/workspace/destinationRoute';
 import { normalizeProjectPage, resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { readProjectRouteWorktreeSelection, resolveProjectRouteHeaderTitle } from '@/components/projects/detail/projectRouteState';
 import { projectPageLabel } from '@/components/projects/shell/ProjectShellHeader';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import type { DocumentTabTitleSource } from '@/components/ui/navigation/DocumentTabStrip';
 import { EMPTY_WORKSPACE_REFS, readProjectWorkspaceRefs, readCurrentProjectAccountRows, isProjectAccountRowsCensusComplete } from '@/sync/store/domains/projectAccountRows';
 import { isSessionRetiredForServer } from '@/sync/store/domains/sessions';
 import type {
@@ -20,19 +21,19 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
-    useAppShellPluginUiDeclarationSources,
     type AppShellPluginUiDeclarationSources,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { createPluginLocalizedTextResolver, type PluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
+import { readCurrentAppShellPluginUiTranslationRuntime, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getPreferredLanguage } from '@/text/preferredLanguage';
 import type { SupportedLanguage } from '@/text/_all';
 import {
-    resolvePluginAppPages,
-    selectPluginAppPagePlacements,
-    type PluginAppPage,
-} from '@/components/appShell/plugins/pluginAppPages';
-import { usePluginAppPageCatalogActivationHandler } from '@/components/appShell/plugins/pluginAppPageNavigation';
+    resolvePluginPages,
+    selectPluginPagePlacements,
+    type PluginPage,
+} from '@/components/plugins/pages/pluginPages';
+import { usePluginPageCatalogActivationHandler } from '@/components/plugins/pages/pluginPageNavigation';
+import { readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
 import {
     useOptionalUniversalSearchRuntime,
     type UniversalSearchScopeSeed,
@@ -44,16 +45,12 @@ import {
     resolveRightSidebarTabs,
 } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
-import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
-import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
-import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
-import { getStorage, selectSessionDisplayNameSource, useActiveServerAccountScopeLifetime, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { getStorage, selectSessionDisplayNameSource, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { t, tLoose, type TranslationKeyNoParams } from '@/text';
 import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { UNIVERSAL_SEARCH_ROUTE } from '@/components/appShell/search/universalSearchRoutePresentation';
@@ -72,7 +69,7 @@ import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/s
 import { readSessionDisplayTitle, sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { readDiscussionTitle, useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { matchWorkspaceDestinationRoute, registeredWorkspaceRoutes, workspaceRouteHref } from '@/components/appShell/workspace/workspaceRoutes';
-import { useOptionalWorkspaceNavigation, type WorkspaceDestinationTitle } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useWorkspaceDestinationTitles, type WorkspaceDestinationTitle } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { getProfileCatalogSnapshot, subscribeProfileCatalogSnapshots } from '@/sync/store/settings/profileCatalogSnapshot';
@@ -93,6 +90,8 @@ import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/appro
 import { formatApprovalStatusLabel, readApprovalArtifactDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildDiscussionsRouteHref } from '@/components/discussions/discussionRoutes';
+import { isArtifactInventoryLoaded } from '@/sync/domains/artifacts/artifactInventory';
+import { readSessionRecordingVisibility, subscribeSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 
 /**
  * The one catalog of shell destinations (user ruling U1, 2026-09-28): the app's own destinations and
@@ -142,6 +141,13 @@ function isPlaceableAppShellColumnId(value: string): value is PlaceableAppShellC
 
 export type AppDestinationRailRegion = 'app' | 'plugins' | 'account';
 
+/**
+ * The rail's bands (owner Q8, 2026-10-30): visual separation only, no labels, the same icons. The app's
+ * own destinations stand in Work, Together and Library; plugin destinations and the account keep their
+ * regions. Personal order and placement stay with the rail's customizer.
+ */
+export type AppRailBand = 'work' | 'together' | 'library' | 'plugins' | 'account';
+
 /** Where a destination is listed, after resolving its request against this host's columns. */
 export type AppDestinationPlacement =
     | Readonly<{ kind: 'rail'; region: AppDestinationRailRegion }>
@@ -186,6 +192,8 @@ export type CompactAppBuiltinDestination = CompactAppDestinationCommon & Readonl
     signal?: 'inboxCount';
     /** Offered by the command palette before anything is typed. */
     suggested?: true;
+    /** Its rail band, for an app-region destination. */
+    band?: Extract<AppRailBand, 'work' | 'together' | 'library'>;
     /**
      * The rail already draws this destination as one of its own footer controls (Machines is the
      * `app-rail-machines` icon and its popover), so the rail, its customizer and the phone launcher do
@@ -204,7 +212,7 @@ export type CompactAppPluginDestination = CompactAppDestinationCommon & Readonly
     id: string;
     destination: PluginUiDestinationReferenceV1;
     /** Static, normalized presentation defaults; host/user policy remains final. */
-    badge?: PluginAppPage['badge'];
+    badge?: PluginPage['badge'];
     rankHint?: number;
     /** The page stands its own (plugin-rendered) column beside it. */
     ownColumn?: true;
@@ -233,9 +241,11 @@ export type AppBuiltinDestinationAvailability = Readonly<{
     externalSessions: boolean;
     inbox: boolean;
     discussions?: boolean;
+    search?: boolean;
     /** The Workflows destination is discoverable (`useWorkflowsDestinationAccess`). */
     workflows: boolean;
     friends: boolean;
+    bots?: boolean;
     botsRoster?: boolean;
 }>;
 
@@ -245,6 +255,7 @@ type RequestedAppDestinationPlacement =
     | Readonly<{ kind: 'column'; column: string }>;
 
 type BuiltinDestinationRow = Readonly<{
+    contextual?: true;
     id: string;
     titleKey: TranslationKeyNoParams;
     icon: IconName;
@@ -257,6 +268,7 @@ type BuiltinDestinationRow = Readonly<{
     signal?: 'inboxCount';
     suggested?: true;
     railControl?: 'footer';
+    band?: CompactAppBuiltinDestination['band'];
     workspaceNavigationIdentity?: CompactAppBuiltinDestination['workspaceNavigationIdentity'];
     available?: (availability: AppBuiltinDestinationAvailability) => boolean;
     activationAvailable?: (availability: AppBuiltinDestinationAvailability) => boolean;
@@ -271,27 +283,29 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     // Route adapters can load this catalog through DestinationInstanceHost. Read their bindings
     // at projection time rather than capturing an unfinished circular module initialization.
     return [
+    // Work (owner Q8): where the person's own work starts and comes back.
     {
         id: SESSIONS_DESTINATION_ID, titleKey: 'tabs.sessions', icon: 'chats-circle',
-        placement: { kind: 'rail', region: 'app' }, column: 'sessions', activation: 'navigate', routePath: '/',
+        placement: { kind: 'rail', region: 'app' }, band: 'work', column: 'sessions', activation: 'navigate', routePath: '/',
         currentRoutePatterns: ['/session/[...rest]'], suggested: true,
     },
     {
         id: SEARCH_DESTINATION_ID, titleKey: 'tools.names.search', icon: 'magnifying-glass',
-        placement: { kind: 'rail', region: 'app' }, activation: 'overlay', routePath: UNIVERSAL_SEARCH_ROUTE,
+        placement: { kind: 'rail', region: 'app' }, band: 'work', activation: 'overlay', routePath: UNIVERSAL_SEARCH_ROUTE,
+        available: (availability) => availability.search === true,
     },
     {
-        id: 'inbox', titleKey: 'tabs.inbox', icon: 'tray', placement: { kind: 'rail', region: 'app' },
+        id: 'inbox', titleKey: 'tabs.inbox', icon: 'tray', placement: { kind: 'rail', region: 'app' }, band: 'work',
         activation: 'navigate', routePath: '/inbox', currentRoutePatterns: ['/inbox/[...rest]'], signal: 'inboxCount',
         available: (availability) => availability.inbox,
     },
     {
-        id: 'projects', titleKey: 'tabs.projects', icon: 'folder', placement: { kind: 'rail', region: 'app' },
-        column: 'projects', activation: 'navigate', routePath: '/projects', currentRoutePatterns: ['/projects/[...rest]'],
+        id: 'projects', titleKey: 'tabs.projects', icon: 'folder', placement: { kind: 'rail', region: 'app' }, band: 'work',
+        column: 'projects', activation: 'navigate', routePath: '/projects', currentRoutePatterns: ['/projects/[...rest]', '/deployments/[projectSourceId]'],
     },
     {
         id: 'workflows', titleKey: 'workflows.title', icon: 'tree-structure',
-        placement: { kind: 'rail', region: 'app' }, column: 'workflows',
+        placement: { kind: 'rail', region: 'app' }, band: 'work', column: 'workflows',
         activation: 'navigate', routePath: '/workflows',
         // The Automation pages that still exist (a legacy trigger's page, its runs, the create and
         // edit forms) open inside Workflows until the trigger popover and the run route target
@@ -299,34 +313,37 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         currentRoutePatterns: ['/workflows/[...rest]', '/automations', '/automations/[...rest]'],
         available: (availability) => availability.workflows,
     },
+    // Together: the people and agents the person works with.
     {
         id: DISCUSSIONS_DESTINATION_ID, titleKey: 'session.collaboration.discussion.title', icon: 'chat-circle',
-        placement: { kind: 'rail', region: 'app' }, column: 'discussions', activation: 'navigate', routePath: '/discussions',
+        placement: { kind: 'rail', region: 'app' }, band: 'together', column: 'discussions', activation: 'navigate', routePath: '/discussions',
         currentRoutePatterns: ['/discussions/[...rest]'],
         workspaceNavigationIdentity: { resourceParam: 'discussionId', scopeParams: ['serverId'] },
         available: (availability) => availability.discussions === true,
     },
     {
-        id: 'friends', titleKey: 'tabs.friends', icon: 'users', placement: { kind: 'rail', region: 'app' },
+        id: 'friends', titleKey: 'tabs.friends', icon: 'users', placement: { kind: 'rail', region: 'app' }, band: 'together',
         activation: 'navigate', routePath: '/friends', currentRoutePatterns: ['/friends/[...rest]'],
         available: (availability) => availability.friends,
     },
     // Last of Together, its rail-pinned Bots right under it (lab `b-rail A`).
     {
         id: 'bots', titleKey: 'bots.title', icon: BOTS_GLYPH,
-        placement: { kind: 'rail', region: 'app' }, activation: 'botsRoster', routePath: '/',
+        placement: { kind: 'rail', region: 'app' }, band: 'together', activation: 'botsRoster', routePath: '/',
+        available: availability => availability.bots === true,
         activationAvailable: availability => availability.botsRoster === true,
     },
+    // Library: what the person keeps.
     {
         // Live sessions, runs, workflows and machines, arranged by the user (INT §5.1).
         id: 'boards', titleKey: 'boards.title', icon: 'squares-four',
-        placement: { kind: 'rail', region: 'app' }, column: 'boards',
+        placement: { kind: 'rail', region: 'app' }, band: 'library', column: 'boards',
         activation: 'navigate', routePath: '/boards', currentRoutePatterns: ['/boards/[...rest]'],
     },
     {
         // Everything saved to the Account Artifact store, as one browser page (RU2 §9.6).
         id: 'artifacts', titleKey: 'artifacts.title', icon: 'files',
-        placement: { kind: 'rail', region: 'app' },
+        placement: { kind: 'rail', region: 'app' }, band: 'library',
         activation: 'navigate', routePath: '/artifacts', currentRoutePatterns: ['/artifacts/[...rest]'],
     },
     {
@@ -337,9 +354,14 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     {
         // Heads the plugins region: where plugins are installed and found. Plugin-contributed pages
         // under `/plugins/<pluginId>/…` are their own destinations.
-        id: PLUGINS_DESTINATION_ID, titleKey: 'settingsPlugins.surfaces.navigationTitle', icon: PLUGINS_SURFACE_ICON,
+        id: PLUGINS_DESTINATION_ID, titleKey: 'settingsPlugins.surfaces.storeTitle', icon: PLUGINS_SURFACE_ICON,
         placement: { kind: 'rail', region: 'plugins' }, column: 'plugins', activation: 'navigate',
         routePath: PLUGINS_APP_ROUTE, currentRoutePatterns: PLUGINS_APP_PAGE_PATTERNS,
+    },
+    {
+        id: 'store.bots', titleKey: 'bots.title', icon: BOTS_GLYPH,
+        placement: { kind: 'column', column: 'plugins' }, activation: 'navigate',
+        routePath: '/plugins/bots', contextual: true,
     },
     {
         // One Machines page with two doors (R1): this rail door opens it beside the machine list, without
@@ -399,6 +421,11 @@ function resolvePluginPlacement(requested: PluginUiDestinationPlacementV1 | unde
     };
 }
 
+/** The rail band a destination stands in (owner Q8). */
+export function resolveAppRailBand(destination: CompactAppDestination): AppRailBand {
+    if (destination.kind === 'builtin' && destination.band !== undefined) return destination.band;
+    return destination.placement.kind === 'rail' && destination.placement.region === 'account' ? 'account' : 'plugins';
+}
 
 /** The qualified renderer a destination placement binds, when the Registry projected one. */
 function readDestinationRendererKey(
@@ -424,8 +451,9 @@ function placementGroupKey(placement: AppDestinationPlacement): string {
  * listed and disabled, so its route can still show why.
  */
 export function resolveCompactAppDestinations(input: Readonly<{
+    baseline?: readonly CompactAppDestination[];
     builtins: AppBuiltinDestinationAvailability;
-    pages: readonly PluginAppPage[];
+    pages: readonly PluginPage[];
     rightSidebarTabs?: readonly RightSidebarPluginTabDefinition[];
 }>): readonly CompactAppDestination[] {
     const destinations: CompactAppDestination[] = [];
@@ -441,12 +469,14 @@ export function resolveCompactAppDestinations(input: Readonly<{
             placement: resolvePlacement(row.placement, 'app'),
             activation: row.activation,
             routePath: row.routePath,
+            ...(row.contextual === undefined ? {} : { contextual: row.contextual }),
             ...(row.column === undefined ? {} : { column: row.column }),
             ...(row.currentRoutePatterns === undefined ? {} : { currentRoutePatterns: row.currentRoutePatterns }),
             ...(row.shortcut === undefined ? {} : { shortcut: row.shortcut }),
             ...(row.signal === undefined ? {} : { signal: row.signal }),
             ...(row.suggested === undefined ? {} : { suggested: row.suggested }),
             ...(row.railControl === undefined ? {} : { railControl: row.railControl }),
+            ...(row.band === undefined ? {} : { band: row.band }),
             ...(row.workspaceNavigationIdentity === undefined ? {} : { workspaceNavigationIdentity: row.workspaceNavigationIdentity }),
             ...(row.visibility === undefined ? {} : { visibility: row.visibility }),
             availability: row.activationAvailable && !row.activationAvailable(input.builtins) ? 'unavailable' : 'available',
@@ -519,7 +549,11 @@ export function resolveCompactAppDestinations(input: Readonly<{
     };
 
     // Surface-local preferences are resolved by that surface, not shared discovery.
-    return Object.freeze(destinations.sort(compare).map((destination, order) => Object.freeze({ ...destination, order })));
+    const previousById = new Map(input.baseline?.map(row => [row.id, row]));
+    const ordered = destinations.sort(compare).map((destination, order) =>
+        reconcilePluginUiProjectionValue(previousById.get(destination.id), Object.freeze({ ...destination, order })));
+    return input.baseline && input.baseline.length === ordered.length && ordered.every((row, index) => row === input.baseline?.[index])
+        ? input.baseline : Object.freeze(ordered);
 }
 
 export type CompactAppDestinationSources = Pick<AppShellPluginUiDeclarationSources, 'projection' | 'accountLifetime' | 'ready'> & Readonly<{
@@ -530,23 +564,34 @@ export type CompactAppDestinationSources = Pick<AppShellPluginUiDeclarationSourc
 type CompactDestinationVariant = {
     destinations: readonly CompactAppDestination[];
     published: boolean;
+    builtins: AppBuiltinDestinationAvailability;
     listeners: Set<() => void>;
 };
 
 type CompactDestinationPublication = {
     source: CompactAppDestinationSources;
     prepared: Readonly<{
-        pages: readonly PluginAppPage[];
+        pages: readonly PluginPage[];
         rightSidebarTabs: readonly RightSidebarPluginTabDefinition[];
     }> | null;
     variants: Map<number, CompactDestinationVariant>;
     lastDestinations: readonly CompactAppDestination[];
     retirement: Readonly<{ dispose(): void }> | null;
+    demandedPlugins: Set<string>;
+    translationRuntime: PluginUiTranslationRuntime | null;
+    releaseTranslations: (() => void) | null;
+    releaseCopyOwner: (() => void) | null;
 };
 
 const UNPUBLISHED_COMPACT_DESTINATIONS: readonly CompactAppDestination[] = Object.freeze([]);
 const compactDestinationPublications = new Set<CompactDestinationPublication>();
 let latestCompactDestinationPublication: CompactDestinationPublication | null = null;
+/**
+ * Each builtin variant's last published rows, per Account lifetime. A projection republish
+ * starts a new publication and can prune the previous one before every variant re-subscribes;
+ * the variant's own rows (not another variant's) are the baseline that keeps an equal catalog.
+ */
+const lastCompactDestinationsByLifetime = new WeakMap<object, Map<number, readonly CompactAppDestination[]>>();
 
 function isCompactDestinationSourceCurrent(source: CompactAppDestinationSources): boolean {
     return source.ready && (!source.accountLifetime || source.accountLifetime.isCurrent());
@@ -555,7 +600,8 @@ function isCompactDestinationSourceCurrent(source: CompactAppDestinationSources)
 function compactDestinationVariantKey(builtins: AppBuiltinDestinationAvailability): number {
     return Number(builtins.externalSessions) | (Number(builtins.inbox) << 1)
         | (Number(builtins.discussions === true) << 2) | (Number(builtins.workflows) << 3)
-        | (Number(builtins.friends) << 4) | (Number(builtins.botsRoster === true) << 5);
+        | (Number(builtins.friends) << 4) | (Number(builtins.botsRoster === true) << 5) | (Number(builtins.bots === true) << 6)
+        | (Number(builtins.search === true) << 7);
 }
 
 function findCompactDestinationPublication(source: CompactAppDestinationSources): CompactDestinationPublication | undefined {
@@ -577,7 +623,8 @@ function readLastKnownCompactDestinations(source: CompactAppDestinationSources):
         const variant = publication.variants.get(key);
         if (variant?.published) matchingVariant = variant.destinations;
     }
-    return matchingVariant === UNPUBLISHED_COMPACT_DESTINATIONS ? lastKnown : matchingVariant;
+    if (matchingVariant !== UNPUBLISHED_COMPACT_DESTINATIONS) return matchingVariant;
+    return (source.accountLifetime && lastCompactDestinationsByLifetime.get(source.accountLifetime)?.get(key)) || lastKnown;
 }
 
 /** Reads never prepare pages, sort destinations, compare rows, or publish a source. */
@@ -587,7 +634,7 @@ export function readCommittedCompactAppDestinations(source: CompactAppDestinatio
         ?? readLastKnownCompactDestinations(source);
 }
 
-function isCompactDestinationSourcePublished(source: CompactAppDestinationSources): boolean {
+export function isCompactDestinationSourcePublished(source: CompactAppDestinationSources): boolean {
     return isCompactDestinationSourceCurrent(source)
         && findCompactDestinationPublication(source)?.variants.get(compactDestinationVariantKey(source.builtins))?.published === true;
 }
@@ -595,7 +642,32 @@ function isCompactDestinationSourcePublished(source: CompactAppDestinationSource
 function releaseCompactDestinationPublication(publication: CompactDestinationPublication): void {
     compactDestinationPublications.delete(publication);
     publication.retirement?.dispose();
+    publication.releaseTranslations?.();
+    publication.releaseCopyOwner?.();
     if (latestCompactDestinationPublication === publication) latestCompactDestinationPublication = null;
+}
+
+function bindCompactDestinationTranslations(publication: CompactDestinationPublication): void {
+    if (!compactDestinationPublications.has(publication) || !isCompactDestinationSourceCurrent(publication.source)) return;
+    const runtime = readCurrentAppShellPluginUiTranslationRuntime(publication.source.projection);
+    if (runtime !== publication.translationRuntime) {
+        publication.releaseTranslations?.();
+        publication.translationRuntime = runtime;
+        publication.releaseTranslations = runtime?.subscribe(pluginId => {
+            if (!publication.demandedPlugins.has(pluginId)) return;
+            publication.prepared = null;
+            for (const variant of publication.variants.values()) {
+                variant.published = false;
+                commitCompactAppDestinationSources({ ...publication.source, builtins: variant.builtins });
+            }
+        }) ?? null;
+    }
+    const { projection, locale } = publication.source;
+    if (runtime && projection) {
+        for (const pluginId of publication.demandedPlugins) {
+            if (runtime.matchesSource(projection, pluginId)) void runtime.demand(pluginId, locale);
+        }
+    }
 }
 
 function pruneCompactDestinationPublications(): void {
@@ -616,11 +688,14 @@ function retainCompactDestinationVariant(source: CompactAppDestinationSources): 
     let publication = findCompactDestinationPublication(source);
     if (!publication) {
         publication = { source, prepared: null, variants: new Map(),
-            lastDestinations: UNPUBLISHED_COMPACT_DESTINATIONS, retirement: null };
+            lastDestinations: UNPUBLISHED_COMPACT_DESTINATIONS, retirement: null,
+            demandedPlugins: new Set(), translationRuntime: null, releaseTranslations: null, releaseCopyOwner: null };
         compactDestinationPublications.add(publication);
         const owned = publication;
+        publication.releaseCopyOwner = subscribeCommittedAppShellPluginUiProjection(() => bindCompactDestinationTranslations(owned));
         publication.retirement = source.accountLifetime?.onRetire(() => {
             releaseCompactDestinationPublication(owned);
+            if (owned.source.accountLifetime) lastCompactDestinationsByLifetime.delete(owned.source.accountLifetime);
             owned.prepared = null;
             owned.lastDestinations = UNPUBLISHED_COMPACT_DESTINATIONS;
             for (const variant of owned.variants.values()) {
@@ -633,7 +708,7 @@ function retainCompactDestinationVariant(source: CompactAppDestinationSources): 
     const key = compactDestinationVariantKey(source.builtins);
     let variant = publication.variants.get(key);
     if (!variant) {
-        variant = { destinations: readLastKnownCompactDestinations(source), published: false, listeners: new Set() };
+        variant = { destinations: readLastKnownCompactDestinations(source), published: false, builtins: source.builtins, listeners: new Set() };
         publication.variants.set(key, variant);
     }
     return { publication, variant };
@@ -644,16 +719,6 @@ export function subscribeCompactAppDestinations(source: CompactAppDestinationSou
     const { variant } = retainCompactDestinationVariant(source);
     variant.listeners.add(listener);
     return () => { variant.listeners.delete(listener); pruneCompactDestinationPublications(); };
-}
-
-function shareCompactDestinationRows(previous: readonly CompactAppDestination[], next: readonly CompactAppDestination[]): readonly CompactAppDestination[] {
-    const previousById = new Map(previous.map(row => [row.id, row]));
-    const shared = next.map(row => {
-        const retained = previousById.get(row.id);
-        return retained && sameStrictJsonValue(retained, row) ? retained : row;
-    });
-    return previous.length === shared.length && shared.every((row, index) => row === previous[index])
-        ? previous : Object.freeze(shared);
 }
 
 /** One committed declaration/locale prepares pages and tabs for every builtin/Bots variant. */
@@ -669,9 +734,19 @@ export function commitCompactAppDestinationSources(source: CompactAppDestination
     }
     if (!publication.prepared) {
         const projection = source.projection;
-        const localize = createPluginLocalizedTextResolver({ projection, locale: source.locale });
+        const resolve = createPluginLocalizedTextResolver({ projection, locale: source.locale,
+            runtime: readCurrentAppShellPluginUiTranslationRuntime(projection) });
+        const localize = (pluginId: string, value: unknown) => {
+            if (typeof value === 'object' && value !== null && 'key' in value) publication.demandedPlugins.add(pluginId);
+            return resolve(pluginId, value);
+        };
+        let baselinePages: readonly PluginPage[] | undefined;
+        for (const previous of compactDestinationPublications) {
+            if (previous.source.accountLifetime === source.accountLifetime && previous.source.locale === source.locale && previous.prepared)
+                baselinePages = previous.prepared.pages;
+        }
         publication.prepared = {
-            pages: projection ? resolvePluginAppPages({ placements: selectPluginAppPagePlacements(projection), localize }) : [],
+            pages: projection ? resolvePluginPages({ target: { kind: 'app' }, placements: selectPluginPagePlacements(projection, { container: 'appPage', targetKind: 'app' }), localize, baseline: baselinePages }) : [],
             rightSidebarTabs: projection ? resolveRightSidebarTabs({ scope: 'app',
                 pluginPlacements: selectPluginRightSidebarTabPlacements(projection, 'app'),
                 localize,
@@ -679,14 +754,21 @@ export function commitCompactAppDestinationSources(source: CompactAppDestination
         };
     }
     const previous = variant.destinations;
-    variant.destinations = shareCompactDestinationRows(previous, resolveCompactAppDestinations({
-        builtins: source.builtins, ...publication.prepared,
-    }));
+    variant.destinations = resolveCompactAppDestinations({
+        builtins: source.builtins, ...publication.prepared, baseline: previous,
+    });
     variant.published = true;
     publication.lastDestinations = variant.destinations;
+    if (source.accountLifetime) {
+        let remembered = lastCompactDestinationsByLifetime.get(source.accountLifetime);
+        if (!remembered) lastCompactDestinationsByLifetime.set(source.accountLifetime, remembered = new Map());
+        remembered.set(compactDestinationVariantKey(source.builtins), variant.destinations);
+    }
     latestCompactDestinationPublication = publication;
+    // The catalog is committed before acquiring copy; abandoned renders acquire nothing.
+    void Promise.resolve().then(() => bindCompactDestinationTranslations(publication));
     pruneCompactDestinationPublications();
-    if (variant.destinations !== previous) for (const listener of variant.listeners) listener();
+    if (previous !== variant.destinations) for (const listener of variant.listeners) listener();
 }
 
 /** The destinations listed in one placement group, visible ones only, in catalog order. */
@@ -805,6 +887,8 @@ export function resolveDestinationRefFromHref(
     href: string,
 ): DestinationRef | null {
     if (!href.startsWith('/') || href.startsWith('//')) return null;
+    // Reject before URL normalization can remove a plugin-local traversal segment.
+    if (/^\/projects\/[^/]+\/plugins\//.test(href) && !resolveProjectCockpitRouteFromPathname(href)) return null;
     let url: URL;
     try {
         url = new URL(href, 'https://happier.invalid');
@@ -971,54 +1055,7 @@ export function hrefForDestinationRef(
     return appendQuery(destination.routePath, params, []);
 }
 
-function useAppBuiltinDestinationAvailability(owners: AppDestinationActivationOwners): AppBuiltinDestinationAvailability {
-    // The same decision the Sessions list reads for its external sessions (`useSessionListStorageKind`).
-    const externalSessions = useFeatureDecision('sessions.direct')?.state === 'enabled';
-    const inbox = useInboxAvailable();
-    const discussions = useFeatureDecision('sessions.conversations')?.state === 'enabled';
-    // Listed while discoverable, including a local-policy disablement whose repair it leads to.
-    const workflows = useWorkflowsDestinationAccess().discoverable;
-    const friends = useFriendsEnabled();
-    // The roster opens from the app-wide runtime (rail anchor or sheet); an explicit owner overrides it.
-    const botsRosterRuntime = useOptionalBotsRosterRuntime();
-    const botsRoster = (owners.openBotsRoster ?? botsRosterRuntime?.open) !== undefined;
-    return React.useMemo(
-        () => ({ externalSessions, inbox, discussions, workflows, friends, botsRoster }),
-        [externalSessions, friends, inbox, discussions, workflows, botsRoster],
-    );
-}
-
-/**
- * App-shell adapter for the catalog. Discovery requires a current admitted projection, not daemon
- * interaction: pages can be host-local or Account-artifact-backed and must remain
- * navigable/offline-tombstonable while executable bridge methods are separately unavailable.
- */
-export function useCompactAppDestinationCatalog(owners: AppDestinationActivationOwners = {}): Readonly<{
-    destinations: readonly CompactAppDestination[];
-    ready: boolean;
-    accountLifetime: AppShellPluginUiDeclarationSources['accountLifetime'];
-}> {
-    const declaration = useAppShellPluginUiDeclarationSources();
-    const locale = usePreferredLanguage();
-    const builtins = useAppBuiltinDestinationAvailability(owners);
-    const source = React.useMemo<CompactAppDestinationSources>(() => ({ ...declaration, locale, builtins }), [builtins, declaration, locale]);
-    const subscribe = React.useCallback((listener: () => void) => subscribeCompactAppDestinations(source, listener), [source]);
-    const getSnapshot = React.useCallback(() => readCommittedCompactAppDestinations(source), [source]);
-    const destinations = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const ready = isCompactDestinationSourcePublished(source);
-    const [, refresh] = React.useReducer((value: boolean) => !value, false);
-    React.useLayoutEffect(() => {
-        commitCompactAppDestinationSources(source);
-        // useSyncExternalStore subscribes passively. Admit the first complete catalog before
-        // paint, including equal-row publications whose exact source just became ready.
-        if (destinations !== getSnapshot() || ready !== isCompactDestinationSourcePublished(source)) refresh();
-    }, [destinations, getSnapshot, ready, source]);
-    return { destinations, ready, accountLifetime: declaration.accountLifetime };
-}
-
-export function useCompactAppDestinations(owners: AppDestinationActivationOwners = {}): readonly CompactAppDestination[] {
-    return useCompactAppDestinationCatalog(owners).destinations;
-}
+export { useCompactAppDestinationCatalog, useCompactAppDestinations } from './useCompactAppDestinations';
 
 export type ActivateAppDestination = (
     destination: CompactAppDestination,
@@ -1032,15 +1069,15 @@ export type ActivateAppDestination = (
  * tombstone; lists that show it disabled simply do not call this.
  */
 export function useActivateAppDestination(activationOwners: AppDestinationActivationOwners = {}): ActivateAppDestination {
-    const router = useRouter();
-    const activatePluginAppPage = usePluginAppPageCatalogActivationHandler();
+    const navigateSection = useOpenAppSection();
+    const activatePluginAppPage = usePluginPageCatalogActivationHandler(navigateSection);
     const universalSearch = useOptionalUniversalSearchRuntime();
     const openAppRightSidebarTab = useOpenAppRightSidebarTab();
     const botsRosterRuntime = useOptionalBotsRosterRuntime();
     // The owners above change with the route; the returned callback does not, so every memoized row
     // and rail icon that holds it keeps its identity across navigation.
-    const latest = React.useRef({ router, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners });
-    latest.current = { router, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners };
+    const latest = React.useRef({ navigateSection, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners });
+    latest.current = { navigateSection, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners };
     return React.useCallback((destination, options) => {
         const owners = latest.current;
         if (!isCompactAppDestinationInvokable(destination)) return;
@@ -1067,7 +1104,7 @@ export function useActivateAppDestination(activationOwners: AppDestinationActiva
         }
         const home = destination.id === DISCUSSIONS_DESTINATION_ID ? getActiveServerAccountScope() : null;
         const routePath = home ? buildDiscussionsRouteHref(home) : destination.routePath;
-        const result = runGuardedNavigation(() => owners.router.push(routePath as never));
+        const result = runGuardedNavigation(() => owners.navigateSection(routePath));
         if (result !== true) fireAndForget(result, { tag: 'AppDestination.activate' });
     }, []);
 }
@@ -1111,8 +1148,26 @@ function resolveStaticInstanceTitle(catalog: readonly CompactAppDestination[], r
         if (key) return t(key);
     }
     const destination = resolveCurrentAppDestination(catalog, pathname);
-    return destination && (destination.kind === 'plugin' || pathname === destination.routePath)
-        ? destination.title : null;
+    if (destination?.kind === 'plugin') return resolvePluginRouteViewTitle(catalog, destination, href) ?? destination.title;
+    return destination && pathname === destination.routePath ? destination.title : null;
+}
+
+/**
+ * The declared view a plugin page's route presents (`?view=`, written by the page's location owner), named from the
+ * catalog before anything mounts: a cold load of that route says the view's name from its first frame. A view the
+ * plugin does not declare as a page leaves the page's own name.
+ */
+function resolvePluginRouteViewTitle(
+    catalog: readonly CompactAppDestination[],
+    destination: CompactAppPluginDestination,
+    href: string,
+): string | null {
+    const query = href.split('#', 1)[0]!.split('?')[1];
+    const view = query === undefined ? null : readPluginAppPageRouteView(new URLSearchParams(query).get('view'));
+    if (view === null || view === destination.destination.localId) return null;
+    const viewed = catalog.find(candidate => candidate.kind === 'plugin' && candidate.container === 'appPage'
+        && candidate.destination.pluginId === destination.destination.pluginId && candidate.destination.localId === view);
+    return viewed?.title ?? null;
 }
 
 function resolveProjectInstanceTitle(ref: DestinationRef, workspaceRefs: readonly WorkspaceRefV1[]): string | null {
@@ -1143,7 +1198,9 @@ function resolvePublishedOrStaticInstanceTitle(catalog: readonly CompactAppDesti
     }
     // Home's greeting is content, while the shell catalog calls its rail Sessions.
     if (ref.kind === SESSIONS_DESTINATION_ID && pathname === '/') return t('common.home');
-    const staticTitle = resolveStaticInstanceTitle(catalog, ref);
+    const publishParams = pathname === '/settings/plugins/publish' ? new URLSearchParams(href?.split('?')[1]) : null;
+    const templatePublisher = Boolean(publishParams?.get('templateArtifactId') && publishParams.get('templateServerId'));
+    const staticTitle = templatePublisher ? null : resolveStaticInstanceTitle(catalog, ref);
     const destination = pathname ? resolveCurrentAppDestination(catalog, pathname) : null;
     // Collection/status headlines and automatically selected detail panels do not
     // rename their destination. Explicit entity routes have no static identity here.
@@ -1172,6 +1229,8 @@ function resolvePublishedOrStaticInstanceTitle(catalog: readonly CompactAppDesti
  * lands only when the verdict changes). `null` when nothing can name it yet.
  */
 export function readDestinationInstanceTitle(catalog: readonly CompactAppDestination[], ref: DestinationRef, options?: DestinationInstanceTitleOptions): string | null {
+    const address = readDestinationSessionAddress(ref);
+    if (address && !readSessionRecordingVisibility()(address)) return t('session.untitled');
     const state = readRegisteredStorageState();
     const missing = resolveKnownMissingInstanceTitle(ref, state);
     if (missing) return missing;
@@ -1228,11 +1287,16 @@ function readSettingsEntityTitleDemand(ref: DestinationRef) {
     return null;
 }
 
+/**
+ * An entity settings tab names its entity once a catalog can. Until then, and when the read failed,
+ * was refused or the entity is gone, it returns null so the route's own title names the page
+ * (the same title the phone header shows); "Unavailable" never names a tab.
+ */
 function resolveSettingsEntityInstanceTitle(ref: DestinationRef, state: ReturnType<typeof readRegisteredStorageState>): string | null {
     const demand = readSettingsEntityTitleDemand(ref);
     if (!demand || !state?.profileScope) return null;
     const scope = state.profileScope;
-    if (demand.serverId && !areServerProfileIdentifiersEquivalent(scope.serverId, demand.serverId)) return t('common.unavailable');
+    if (demand.serverId && !areServerProfileIdentifiersEquivalent(scope.serverId, demand.serverId)) return null;
     if (demand.kind === 'provider') {
         const snapshot = getProviderCatalogSnapshot(scope);
         const connection = snapshot?.data?.connections.find(row => row.id === demand.id);
@@ -1240,18 +1304,18 @@ function resolveSettingsEntityInstanceTitle(ref: DestinationRef, state: ReturnTy
             // Destination titles are Account-only and never pick a Machine to resolve a name.
             composeProviderSettingsV1(snapshot.data, {}), connection, readAccountProviderDeclarations({ kind: 'account' }),
         )).title;
-        return snapshot && snapshot.status !== 'loading' ? t('common.unavailable') : null;
+        return null;
     }
     if (demand.kind === 'profile') {
         const snapshot = getProfileCatalogSnapshot(scope);
         const profile = (snapshot && readUiProfileCatalogSnapshot(snapshot).profiles.find(row => row.id === demand.id))
             ?? getBuiltInProfile(demand.id);
         if (profile) return getProfileDisplayName(projectAiLaunchProfileForLegacyUi(profile));
-        return snapshot && snapshot.catalog.status !== 'loading' ? t('common.unavailable') : null;
+        return null;
     }
     const snapshot = getMcpServerCatalogSnapshot(scope);
     const server = snapshot.value?.servers.find(row => row.id === demand.id);
-    return server ? mcpServerDisplayName(server) : snapshot.status !== 'loading' ? t('common.unavailable') : null;
+    return server ? mcpServerDisplayName(server) : null;
 }
 
 function subscribeSettingsEntityTitles(listener: () => void): () => void {
@@ -1282,7 +1346,9 @@ function resolveKnownMissingInstanceTitle(ref: DestinationRef, state: ReturnType
             ? t('projects.detail.notFoundTitle') : null;
     }
     if ((ref.kind === 'workflow' || ref.kind === 'artifacts') && ref.params.id && !resolveBuiltinWorkflowTitle(ref)
-        && !state.artifacts[ref.params.id] && state.artifactsLoaded) {
+        && !state.artifacts[ref.params.id] && isArtifactInventoryLoaded(state,
+            // A generic Artifact route carries no kind; only the full census can prove its absence.
+            ref.kind === 'workflow' ? ['workflow-definition.v1'] : undefined)) {
         return t(ref.kind === 'artifacts' ? 'artifacts.notFound' : 'common.unavailable');
     }
     return null;
@@ -1321,6 +1387,82 @@ function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeo
     return null;
 }
 
+/** One tab's projection is invalidated by its own records, never an unrelated root publication. */
+function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDestination[], entry: DestinationInstanceTitleEntry) {
+    const { ref, fallbackTitle } = entry;
+    const savedTitle = resolveSavedInstanceTitle(catalog, ref, fallbackTitle);
+    const settingsDemand = readSettingsEntityTitleDemand(ref);
+    const session = isSessionTitleRef(ref);
+    const managedRunId = ref.kind === 'workflowRun' && readWorkflowRunTarget(ref.params)?.kind === 'managed' ? ref.params.runId : undefined;
+    const artifactId = ref.kind === 'workflow' || ref.kind === 'artifacts' || isApprovalInstanceRef(ref) ? ref.params.id : undefined;
+    let storeInputs: readonly unknown[] | undefined;
+    let inputs: readonly unknown[] | undefined;
+    let projection: ReturnType<typeof project> | undefined;
+    function project(state: ReturnType<typeof readRegisteredStorageState>, source: ReturnType<typeof selectSessionDisplayNameSource> | null) {
+        return {
+            stored: resolveStoredInstanceTitle(ref, state, savedTitle),
+            missing: resolveKnownMissingInstanceTitle(ref, state),
+            session: session ? sessionDisplayTitle(source) : null,
+            project: ref.kind === 'project' && state ? resolveProjectInstanceTitle(ref, readProjectWorkspaceRefs(state)) : null,
+        };
+    }
+    let settingsInputs: readonly unknown[] | undefined;
+    let settingsTitle: string | null = null;
+    let titleInputs: readonly unknown[] | undefined;
+    let title: string | null = null;
+    return {
+        entry, catalog, fallbackTitle, settingsDemand, session, managedRunId,
+        read(state: ReturnType<typeof readRegisteredStorageState>) {
+            // Producer-owned record/container identities decide whether canonical lookup is needed.
+            const nextStoreInputs = [state?.profileScope,
+                artifactId ? state?.artifacts[artifactId] : null,
+                managedRunId && state?.profileScope ? state.workflowRunsById[workflowRunStoreKey(managedRunId, state.profileScope)] : null,
+                ref.kind === 'project' ? state?.projectAccountRows : null,
+                session ? state?.sessions : null, session ? state?.sessionListRowsByServerId : null,
+                session ? state?.ordinarySessionListMembershipByServerId : null, session ? state?.deletedSessionIds : null,
+                artifactId ? state?.artifactsLoaded : null, artifactId ? state?.artifactBrowserLoaded : null,
+                artifactId ? state?.artifactInventoryKindsLoaded : null];
+            if (projection && storeInputs && shallow(storeInputs, nextStoreInputs)) return projection;
+            storeInputs = nextStoreInputs;
+            const source = session && ref.params.id && state ? selectSessionDisplayNameSource(state, ref.params.id, ref.params.serverId) : null;
+            const projectRows = ref.kind === 'project' && state ? readCurrentProjectAccountRows(state) : null;
+            const projectRef = ref.kind === 'project' && ref.params.workspaceRefId && state
+                ? resolveWorkspaceRefById(readProjectWorkspaceRefs(state), ref.params.workspaceRefId, ref.params.serverId) : null;
+            const nextInputs = [state?.profileScope, artifactId ? state?.artifacts[artifactId] : null,
+                managedRunId && state?.profileScope ? state.workflowRunsById[workflowRunStoreKey(managedRunId, state.profileScope)] : null,
+                projectRef?.kind === 'resolved' ? projectRef.ref : projectRef?.kind, isProjectAccountRowsCensusComplete(projectRows),
+                artifactId && state ? isArtifactInventoryLoaded(state, ref.kind === 'workflow' ? ['workflow-definition.v1'] : undefined) : false,
+                session && state && ref.params.id ? isSessionRetiredForServer(state.deletedSessionIds, ref.params.id, ref.params.serverId ?? state.profileScope?.serverId ?? null) : false,
+                ...Object.values(source ?? {})];
+            if (!projection || !inputs || !shallow(inputs, nextInputs)) {
+                inputs = nextInputs;
+                projection = project(state, source);
+            }
+            return projection;
+        },
+        readSettings(state: ReturnType<typeof readRegisteredStorageState>) {
+            if (!settingsDemand) return null;
+            const scope = state?.profileScope;
+            const nextInputs = [scope, scope ? settingsDemand.kind === 'provider' ? getProviderCatalogSnapshot(scope)
+                : settingsDemand.kind === 'profile' ? getProfileCatalogSnapshot(scope) : getMcpServerCatalogSnapshot(scope) : null];
+            if (!settingsInputs || !shallow(settingsInputs, nextInputs)) {
+                settingsInputs = nextInputs;
+                settingsTitle = resolveSettingsEntityInstanceTitle(ref, state);
+            }
+            return settingsTitle;
+        },
+        title(value: ReturnType<typeof project>, settings: string | null, discussion: string | null | undefined, published: WorkspaceDestinationTitle | undefined) {
+            const nextInputs = [value, settings, discussion, published];
+            if (!titleInputs || !shallow(titleInputs, nextInputs)) {
+                titleInputs = nextInputs;
+                const fallback = resolvePublishedOrStaticInstanceTitle(catalog, ref, { publishedTitle: published, fallbackTitle }, settings ?? value.stored);
+                title = value.missing ?? (discussion || null) ?? (value.session || null) ?? value.project ?? fallback;
+            }
+            return title;
+        },
+    };
+}
+
 /**
  * The live title of each open destination instance (workspace lab T: "its title comes from the
  * destination"): a session's current name, a Details target's own name, a settings page or plugin
@@ -1333,21 +1475,61 @@ export function useDestinationInstanceTitles(
     catalog: readonly CompactAppDestination[],
     entries: readonly DestinationInstanceTitleEntry[],
 ): ReadonlyMap<string, string> {
-    const workspace = useOptionalWorkspaceNavigation();
+    const sources = useDestinationInstanceTitleSources(catalog, entries);
+    const source = React.useMemo(() => {
+        let titles: ReadonlyMap<string, string> = new Map();
+        return {
+            subscribe(listener: () => void) {
+                const stopStore = getStorage().subscribe(listener, {
+                    profileScope: true, projectAccountRows: true, sessions: true,
+                    sessionListRowsByServerId: true, ordinarySessionListMembershipByServerId: true,
+                    deletedSessionIds: true, artifacts: true, artifactsLoaded: true,
+                    artifactBrowserLoaded: true, artifactInventoryKindsLoaded: true, workflowRunsById: true,
+                });
+                const stopSettings = subscribeSettingsEntityTitles(listener);
+                const stopPrivacy = entries.some(entry => readDestinationSessionAddress(entry.ref))
+                    ? subscribeSessionRecordingVisibility(listener) : null;
+                return () => { stopStore(); stopSettings(); stopPrivacy?.(); };
+            },
+            read() {
+                const next = new Map<string, string>();
+                for (const [key, source] of sources) {
+                    const title = source.getSnapshot();
+                    if (title) next.set(key, title);
+                }
+                if (!shallow(titles, next)) titles = next;
+                return titles;
+            },
+        };
+    }, [sources]);
+    return React.useSyncExternalStore(source.subscribe, source.read, source.read);
+}
+
+/** Strips subscribe in the tab leaf; grouped content demand stays at this owner. */
+export function useDestinationInstanceTitleSources(
+    catalog: readonly CompactAppDestination[],
+    entries: readonly DestinationInstanceTitleEntry[],
+): ReadonlyMap<string, DocumentTabTitleSource> {
+    const destinationTitles = useWorkspaceDestinationTitles();
     const accountLifetime = useActiveServerAccountScopeLifetime();
-    const settingsDemands = entries.map(entry => readSettingsEntityTitleDemand(entry.ref));
+    const previous = React.useRef(new Map<string, ReturnType<typeof createDestinationInstanceTitleProjection>>());
+    const projections = React.useMemo(() => {
+        const next = new Map<string, ReturnType<typeof createDestinationInstanceTitleProjection>>();
+        for (const entry of entries) {
+            const old = previous.current.get(entry.key);
+            next.set(entry.key, old?.catalog === catalog && (old.entry === entry || (old.entry.ref === entry.ref
+                && old.fallbackTitle === entry.fallbackTitle && old.entry.instanceKey === entry.instanceKey))
+                ? old : createDestinationInstanceTitleProjection(catalog, entry));
+        }
+        previous.current = next;
+        return [...next.values()];
+    }, [catalog, entries]);
+    const settingsDemands = projections.map(entry => entry.settingsDemand);
     const hasProviders = settingsDemands.some(demand => demand?.kind === 'provider');
     const hasProfiles = settingsDemands.some(demand => demand?.kind === 'profile');
     const hasMcp = settingsDemands.some(demand => demand?.kind === 'mcp');
-    const subscribeTitles = React.useCallback((listener: () => void) => hasProviders || hasProfiles || hasMcp
-        ? subscribeSettingsEntityTitles(listener) : () => {}, [hasProviders, hasProfiles, hasMcp]);
-    const readSettingsTitles = React.useCallback(() => JSON.stringify(entries.map(entry => resolveSettingsEntityInstanceTitle(
-        entry.ref, readRegisteredStorageState(),
-    ))), [entries, accountLifetime]);
-    const settingsTitlesKey = React.useSyncExternalStore(subscribeTitles, readSettingsTitles, readSettingsTitles);
-    const settingsTitles = React.useMemo(() => JSON.parse(settingsTitlesKey) as readonly (string | null)[], [settingsTitlesKey]);
     React.useEffect(() => {
-        if (!accountLifetime?.isCurrent()) return;
+        if (!accountLifetime?.isCurrent() || !(hasProviders || hasProfiles || hasMcp)) return;
         const disposers: (() => void)[] = [];
         let disposed = false;
         const scope = accountLifetime.scope;
@@ -1361,18 +1543,11 @@ export function useDestinationInstanceTitles(
         }), { tag: 'Workspace.settingsTitles' });
         return () => { disposed = true; disposers.forEach(dispose => dispose()); };
     }, [accountLifetime, hasProviders, hasProfiles, hasMcp]);
-    const hasProjects = entries.some(entry => entry.ref.kind === 'project');
-    const workspaceRefs = getStorage()(state => hasProjects ? readProjectWorkspaceRefs(state) : EMPTY_WORKSPACE_REFS);
-    const storedTitles = getStorage()(useShallow(state => entries.map(entry => resolveStoredInstanceTitle(
-        entry.ref, state, resolveSavedInstanceTitle(catalog, entry.ref, entry.fallbackTitle),
-    ))));
-    const missingTitles = getStorage()(useShallow(state => entries.map(entry => resolveKnownMissingInstanceTitle(entry.ref, state))));
-    const unreadRunIdsKey = getStorage()(state => JSON.stringify([...new Set(entries.flatMap(entry => {
-        const { ref } = entry;
-        if (ref.kind !== 'workflowRun' || readWorkflowRunTarget(ref.params)?.kind !== 'managed' || !ref.params.runId || !state.profileScope
-            || (ref.params.serverId && !areServerProfileIdentifiersEquivalent(ref.params.serverId, state.profileScope.serverId))
-            || state.workflowRunsById[workflowRunStoreKey(ref.params.runId)]) return [];
-        return [ref.params.runId];
+    const runEntries = React.useMemo(() => projections.filter(entry => entry.managedRunId), [projections]);
+    const unreadRunIdsKey = getStorage()(state => runEntries.length === 0 ? '[]' : JSON.stringify([...new Set(runEntries.flatMap(entry => {
+        const { ref } = entry.entry;
+        return state.profileScope && (!ref.params.serverId || areServerProfileIdentifiersEquivalent(ref.params.serverId, state.profileScope.serverId))
+            && !state.workflowRunsById[workflowRunStoreKey(entry.managedRunId!, state.profileScope)] ? [entry.managedRunId!] : [];
     }))].sort()));
     React.useEffect(() => {
         if (unreadRunIdsKey === '[]' || !accountLifetime?.isCurrent()) return;
@@ -1384,12 +1559,10 @@ export function useDestinationInstanceTitles(
             return owner.refreshWorkflowRunSummaries(runIds.map(runId => ({ runId })));
         }), { tag: 'Workspace.runTitles' });
     }, [accountLifetime, unreadRunIdsKey]);
-    const sessionEntries = React.useMemo(() => entries.filter((entry) => isSessionTitleRef(entry.ref)
-        && typeof entry.ref.params.id === 'string' && entry.ref.params.id.length > 0), [entries]);
+    const sessionEntries = React.useMemo(() => projections.filter(entry => entry.session && entry.entry.ref.params.id).map(entry => entry.entry), [projections]);
     const addresses = React.useMemo(() => sessionEntries.map((entry) => ({
         sessionId: entry.ref.params.id!, serverId: entry.ref.params.serverId ?? null,
     })), [sessionEntries]);
-    const sessionTitles = useSessionDisplayNameProjections(addresses, sessionDisplayTitle);
     // A restored tab's page is not mounted, so its Session is named from content nobody has demanded yet.
     const activeServerId = useActiveServerSnapshot(addresses.some(address => !address.serverId)).serverId;
     const demandedSessions = React.useMemo(() => addresses.flatMap(address => {
@@ -1407,30 +1580,45 @@ export function useDestinationInstanceTitles(
             discussionId: details.discussionId }] : [];
     }), [entries]);
     const discussionTitles = useDiscussionTitleProjections(discussionEntries);
+    type TitleSourceEntry = Readonly<{
+        projection: ReturnType<typeof createDestinationInstanceTitleProjection>;
+        published: WorkspaceDestinationTitle | undefined;
+        discussion: string | null | undefined;
+        source: DocumentTabTitleSource;
+    }>;
+    const previousSources = React.useRef(new Map<string, TitleSourceEntry>());
     return React.useMemo(() => {
-        const titles = new Map<string, string>();
-        for (const [index, entry] of entries.entries()) {
-            const published = workspace?.destinationTitles?.[entry.instanceKey ?? entry.key];
-            const fallback = resolvePublishedOrStaticInstanceTitle(catalog, entry.ref, { publishedTitle: published, fallbackTitle: entry.fallbackTitle }, settingsTitles[index] ?? storedTitles[index]);
-            const title = entry.ref.kind === 'project'
-                ? resolveProjectInstanceTitle(entry.ref, workspaceRefs) ?? fallback
-                : fallback;
-            if (title) titles.set(entry.key, title);
+        const next = new Map<string, TitleSourceEntry>();
+        const sources = new Map<string, DocumentTabTitleSource>();
+        const discussionsByKey = new Map(discussionEntries.map((entry, index) => [entry.key, discussionTitles[index]]));
+        for (const projection of projections) {
+            const entry = projection.entry;
+            const address = readDestinationSessionAddress(entry.ref);
+            const published = destinationTitles?.[entry.instanceKey ?? entry.key];
+            const discussion = discussionsByKey.get(entry.key);
+            const old = previousSources.current.get(entry.key);
+            const source = old?.projection === projection && old.published === published && old.discussion === discussion ? old.source : {
+                getSnapshot: () => {
+                    if (address && !readSessionRecordingVisibility()(address)) return t('session.untitled');
+                    const state = readRegisteredStorageState();
+                    return projection.title(projection.read(state), projection.readSettings(state), discussion, published);
+                },
+                subscribe: (listener: () => void) => {
+                    const stopStore = getStorage().subscribe(listener, {
+                        profileScope: true, projectAccountRows: true, sessions: true,
+                        sessionListRowsByServerId: true, ordinarySessionListMembershipByServerId: true,
+                        deletedSessionIds: true, artifacts: true, artifactsLoaded: true,
+                        artifactBrowserLoaded: true, artifactInventoryKindsLoaded: true, workflowRunsById: true,
+                    });
+                    const stopSettings = projection.settingsDemand ? subscribeSettingsEntityTitles(listener) : null;
+                    const stopPrivacy = address ? subscribeSessionRecordingVisibility(listener) : null;
+                    return () => { stopStore(); stopSettings?.(); stopPrivacy?.(); };
+                },
+            };
+            next.set(entry.key, { projection, published, discussion, source });
+            sources.set(entry.key, source);
         }
-        sessionEntries.forEach((entry, index) => {
-            const name = sessionTitles[index];
-            if (!name) return;
-            // A Details tab names its target; a session tab names the session.
-            titles.set(entry.key, name);
-        });
-        discussionEntries.forEach((entry, index) => {
-            const name = discussionTitles[index];
-            if (name) titles.set(entry.key, name);
-        });
-        entries.forEach((entry, index) => {
-            const missing = missingTitles[index];
-            if (missing) titles.set(entry.key, missing);
-        });
-        return titles;
-    }, [catalog, entries, storedTitles, missingTitles, settingsTitles, workspaceRefs, sessionEntries, sessionTitles, discussionEntries, discussionTitles, workspace?.destinationTitles]);
+        previousSources.current = next;
+        return sources;
+    }, [projections, discussionEntries, discussionTitles, destinationTitles]);
 }

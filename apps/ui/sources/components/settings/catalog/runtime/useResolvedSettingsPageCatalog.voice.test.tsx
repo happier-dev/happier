@@ -2,7 +2,7 @@ import { expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
@@ -21,6 +21,38 @@ vi.mock('expo-router', async () => {
 await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
 await import('../settingsPageDeclarations');
 const { storage } = await import('@/sync/domains/state/storage');
+
+it('does not re-parse the selected voice service config on renders and Store publishes that leave voice settings unchanged', async () => {
+    const beforeStorage = storage.getState();
+    onTestFinished(() => storage.setState(beforeStorage, true));
+    const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/elevenlabs/src/manifest');
+    const { VOICE_PROVIDER_PRESENTATIONS } = await import('../../../../../../../packages/plugins/elevenlabs/src/ui/voice/entries');
+    const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(PLUGIN_MANIFEST)), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
+    const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    const entry = registry.get(providerId);
+    if (entry?.kind !== 'voice.conversation-provider.v1' || !entry.providerSettings) throw new Error('Missing current language contribution');
+    // The plugin's stored-config parser is the plugin boundary; counting it keeps the real parse.
+    const providerSettings = entry.providerSettings;
+    const parse = vi.fn((value: unknown) => providerSettings.parseStoredConfig(value));
+    // An installed (non-bundled) plugin owns its descriptor, so the registry serves this exact copy.
+    const countedProviderId = 'test.voice.counted/realtime';
+    const descriptor = { ...entry, pluginId: 'test.voice.counted', providerId: countedProviderId,
+        providerSettings: { ...providerSettings, parseStoredConfig: parse } };
+    const token = {};
+    commitExternalVoiceProviderRegistration({ token, pluginId: descriptor.pluginId, localId: 'realtime', providerId: countedProviderId, descriptor, adapter: null });
+    onTestFinished(() => removeExternalVoiceProviderRegistration(token));
+    const { voice: _derivedVoice, ...accountDefaults } = settingsDefaults;
+    storage.setState({ settings: settingsParse({ ...accountDefaults, voiceSettingsV1: { ...settingsDefaults.voice, providerId: countedProviderId, assistantLanguage: 'fr' } }) });
+    const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+    const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+    onTestFinished(() => hook.unmount());
+    expect(parse).toHaveBeenCalled();
+    parse.mockClear();
+    // Its consumers (the open Search palette) re-render on every key and every Store publish they follow.
+    for (let i = 0; i < 20; i += 1) await hook.rerender();
+    for (let i = 0; i < 20; i += 1) await act(async () => storage.setState((state) => ({ ...state })));
+    expect(parse).toHaveBeenCalledTimes(0);
+});
 
 it('refreshes the root language search label when the same selected service envelope becomes unavailable', async () => {
     const beforeStorage = storage.getState();

@@ -177,6 +177,25 @@ describe('SettingsAnalyticsRuntime', () => {
         }));
     });
 
+    it('does not render for untracked local state and updates tracked device preferences', async () => {
+        const commits = vi.fn();
+        trackingMock.group.mockClear();
+        await renderScreen(<React.Profiler id="settings-analytics-local" onRender={commits}>
+            <SettingsAnalyticsRuntime />
+        </React.Profiler>);
+        const baseline = commits.mock.calls.length;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ paneArrangement: 'editor' }, { persist: false });
+        });
+        expect(commits.mock.calls.length - baseline).toBe(0);
+        await act(async () => {
+            storage.getState().applyLocalSettings({ themePreference: 'light' }, { persist: false });
+        });
+        expect(commits.mock.calls.length - baseline).toBe(1);
+        expect(trackingMock.group).toHaveBeenLastCalledWith('device_user', 'anon-user:install-123',
+            expect.objectContaining({ local_setting__themePreference: 'light' }));
+    });
+
     it('resets cached snapshots when the tracking identity changes', async () => {
         trackingMock.identify.mockReset();
         trackingMock.group.mockReset();

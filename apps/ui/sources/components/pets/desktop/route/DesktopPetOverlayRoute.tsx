@@ -35,7 +35,7 @@ import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
 import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import type { PetCompanionActivityModel } from '@/components/pets/activity';
-import { useLocalSettings } from '@/sync/domains/state/storage';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -232,12 +232,12 @@ function useNativeDesktopPetOverlayWindowState(): Readonly<{
 }
 
 function DesktopPetOverlayRouteWithNativeActivity(props: DesktopPetOverlayRouteProps): React.ReactElement {
-    const localSettings = useLocalSettings();
+    const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const native = useNativeDesktopPetOverlayWindowState();
     const { dismissTrayItem } = usePetCompanionTrayDismissals();
     const geometry = React.useMemo(
-        () => resolveDesktopPetOverlayGeometry(localSettings.petsCompanionSizeScale),
-        [localSettings.petsCompanionSizeScale],
+        () => resolveDesktopPetOverlayGeometry(petsCompanionSizeScale),
+        [petsCompanionSizeScale],
     );
     const activity = props.activityModel ?? native.activity;
     if (!activity) {
@@ -309,7 +309,7 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
         };
     }, [props.nativeLayoutState]);
     const selectedPetPackage = useSelectedPetPackage();
-    const localSettings = useLocalSettings();
+    const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const activity = props.activity;
     const [trayOpen, setTrayOpen] = React.useState(false);
     const [nativeHoveredSessionId, setNativeHoveredSessionId] = React.useState<string | null>(null);
@@ -335,8 +335,8 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
         dragCommandQueueRef.current = queuedCommand.catch(() => undefined);
     }, []);
     const geometry = React.useMemo(
-        () => resolveDesktopPetOverlayGeometry(localSettings.petsCompanionSizeScale),
-        [localSettings.petsCompanionSizeScale],
+        () => resolveDesktopPetOverlayGeometry(petsCompanionSizeScale),
+        [petsCompanionSizeScale],
     );
     const handleDragStart = React.useCallback((start: CompanionPointerDragStart) => {
         enqueueDragCommand(() => startDesktopPetOverlayDragSession({

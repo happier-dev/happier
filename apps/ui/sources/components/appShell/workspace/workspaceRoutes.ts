@@ -26,6 +26,10 @@ export const registeredWorkspaceRoutes: Readonly<Record<string, WorkspaceRouteRe
         moduleKey: './(app)/personalize.tsx', destinationId: 'personalize',
         catalogEntry: { titleKey: 'personalize.flowTitle', icon: 'gear', visibility: 'hidden' },
     },
+    'bot-template': {
+        moduleKey: './(app)/bot-template.tsx', destinationId: 'bot-template',
+        catalogEntry: { titleKey: 'botTemplates.title', icon: 'file-text', visibility: 'hidden' },
+    },
 };
 
 /** Workspace-eligible Expo modules; registered configuration routes are a projection, not another inventory. */
@@ -62,19 +66,25 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "plugins/[pluginId]/[localId]": "./(app)/plugins/[pluginId]/[localId]/index.tsx",
     "plugins/[pluginId]": "./(app)/plugins/[pluginId].tsx",
     "plugins": "./(app)/plugins/index.tsx",
+    "plugins/bots": "./(app)/plugins/bots.tsx",
     "plugins/listing": "./(app)/plugins/listing.tsx",
     "plugins/panels": "./(app)/plugins/panels.tsx",
+    "projects/[workspaceRefId]/plugins/[pluginId]/[localId]": "./(app)/projects/[workspaceRefId]/plugins/[pluginId]/[localId]/index.tsx",
+    "projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath]": "./(app)/projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath].tsx",
     "projects/[workspaceRefId]/overview": "./(app)/projects/[workspaceRefId]/overview.tsx",
     "projects/[workspaceRefId]/code": "./(app)/projects/[workspaceRefId]/code.tsx",
     "projects/[workspaceRefId]/changes": "./(app)/projects/[workspaceRefId]/changes.tsx",
     "projects/[workspaceRefId]/scripts": "./(app)/projects/[workspaceRefId]/scripts.tsx",
     "projects/[workspaceRefId]/services": "./(app)/projects/[workspaceRefId]/services.tsx",
+    "projects/[workspaceRefId]/deployments": "./(app)/projects/[workspaceRefId]/deployments.tsx",
+    "deployments/[projectSourceId]": "./(app)/deployments/[projectSourceId].tsx",
     "projects/[workspaceRefId]/context": "./(app)/projects/[workspaceRefId]/context.tsx",
     "projects/[workspaceRefId]/memory": "./(app)/projects/[workspaceRefId]/memory.tsx",
     "projects/[workspaceRefId]": "./(app)/projects/[workspaceRefId]/index.tsx",
     "projects/[workspaceRefId]/terminal": "./(app)/projects/[workspaceRefId]/terminal.tsx",
     "projects": "./(app)/projects/index.tsx",
     "projects/sources": "./(app)/projects/sources.tsx",
+    "projects/deployments": "./(app)/projects/deployments.tsx",
     "projects/open": "./(app)/projects/open.tsx",
     "session/[id]/automations/new": "./(app)/session/[id]/automations/new.tsx",
     "session/archived": "./(app)/session/archived.tsx",
@@ -94,7 +104,6 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "session/[id]/permissions": "./(app)/session/[id]/permissions.tsx",
     "session/[id]/runs": "./(app)/session/[id]/runs.tsx",
     "session/[id]/runs/[runId]": "./(app)/session/[id]/runs/[runId].tsx",
-    "session/[id]/runs/new": "./(app)/session/[id]/runs/new.tsx",
     "session/[id]/sharing": "./(app)/session/[id]/sharing.tsx",
     "session/[id]/template": "./(app)/session/[id]/template.tsx",
     "session/[id]/terminal": "./(app)/session/[id]/terminal.tsx",
@@ -109,9 +118,17 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "workflows/settings": "./(app)/workflows/settings.tsx",
 };
 
-const matchDestinationRoute = createWorkspaceRouteMatcher(Object.keys(workspaceRouteFiles));
+// The Session root is rendered directly by WorkspaceDestinationBody, rather than
+// loaded from workspaceRouteFiles. It still shares the same URL/parameter owner.
+const matchDestinationRoute = createWorkspaceRouteMatcher(['session/[id]', ...Object.keys(workspaceRouteFiles)]);
 export function matchWorkspaceDestinationRoute(pathname: string) {
     return matchDestinationRoute(pathname);
+}
+
+/** A plugin's root and local locations render the same retained app page. */
+export function workspacePluginAppPageRouteKey(routeKey: string): string | null {
+    return routeKey === 'plugins/[pluginId]/[localId]' || routeKey === 'plugins/[pluginId]/[localId]/[...subPath]'
+        ? 'plugins/[pluginId]/[localId]' : null;
 }
 
 /** The two doors address one Machine page; configuration and managed creations remain distinct. */

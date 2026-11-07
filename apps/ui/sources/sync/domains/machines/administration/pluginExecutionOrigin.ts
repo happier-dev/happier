@@ -4,6 +4,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 
 import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { resolveFleetSnapshotMachineRejection, resolveFleetSupplyAgreement } from './fleetUnion';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { PluginAccountInstalledPluginsAdmission } from '@/sync/domains/plugins/availability/reader';
 
 export type PluginMachineOriginRejectionReasonV1 =
@@ -54,7 +55,7 @@ export type PluginMachineExecutionOriginRejectionV1 = Readonly<{
 /** An admitted real projection source, never a synthesized installation row. */
 export type PluginMachineSourceExecutionOriginCandidateV1 = PluginMachineReleaseClassificationV1 & Readonly<{
     source: Readonly<{
-        origin: Extract<PluginMachineExecutionOriginV1, { sourceRef: unknown }>;
+        origin: PluginMachineExecutionOriginV1;
         version: string;
         occurrenceId: string;
         serverId: string;
@@ -79,15 +80,13 @@ function machineTargetKey(target: PluginExecutionOriginContextualTarget) {
     return `${target.serverIdentityId}\u0000${target.machineId}`;
 }
 
-const NO_MATERIALIZATIONS: readonly PluginMachineMaterializationV1[] = Object.freeze([]);
-
 function readMachineFact(params: MachineFactInputs, target: PluginExecutionOriginContextualTarget) {
     if (params.readMachineFact) return params.readMachineFact(target);
     const entry = params.machineSnapshots.find(entry => entry.kind === 'resolved' && entry.serverIdentityId === target.serverIdentityId);
     const snapshot = entry?.kind === 'resolved' ? entry : undefined;
     const machine = snapshot?.machines.find(machine => machine.id === target.machineId);
     return {
-        activeAt: machine?.activeAt ?? 0,
+        activeAt: machine ? readMachineActivity(machine).activeAt ?? 0 : 0,
         rejection: resolveFleetSnapshotMachineRejection({ snapshot, machine }),
         eligible: snapshot?.executionEligibleMachineIds?.includes(target.machineId) === true,
     };
@@ -105,8 +104,8 @@ export function combinePluginMachineExecutionOriginCandidates(
     return Object.freeze([
         ...materializations.filter(({ materialization }) => materialization.portableRelease || !sources.some(({ source }) => (
             source.origin.serverIdentityId === materialization.serverIdentityId
-            && source.origin.sourceRef.machineId === materialization.machineId
-            && source.origin.sourceRef.pluginId === materialization.pluginId
+            && getPluginMachineExecutionOriginRef(source.origin).machineId === materialization.machineId
+            && getPluginMachineExecutionOriginRef(source.origin).pluginId === materialization.pluginId
         ))),
         ...sources,
     ]);
@@ -120,6 +119,27 @@ export function getPluginExecutionOriginCandidateVersion(candidate: PluginExecut
     return 'source' in candidate ? candidate.source.version : candidate.materialization.version;
 }
 
+// The Account's materialization list is one immutable array shared by every
+// plugin demand. Group it once so a demand visits only its own rows.
+const materializationsByPluginByList = new WeakMap<readonly PluginMachineMaterializationV1[],
+    ReadonlyMap<string, readonly PluginMachineMaterializationV1[]>>();
+const NO_MATERIALIZATIONS: readonly PluginMachineMaterializationV1[] = Object.freeze([]);
+
+export function readPluginMachineMaterializations(materializations: readonly PluginMachineMaterializationV1[],
+    pluginId: string): readonly PluginMachineMaterializationV1[] {
+    let byPlugin = materializationsByPluginByList.get(materializations);
+    if (!byPlugin) {
+        const grouped = new Map<string, PluginMachineMaterializationV1[]>();
+        for (const materialization of materializations) {
+            const rows = grouped.get(materialization.pluginId);
+            if (rows) rows.push(materialization); else grouped.set(materialization.pluginId, [materialization]);
+        }
+        byPlugin = grouped;
+        materializationsByPluginByList.set(materializations, byPlugin);
+    }
+    return byPlugin.get(pluginId) ?? NO_MATERIALIZATIONS;
+}
+
 /** Only target coordinates determine which Machine facts a plugin consumes. */
 export function readPluginExecutionOriginMachineTargets(params: Readonly<{
     pluginId: string;
@@ -127,10 +147,10 @@ export function readPluginExecutionOriginMachineTargets(params: Readonly<{
     sources: readonly PluginMachineSourceExecutionOriginCandidateV1[];
 }>): readonly PluginExecutionOriginContextualTarget[] {
     return [
-        ...params.materializations.filter((entry) => entry.pluginId === params.pluginId)
+        ...readPluginMachineMaterializations(params.materializations, params.pluginId)
             .map(({ serverIdentityId, machineId }) => ({ serverIdentityId, machineId })),
-        ...params.sources.filter((entry) => entry.source.origin.sourceRef.pluginId === params.pluginId)
-            .map((entry) => ({ serverIdentityId: entry.source.origin.serverIdentityId, machineId: entry.source.origin.sourceRef.machineId })),
+        ...params.sources.filter((entry) => getPluginMachineExecutionOriginRef(entry.source.origin).pluginId === params.pluginId)
+            .map((entry) => ({ serverIdentityId: entry.source.origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(entry.source.origin).machineId })),
     ].sort((left, right) => left.serverIdentityId.localeCompare(right.serverIdentityId) || left.machineId.localeCompare(right.machineId));
 }
 
@@ -219,10 +239,10 @@ export function buildPluginMachineSourceExecutionOriginCandidates(params: Machin
     pluginId: string;
     sources: readonly PluginMachineSourceExecutionOriginCandidateV1[];
 }>): readonly PluginMachineSourceExecutionOriginCandidateV1[] {
-    return Object.freeze(params.sources.filter((candidate) => candidate.source.origin.sourceRef.pluginId === params.pluginId).map((candidate) => {
+    return Object.freeze(params.sources.filter((candidate) => getPluginMachineExecutionOriginRef(candidate.source.origin).pluginId === params.pluginId).map((candidate) => {
         const origin = candidate.source.origin;
         const reason = readMachineFact(params, {
-            serverIdentityId: origin.serverIdentityId, machineId: origin.sourceRef.machineId,
+            serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId,
         }).rejection;
         return reason ? Object.freeze({ ...candidate, validation: { kind: 'rejected' as const, reason } }) : candidate;
     }));
@@ -240,8 +260,12 @@ export function buildPluginMachineExecutionOriginCandidates(params: MachineFactI
     classifyRelease: (materialization: PluginMachineMaterializationV1) => PluginMachineReleaseClassificationV1;
     machineRejections?: readonly PluginMachineExecutionOriginRejectionV1[];
 }>): readonly PluginMachineExecutionOriginCandidateV1[] {
-    return Object.freeze(params.materializations
-        .filter((materialization) => materialization.pluginId === params.pluginId)
+    const rejections = new Map<string, PluginMachineOriginRejectionReasonV1>();
+    for (const entry of params.machineRejections ?? []) {
+        const key = machineTargetKey(entry);
+        if (!rejections.has(key)) rejections.set(key, entry.reason);
+    }
+    return Object.freeze(readPluginMachineMaterializations(params.materializations, params.pluginId)
         .map((materialization) => {
             const release = params.classifyRelease(materialization);
             return Object.freeze({
@@ -249,8 +273,7 @@ export function buildPluginMachineExecutionOriginCandidates(params: MachineFactI
                 releaseContent: release.releaseContent,
                 validation: resolvePluginMachineMaterializationValidation({ materialization, release,
                     machineRejection: readMachineFact(params, materialization).rejection
-                        ?? params.machineRejections?.find(entry => entry.serverIdentityId === materialization.serverIdentityId
-                            && entry.machineId === materialization.machineId)?.reason ?? null }),
+                        ?? rejections.get(machineTargetKey(materialization)) ?? null }),
             });
         }).sort(compareCandidates));
 }
@@ -305,10 +328,17 @@ function compareCandidates(
         : JSON.stringify(leftOrigin).localeCompare(JSON.stringify(rightOrigin));
 }
 
+// Materializations are immutable admitted rows. Their compact origin is produced
+// once for that row's lifetime; callers never have to reconcile fresh copies.
+const materializationOrigins = new WeakMap<PluginMachineMaterializationV1,
+    Extract<PluginMachineExecutionOriginV1, { materializationRef: unknown }>>();
+
 export function composePluginMachineExecutionOriginV1(
     materialization: PluginMachineMaterializationV1,
 ): Extract<PluginMachineExecutionOriginV1, { materializationRef: unknown }> {
-    return Object.freeze({
+    const previous = materializationOrigins.get(materialization);
+    if (previous) return previous;
+    const origin = Object.freeze({
         serverIdentityId: materialization.serverIdentityId,
         materializationRef: Object.freeze({
             machineId: materialization.machineId,
@@ -316,15 +346,24 @@ export function composePluginMachineExecutionOriginV1(
             pluginId: materialization.pluginId,
         }),
     });
+    materializationOrigins.set(materialization, origin);
+    return origin;
 }
 
 /** Artifact and machine facts that make an exact origin safe to persist/use. */
+export function readPluginMachineExecutionOriginCandidateRejection(
+    candidate: PluginExecutionOriginCandidateV1,
+): PluginMachineOriginRejectionReasonV1 | null {
+    if (candidate.validation.kind === 'rejected') return candidate.validation.reason;
+    if (candidate.releaseContent !== 'matched') return candidate.releaseContent === 'conflict' ? 'content_conflict' : 'unknown';
+    if ('materialization' in candidate && !candidate.materialization.portableRelease) return 'machine_local';
+    return null;
+}
+
 export function isPluginMachineExecutionOriginCandidateSelectable(
     candidate: PluginExecutionOriginCandidateV1,
 ): boolean {
-    return candidate.validation.kind === 'admitted'
-        && candidate.releaseContent === 'matched'
-        && ('source' in candidate || candidate.materialization.portableRelease);
+    return readPluginMachineExecutionOriginCandidateRejection(candidate) === null;
 }
 
 function candidateMatchesOrigin(
@@ -414,6 +453,22 @@ export function readPluginMachineScopedContributors(pluginId: string, materializ
     return readPluginContributorFacts(materializations, installedPlugins).contributorsByTargetPlugin.get(pluginId) ?? NO_CONTRIBUTORS;
 }
 
+// Machine activity is one list per inventory publication, shared by every demand.
+const machineActivityIndexes = new WeakMap<readonly (MachineAdministrationTargetV1 & Readonly<{ activeAt: number }>)[], ReadonlyMap<string, number>>();
+
+function readMachineActivityIndex(activity: readonly (MachineAdministrationTargetV1 & Readonly<{ activeAt: number }>)[]) {
+    let index = machineActivityIndexes.get(activity);
+    if (index) return index;
+    const byTarget = new Map<string, number>();
+    for (const target of activity) {
+        const key = machineTargetKey(target);
+        if (!byTarget.has(key)) byTarget.set(key, target.activeAt);
+    }
+    index = byTarget;
+    machineActivityIndexes.set(activity, index);
+    return index;
+}
+
 export type PluginExecutionOriginNativeToolAuthentication = PluginExecutionOriginContextualTarget & Readonly<{
     systemTool: string;
     authenticated: boolean;
@@ -479,7 +534,11 @@ function rankPluginMachineExecutionOriginCandidates(
         return target?.serverIdentityId === origin.serverIdentityId
             && target.machineId === getPluginMachineExecutionOriginRef(origin).machineId;
     };
-    const activity = (candidate: PluginExecutionOriginCandidateV1) => params.machineActivity?.find(target => matchesTarget(candidate, target))?.activeAt ?? 0;
+    const activityIndex = params.machineActivity && readMachineActivityIndex(params.machineActivity);
+    const activity = (candidate: PluginExecutionOriginCandidateV1) => {
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        return activityIndex?.get(machineTargetKey({ serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId })) ?? 0;
+    };
     const isDefault = (candidate: PluginExecutionOriginCandidateV1) => params.declaredDefaultOrigins?.some(origin => candidateMatchesOrigin(candidate, origin)) === true;
     const [candidate] = [...alternatives].sort((left, right) =>
         compareCoverage(left, right)
@@ -589,30 +648,13 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
                 reasons: Object.freeze([presence ?? 'missing']),
             });
         }
-        if (selected.validation.kind === 'rejected') {
+        const rejection = readPluginMachineExecutionOriginCandidateRejection(selected);
+        if (rejection !== null) {
             return Object.freeze({
                 kind: 'unavailable',
                 storedOrigin: params.storedOrigin,
                 candidates,
-                reasons: Object.freeze([selected.validation.reason]),
-            });
-        }
-        if (selected.releaseContent !== 'matched') {
-            return Object.freeze({
-                kind: 'unavailable',
-                storedOrigin: params.storedOrigin,
-                candidates,
-                reasons: Object.freeze([
-                    selected.releaseContent === 'conflict' ? 'content_conflict' : 'unknown',
-                ] as const),
-            });
-        }
-        if ('materialization' in selected && !selected.materialization.portableRelease) {
-            return Object.freeze({
-                kind: 'unavailable',
-                storedOrigin: params.storedOrigin,
-                candidates,
-                reasons: Object.freeze(['machine_local'] as const),
+                reasons: Object.freeze([rejection]),
             });
         }
         return Object.freeze({

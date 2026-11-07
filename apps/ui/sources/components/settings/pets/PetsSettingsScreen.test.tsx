@@ -285,6 +285,7 @@ vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', ()
 }));
 
 vi.mock('@/utils/platform/desktopHost', () => ({
+    desktopHostKind: () => tauriDesktopState.current ? 'tauri' : null,
     isDesktopHost: () => tauriDesktopState.current,
 }));
 
@@ -338,7 +339,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
                 petsDesktopOverlayDefaultEnabled: true,
             }),
-            useLocalSettings: () => ({
+            useLocalSetting: (name) => ({
                 ...localSettingsDefaults,
                 petsEnabledOverride: 'inherit',
                 petsSelectedPetOverride: localSettingsState.petsSelectedPetOverride,
@@ -348,7 +349,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 desktopPetOverlayAnchor: 'bottomRight',
                 desktopPetOverlayOffset: { x: 0, y: 0 },
                 desktopPetOverlayLocked: false,
-            }),
+            })[name],
             useAllMachines: () => machinesState.current,
             storage,
         },

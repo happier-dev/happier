@@ -12,11 +12,10 @@ import { machineAdministrationTargetObservationsState } from '@/sync/domains/sta
 import { resolveAllProfileMachineInventorySnapshots, type ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { readMachineRequestReachabilityRevision, subscribeMachineRequestReachability } from '@/sync/domains/machines/reachability/machineReachability';
-import { sessionListRuntimeClock, type SessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
-import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { resolveFleetSnapshotMachineRejection } from './fleetUnion';
-import { readPluginExecutionOriginMachineTargets, createPluginMachineExecutionOriginMachineFacts,
+import { readPluginExecutionOriginMachineTargets, readPluginMachineMaterializations, createPluginMachineExecutionOriginMachineFacts,
     buildPluginMachineExecutionOriginCandidates, buildPluginMachineSourceExecutionOriginCandidates,
     combinePluginMachineExecutionOriginCandidates, resolvePluginMachineExecutionOriginState, resolvePluginMachineProjectionTarget,
     type PluginMachineReleaseClassificationV1, type PluginMachineExecutionOriginRejectionV1,
@@ -52,7 +51,6 @@ export type ExecutionOriginMachineSnapshotSelection = Readonly<{
     key: string;
     eligibilityKey: string;
     snapshots: readonly ServerMachineInventorySnapshotV1[];
-    nextRefreshAtMs: number | null;
     readMachineFact: PluginExecutionOriginMachineFactReader;
     selection: PluginExecutionOriginDescriptiveSelection | null;
 }>;
@@ -74,7 +72,7 @@ export type ExecutionOriginMachineSnapshotInputs = Readonly<{
 }>;
 const EMPTY_FACT = Object.freeze({ activeAt: 0, rejection: 'unknown' as const, eligible: false });
 export const EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION: ExecutionOriginMachineSnapshotSelection = Object.freeze({
-    key: '', eligibilityKey: '', snapshots: Object.freeze([]), nextRefreshAtMs: null, readMachineFact: () => EMPTY_FACT, selection: null,
+    key: '', eligibilityKey: '', snapshots: Object.freeze([]), readMachineFact: () => EMPTY_FACT, selection: null,
 });
 
 /** A failed or signed-out census is an answer; an unread census is not empty. */
@@ -86,12 +84,10 @@ export function isMachineInventoryPending(snapshot: ServerMachineInventorySnapsh
 
 type InventoryPublication = Readonly<{
     snapshots: readonly ServerMachineInventorySnapshotV1[];
-    nextRefreshAtMs: number | null;
     readMachineFact: PluginExecutionOriginMachineFactReader;
     pendingHomes: ReadonlySet<string>;
     state: StorageState;
     reachabilityRevision: number;
-    observedAtMs: number;
     homes: ReadonlyMap<string, InventoryHome>;
     changedTargets: readonly PluginExecutionOriginContextualTarget[];
     fullRefresh: boolean;
@@ -105,7 +101,6 @@ type InventoryRow = Readonly<{
     eligible: boolean;
     presence: string;
     fact: InventoryMachineFact;
-    nextRefreshAtMs: number | null;
 }>;
 type InventoryHome = Readonly<{
     snapshot: Extract<ServerMachineInventorySnapshotV1, { kind: 'resolved' }>;
@@ -119,6 +114,7 @@ type Demand = {
     facts: Readonly<{ eligibilityKey: string; activityKey: string }> | null;
     factProjection: ReturnType<typeof createPluginMachineExecutionOriginMachineFacts> | null;
     factsInventory: InventoryPublication | null;
+    candidatePublication: ReturnType<typeof createCandidatePublication> | null;
     current: ExecutionOriginMachineSnapshotSelection;
     snapshot: ExecutionOriginMachineSnapshotSelection;
     listeners: Set<() => void>;
@@ -148,7 +144,6 @@ type PublicationDependencies = Readonly<{
     readState(): StorageState | null;
     subscribeState(listener: () => void): (() => void) | null;
     subscribeMachineUpdates(listener: (serverId: string, machineIds: readonly string[]) => void): (() => void) | null;
-    clock: SessionListRuntimeClock;
 }>;
 
 function sameTargets(left: readonly PluginExecutionOriginContextualTarget[], right: readonly PluginExecutionOriginContextualTarget[]) {
@@ -163,7 +158,7 @@ function sameTarget(left: MachineAdministrationTargetV1 | null | undefined, righ
 function sameCandidateInputs(left: ExecutionOriginMachineSnapshotInputs, right: ExecutionOriginMachineSnapshotInputs) {
     const a = left.selection;
     const b = right.selection;
-    return a?.classifyRelease === b?.classifyRelease && a?.availabilityRevision === b?.availabilityRevision
+    return left.pluginId === right.pluginId && a?.classifyRelease === b?.classifyRelease && a?.availabilityRevision === b?.availabilityRevision
         && left.materializations === right.materializations && (left.sources === right.sources
             || left.sources.length === right.sources.length && left.sources.every((candidate, index) => {
                 const other = right.sources[index]!;
@@ -175,7 +170,7 @@ function sameCandidateInputs(left: ExecutionOriginMachineSnapshotInputs, right: 
             }))
         && (a?.machineRejections === b?.machineRejections || (a?.machineRejections?.length ?? 0) === (b?.machineRejections?.length ?? 0)
             && (a?.machineRejections ?? []).every((entry, index) => sameTarget(entry, b?.machineRejections?.[index])
-                && entry.reason === b?.machineRejections?.[index]?.reason)) && left.pluginId === right.pluginId;
+                && entry.reason === b?.machineRejections?.[index]?.reason));
 }
 
 function sameSelectionInputs(left: ExecutionOriginMachineSnapshotInputs, right: ExecutionOriginMachineSnapshotInputs) {
@@ -204,26 +199,97 @@ function readInventoryMachineFact(homes: ReadonlyMap<string, InventoryHome>, tar
         rejection: resolveFleetSnapshotMachineRejection({ snapshot: home?.snapshot, machine: undefined }) };
 }
 
-/** A changed classifier must run, but equal descriptive results must not republish themselves. */
+function candidateFact(candidate: PluginExecutionOriginCandidateV1) {
+    return 'materialization' in candidate ? candidate.materialization : candidate.source;
+}
+
+function retainDescriptiveCandidate(old: PluginExecutionOriginCandidateV1 | undefined, candidate: PluginExecutionOriginCandidateV1) {
+    return old && candidateFact(old) === candidateFact(candidate)
+        && old.releaseContent === candidate.releaseContent && old.validation.kind === candidate.validation.kind
+        && (old.validation.kind !== 'rejected' || candidate.validation.kind === 'rejected' && old.validation.reason === candidate.validation.reason)
+        ? old : candidate;
+}
+
+/** Retain by supplying fact, including when an insertion changes the row order. */
 function retainDescriptiveCandidates(previous: readonly PluginExecutionOriginCandidateV1[] | undefined,
     proposed: readonly PluginExecutionOriginCandidateV1[]) {
     if (!previous) return proposed;
-    const retained = proposed.map((candidate, index) => {
-        const old = previous[index];
-        if (!old) return candidate;
-        const sameFact = 'materialization' in old && 'materialization' in candidate
-            ? old.materialization === candidate.materialization : 'source' in old && 'source' in candidate && old.source === candidate.source;
-        return sameFact && old.releaseContent === candidate.releaseContent && old.validation.kind === candidate.validation.kind
-            && (old.validation.kind !== 'rejected' || candidate.validation.kind === 'rejected' && old.validation.reason === candidate.validation.reason)
-            ? old : candidate;
-    });
+    const byFact = new Map(previous.map(candidate => [candidateFact(candidate), candidate]));
+    const retained = proposed.map(candidate => retainDescriptiveCandidate(byFact.get(candidateFact(candidate)), candidate));
     return sameCandidateRows(previous, retained) ? previous : Object.freeze(retained);
+}
+
+/** One candidate producer per plugin/input basis, independent of selection intent. */
+function createCandidatePublication(inputs: ExecutionOriginMachineSnapshotInputs, inventory: InventoryPublication,
+    previous?: readonly PluginExecutionOriginCandidateV1[]) {
+    const spec = inputs.selection!;
+    const build = (materializations: readonly PluginMachineMaterializationV1[],
+        sources: readonly PluginMachineSourceExecutionOriginCandidateV1[], current: InventoryPublication) =>
+        combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
+            pluginId: inputs.pluginId, materializations, classifyRelease: spec.classifyRelease,
+            machineSnapshots: current.snapshots, readMachineFact: current.readMachineFact, machineRejections: spec.machineRejections,
+        }), buildPluginMachineSourceExecutionOriginCandidates({ pluginId: inputs.pluginId, sources,
+            machineSnapshots: current.snapshots, readMachineFact: current.readMachineFact }));
+    let candidates = retainDescriptiveCandidates(previous, build(inputs.materializations, inputs.sources, inventory));
+    const positions = new Map(candidates.map((candidate, index) => [candidateFact(candidate), index]));
+    let basis = inventory;
+    type TargetRows = { target: PluginExecutionOriginContextualTarget; rejection: InventoryMachineFact['rejection'];
+        materializations: PluginMachineMaterializationV1[]; sources: PluginMachineSourceExecutionOriginCandidateV1[] };
+    const homes = new Map<string, Map<string, TargetRows>>();
+    const targetRows = (target: PluginExecutionOriginContextualTarget) => {
+        let home = homes.get(target.serverIdentityId);
+        if (!home) { home = new Map(); homes.set(target.serverIdentityId, home); }
+        let rows = home.get(target.machineId);
+        if (!rows) {
+            rows = { target, rejection: inventory.readMachineFact(target).rejection, materializations: [], sources: [] };
+            home.set(target.machineId, rows);
+        }
+        return rows;
+    };
+    // Index declaration inputs once. A Machine delta never scans the fleet's declarations.
+    for (const materialization of readPluginMachineMaterializations(inputs.materializations, inputs.pluginId)) {
+        targetRows(materialization).materializations.push(materialization);
+    }
+    for (const source of inputs.sources) if (getPluginMachineExecutionOriginRef(source.source.origin).pluginId === inputs.pluginId) {
+        targetRows({ serverIdentityId: source.source.origin.serverIdentityId,
+            machineId: getPluginMachineExecutionOriginRef(source.source.origin).machineId }).sources.push(source);
+    }
+    return {
+        inputs,
+        read(current: InventoryPublication) {
+            if (basis === current) return candidates;
+            const changed = current.fullRefresh ? [...homes.values()].flatMap(home => [...home.values()])
+                : current.changedTargets.flatMap(target => homes.get(target.serverIdentityId)?.get(target.machineId) ?? []);
+            const affected = new Set<TargetRows>();
+            for (const rows of changed) {
+                const rejection = current.readMachineFact(rows.target).rejection;
+                if (rows.rejection === rejection) continue;
+                rows.rejection = rejection;
+                affected.add(rows);
+            }
+            basis = current;
+            if (affected.size === 0) return candidates;
+            const materializations = [...affected].flatMap(rows => rows.materializations);
+            const sources = [...affected].flatMap(rows => rows.sources);
+            let updated: PluginExecutionOriginCandidateV1[] | null = null;
+            for (const replacement of build(materializations, sources, current)) {
+                const index = positions.get(candidateFact(replacement));
+                if (index === undefined) continue;
+                const retained = retainDescriptiveCandidate(candidates[index], replacement);
+                if (retained === candidates[index]) continue;
+                updated ??= [...candidates];
+                updated[index] = retained;
+            }
+            if (updated) candidates = Object.freeze(updated);
+            return candidates;
+        },
+    };
 }
 
 function retainDescriptiveState(previous: PluginMachineExecutionOriginStateV1 | undefined, next: PluginMachineExecutionOriginStateV1) {
     if (!previous || previous.kind !== next.kind) return next;
     if (previous.kind === 'selected' && next.kind === 'selected') return previous.candidate === next.candidate
-        && previous.selectionSource === next.selectionSource && arePluginMachineExecutionOriginsEqual(previous.origin, next.origin) ? previous : next;
+        && previous.selectionSource === next.selectionSource ? previous : next;
     if (previous.kind === 'selected' || next.kind === 'selected' || !sameCandidateRows(previous.candidates, next.candidates)) return next;
     if (previous.kind === 'selectionRequired' && next.kind === 'selectionRequired') return previous;
     if (previous.kind === 'conflict' && next.kind === 'conflict') return previous.reasons.length === next.reasons.length
@@ -238,7 +304,6 @@ function retainDescriptiveState(previous: PluginMachineExecutionOriginStateV1 | 
 /** The existing inventory producer publishes on source changes; snapshot reads never derive. */
 export function createExecutionOriginMachineSnapshotPublication(dependencies: PublicationDependencies) {
     const contexts = new Map<string, Context>();
-    const clockToken = {};
     let stops: Array<() => void> = [];
     let publishing = false;
     type AutomaticOriginEntry = { current: Demand | null; remaining: Demand[]; next: number };
@@ -344,18 +409,25 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             return spec.availabilityNotLoaded === true || selectedContentPending
                 || ((inventory.pendingHomes.has(readinessHome ?? '') && state.kind !== 'selected') || projectionPending);
         };
+        if (!demand.candidatePublication) {
+            for (const other of demand.context.demands) {
+                if (other !== demand && other.candidatePublication && other.inputs.pluginId === demand.inputs.pluginId
+                    && other.inputs.accountLifetime?.isCurrent() !== false
+                    && sameCandidateInputs(other.candidatePublication.inputs, demand.inputs)) {
+                    demand.candidatePublication = other.candidatePublication;
+                    break;
+                }
+            }
+            demand.candidatePublication ??= createCandidatePublication(demand.inputs, inventory, demand.description?.value.candidates);
+        }
+        const candidates = demand.candidatePublication.read(inventory);
         const matches = (description: NonNullable<Demand['description']>) => description.key === key
+            && description.value.candidates === candidates
             && sameSelectionInputs(description.inputs, demand.inputs) && sameTarget(description.storedTarget, storedTarget)
             && sameTarget(description.lastUsedTarget, lastUsedTarget)
             && description.value.loading === readLoading(description.value.state);
         if (!nativeToolChanged && demand.description && matches(demand.description)) return demand.description.value;
         const previous = demand.description;
-        const candidates = previous && previous.eligibilityKey === eligibilityKey && sameCandidateInputs(previous.inputs, demand.inputs)
-            ? previous.value.candidates : retainDescriptiveCandidates(previous?.value.candidates, combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
-                pluginId: demand.inputs.pluginId, materializations: demand.inputs.materializations, classifyRelease: spec.classifyRelease,
-                machineSnapshots: inventory.snapshots, readMachineFact: inventory.readMachineFact, machineRejections: spec.machineRejections,
-            }), buildPluginMachineSourceExecutionOriginCandidates({ pluginId: demand.inputs.pluginId, sources: demand.inputs.sources,
-                machineSnapshots: inventory.snapshots, readMachineFact: inventory.readMachineFact })));
         const presence = rememberedTarget ? inventory.readMachineFact(rememberedTarget).rejection
             ?? spec.machineRejections?.find(entry => sameTarget(entry, rememberedTarget))?.reason ?? null : null;
         const selectionInputs = { pluginId: demand.inputs.pluginId,
@@ -385,21 +457,17 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         return value;
     }
 
-    function armClock() {
-        let deadline: number | null = null;
-        for (const context of contexts.values()) {
-            const next = context.inventory?.nextRefreshAtMs;
-            if (next != null && (deadline === null || next < deadline)) deadline = next;
-        }
-        if (deadline === null) dependencies.clock.clearWake(clockToken);
-        else dependencies.clock.requestWake(clockToken, deadline);
-    }
-
     function publishDemand(demand: Demand, nativeToolChanged = false) {
         const { context, inputs } = demand;
         const inventory = context.inventory;
         if (!inventory || (inputs.accountLifetime && !inputs.accountLifetime.isCurrent())) {
             demand.current = EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION;
+            // Retired requesters miss subsequent deltas. A successor must read
+            // the current census rather than resume that interrupted basis.
+            demand.candidatePublication = null;
+            demand.factProjection = null;
+            demand.facts = null;
+            demand.factsInventory = null;
         } else {
             if (demand.factsInventory !== inventory) {
                 const facts = { machineSnapshots: inventory.snapshots, readMachineFact: inventory.readMachineFact };
@@ -423,7 +491,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             const selection = describe(demand, inventory, key, eligibilityKey, nativeToolChanged);
             if (demand.current.key !== key || demand.current.snapshots !== inventory.snapshots || demand.current.selection !== selection) {
                 demand.current = Object.freeze({ key, eligibilityKey, selection,
-                    snapshots: inventory.snapshots, nextRefreshAtMs: inventory.nextRefreshAtMs, readMachineFact: inventory.readMachineFact });
+                    snapshots: inventory.snapshots, readMachineFact: inventory.readMachineFact });
             }
         }
         publishAutomaticOrigin(demand);
@@ -443,18 +511,26 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         const unchanged = !force && previous && previous.state.machines === state.machines
             && previous.state.machineListByServerId === state.machineListByServerId
             && previous.state.machineListStatusByServerId === state.machineListStatusByServerId
-            && previous.reachabilityRevision === revision && nowMs >= previous.observedAtMs
-            && (previous.nextRefreshAtMs === null || nowMs < previous.nextRefreshAtMs);
+            && previous.reachabilityRevision === revision;
         if (!unchanged) {
             const activeMachines = Object.values(state.machines);
             const snapshots = resolveAllProfileMachineInventorySnapshots({ profiles: context.inputs.profiles,
                 activeServerId: context.inputs.activeServerId, activeMachines,
                 machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId,
                 accountScopesByServerId: context.scopes, nowMs, loadWarmEntries: loadMachineDisplayWarmCacheEntries });
-            let nextRefreshAtMs: number | null = null;
             const pendingHomes = new Set<string>();
             const homes = new Map<string, InventoryHome>();
+            // One entry per changed Machine, however many demands hold it: every
+            // demand walks this list, so a repeat would cost demands × demands.
             const changedTargets: PluginExecutionOriginContextualTarget[] = [];
+            const changedMachines = new Map<string, Set<string>>();
+            const markChanged = (target: PluginExecutionOriginContextualTarget) => {
+                let machines = changedMachines.get(target.serverIdentityId);
+                if (!machines) { machines = new Set(); changedMachines.set(target.serverIdentityId, machines); }
+                if (machines.has(target.machineId)) return;
+                machines.add(target.machineId);
+                changedTargets.push(target);
+            };
             const resolveScopeId = captureServerProfileScopeResolver();
             for (const snapshot of snapshots) {
                 if ('serverIdentityId' in snapshot && isMachineInventoryPending(snapshot)) pendingHomes.add(snapshot.serverIdentityId);
@@ -468,12 +544,11 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 const sourceIndices = new Map(sourceMachines?.map((machine, index) => [machine.id, index] as const));
                 const old = previous?.homes.get(snapshot.serverIdentityId);
                 const sameAdmission = old !== undefined && old.snapshot.accountId === snapshot.accountId
-                    && old.snapshot.observation === snapshot.observation && old.snapshot.settled === snapshot.settled
-                    && previous !== null && nowMs >= previous.observedAtMs;
+                    && old.snapshot.observation === snapshot.observation && old.snapshot.settled === snapshot.settled;
                 // A census/Account/reachability transition can change an absent
                 // demanded target too (unknown vs missing), without a row delta.
                 if (!sameAdmission && previous) for (const demand of context.demands) {
-                    for (const target of demand.targets) if (target.serverIdentityId === snapshot.serverIdentityId) changedTargets.push(target);
+                    for (const target of demand.targets) if (target.serverIdentityId === snapshot.serverIdentityId) markChanged(target);
                 }
                 const eligible = new Set(snapshot.executionEligibleMachineIds);
                 const rows = new Map<string, InventoryRow>();
@@ -483,40 +558,35 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                     const before = old?.rows.get(machine.id);
                     const executionEligible = eligible.has(machine.id);
                     const sameRow = sameAdmission && before?.machine === machine
-                        && before.fact.activeAt === machine.activeAt
-                        && (before.nextRefreshAtMs === null || nowMs < before.nextRefreshAtMs);
-                    const livePresence = sameRow && previous?.reachabilityRevision === revision
-                        ? null : resolveMachinePickerPresence(machine, nowMs, scope, resolveScopeId);
-                    const presence = livePresence ? livePresence.status === 'offline' ? livePresence.reason : livePresence.status : before!.presence;
+                        && before.fact.activeAt === readMachineActivity(machine).activeAt;
+                    const livePresence = resolveMachinePickerPresence(machine, nowMs, scope, resolveScopeId);
+                    const presence = livePresence.status === 'offline' ? livePresence.reason : livePresence.status;
                     const unchanged = sameRow && before!.eligible === executionEligible && before!.presence === presence;
                     let row = before;
                     if (!unchanged) {
-                        const proposed = { activeAt: machine.activeAt, eligible: executionEligible,
+                        const proposed = { activeAt: readMachineActivity(machine).activeAt ?? 0, eligible: executionEligible,
                             rejection: resolveFleetSnapshotMachineRejection({ snapshot, machine, executionEligible }) };
                         const fact = before && before.fact.activeAt === proposed.activeAt && before.fact.eligible === proposed.eligible
                             && before.fact.rejection === proposed.rejection ? before.fact : proposed;
-                        row = { machine, displayIndex, sourceIndex, eligible: executionEligible, presence, fact,
-                            nextRefreshAtMs: readMachineStatusNextRefreshAtMs(machine, nowMs) };
+                        row = { machine, displayIndex, sourceIndex, eligible: executionEligible, presence, fact };
                     } else if (row!.displayIndex !== displayIndex || row!.sourceIndex !== sourceIndex) {
                         row = { ...row!, displayIndex, sourceIndex };
                     }
                     rows.set(machine.id, row!);
-                    if (before?.fact !== row!.fact) changedTargets.push({ serverIdentityId: snapshot.serverIdentityId, machineId: machine.id });
-                    const deadline = row!.nextRefreshAtMs;
-                    if (deadline !== null && (nextRefreshAtMs === null || deadline < nextRefreshAtMs)) nextRefreshAtMs = deadline;
+                    if (before?.fact !== row!.fact) markChanged({ serverIdentityId: snapshot.serverIdentityId, machineId: machine.id });
                 }
                 for (const machineId of old?.rows.keys() ?? []) if (!rows.has(machineId)) {
-                    changedTargets.push({ serverIdentityId: snapshot.serverIdentityId, machineId });
+                    markChanged({ serverIdentityId: snapshot.serverIdentityId, machineId });
                 }
                 homes.set(snapshot.serverIdentityId, { snapshot, rows, sourceMachines });
             }
             for (const [serverIdentityId, old] of previous?.homes ?? []) if (!homes.has(serverIdentityId)) {
-                for (const machineId of old.rows.keys()) changedTargets.push({ serverIdentityId, machineId });
+                for (const machineId of old.rows.keys()) markChanged({ serverIdentityId, machineId });
                 for (const demand of context.demands) {
-                    for (const target of demand.targets) if (target.serverIdentityId === serverIdentityId) changedTargets.push(target);
+                    for (const target of demand.targets) if (target.serverIdentityId === serverIdentityId) markChanged(target);
                 }
             }
-            context.inventory = { snapshots, nextRefreshAtMs, pendingHomes, state, observedAtMs: nowMs, homes, changedTargets, fullRefresh: !previous,
+            context.inventory = { snapshots, pendingHomes, state, homes, changedTargets, fullRefresh: !previous,
                 activeServerIdentityId: getServerProfileById(context.inputs.activeServerId)?.serverIdentityId ?? '',
                 reachabilityRevision: revision,
                 readMachineFact: target => readInventoryMachineFact(homes, target) };
@@ -529,84 +599,76 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
 
     function publishMachineUpdates(context: Context, state: StorageState, serverId: string, machineIds: readonly string[]) {
         const previous = context.inventory;
-        if (!previous) { publishContext(context); return; }
+        if (!previous) { publishContext(context, true); return; }
         const resolveScopeId = captureServerProfileScopeResolver();
         const snapshotIndex = previous.snapshots.findIndex(entry => areServerProfileIdentifiersEquivalent(entry.profileId, serverId, resolveScopeId));
         const snapshot = previous.snapshots[snapshotIndex];
-        if (snapshot?.kind !== 'resolved') return;
+        if (snapshot?.kind !== 'resolved') { publishContext(context, true); return; }
         const home = previous.homes.get(snapshot.serverIdentityId)!;
         const nowMs = Date.now();
-        // Semantic/root, scope, reachability and expiry transitions still use
+        // Semantic/root, scope and reachability transitions still use
         // the canonical census. Exact receipts with retained roots change only
         // liveness; their row coordinates were established by that census.
         if (previous.state.machines !== state.machines || previous.state.machineListByServerId !== state.machineListByServerId
             || previous.state.machineListStatusByServerId !== state.machineListStatusByServerId
-            || previous.reachabilityRevision !== readMachineRequestReachabilityRevision()
-            || nowMs < previous.observedAtMs || (previous.nextRefreshAtMs !== null && nowMs >= previous.nextRefreshAtMs)) {
-            publishContext(context);
+            || previous.reachabilityRevision !== readMachineRequestReachabilityRevision()) {
+            publishContext(context, true);
             return;
         }
+        const profile = context.inputs.profiles.find(entry => entry.id === snapshot.profileId);
+        const sourceMachines = resolveServerScopedMachineInventory({
+            serverId: snapshot.serverIdentityId, serverIdAliases: [snapshot.profileId, ...(profile?.legacyServerIds ?? [])],
+            activeServerId: context.inputs.activeServerId,
+            get activeMachines() { return Object.values(state.machines); },
+            machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId,
+        }, resolveScopeId).machines;
         let rows: Map<string, InventoryRow> | null = null;
         let machines: Array<InventoryRow['machine']> | null = null;
         const changedTargets: PluginExecutionOriginContextualTarget[] = [];
-        let earliestChanged = false;
-        let nextRefreshAtMs = previous.nextRefreshAtMs;
         const scope = createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId);
         for (const machineId of new Set(machineIds)) {
             const before = home.rows.get(machineId);
-            const source = before?.sourceIndex != null ? home.sourceMachines?.[before.sourceIndex] : undefined;
+            const source = before?.sourceIndex != null ? sourceMachines?.[before.sourceIndex] : undefined;
             if (!before || !source || source.id !== machineId) { publishContext(context, true); return; }
-            if (before.fact.activeAt === source.activeAt && before.machine.updatedAt === source.updatedAt) continue;
+            const activeAt = readMachineActivity(source).activeAt ?? 0;
             const livePresence = resolveMachinePickerPresence(source, nowMs, scope, resolveScopeId);
             const presence = livePresence.status === 'offline' ? livePresence.reason : livePresence.status;
+            if (before.fact.activeAt === activeAt && before.machine.updatedAt === source.updatedAt && presence === before.presence) continue;
             if (presence !== before.presence) { publishContext(context, true); return; }
-            const machine = { ...before.machine, activeAt: source.activeAt, updatedAt: source.updatedAt };
-            const fact = before.fact.activeAt === source.activeAt ? before.fact : { ...before.fact, activeAt: source.activeAt };
-            const row: InventoryRow = { ...before, machine, fact, nextRefreshAtMs: readMachineStatusNextRefreshAtMs(source, nowMs) };
+            const machine = { ...before.machine, activeAt, updatedAt: source.updatedAt };
+            const fact = before.fact.activeAt === activeAt ? before.fact : { ...before.fact, activeAt };
+            const row: InventoryRow = { ...before, machine, fact };
             rows ??= new Map(home.rows);
             machines ??= [...snapshot.machines];
             rows.set(machineId, row);
             machines[before.displayIndex] = machine;
             if (fact !== before.fact) changedTargets.push({ serverIdentityId: snapshot.serverIdentityId, machineId });
-            if (before.nextRefreshAtMs === previous.nextRefreshAtMs && row.nextRefreshAtMs !== before.nextRefreshAtMs) earliestChanged = true;
-            if (row.nextRefreshAtMs !== null && (nextRefreshAtMs === null || row.nextRefreshAtMs < nextRefreshAtMs)) nextRefreshAtMs = row.nextRefreshAtMs;
         }
         if (!rows || !machines) return;
         const nextSnapshot = { ...snapshot, machines: Object.freeze(machines) };
         const homes = new Map(previous.homes);
-        homes.set(snapshot.serverIdentityId, { ...home, rows, snapshot: nextSnapshot });
-        // Only the scalar deadline minimum needs a scan when its old owner
-        // moves. No unaffected row is re-admitted or re-projected.
-        if (earliestChanged) {
-            nextRefreshAtMs = null;
-            for (const currentHome of homes.values()) for (const row of currentHome.rows.values()) {
-                const deadline = row.nextRefreshAtMs;
-                if (deadline !== null && (nextRefreshAtMs === null || deadline < nextRefreshAtMs)) nextRefreshAtMs = deadline;
-            }
-        }
+        homes.set(snapshot.serverIdentityId, { ...home, rows, sourceMachines, snapshot: nextSnapshot });
         const snapshots = [...previous.snapshots];
         snapshots[snapshotIndex] = nextSnapshot;
-        context.inventory = { ...previous, snapshots: Object.freeze(snapshots), homes, state, observedAtMs: nowMs,
-            changedTargets, fullRefresh: false, nextRefreshAtMs,
+        context.inventory = { ...previous, snapshots: Object.freeze(snapshots), homes, state,
+            changedTargets, fullRefresh: false,
             readMachineFact: target => readInventoryMachineFact(homes, target) };
         for (const demand of context.demands) publishDemand(demand);
     }
 
     function publish() {
         withAutomaticOriginView(() => { for (const context of contexts.values()) publishContext(context); });
-        armClock();
     }
 
     function start() {
         if (stops.length > 0) return;
         stops = [dependencies.subscribeState(publish), subscribeMachineRequestReachability(publish),
-            dependencies.clock.subscribe(publish), dependencies.subscribeMachineUpdates((serverId, machineIds) => {
+            dependencies.subscribeMachineUpdates((serverId, machineIds) => {
                 const state = dependencies.readState();
                 if (!state) return;
                 withAutomaticOriginView(() => {
                     for (const context of contexts.values()) publishMachineUpdates(context, state, serverId, machineIds);
                 });
-                armClock();
             })].filter((stop): stop is () => void => stop !== null);
     }
 
@@ -649,11 +711,19 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 const reuse = previous?.context === context && previous.listeners.size === 0 && sameTargets(previous.targets, targets);
                 // Equivalent connections consume one demand. Match only when a
                 // connection binds, never by searching siblings per arrival.
-                const equivalent = [...context.demands].find(other => other.inputs.readinessServerIdentityId === next.readinessServerIdentityId
-                    && sameTargets(other.targets, targets) && sameSelectionInputs(other.inputs, next));
+                let equivalent: Demand | undefined;
+                for (const other of context.demands) {
+                    if (other.inputs.pluginId === next.pluginId && other.inputs.readinessServerIdentityId === next.readinessServerIdentityId
+                        && sameTargets(other.targets, targets) && sameSelectionInputs(other.inputs, next)) {
+                        equivalent = other;
+                        break;
+                    }
+                }
                 demand = equivalent ?? { inputs: next, targets: reuse ? previous.targets : targets, context,
                     facts: reuse ? previous.facts : null, factsInventory: reuse ? previous.factsInventory : null,
                     factProjection: reuse ? previous.factProjection : null,
+                    candidatePublication: previous?.context === context && sameCandidateInputs(previous.inputs, next)
+                        ? previous.candidatePublication : null,
                     current: previous?.current ?? EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION,
                     snapshot: previousSnapshot, listeners: new Set(),
                     description: previous?.description ?? null };
@@ -667,7 +737,6 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                     demand.current.snapshots, () => {
                         withAutomaticOriginView(() => publishDemand(demand, true));
                     }, next.selection?.installedPlugins) });
-
                 if (next.accountLifetime?.isCurrent()) {
                     const observationKey = serverAccountScopedResourceKey(next.accountLifetime.scope, `plugin.lastRunOn:${next.pluginId}`);
                     retirements.push({ dispose: machineAdministrationTargetObservationsState.subscribeKey(observationKey, () => {
@@ -679,7 +748,6 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                         if (!disposed) bind(next);
                     }));
                 }
-                armClock();
                 if (previousSnapshot.key !== demand.snapshot.key || previousSnapshot.selection !== demand.snapshot.selection) notify();
             }
             start();
@@ -699,7 +767,6 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                         for (const stop of stops) stop();
                         stops = [];
                     }
-                    armClock();
                 },
             };
         },
@@ -708,7 +775,8 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
 
 export const executionOriginMachineSnapshotPublication = createExecutionOriginMachineSnapshotPublication({
     readState: readRegisteredStorageState,
-    subscribeState: subscribeRegisteredStorageState,
+    subscribeState: listener => subscribeRegisteredStorageState(listener, {
+        settings: ['machineAdministrationTargetsLocalV1'], profileScope: true, machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+    }),
     subscribeMachineUpdates: subscribeRegisteredStorageMachineUpdates,
-    clock: sessionListRuntimeClock,
 });

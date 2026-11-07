@@ -59,7 +59,8 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
     // Management lists keep their raw-row subscription. Only an addressed selection needs preference evidence.
     const evidenceScope = selectedProfileId ? scope : null;
     const liveEvidence = getStorage()(useShallow(state => evidenceScope && areAccountSettingsScopesEqual(state.settingsScope, evidenceScope)
-        ? [state.settings.favoriteProfiles, state.settings.profileEnabledById, state.authoringMemory.lastUsedProfile] as const : null));
+        ? [state.settings.favoriteProfiles, state.settings.profileEnabledById, state.authoringMemory.lastUsedProfile] as const : null),
+        { settings: ['favoriteProfiles', 'profileEnabledById'], settingsScope: true, authoringMemory: ['lastUsedProfile'] });
     const subscribeEvidence = React.useCallback((listener: () => void) => evidenceScope
         ? subscribeAccountSettingsPersistenceMutations(changed => {
             if (areAccountSettingsScopesEqual(changed, evidenceScope)) listener();
