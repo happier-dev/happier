@@ -16,7 +16,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import { useDeploymentChangePress } from './deploymentActionOutcome';
@@ -150,6 +149,8 @@ export function DeploymentDomainsPanel(
           recordedIngress={editing.recordedIngress}
           inspect={editing.actions.inspectPlatformTarget}
           services={services}
+          primaryService={content ? primaryComposeService(content) : null}
+          machine={editing.machine}
           routeExports={routeExports}
           credentials={setBindings !== undefined}
           onCancel={() => setAdding(false)}
@@ -179,12 +180,12 @@ export function DeploymentDomainsPanel(
           onChooseCredential={setBindings && content ? (role) => { void chooseCredential(item, role); } : undefined}
         />
       ))}
-      <DeploymentTabState
+      {adding && items.length === 0 ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}
         emptyTitle={t('projects.deployments.domainsEmpty')}
-      />
+      />}
       {domains.hasPreviousPage || domains.hasNextPage ? (
         <View style={styles.paging}>
           {domains.hasPreviousPage ? (
@@ -210,6 +211,12 @@ export function DeploymentDomainsPanel(
 }
 
 /** The Compose services the definition selects; an empty selection (every service) names none, so Service stays typed. */
+/** Compose's primary service, as the definition names it. */
+function primaryComposeService(content: EnvironmentContent): string | null {
+  const { definition } = content;
+  return (definition.kind === 'stored' ? definition.primaryService : definition.compose?.primaryService) ?? null;
+}
+
 function composeServices(content: EnvironmentContent): readonly string[] {
   const { definition } = content;
   const selected = definition.kind === 'stored' ? definition.services : definition.compose?.services;
@@ -248,6 +255,10 @@ function DomainAddForm(
     inspect?: DomainIngressInspection;
     /** The definition's selected Compose services; empty means Service is typed. */
     services: readonly string[];
+    /** Compose's primary service, which a typed Service starts with. */
+    primaryService: string | null;
+    /** The Machine the Environment's own route (Caddy) serves from. */
+    machine: string;
     /** Ports the Environment declares per service; a service without one keeps Port typed. */
     routeExports: readonly RouteExport[];
     /** Basic auth and your own certificate need a credential chosen on the address afterwards. */
@@ -257,7 +268,7 @@ function DomainAddForm(
   }>,
 ) {
   const [hostname, setHostname] = React.useState('');
-  const [service, setService] = React.useState('');
+  const [service, setService] = React.useState(() => props.services.length === 0 ? props.primaryService ?? '' : '');
   const [port, setPort] = React.useState('');
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('/');
@@ -328,16 +339,12 @@ function DomainAddForm(
         </FieldItem>
         {!props.recordedIngress ? (
           <>
-            {ingressMode === 'environment' ? (
-              <Text testID="project-deployments.environment.domains.add.ingress.notRecorded">
-                {t('projects.deployments.domainIngressMissing')}
-              </Text>
-            ) : null}
-            <FieldItem label={t('projects.deployments.domainIngressRouting')}>
+            <FieldItem label={t('projects.deployments.editors.reachThrough')}>
               <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode"
-                label={t('projects.deployments.domainIngressRouting')}
+                label={t('projects.deployments.editors.reachThrough')}
                 items={[
-                  { id: 'environment', title: t('projects.deployments.domainIngressEnvironment') },
+                  // The place visitors reach, named as the lab does ("Caddy on vps-2 · public"), not the mechanism.
+                  { id: 'environment', title: t('projects.deployments.editors.reachCaddy', { machine: props.machine }) },
                   { id: 'cloudflare', title: t('projects.deployments.domainIngressTitle') },
                 ]}
                 selectedId={ingressMode} onSelect={setIngressMode} disabled={props.busy} />

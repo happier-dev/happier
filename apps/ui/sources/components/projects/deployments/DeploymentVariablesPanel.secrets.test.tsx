@@ -13,7 +13,6 @@ import { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests }
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 
@@ -66,7 +65,7 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
       snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
-      machineId="machine-a" referenceTargets={referenceTargets as never}
+      referenceTargets={referenceTargets as never}
       secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
@@ -121,14 +120,10 @@ it.each(['access_removed', 'deleted'] as const)('keeps a withdrawn binding visib
   expect(materialReads()).toBe(0);
 });
 
-it('takes the person to the Machine Services control owner and the existing API token grant editor', async () => {
-  const { screen, scope } = await mount();
-  await screen.pressByTestIdAsync('project-deployments.environment.variables.services');
-  expect(routing.spies.push).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
-    target: { serverId: scope.serverId, machineId: 'machine-a' }, tab: { id: 'services' } }));
-  await screen.pressByTestIdAsync('project-deployments.environment.variables.ci');
-  expect(routing.spies.push).toHaveBeenCalledWith(SETTINGS_ROUTES.apiTokens);
-  expect(materialReads()).toBe(0);
+it('keeps the Variables page to variables: no Machine services or API token rows under the table', async () => {
+  const { screen } = await mount();
+  expect(screen.findByTestId('project-deployments.environment.variables.services')).toBeNull();
+  expect(screen.findByTestId('project-deployments.environment.variables.ci')).toBeNull();
 });
 
 it('points a new variable at another service export through the same draft and binding write', async () => {

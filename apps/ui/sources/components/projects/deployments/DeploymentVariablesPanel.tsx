@@ -48,7 +48,6 @@ import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecre
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 
 type VariableBinding = EnvironmentVariableBindingV1;
@@ -105,8 +104,6 @@ export const DeploymentVariablesPanel = React.memo(
       scope: AccountSettingsScope | null;
       /** The same Home/Account's lifetime: "Use a saved secret…" picks only while it is current. */
       lifetime: ServerAccountScopeLifetime | null;
-      /** Only a single runtime Machine has an unambiguous Services destination. */
-      machineId?: string | null;
       /**
        * The Environment controller's running-vs-saved secret facts per runtime member (T2-DOMAIN-PREVIEW
        * `secretRevisions` on the Environment detail); absent before the page has them.
@@ -137,8 +134,6 @@ export const DeploymentVariablesPanel = React.memo(
     const disclosedRow = rows.find(row => JSON.stringify([props.environmentId, row.key]) === disclosedKey);
     const disclosedRef = disclosedRow?.binding.source.kind === 'secret' ? disclosedRow.binding.source.ref : null;
     const disclosedEntry = catalog.find(entry => entry.ref === disclosedRef);
-    const machineServicesHref = props.machineId && props.scope ? machinePageHref({ door: 'rail', target: {
-      machineId: props.machineId, serverId: props.scope.serverId }, tab: { id: 'services' } }) : null;
     const manageSecret = React.useCallback((ref: string) => {
       router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } });
     }, [router]);
@@ -563,14 +558,6 @@ export const DeploymentVariablesPanel = React.memo(
               scope={props.scope} entry={disclosedEntry} active />
           </ItemGroup>
         ) : null}
-        {machineServicesHref ? <Item
-          testID="project-deployments.environment.variables.services"
-          title={t('projects.deployments.openMachineServices')}
-          subtitle={`${t('machineServices.control.stop')} · ${t('machineServices.control.start')}`}
-          onPress={() => router.push(machineServicesHref)} /> : null}
-        <Item testID="project-deployments.environment.variables.ci"
-          title={t('settingsApiTokens.title')} subtitle={t('settingsApiTokens.entrySubtitle')}
-          onPress={() => router.push(SETTINGS_ROUTES.apiTokens)} />
         {mode === 'table' && secrets > 0 && (props.sealedOn || teamDisclosure) ? (
           <View
             testID="project-deployments.environment.variables.sealed"
@@ -1241,7 +1228,8 @@ function ValueSource(
   return (
     <View style={styles.source}>
       <Text
-        numberOfLines={1}
+        // Long names wrap to a second line rather than clipping in a narrow column.
+        numberOfLines={2}
         style={[styles.sourceTitle, value && styles.mono]}
       >
         {title}
@@ -1361,9 +1349,10 @@ function sourceDetail(binding: VariableBinding): string | null {
   const source = binding.source;
   switch (source.kind) {
     case 'secret':
-      return t('projects.deployments.sourceSecretRevision', {
+      // The row's kind leads, so a secret named like a value still reads as a Saved secret.
+      return `${t('projects.deployments.sourceSavedSecret')} · ${t('projects.deployments.sourceSecretRevision', {
         revision: source.resourceRevision,
-      });
+      })}`;
     case 'value':
       return t('projects.deployments.sourceValue');
     case 'reference':

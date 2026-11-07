@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
   DEPLOYMENT_ACTION_IDS_V1,
@@ -34,7 +33,6 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { createTeamAddress, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { resolveActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
 
 import { useDeploymentChangePress } from './deploymentActionOutcome';
@@ -292,6 +290,7 @@ function EnvironmentApprovals(props: Readonly<{ environmentId: string; environme
       ? state.value : 'default';
     return {
       actionId,
+      label: approvalLabel(actionId),
       value,
       // An Action that always asks (irreversible) has no choice to offer here.
       fixed: state.kind === 'approval' && !state.approvalWaivable,
@@ -316,7 +315,8 @@ function EnvironmentApprovals(props: Readonly<{ environmentId: string; environme
         <ActionScopedApprovalRow
           key={row.actionId}
           testIDPrefix={`${prefix}.${row.actionId}`}
-          title={resolveActionTitle(row.actionId, getActionSpec(row.actionId))}
+          title={row.label.title}
+          subtitle={row.label.hint}
           value={row.fixed ? 'ask_first' : row.value}
           disabled={row.fixed}
           onChange={(mode) => { void writePolicy({ actionId: row.actionId, audience: AUDIENCE, scope, mode }); }}
@@ -324,6 +324,23 @@ function EnvironmentApprovals(props: Readonly<{ environmentId: string; environme
       ))}
     </ItemGroup>
   );
+}
+
+/**
+ * What each approval row is about, in the person's words with its consequence (lab d2 `access`): the root
+ * operation the deployment Action owner classifies, then editing settings and variables.
+ */
+function approvalLabel(actionId: ActionId): Readonly<{ title: string; hint: string }> {
+  switch (deploymentOperationForRootActionV1(actionId)) {
+    case 'deploy': return { title: t('projects.deployments.editors.approveDeploy'), hint: t('projects.deployments.editors.approveDeployHint') };
+    case 'rollback': return { title: t('projects.deployments.editors.approveRollback'), hint: t('projects.deployments.editors.approveRollbackHint') };
+    case 'promote': return { title: t('projects.deployments.editors.approvePromote'), hint: t('projects.deployments.editors.approvePromoteHint') };
+    case 'teardown': return { title: t('projects.deployments.editors.approveTeardown'), hint: t('projects.deployments.editors.approveTeardownHint') };
+    case undefined: break;
+  }
+  return actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+    ? { title: t('projects.deployments.editors.approveVariables'), hint: t('projects.deployments.editors.approveVariablesHint') }
+    : { title: t('projects.deployments.editors.approveSettings'), hint: t('projects.deployments.editors.approveSettingsHint') };
 }
 
 function deployersLabel(mode: DeployerMode): string {

@@ -138,6 +138,23 @@ describe('Environment → Permissions: approvals', () => {
 
 });
 
+describe('Environment → Permissions: approvals read as what the person does (PAGE-ACCEPT-85 D10)', () => {
+  it('titles each row by the operation, with a consequence line, not by the Action spec title', async () => {
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { ActionScopedApprovalRow } = await import('@/components/settings/actions/ActionScopedApprovalRow');
+    const screen = await renderScreen(<DeploymentPermissionsPanel detail={manager() as never}
+      machineName={() => 'vps-1'} onOpenController={() => {}} editing={null} />);
+    const rows = screen.findAllByType(ActionScopedApprovalRow);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const actionId = String(row.props.testIDPrefix).replace(`${prefix}.approvals.`, '');
+      expect(row.props.title).not.toBe(getActionSpec(actionId as never).title);
+      expect(row.props.subtitle).toEqual(expect.any(String));
+    }
+    await screen.unmount();
+  });
+});
+
 describe('Environment → Permissions: chosen people', () => {
   it('offers Chosen people only where there is a Team to choose from', async () => {
     const { SegmentedChoiceItem } =
