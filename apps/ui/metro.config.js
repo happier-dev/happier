@@ -1,4 +1,5 @@
 const path = require("node:path");
+const { createArtifactAssetResponse } = require('./scripts/metroArtifactAssetResponse.cjs');
 const fs = require("node:fs");
 const { selectNativeBundleResponse } = require('./scripts/metroNativeBundleResponse.cjs');
 const { protectMetroDependencyConsumption, processMetroDependencyChanges } = require('./scripts/metroDependencyConsumption.cjs');
@@ -1228,9 +1229,10 @@ config.server.enhanceMiddleware = (middleware, metroServer) => {
       void refresh.then(owner => owner.ready()).then(() => upstream(req, res, next), next);
     };
   }
+  const artifactAssetResponse = createArtifactAssetResponse(enhanced, artifactOnlyAssetExts);
   return (req, res, next) => {
     selectNativeBundleResponse(req);
-    return enhanced(req, res, next);
+    return artifactAssetResponse(req, res, next);
   };
 };
 

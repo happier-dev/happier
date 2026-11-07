@@ -92,3 +92,114 @@ test('source inventory discovers every watched input with one compiler graph in 
   assert.equal(peak, 1, 'the serving process must not overlap full compiler graphs');
   t.diagnostic(`graphs=${beforeEdit} peak=${peak} rediscoveries=${completed - beforeEdit}`);
 });
+
+test('artifact requests reuse publication admission and admit changed files before serving', async t => {
+  const { createRequire, syncBuiltinESMExports } = await import('node:module');
+  const { EventEmitter } = await import('node:events');
+  const { dirname } = await import('node:path');
+  const { rename, rm } = await import('node:fs/promises');
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-admission-cost-' });
+  const uiPackageDir = fixture.path('source/apps/ui');
+  await mkdir(join(uiPackageDir, 'scripts'), { recursive: true });
+  await writeFile(join(uiPackageDir, 'scripts/prepareSourcePluginUiArtifacts.mjs'), 'export {};');
+  await mkdir(fixture.path('source/apps/cli'), { recursive: true });
+  await writeFile(fixture.path('source/apps/cli/package.json'), JSON.stringify({ bundledDependencies: [] }));
+  const inventoryPath = fixture.path('consumer/inventory.js');
+  const recordPath = fixture.path('consumer/source-assets.json');
+  await mkdir(dirname(inventoryPath), { recursive: true });
+  const pluginAssets = Array.from({ length: 12 }, (_, index) => fixture.path(`consumer/plugin-${index}.bundle`));
+  const sourceAssets = Array.from({ length: 8 }, (_, index) => fixture.path(`consumer/source-${index}.bundle`));
+  const assets = new Set([...pluginAssets, ...sourceAssets]);
+  for (const path of assets) await writeFile(path, 'asset');
+  const publish = async (path, contents) => {
+    await writeFile(`${path}.candidate`, contents);
+    await rename(`${path}.candidate`, path);
+  };
+  const publishInventory = () => publish(inventoryPath, pluginAssets.map((path, index) =>
+    `const BUNDLED_PLUGIN_UI_APP_ASSET_${index} = require(${JSON.stringify(path)});`).join('\n') +
+    '\nexport const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n');
+  const publishRecord = () => publish(recordPath, JSON.stringify({ assetPaths: sourceAssets }));
+  await publishInventory();
+  await publishRecord();
+  const watcher = new EventEmitter();
+  const graph = new EventEmitter();
+  const indexed = new Set(assets);
+  let reachedMissing;
+  let fileMapChecks = 0;
+  graph.doesFileExist = path => {
+    fileMapChecks += 1;
+    if (!indexed.has(path)) reachedMissing?.();
+    return indexed.has(path);
+  };
+  const metroServer = {
+    getWatchFolders: () => [],
+    getBundler: () => ({ getBundler: () => ({ getWatcher: () => watcher, getDependencyGraph: async () => graph }) }),
+  };
+  const { watchUiSourcePluginInventory } = await import('./ensureWorkspacePackagesBuilt.mjs');
+  const owner = watchUiSourcePluginInventory({ uiPackageDir, metroServer,
+    metroConfig: { projectRoot: fixture.root, resolver: { sourceExts: ['js'], assetExts: ['bundle'] },
+      watcher: { additionalExts: [] } },
+    env: { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath },
+    logger: { error() {} },
+  });
+  t.after(() => owner.close());
+  // Observe the real filesystem boundary; keep inventory parsing, admission,
+  // publication identity and the owner's existing watcher/queue real.
+  const fs = createRequire(import.meta.url)('node:fs/promises');
+  const counts = { assetStat: 0, assetRealpath: 0, publicationStat: 0 };
+  for (const name of ['stat', 'realpath']) {
+    const original = fs[name];
+    t.mock.method(fs, name, async (path, ...args) => {
+      if (assets.has(path)) counts[name === 'stat' ? 'assetStat' : 'assetRealpath'] += 1;
+      if (name === 'stat' && [inventoryPath, recordPath].includes(path)) counts.publicationStat += 1;
+      return original(path, ...args);
+    });
+  }
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  await Promise.all(Array.from({ length: 6 }, () => owner.ready()));
+  t.diagnostic(`cold admission assets=${assets.size} ${JSON.stringify(counts)} fileMapChecks=${fileMapChecks}`);
+  assert.equal(counts.assetStat, assets.size, 'concurrent requests share one admission for the published files');
+  assert.equal(counts.assetRealpath, assets.size);
+  const beforeWarm = { ...counts };
+  const beforeChecks = fileMapChecks;
+  await Promise.all(Array.from({ length: 6 }, () => owner.ready()));
+  t.diagnostic(`warm admission assetStats=${counts.assetStat - beforeWarm.assetStat} assetRealpaths=${counts.assetRealpath - beforeWarm.assetRealpath} publicationStats=${counts.publicationStat - beforeWarm.publicationStat}`);
+  assert.equal(counts.assetStat, beforeWarm.assetStat, 'already admitted artifacts need no per-request asset scan');
+  assert.equal(counts.assetRealpath, beforeWarm.assetRealpath);
+  assert.equal(fileMapChecks, beforeChecks, 'unchanged publication reuses Metro file-map admission');
+  assert.equal(counts.publicationStat - beforeWarm.publicationStat, 12, 'external publication detection costs two metadata reads per request');
+
+  // A one-shot child can atomically publish without this process's callback.
+  // New filesystem bytes still wait for Metro's actual file-map boundary.
+  const added = fixture.path('consumer/new-source.bundle');
+  assets.add(added);
+  sourceAssets.push(added);
+  await writeFile(added, 'new asset');
+  await publishRecord();
+  const missingFromMap = new Promise(resolve => { reachedMissing = resolve; });
+  const changedReady = owner.ready();
+  assert.equal(await Promise.race([changedReady.then(() => 'served'), missingFromMap.then(() => 'waiting')]), 'waiting');
+  indexed.add(added);
+  graph.emit('change');
+  await changedReady;
+
+  const missing = fixture.path('consumer/missing-source.bundle');
+  assets.add(missing);
+  sourceAssets.push(missing);
+  await publishRecord();
+  await assert.rejects(owner.ready(), { code: 'plugin_ui_inventory_unindexable' });
+  await writeFile(missing, 'repaired asset');
+  indexed.add(missing);
+  await owner.ready();
+  await rm(missing);
+  watcher.emit('change', { eventsQueue: [{ filePath: missing, type: 'delete' }] });
+  await assert.rejects(owner.ready(), { code: 'plugin_ui_inventory_unindexable' },
+    'removing an admitted asset invalidates readiness through the existing watcher');
+  await writeFile(missing, 'repaired again');
+  await owner.ready();
+  await publishInventory();
+  const beforeInventory = counts.assetStat;
+  await owner.ready();
+  assert.ok(counts.assetStat > beforeInventory, 'external plugin inventory replacement also needs admission');
+});

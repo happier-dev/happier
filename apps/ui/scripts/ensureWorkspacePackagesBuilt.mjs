@@ -8,6 +8,7 @@ import {
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault,
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
+import { fileDigestMetadataIdentity } from '../../stack/scripts/utils/fs/cached_file_digest.mjs';
 import { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import { prepareSourceUiAssets, publishSourceUiAssets, readSourceUiAssetsRecord,
   resolveSourceUiAssetsRecordPath } from './prepareSourceUiAssets.mjs';
@@ -73,6 +74,7 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
     signal?.addEventListener('abort', abort, { once: true });
     check();
   });
+  return paths;
 }
 
 export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env = process.env, signal, metroServer, metroConfig } = {}) {
@@ -128,6 +130,12 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
   let queued = false;
   let pending = Promise.resolve();
   let inputsPromise;
+  let admission;
+  const sourceAssetsRecordPath = resolveSourceUiAssetsRecordPath(inventoryPath);
+  const publicationIdentity = async () => (await Promise.all([inventoryPath, sourceAssetsRecordPath].map(async path => {
+    try { return fileDigestMetadataIdentity(await stat(path, { bigint: true })); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  }))).join('\n');
   const report = error => { if (!closed) logger.error('[plugin-ui] source inventory refresh failed:', error); };
   const inputs = () => inputsPromise ??= (async () => {
     const { readWorkspacePackages } = await import('../../../packages/cli-common/sourceRuntimeEntries.mjs');
@@ -146,6 +154,13 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       ...sourceInputs, ...sourceInputs.map(path => dirname(path))].map(path => resolve(repoRoot, path)));
   })().catch(error => { inputsPromise = null; throw error; });
   const onChange = ({ eventsQueue }) => {
+    // Publication changes and removal/repair of admitted files invalidate at
+    // the existing watcher boundary, before asynchronous compiler discovery.
+    if (eventsQueue.some(({ filePath, type }) => {
+      const path = resolve(filePath);
+      return path === inventoryPath || path === sourceAssetsRecordPath
+        || (type !== 'change' && admission?.paths.has(path));
+    })) admission = undefined;
     void inputs().then(async paths => {
       const { isWorkspaceBuildInputIgnoredPath } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
       const changed = eventsQueue.some(({ filePath }) => {
@@ -171,10 +186,23 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
   watcher.on('change', onChange);
   void inputs().catch(report);
   return { async ready() {
-    // A one-shot preparer or warm-start parent can publish outside this process.
-    // Bundle/asset admission consumes the same file-map readiness as live refresh.
-    await waitForMetroPluginUiInventory({ metroServer, metroConfig,
-      inventoryPath, signal: cancellation.signal });
+    cancellation.signal.throwIfAborted();
+    // A one-shot child/warm-start parent can publish without this process's
+    // callback. Two metadata reads detect that atomic publication; immutable
+    // asset files and Metro's file map are admitted once per publication.
+    const identity = await publicationIdentity();
+    if (!admission || admission.identity !== identity) {
+      const candidate = { identity, paths: new Set(), promise: undefined };
+      candidate.promise = waitForMetroPluginUiInventory({ metroServer, metroConfig,
+        inventoryPath, signal: cancellation.signal }).then(paths => {
+        candidate.paths = new Set(paths);
+      }).catch(error => {
+        if (admission === candidate) admission = undefined;
+        throw error;
+      });
+      admission = candidate;
+    }
+    await admission.promise;
   }, async close() {
     closed = true;
     watcher.off('change', onChange);
