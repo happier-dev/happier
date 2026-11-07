@@ -59,6 +59,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     /** The selected Agent's contribution identity; it keys the Agent's default authentication. */
     agentIdentity?: ResolvedAgentCatalogEntry['identity'];
     teamCredentialResources?: ConnectedServicesParams['teamCredentialResources'];
+    managedSessionDefaults?: ConnectedServicesParams['managedSessionDefaults'];
     modelSelection?: ConnectedServicesParams['modelSelection'];
     providerSources?: ConnectedServicesParams['providerSources'];
     routeSources?: ConnectedServicesParams['routeSources'];
@@ -114,6 +115,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         providerSources: params.providerSources,
         routeSources: params.routeSources,
         nativeAgentTargetKey: params.selectedBackendTargetKey,
+        managedSessionDefaults: params.managedSessionDefaults,
         providerSettings: params.providerSettings,
         providerProjection: params.providerProjection,
         modelRouteTeamSources: params.modelRouteTeamSources,

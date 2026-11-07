@@ -369,8 +369,16 @@ field before anything is written and commits wholly or not at all.
 In 0.3 development source, one nullable JSON column stores the strict `ManagedDefaultsV1`
 document `{ team, groups: { [teamGroupId]: defaults } }`. The shared schema and per-field
 precedence owner are `packages/protocol/src/teams/managedDefaults.ts`. Values cover placement,
-Agent permission intent, model selection, and qualified connected-service purposes. The
-initial New Session integration consumes permission intent; other fields require their owners' consumers.
+Agent permission intent, model selection, and qualified connected-service purposes. New
+Session reads the member-qualified context through `useManagedSessionDefaults`; its placement,
+permission, model, and connected-service owners submit deliberate choices to the shared resolver
+at decision time. Defaults update from the existing Team push subscription. A Team model retains
+its full V2 selection when the personal V1 carrier cannot represent it; that projection does not
+authorize falling back to a personal model. Managed presets still require the existing configurator's
+reviewed creation draft before launch.
+
+Saved New Session drafts retain authored choices rather than resolved managed values, so reopening
+an untouched draft reads current defaults and a policy lock preserves the person's underlying choice.
 
 The existing `teams.policy.set` replaces the document under `manageSettings`, or applies a
 scoped `managedGroupDefaults` change under existing Team/Group management authority. Omission

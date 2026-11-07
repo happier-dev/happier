@@ -76,7 +76,7 @@ import {
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile, getProfilePrimaryCli, isProfileEnabled } from '@/sync/domains/profiles/profileUtils';
-import { getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -1153,6 +1153,28 @@ export function useNewSessionScreenModel(input?: Readonly<{
         return raw || null;
     }, [worktreeParam]);
 
+    const accessDraftState = useNewSessionAccessDraft({
+        targetServerId: targetServerId ?? null,
+        initialAccess: persistedDraft?.access !== undefined
+            ? persistedDraft.access
+            : hydratedTempAuthoringDraft?.access,
+        initialPrimaryTeamId: persistedDraft?.primaryTeamId !== undefined
+            ? persistedDraft.primaryTeamId
+            : hydratedTempAuthoringDraft?.primaryTeamId,
+        sourceRevision: scopedPersistedDraftRevision,
+        sourceAccessConflict: scopedPersistedDraftAccessConflict,
+        sourcePrimaryTeamConflict: scopedPersistedDraftPrimaryTeamConflict,
+        useScreenHost: isNewSessionMobileLayoutWidth,
+    });
+    // Placement needs the same pushed Team context before the machine-dependent
+    // Agent catalog resolves. Each field owner resolves its final Agent below.
+    const managedSessionDefaults = useManagedSessionDefaults({
+        serverId: targetServerId ?? '',
+        teamId: accessDraftState.primaryTeamId,
+        agentTargetKey: resolveBackendTargetKeyV2(routeBackendTarget ?? hydratedTempBackendTarget
+            ?? hydratedPersistedBackendTarget ?? { kind: 'backend', backendId: DEFAULT_AGENT_ID }),
+    });
+
     const explicitMachineId = normalizeOptionalParam(machineIdParam)?.trim() ?? '';
     const routeSelectionOrigin = explicitMachineId
         ? MachinePoolSelectionOriginV1Schema.safeParse({
@@ -1163,6 +1185,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const {
         executionTarget,
         managedMachineSelection,
+        managedPlacementPreset,
+        placementForPersistence,
         managedMachineArchiveChoiceAvailability,
         setManagedMachineTarget,
         adoptManagedMachineTarget,
@@ -1188,6 +1212,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getRequestedPath,
         getBestPathForMachine,
     } = useNewSessionMachinePathState({
+        managedDefaults: managedSessionDefaults.read.context,
         isBot: Boolean((hydratedTempAuthoringDraft?.initialSessionFacts ?? hydratedPersistedAuthoringDraft?.initialSessionFacts)?.bot),
         serverId: targetServerId,
         persistedManagedMachineSelection: persistedTargetMatches ? persistedDraft?.managedMachineSelection : null,
@@ -1363,8 +1388,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             inventoryDemanded: agentInventoryDemanded },
     });
     const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
-    const selectedTeamCredentialModel = storedTeamCredentialModel?.agentTargetKey === selectedBackendTargetKey
-        ? storedTeamCredentialModel : null;
     const teamCredentialCatalog = useHomeTeamCredentialModelCatalog({
         serverId: targetServerId,
         machineId: selectedMachineId,
@@ -1372,24 +1395,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         enabled: credentialResourcesEnabled,
         agentTargetKey: selectedBackendTargetKey,
     });
-    // The authoring owner composes the selected Agent's qualified Team catalog
-    // with creator eligibility; picker and launch consume the same source rows.
-    const composedTemporaryComputerCreator = React.useMemo(() => (
-        createTemporaryComputerCreatorDependencies({
-            teamCredentialResources: teamCredentialCatalog.resources,
-            teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
-            teamCredentialServerId: targetServerId,
-            selectedTeamCredentialModel,
-            registryActionExecution: temporaryComputerRegistryActionExecution,
-            agentCatalogMachineId,
-            projectedAgentsById: currentProjectionInputs?.pluginProjectionV2?.agentsById ?? EMPTY_PLUGIN_PROJECTION_RECORD,
-            installedPluginPackagesById: currentProjectionInputs?.pluginProjectionV2?.installedPackagesById ?? EMPTY_PLUGIN_PROJECTION_RECORD,
-        })
-    ), [agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedTeamCredentialModel,
-        targetServerId, teamCredentialCatalog.resourceStatusByKey, teamCredentialCatalog.resources,
-        temporaryComputerRegistryActionExecution]);
-    const temporaryComputerCreator: TemporaryComputerCreatorDependencies =
-        input?.temporaryComputerCreatorDependencies ?? composedTemporaryComputerCreator.dependencies;
     const selectedAgentScopedPluginSettings = useAgentScopedPluginSettingsSnapshot({
         agentId: selectedRuntimeCarrierAgentId,
         projectionInputs: currentProjectionInputs,
@@ -1523,22 +1528,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         initialPlacementServerId: persistedDraft?.targetServerId,
         initialPlacementScope: draftScope,
     });
-    const accessDraftState = useNewSessionAccessDraft({
-        targetServerId: targetServerId ?? null,
-        initialAccess: persistedDraft?.access !== undefined
-            ? persistedDraft.access
-            : hydratedTempAuthoringDraft?.access,
-        initialPrimaryTeamId: persistedDraft?.primaryTeamId !== undefined
-            ? persistedDraft.primaryTeamId
-            : hydratedTempAuthoringDraft?.primaryTeamId,
-        sourceRevision: scopedPersistedDraftRevision,
-        sourceAccessConflict: scopedPersistedDraftAccessConflict,
-        sourcePrimaryTeamConflict: scopedPersistedDraftPrimaryTeamConflict,
-        useScreenHost: isNewSessionMobileLayoutWidth,
-    });
     const {
         modelMode,
         modelSelection,
+        modelSelectionV2,
+        modelSelectionForPersistence,
+        modelIsManagedDefault,
+        teamCredentialModel: selectedTeamCredentialModel,
         setModelMode,
         setModelSelection,
         setModelSelectionForBackendTarget,
@@ -1551,6 +1547,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         capabilitySelection,
         setCapabilitySelection,
     } = useNewSessionAgentAuthoringOptionsState({
+        managedDefaults: managedSessionDefaults.read.context,
+        explicitTeamCredentialModel: storedTeamCredentialModel,
         agentType: agentPolicyType,
         backendTargetKey: selectedBackendTargetKey,
         allowTargetlessDraftEngineSelection: routeBackendTarget === null,
@@ -1559,6 +1557,24 @@ export function useNewSessionScreenModel(input?: Readonly<{
         rememberedEngineSelection,
         implicitProfileModelSelection: initialProfileAuthoringIntent.modelSelection,
     });
+    // The authoring owner composes the selected Agent's qualified Team catalog
+    // with creator eligibility; picker and launch consume the same source rows.
+    const composedTemporaryComputerCreator = React.useMemo(() => (
+        createTemporaryComputerCreatorDependencies({
+            teamCredentialResources: teamCredentialCatalog.resources,
+            teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
+            teamCredentialServerId: targetServerId,
+            selectedTeamCredentialModel,
+            registryActionExecution: temporaryComputerRegistryActionExecution,
+            agentCatalogMachineId,
+            projectedAgentsById: currentProjectionInputs?.pluginProjectionV2?.agentsById ?? EMPTY_PLUGIN_PROJECTION_RECORD,
+            installedPluginPackagesById: currentProjectionInputs?.pluginProjectionV2?.installedPackagesById ?? EMPTY_PLUGIN_PROJECTION_RECORD,
+        })
+    ), [agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedTeamCredentialModel,
+        targetServerId, teamCredentialCatalog.resourceStatusByKey, teamCredentialCatalog.resources,
+        temporaryComputerRegistryActionExecution]);
+    const temporaryComputerCreator: TemporaryComputerCreatorDependencies =
+        input?.temporaryComputerCreatorDependencies ?? composedTemporaryComputerCreator.dependencies;
     useRetireNewSessionTeamCredentialModel({ selection: storedTeamCredentialModel, agentTargetKey: selectedBackendTargetKey,
         setSelection: setSelectedTeamCredentialModel, setModelSelectionForBackendTarget });
     const canRetainModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
@@ -1647,21 +1663,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
     });
     const coordinateTeamCredentialSelection = useTeamCredentialSelectionCoordinator(targetServerId);
-    const teamCredentialProviderBinding = React.useMemo(() => selectedTeamCredentialModel
-        ? sessionModelSelectionV2TeamBindingIntent({
-            v: 2,
-            updatedAt: Date.now(),
-            ref: {
-                source: 'team_resource',
-                resourceId: selectedTeamCredentialModel.resourceId,
-                teamId: selectedTeamCredentialModel.teamId,
-                expectedResourceRevision: selectedTeamCredentialModel.expectedResourceRevision,
-                deliveryMode: selectedTeamCredentialModel.deliveryMode,
-                agentTargetKey: selectedTeamCredentialModel.agentTargetKey,
-                modelId: selectedTeamCredentialModel.modelId,
-            },
-        })
-        : undefined, [selectedTeamCredentialModel]);
+    const teamCredentialProviderBinding = React.useMemo(() => modelSelectionV2?.ref.source === 'team_resource'
+        ? sessionModelSelectionV2TeamBindingIntent(modelSelectionV2)
+        : undefined, [modelSelectionV2]);
     const setAcpSessionModeIdAndRemember = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
         const current = currentEngineSelectionRef.current.acpSessionModeId;
         const value = typeof next === 'function'
@@ -1857,6 +1861,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         nativeSourceLabel: connectedServicesNativeSourceLabel,
         requesterSignInPurposes,
     } = useNewSessionConnectedServicesAgentOptions({
+        managedSessionDefaults: managedSessionDefaults.read.context,
         routeSources: newSessionRouteSources,
         modelSelection: selectedTeamCredentialModel ? { ...selectedTeamCredentialModel, source: 'team_resource' } : modelSelection?.ref ?? null,
         providerSources: providerModelProjection.data?.groups,
@@ -1944,13 +1949,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
 
     React.useEffect(() => {
-        if (modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
+        if (modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
             || modelSelection?.ref.providerConnectionId || selectedTeamCredentialModel) return;
         const reconciled = resolveCanonicalModelOptionId(modelOptions, modelMode, preflightModels);
         if (reconciled === modelMode) return;
         setModelMode(reconciled);
         rememberCurrentEngineSelection({ modelMode: reconciled });
-    }, [modelMode, modelOptions, modelOptionsProbeState.failed, modelOptionsProbeState.phase, modelSelection,
+    }, [modelIsManagedDefault, modelMode, modelOptions, modelOptionsProbeState.failed, modelOptionsProbeState.phase, modelSelection,
         preflightModels, rememberCurrentEngineSelection, selectedTeamCredentialModel, setModelMode]);
 
     React.useEffect(() => {
@@ -2500,11 +2505,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         backendTarget,
         externalSessionsFeatureEnabled,
     });
-    const managedSessionDefaults = useManagedSessionDefaults({
-        serverId: targetServerId ?? '',
-        teamId: accessDraftState.primaryTeamId,
-        agentTargetKey: selectedBackendTargetKey,
-    });
     const {
         permissionMode,
         permissionModeLock,
@@ -2763,6 +2763,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setBackendTarget,
         modelMode,
         modelSelection,
+        modelSelectionV2,
+        modelIsManagedDefault,
         canRetainModelSelection,
         setModelMode,
         acpSessionModeId,
@@ -2828,6 +2830,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         targetServerId,
         executionTarget,
         managedMachineSelection,
+        placementForPersistence,
         managedMachineAcquisition,
         temporaryComputerActivationRef: temporaryComputerTargetScope !== null
             ? targetScopedDraft?.temporaryComputerActivationRef
@@ -2854,6 +2857,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resumeSessionId,
         permissionMode,
         modelSelection,
+        modelSelectionForPersistence: { value: modelSelectionForPersistence },
         capabilitySelection,
         agentNewSessionOptions,
         settings: terminalSettings,
@@ -2952,6 +2956,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // No folder is a machine target's choice; a Temporary computer's endpoint chooses its folder.
     const offersNoFolder = executionTarget?.kind === 'machine' && !directoryIntentFixed;
     const { pathPopover: composerPathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
+        managedPlacementPreset,
         machineInventory: useEnhancedSessionWizard ? undefined : {
             allowedServerIds: destinationServerIds,
             activeServerId: activeServerSource.activeServerId,
@@ -4544,6 +4549,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             connectionStatus: composerConnectionStatus,
             selectedMachine: selectedMachineDisplay ?? selectedMachine,
             managedMachineSelection,
+            managedPlacementPreset,
             hasMachine,
             executionTarget,
             destination: {

@@ -6,7 +6,14 @@ import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { applyTeamProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
+import { teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { readManagedSessionDefaults } from '@/sync/ops/teams/managedSessionDefaults';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
@@ -19,6 +26,115 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('reads pushed Team model defaults without settings writes, retains explicit choices, and honors policy locks', async () => {
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const scope = createServerAccountScope('home-a', 'member-a')!;
+        const address = createTeamAddress('home-a', 'team-a')!;
+        const publish = (modelId: string) => applyTeamProjection({ scope, address, observedAt: 1,
+            team: teamSummaryFixture({ policy: teamPolicyFixture({ managedDefaultsStatus: 'available',
+                managedDefaults: { team: { modelByAgentTargetKey: { [agentTargetKey]: nativeSelection(agentTargetKey, modelId, 1) } }, groups: {} },
+            }) }),
+        });
+        const read = () => readManagedSessionDefaults({ serverId: 'home-a', teamId: 'team-a', memberAccountId: 'member-a', agentTargetKey });
+        type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
+        const props: Props = { agentType: 'claude', backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null };
+        publish('haiku');
+        const storageWrite = vi.spyOn(getPersistenceStorage(), 'set');
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, {
+            initialProps: { ...props, managedDefaults: read().context },
+        });
+        try {
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('haiku');
+            expect(hook.getCurrent().modelIsManagedDefault).toBe(true);
+            expect(hook.getCurrent().modelSelectionForPersistence).toBeUndefined();
+            publish('sonnet');
+            await hook.rerender({ ...props, managedDefaults: read().context });
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('sonnet');
+            act(() => { hook.getCurrent().setModelSelection(nativeSelection(agentTargetKey, 'opus', 2)); });
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('opus');
+            expect(hook.getCurrent().modelIsManagedDefault).toBe(false);
+            expect(hook.getCurrent().modelSelectionForPersistence?.ref.modelId).toBe('opus');
+            publish('haiku');
+            await hook.rerender({ ...props, managedDefaults: read().context });
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('opus');
+            const managedDefaults = { ...read().context, policyDefaults: { organization: 'Example', locked: true,
+                values: { modelByAgentTargetKey: { [agentTargetKey]: nativeSelection(agentTargetKey, 'sonnet', 3) } } } };
+            await hook.rerender({ ...props, managedDefaults });
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('sonnet');
+            expect(hook.getCurrent().modelIsManagedDefault).toBe(true);
+            expect(hook.getCurrent().modelSelectionForPersistence?.ref.modelId).toBe('opus');
+            act(() => { hook.getCurrent().setModelSelection(nativeSelection(agentTargetKey, 'haiku', 4)); });
+            expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('sonnet');
+            expect(hook.getCurrent().modelSelectionForPersistence?.ref.modelId).toBe('haiku');
+            expect(storageWrite).toHaveBeenCalledTimes(0);
+        } finally { await hook.unmount(); storageWrite.mockRestore(); resetTeamsSnapshotsForTests(); }
+    });
+
+    it('keeps a managed Team V2 source when a personal V1 fallback cannot represent it', async () => {
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+            deliveryMode: 'brokered', agentTargetKey, modelId: 'team-model',
+        } });
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: {
+            agentType: 'claude', backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+            rememberedEngineSelection: { v: 1 as const, updatedAt: 1, modelSelection: nativeSelection(agentTargetKey, 'haiku', 1),
+                acpSessionModeId: null, sessionConfigOptionOverrides: null },
+            managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: { [agentTargetKey]: selection } }, groups: {} } },
+        } });
+        try {
+            expect(hook.getCurrent().modelMode).toBe('team-model');
+            expect(hook.getCurrent().modelSelection).toBeNull();
+            expect(hook.getCurrent().modelSelectionV2).toEqual(selection);
+            expect(hook.getCurrent().teamCredentialModel).toMatchObject({ teamId: 'team-a', resourceId: 'resource-a', modelId: 'team-model' });
+        } finally { await hook.unmount(); }
+    });
+
+    it('retains accepted native references through managed and explicitly chosen Team model projections', async () => {
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller', guestInstallationId: 'guest',
+            bindingKey: 'binding', placeholderRef: 'reference', sourceRevision: 'source:1', providerTicket: 'a'.repeat(43) };
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+            deliveryMode: 'vendor-native', agentTargetKey, modelId: 'team-model', nativeDelivery,
+        } });
+        type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
+        const props: Props = { agentType: 'claude', backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null };
+        const initialProps: Props = { ...props,
+            managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: { [agentTargetKey]: selection } }, groups: {} } },
+        };
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps });
+        try {
+            expect(hook.getCurrent().teamCredentialModel?.nativeDelivery).toEqual(nativeDelivery);
+            await hook.rerender({ ...props, explicitTeamCredentialModel: { kind: 'team_credential_provider_model',
+                teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+                deliveryMode: 'vendor-native', agentTargetKey, modelId: 'team-model', nativeDelivery,
+            } });
+            expect(hook.getCurrent().modelSelectionV2?.ref).toMatchObject({ source: 'team_resource', nativeDelivery });
+            expect(hook.getCurrent().modelSelectionForPersistence).toMatchObject({ v: 2, ref: { source: 'team_resource', nativeDelivery } });
+            expect(hook.getCurrent().teamCredentialModel?.nativeDelivery).toEqual(nativeDelivery);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['mode', 'selection'] as const)('keeps explicit native Automatic null while overriding unlocked defaults through %s', async (intent) => {
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: {
+            agentType: 'claude', backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+            managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: {
+                [agentTargetKey]: nativeSelection(agentTargetKey, 'sonnet', 1),
+            } }, groups: {} } },
+        } });
+        try {
+            act(() => { if (intent === 'mode') hook.getCurrent().setModelMode('default');
+                else hook.getCurrent().setModelSelection(null); });
+            expect(hook.getCurrent().modelMode).toBe('default');
+            expect(hook.getCurrent().modelSelection).toBeNull();
+        } finally { await hook.unmount(); }
+    });
     it('uses the selected target without probing a bundled fallback on unrelated renders', async () => {
         const parses = vi.spyOn(AgentExecutionTargetV1Schema, 'safeParse');
         const targetKey = 'agent:acme.review/reviewer';
@@ -356,6 +472,36 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             rememberedEngineSelection: null,
         }));
         expect(explicitHook.getCurrent().modelSelection).toEqual(explicitSelection);
+    });
+
+    it('applies implicit profile model intent only to the target it names when the person picks another Agent', async () => {
+        type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
+        const codexTargetKey = 'agent:happier.agent.codex/codex';
+        const claudeTargetKey = 'agent:happier.agent.claude/claude';
+        // Live repro (repo-dev, 2026-11-06): a Codex launch profile pinned an OpenRouter model;
+        // choosing Claude in the Agent chip crashed New Session with "target mismatch".
+        const profileSelection = SessionModelSelectionV1Schema.parse({
+            v: 1, updatedAt: 200,
+            ref: { agentTargetKey: codexTargetKey, providerConnectionId: 'pc_profile', modelId: 'openrouter/free' },
+        });
+        const remembered = nativeSelection(claudeTargetKey, 'remembered-claude', 100);
+        const buildProps = (agentType: AgentId, backendTargetKey: string): Props => ({
+            agentType, backendTargetKey,
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: null,
+            implicitProfileModelSelection: profileSelection,
+            rememberedEngineSelection: backendTargetKey === claudeTargetKey
+                ? { v: 1, modelSelection: remembered, acpSessionModeId: null, sessionConfigOptionOverrides: null, updatedAt: 100 }
+                : null,
+        });
+        const hook = await renderHook((props: Props) => useNewSessionAgentAuthoringOptionsState(props),
+            { initialProps: buildProps('codex', codexTargetKey) });
+        try {
+            expect(hook.getCurrent().modelSelection).toEqual(profileSelection);
+            await hook.rerender(buildProps('claude', claudeTargetKey));
+            expect(hook.getCurrent().modelSelection).toEqual(remembered);
+            expect(hook.getCurrent().modelMode).toBe('remembered-claude');
+        } finally { await hook.unmount(); }
     });
 
     it('can stage an exact provider selection for a profile-preferred backend before that backend renders', async () => {

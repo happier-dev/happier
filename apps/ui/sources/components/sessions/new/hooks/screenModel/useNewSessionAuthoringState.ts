@@ -1,3 +1,4 @@
+import type { Settings } from '@/sync/domains/settings/settings';
 import * as React from 'react';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -16,10 +17,13 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import type { AgentExecutionTargetV1, BackendTargetRefV2, SessionModelSelectionV1, SessionOrganizationPlacementV1 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+import type { SessionOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -30,8 +34,11 @@ import {
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { NewSessionPlacementForPersistence } from './useNewSessionMachinePathState';
 
-type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
+type PersistedDraft = Omit<ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>, 'executionTarget'> & {
+    executionTarget: SessionAuthoringDraft['executionTarget'] | undefined;
+};
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
 type BuildPersistedInputs = Parameters<typeof buildPersistedNewSessionDraftFromAuthoringDraft>[0];
 
@@ -53,6 +60,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     managedMachineAcquisition?: ManagedMachineAcquisitionDraft | null;
     temporaryComputerActivationRef?: SessionAuthoringDraft['temporaryComputerActivationRef'];
     organizationPlacement: SessionOrganizationPlacementV1;
+    spaceMembership?: NewSessionDraft['spaceMembership'];
     access?: SessionAuthoringDraft['access'];
     primaryTeamId?: SessionAuthoringDraft['primaryTeamId'];
     teamCredentialBindings?: SessionAuthoringDraft['teamCredentialBindings'];
@@ -74,6 +82,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     resumeSessionId: string;
     permissionMode: PermissionMode;
     modelSelection: SessionModelSelectionV1 | null;
+    modelSelectionForPersistence?: Readonly<{ value: SessionModelSelectionV1 | SessionModelSelectionV2 | null | undefined }>;
+    placementForPersistence?: NewSessionPlacementForPersistence;
     capabilitySelection: BuildResolvedInputs['capabilitySelection'];
     agentNewSessionOptions: Record<string, unknown> | null;
     settings: TerminalSpawnSettings & Pick<Settings, 'sessionWindowsTerminalWindowName'>;
@@ -134,7 +144,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     }, [params.draftScope, params.temporaryComputerActivationRef]);
     const draftAgentId = React.useMemo(() => resolveNewSessionCompatAgentType({
         backendTarget: params.backendTarget,
-        persistedAgentId: getStorage().getState().settings.lastUsedAgent,
+        persistedAgentId: readLastUsedBackendSelection(getStorage().getState().settingsScope).lastUsedAgent,
         selectedBuiltInAgentId: params.staticAgentId,
     }), [params.backendTarget, params.staticAgentId]);
 
@@ -262,11 +272,33 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const buildCurrentPersistedDraft = React.useCallback(() => {
         // Rebuild from the live composer text rather than the last-rendered draft: the model
         // no longer re-renders per keystroke, so `currentAuthoringDraft` can lag the input.
+        let draft = buildCurrentAuthoringDraft(effectiveAutomationDraft);
+        if (params.modelSelectionForPersistence) {
+            const selection = params.modelSelectionForPersistence.value;
+            const otherBindings = draft.teamCredentialBindings?.filter((binding) => binding.slot.kind !== 'provider_model');
+            const teamBinding = selection?.v === 2 && selection.ref.source === 'team_resource'
+                ? sessionModelSelectionV2TeamBindingIntent(selection)
+                : null;
+            draft = {
+                ...draft,
+                modelSelection: selection?.v === 2 ? projectSessionModelSelectionV2ToV1(selection) : selection,
+                teamCredentialBindings: teamBinding ? [...(otherBindings ?? []), teamBinding] : otherBindings,
+            };
+        }
+        if (params.placementForPersistence) {
+            draft = {
+                ...draft,
+                executionTarget: params.placementForPersistence.executionTarget ?? null,
+                directory: params.placementForPersistence.selectedPath,
+            };
+        }
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
-            draft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
-            managedMachineSelection: params.managedMachineSelection,
+            draft,
+            managedMachineSelection: params.placementForPersistence
+                ? params.placementForPersistence.managedMachineSelection : params.managedMachineSelection,
             managedMachineAcquisition: params.managedMachineAcquisition,
-            machineId: params.selectedMachineId,
+            machineId: params.placementForPersistence
+                ? params.placementForPersistence.selectedMachineId : params.selectedMachineId,
             targetServerId: params.targetServerId,
             windowsRemoteSessionLaunchModeOverride: params.windowsRemoteSessionLaunchModeOverride,
             entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
@@ -285,6 +317,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
             : '';
         return {
             ...persistedDraft,
+            ...(params.placementForPersistence ? { executionTarget: params.placementForPersistence.executionTarget } : {}),
+            ...(params.spaceMembership === undefined ? {} : { spaceMembership: params.spaceMembership }),
             ...(params.authoringOrigin === undefined ? {} : { authoringOrigin: params.authoringOrigin }),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             agentType: resolveNewSessionCompatAgentType({
@@ -302,11 +336,14 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.placementCandidates,
         params.managedMachineSelection,
         params.managedMachineAcquisition,
+        params.modelSelectionForPersistence,
+        params.placementForPersistence,
         params.automationRequestedByRoute,
         draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         params.launchUserAttemptId,
         params.authoringOrigin,
+        params.spaceMembership,
         params.selectedMachineId,
         params.selectedSecretId,
         params.selectedSecretIdByProfileIdByEnvVarName,
@@ -379,3 +416,4 @@ export function useNewSessionAuthoringState(params: Readonly<{
         draftPersistenceGenerationRef,
     };
 }
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';

@@ -333,8 +333,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
   ]);
 
   // One model choice can author native auth for several services before React commits a render.
-  const bindingsForSelectionRef = React.useRef(connectedServicesBindingsByServiceId);
-  bindingsForSelectionRef.current = connectedServicesBindingsByServiceId;
+  const bindingsForSelectionRef = React.useRef(explicitBindings ?? {});
+  bindingsForSelectionRef.current = explicitBindings ?? {};
   React.useEffect(() => {
     if (optimisticAuthored && (optimisticAuthored.contextKey !== authoredContextKey || optimisticAuthored.options !== agentOptionState)) {
       setOptimisticAuthored(null);

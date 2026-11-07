@@ -2,7 +2,8 @@ import {
     hasConstrainedFreeformModelIds,
     isFreeformModelIdAllowed,
 } from '@happier-dev/agents';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 
 export type NewSessionModelConfig = Readonly<{
     defaultMode: string | null | undefined;
@@ -68,14 +69,21 @@ export function resolveInitialNewSessionModelMode(params: Readonly<{
 
 export function coerceNewSessionModelMode(params: Readonly<{
     modelMode: string | null | undefined;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelectionV1 | SessionModelSelectionV2 | null;
+    modelIsManagedDefault?: boolean;
     modelConfig: NewSessionModelConfig;
     preflight: NewSessionPreflightModels | null | undefined;
     currentTargetKey?: string | null;
 }>): string {
     // Native discovery cannot validate a model from a separately selected Provider connection.
-    if (params.modelSelection?.ref.providerConnectionId) return params.modelSelection.ref.modelId;
+    const selection = params.modelSelection;
+    if (selection && (selection.v === 2
+        ? selection.ref.source !== 'native'
+        : selection.ref.providerConnectionId !== null)) return selection.ref.modelId;
     const mode = normalizeModelId(params.modelMode);
+    // Discovery is availability evidence; it cannot author a personal choice
+    // in place of the shared managed-default decision.
+    if (params.modelIsManagedDefault && mode) return mode;
     if (!mode) return resolveFallbackModelMode(params.modelConfig);
     if (mode === 'default') return mode;
 

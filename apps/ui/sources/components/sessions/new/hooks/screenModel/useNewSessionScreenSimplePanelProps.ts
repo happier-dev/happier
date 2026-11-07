@@ -6,6 +6,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { describeExecutionTargetDestination } from '@/components/sessions/new/hooks/temporaryComputerTargetPresentation';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import { t } from '@/text';
 
 type ModelOptionsProbe = NonNullable<NewSessionSimplePanelProps['modelOptionsProbe']>;
@@ -127,6 +128,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
          */
         executionTarget?: SessionAuthoringExecutionTargetV2 | null;
         managedMachineSelection?: ManagedMachineSelectionDraft | null;
+        managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
         destination?: Readonly<{
             selectionOrigin?: MachinePoolSelectionOriginV1;
             machineGroups: readonly Readonly<{ serverId: string; serverName: string }>[];
@@ -148,14 +150,16 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         destination,
         executionTarget,
         managedMachineSelection,
+        managedPlacementPreset,
         hasMachine,
         pathPopover,
         ...machineAndResumeProps
     } = params.machineAndResume;
     // A chosen destination (a machine being created, a Temporary computer) is named even before it exists.
-    const noMachineYet = hasMachine === false && !executionTarget && !selectedMachine && !managedMachineSelection;
+    const noMachineYet = hasMachine === false && !executionTarget && !selectedMachine && !managedMachineSelection && !managedPlacementPreset;
     const temporaryComputerName = describeExecutionTargetDestination(executionTarget);
-    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? managedMachineSelection?.receipt.launch.name;
+    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? managedMachineSelection?.receipt.launch.name
+        ?? (managedPlacementPreset ? t('managedMachines.picker.newMachine') : undefined);
     const destinationParts = machineName ? [machineName] : [];
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a

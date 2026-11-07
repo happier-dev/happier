@@ -1,8 +1,12 @@
+import { rememberLastUsedBackendSelection, readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
+import { Modal } from '@/modal';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountProfileSchema, PluginProjectionV2Schema, createProviderErrorV1 } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
@@ -51,6 +55,10 @@ import { randomUUID } from '@/platform/randomUUID';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
+import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { applyTeamProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
+import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -107,6 +115,7 @@ function nativeFacts(status: 'signedIn' | 'signedOut') {
 
 afterEach(async () => { await standardCleanup(); await mountedConnection?.dispose(); mountedConnection = null;
     mountedBridge?.dispose(); mountedBridge = null;
+    resetTeamsSnapshotsForTests();
     rpc.mockReset(); storage.setState(initialState, true); authoringRoute.directory = '/repo'; authoringRoute.machineId = 'credential-devbox'; });
 
 describe('New Session selected credential launch gate', () => {
@@ -142,6 +151,7 @@ describe('New Session selected credential launch gate', () => {
             } });
         const scope = { serverId: connection.home.id, accountId };
         mountedConnection = connection;
+        rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'claude', lastUsedBackendTarget: null });
         storage.setState({ profileScope: scope, settingsScope: scope,
             settings: { ...settingsDefaults, lastUsedAgent: 'claude', useEnhancedSessionWizard: false },
             profile });
@@ -271,6 +281,7 @@ describe('New Session selected credential launch gate', () => {
             } });
         const scope = { serverId: connection.home.id, accountId };
         mountedConnection = connection;
+        rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'claude', lastUsedBackendTarget: null });
         storage.setState({ profileScope: scope, settingsScope: scope, settings: { ...settingsDefaults, lastUsedAgent: 'claude', useEnhancedSessionWizard: false, useProfiles: lateDraft },
             profile });
         const machine = createMachineFixture({ id: 'credential-devbox', activeAt: Date.now() });
@@ -453,6 +464,13 @@ describe('New Session selected credential launch gate', () => {
             expect(model.simpleProps.connectionStatus?.action?.testID?.startsWith('new-session-agent-blocker.') === true, observedAdmission)
                 .toBe(!scenario.ready && !scenario.selected.startsWith('provider'));
             if (scenario.native === 'signedOut' && !scenario.connected && scenario.selected === 'native') {
+                // Sign in opens the Agent's own chooser where the person is (owner, 2026-11-05), never another page.
+                const shown = vi.spyOn(Modal, 'show');
+                await act(async () => { model.simpleProps.connectionStatus?.action?.onPress(); });
+                expect(shown).toHaveBeenCalledTimes(1);
+                expect(shown.mock.calls[0]![0].props).toMatchObject({ target: { agent: { agentId: 'claude' }, machineId: machine.id } });
+                Modal.hide(shown.mock.results[0]!.value as string);
+                shown.mockRestore();
                 const inventory = await renderHook(() => useMachineAgents({
                     serverId: scope.serverId, machineId: machine.id, load: false,
                 }));
@@ -572,14 +590,19 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         definitionInventory?: boolean;
         includeCodex?: boolean;
         serverIdentityId?: string;
+        isolated?: boolean;
     }>) {
         await prepareSessionDraftPersistenceStorage();
         mountedBridge = await loadSyncSingletonForTests();
         const accountId = `catalog-authoring-${input.name}`;
+        const baseMachine = createMachineFixture({ id: 'credential-devbox', activeAt: Date.now() });
+        const machine = input.isolated ? { ...baseMachine, isShared: false, metadata: { ...baseMachine.metadata!,
+            platform: 'linux', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } } : baseMachine;
         const http = createHomeHubArtifactHttpBoundary(accountId, undefined, {
-            machines: [createPlainMachineRowFixture({ id: 'credential-devbox', accountId })],
+            machines: [createPlainMachineRowFixture({ id: machine.id, accountId, machine })],
         });
         const authoringMemory = createAuthoringMemoryHttpBoundary();
+        let accountSettingsWrites = 0;
         const acpRead = createDeferred<void>();
         let acpPhase: AcpPhase = 'ready';
         let pendingAcpRefresh: Promise<void> | null = null;
@@ -626,6 +649,9 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 const memoryResponse = await authoringMemory.handle(request, init);
                 if (memoryResponse) return memoryResponse;
                 const path = new URL(String(request)).pathname;
+                if (path === '/v2/account/settings' && init?.method === 'POST') accountSettingsWrites += 1;
+                const machineRead = createPlainMachineReadHttpResponseFixture(path, init, accountId, machine);
+                if (machineRead) return machineRead;
                 if (path === '/v1/features') return Response.json(buildServerFeaturesResponse());
                 if (path === '/v2/account/settings') return Response.json({ version: 1,
                     content: { t: 'plain', v: { useProfiles: Boolean(input.profile || input.rememberedProfile), useEnhancedSessionWizard: false,
@@ -644,10 +670,10 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             } });
         mountedConnection = connection;
         const scope = { serverId: resolveServerProfileScopeId(connection.home), accountId };
+        rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'claude', lastUsedBackendTarget: input.target });
         storage.setState({ settingsScope: scope, profileScope: scope, profile: AccountProfileSchema.parse({ id: accountId }),
             settings: { ...settingsDefaults, useEnhancedSessionWizard: false, useProfiles: Boolean(input.profile || input.rememberedProfile),
                 lastUsedAgent: 'claude', lastUsedBackendTarget: input.target } });
-        const machine = createMachineFixture({ id: 'credential-devbox', activeAt: Date.now() });
         storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
         observeMachinePresenceForTest(scope, [machine.id]);
         const agentCapabilities = { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } };
@@ -675,7 +701,8 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         await Promise.all([refreshAcpCatalog(scope), refreshProfileCatalog(scope),
             refreshMachineAgents({ serverId: scope.serverId, machineId: machine.id, accountLifetime: lifetime })]);
         expect(getAcpCatalogSnapshot(scope)?.catalog.status).toBe('ready');
-        expect(getProfileCatalogSnapshot(scope)?.catalog.status).toBe('ready');
+        const profileCatalog = getProfileCatalogSnapshot(scope)?.catalog;
+        expect(profileCatalog?.status, profileCatalog?.status === 'unavailable' ? profileCatalog.reason : undefined).toBe('ready');
         if (input.definitionInventory) {
             await refreshMachineAgents({ serverId: scope.serverId, machineId: machine.id, accountLifetime: lifetime, force: true });
             expect(machineAgentInventoryStore.read(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id))
@@ -707,6 +734,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             permissionMode: 'default', updatedAt: 1 } });
         return {
             scope, draftId, profileId, home: connection.home,
+            accountSettingsWrites: () => accountSettingsWrites,
             async refreshDefinitions(selected: 'kiro' | 'review', status: 'signedOut' | 'missing') {
                 acpRecord.definitions.reverse();
                 definitionFacts = acpRecord.definitions.map(definition => MachineAgentInventoryItemSchema.parse({
@@ -736,6 +764,99 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             },
         };
     }
+
+    it('projects pushed Team model defaults into New Session while explicit choices stay local', async () => {
+        const fixture = await restoreCatalogAuthoringFixture({ name: 'managed-defaults', target: bundledTarget, seedDraft: false });
+        const teamId = 'managed-defaults-team';
+        const address = createTeamAddress(fixture.scope.serverId, teamId)!;
+        const publish = (modelId: string) => applyTeamProjection({ scope: fixture.scope, address, observedAt: Date.now(),
+            team: teamSummaryFixture({ id: teamId, viewerRole: 'member', capabilities: teamCapabilitiesFixture({}),
+                policy: teamPolicyFixture({ managedDefaultsStatus: 'available', managedDefaults: { team: {
+                    modelByAgentTargetKey: { [bundledKey]: { v: 1, updatedAt: 1,
+                        ref: { agentTargetKey: bundledKey, providerConnectionId: null, modelId } } },
+                }, groups: {} } }) }),
+        });
+        publish('haiku');
+        writeNewSessionDraftToRepository({ scope: fixture.scope, draftId: fixture.draftId, draft: {
+            input: 'hello', selectedMachineId: 'credential-devbox', selectedPath: '/repo',
+            targetServerId: fixture.scope.serverId, backendTarget: bundledTarget, primaryTeamId: teamId, updatedAt: 1,
+        } });
+        const settingsBefore = storage.getState().settings;
+        const writesBefore = fixture.accountSettingsWrites();
+        let hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }));
+        const simple = () => {
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
+            return model.simpleProps;
+        };
+        try {
+            await vi.waitFor(() => expect(simple().modelMode).toBe('haiku'));
+            await vi.waitFor(() => expect(readNewSessionDraftFromRepository({ scope: fixture.scope, draftId: fixture.draftId })?.updatedAt).toBeGreaterThan(1));
+            await hook.unmount();
+            await act(async () => { publish('sonnet'); });
+            hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }));
+            await vi.waitFor(() => expect(simple().modelMode).toBe('sonnet'));
+            await act(async () => { simple().setModelMode('opus'); });
+            expect(simple().modelMode).toBe('opus');
+            await act(async () => { publish('haiku'); });
+            expect(simple().modelMode).toBe('opus');
+            expect(fixture.accountSettingsWrites() - writesBefore).toBe(0);
+            expect(storage.getState().settings).toEqual(settingsBefore);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['agent_user_missing', 'workspace_not_ready'] as const)('first isolated owner launch: %s', async (code) => {
+        const fixture = await restoreCatalogAuthoringFixture({ name: `first-launch-${code.replaceAll('_', '-')}`,
+            target: bundledTarget, seedDraft: false, isolated: true });
+        authoringRoute.directory = undefined;
+        const original = rpc.getMockImplementation();
+        if (!original) throw new Error('Expected Machine RPC boundary');
+        const launches: unknown[] = [];
+        let statusReads = 0;
+        rpc.mockImplementation((request: { method: string; payload?: unknown }) => {
+            if (request.method === 'machines.agentIsolation.status') {
+                statusReads += 1;
+                return Promise.resolve({ protection: 'unavailable', status: { kind: 'unavailable', code } });
+            }
+            if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+                launches.push(request.payload);
+                return Promise.resolve({ ok: false, code: 'invalid_directory' });
+            }
+            return original(request);
+        });
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }));
+        try {
+            await vi.waitFor(() => {
+                const model = hook.getCurrent();
+                expect(model.requesterIsolation?.status)
+                    .toMatchObject({ status: { kind: 'unavailable', code } });
+            });
+            await vi.waitFor(() => {
+                const model = hook.getCurrent();
+                if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
+                expect(model.simpleProps.canCreate, JSON.stringify(model.simpleProps.connectionStatus)).toBe(code === 'agent_user_missing');
+            });
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
+            expect(launches).toEqual([]); // Background status must never prepare the member.
+            if (code === 'agent_user_missing') {
+                expect(model.simpleProps.folderChipState).toMatchObject({ kind: 'launch_preparable' });
+                await act(async () => { await model.simpleProps.handleCreateSession(); });
+                await vi.waitFor(() => expect(launches).toHaveLength(1));
+                expect(launches[0]).toMatchObject({ prepareAgentIsolationMember: true,
+                    directory: { kind: 'path', path: '~' } });
+            } else {
+                expect(model.simpleProps.folderChipState).toMatchObject({ kind: 'failed' });
+                const isolation = model.requesterIsolation;
+                if (!isolation) throw new Error('Expected requester directory state');
+                expect(isolation.failed).toBe(true);
+                await act(async () => { isolation.retry(); });
+                await vi.waitFor(() => expect(statusReads).toBe(2));
+                await vi.waitFor(() => expect(hook.getCurrent().requesterIsolation?.failed).toBe(true));
+                expect(launches).toEqual([]);
+            }
+        } finally { await hook.unmount(); }
+    });
 
     it('recovers a managed draft and its authored folder through a local Home profile alias', async () => {
         const fixture = await restoreCatalogAuthoringFixture({ name: 'managed-home-alias', target: bundledTarget,
@@ -1028,7 +1149,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
         await act(async () => { publishMachineContributionRegistryProjectionInvalidation({
             serverId: fixture.scope.serverId, machineId: 'credential-devbox',
-        }); });
+        }, 'authority'); });
         const { AgentInputChipPickerPanel } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPanel');
         const { SessionModelPicker } = await import('@/components/sessions/modelPicker/SessionModelPicker');
         let current!: ReturnType<typeof useNewSessionScreenModel>;
@@ -1108,7 +1229,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 const model = hook.getCurrent();
                 if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
                 expect(model.simpleProps.agentPickerSelectedOptionId, JSON.stringify({
-                    remembered: storage.getState().settings.lastUsedBackendTarget,
+                    remembered: readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedBackendTarget,
                     draft: readNewSessionDraftFromRepository(fixture)?.agentTarget,
                     picker: model.simpleProps.agentPickerOptions?.map(option => option.id),
                 })).toBe(configuredKey);
@@ -1136,7 +1257,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 const model = hook.getCurrent();
                 if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
                 expect(model.simpleProps.agentPickerSelectedOptionId, JSON.stringify({
-                    remembered: storage.getState().settings.lastUsedBackendTarget,
+                    remembered: readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedBackendTarget,
                     picker: model.simpleProps.agentPickerOptions?.map(option => option.id),
                 })).toBe(bundledKey);
                 expect(model.simpleProps.canCreate).toBe(true);

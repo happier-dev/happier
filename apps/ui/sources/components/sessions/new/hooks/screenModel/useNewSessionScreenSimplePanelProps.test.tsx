@@ -45,6 +45,15 @@ function buildParams(
 }
 
 describe('useNewSessionScreenSimplePanelProps destination naming', () => {
+    it('names a managed preset waiting for review as the selected new machine', async () => {
+        const rendered = await renderHook(() => useNewSessionScreenSimplePanelProps(buildParams({
+            hasMachine: false,
+            managedPlacementPreset: { kind: 'preset', homeId: 'home-a', presetId: 'launch' },
+        })));
+        expect(rendered.getCurrent().machineName).toBe('managedMachines.picker.newMachine');
+        await rendered.unmount();
+    });
+
     it('leaves the machine chip unselected when no Machine is selected', async () => {
         const rendered = await renderHook(() => useNewSessionScreenSimplePanelProps(buildParams({})));
 

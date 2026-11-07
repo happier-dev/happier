@@ -1,10 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { coerceNewSessionModelMode, resolveInitialNewSessionModelMode } from './newSessionModelModePolicy';
 import type { NewSessionModelConfig } from './newSessionModelModePolicy';
 
 describe('newSessionModelModePolicy', () => {
+    it('keeps a managed native default instead of authoring an automatic catalog fallback', () => {
+        expect(coerceNewSessionModelMode({ modelMode: 'team-native', modelIsManagedDefault: true,
+            modelConfig: { defaultMode: 'personal', allowedModes: ['personal'], dynamicProbe: 'static-only' },
+            preflight: { availableModels: [{ id: 'personal' }], supportsFreeform: false },
+        })).toBe('team-native');
+    });
+
+    it('retains a Team V2 model when native discovery cannot represent or validate its source', () => {
+        const modelSelection = { v: 2 as const, updatedAt: 1, ref: {
+            source: 'team_resource' as const, teamId: 'team-a', resourceId: 'resource-a',
+            expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-only',
+        } };
+        const input = { modelSelection, modelMode: 'team-only',
+            modelConfig: { defaultMode: 'personal', allowedModes: ['personal'], dynamicProbe: 'static-only' as const },
+            preflight: { availableModels: [], supportsFreeform: false, unavailable: true },
+        };
+        expect(coerceNewSessionModelMode(input)).toBe('team-only');
+        expect(coerceNewSessionModelMode({ ...input, preflight: null })).toBe('team-only');
+    });
+
     it('preserves a connection-bound model when the native discovery is unavailable or excludes it', () => {
         const modelSelection = {
             v: 1 as const, updatedAt: 1,

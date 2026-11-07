@@ -18,12 +18,14 @@ export function useNewSessionTeamCredentialModelState(input: Readonly<{
 }>) {
     const restored = React.useMemo<TeamCredentialProviderModelSelectionV1 | null>(() => {
         const binding = findAssignedProviderModelCredentialBinding(input.draft?.teamCredentialBindings);
-        const ref = input.draft?.modelSelection?.ref;
-        if (!binding?.teamId || !ref || ref.providerConnectionId !== null) return null;
+        const legacyRef = input.draft?.modelSelection?.ref;
+        const ref = legacyRef ?? binding?.providerModelSelection;
+        if (!binding?.teamId || !ref || (legacyRef && legacyRef.providerConnectionId !== null)) return null;
         return {
             kind: 'team_credential_provider_model', teamId: binding.teamId, resourceId: binding.resourceId,
             expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: binding.deliveryMode,
             agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
+            ...(binding.nativeDelivery ? { nativeDelivery: binding.nativeDelivery } : {}),
         };
     }, [input.draft?.modelSelection, input.draft?.teamCredentialBindings]);
     const scopeKey = JSON.stringify([input.serverId, input.accountId, input.draftId]);

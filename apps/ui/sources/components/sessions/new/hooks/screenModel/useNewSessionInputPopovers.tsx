@@ -18,6 +18,7 @@ import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } f
 import type { PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { RunnerArtifactTarget } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
+import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import type { ServerScopedMachinePoolGroup } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import { useMachinePoolSelection } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
 import type { TemporaryComputerAvailability } from '@/components/sessions/new/hooks/useTemporaryComputerAvailability';
@@ -135,6 +136,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     executionTarget: SessionAuthoringExecutionTargetV2 | null;
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
+    managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
     onSelectManagedMachine?: ManagedMachineUse;
     /** Whether the composer holds a drafted prompt; a getter, so typing never re-renders the picker. */
     managedMachineStartsSession?: () => boolean;
@@ -177,6 +179,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
     const machinePopoverGroups = params.machineGroups;
     const executionTargetScopeKey = params.selectedManagedMachine
         ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
+        : params.managedPlacementPreset
+            ? ['preset', params.managedPlacementPreset.homeId, params.managedPlacementPreset.presetId].join('\u0000')
         : params.executionTarget?.kind === 'machine'
         ? [
             'machine',
@@ -217,6 +221,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         selectTemporaryComputer: params.selectTemporaryComputer,
         managedMachines: params.managedMachines,
         selectedManagedMachine: params.selectedManagedMachine,
+        managedPlacementPreset: params.managedPlacementPreset,
         onSelectManagedMachine: params.onSelectManagedMachine,
         managedMachineStartsSession: params.managedMachineStartsSession,
     });
@@ -307,6 +312,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         selectedServerId: params.selectedServerId,
         managedMachines: params.managedMachines,
         selectedManagedMachine: params.selectedManagedMachine,
+        managedPlacementPreset: params.managedPlacementPreset,
         useMachinePickerSearch: params.useMachinePickerSearch,
         temporaryComputerTargets: params.temporaryComputerAvailability.status === 'available'
             ? params.temporaryComputerAvailability.artifacts.map((artifact) => artifact.identity.target)
@@ -324,6 +330,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.selectedServerId,
         params.managedMachines,
         params.selectedManagedMachine,
+        params.managedPlacementPreset,
         params.executionTarget,
         params.temporaryComputerAvailability,
         params.useMachinePickerSearch,
@@ -363,6 +370,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                     temporaryComputers={temporaryComputers}
                     managedMachines={renderParams.managedMachines}
                     selectedManagedMachine={renderParams.selectedManagedMachine}
+                    managedPlacementPreset={renderParams.managedPlacementPreset}
                     managedMachineStartsSession={renderParams.managedMachineStartsSession}
                     onSelectManagedMachine={(draft, options) => {
                         renderParams.machinePoolSelection.cancelPendingSelection();

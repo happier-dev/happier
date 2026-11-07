@@ -9,6 +9,7 @@ import type {
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import type {
@@ -31,6 +32,8 @@ import {
     resolveMachineDestinationPurposeEligibility,
     describeMachineDestinationEligibility,
     describeMachineDestinationWorkerFacts,
+    describeMachineDestinationCopySetupAction,
+    type MachineDestinationCopySetupAction,
     type MachineDestinationPlacementFacts,
     type MachineDestinationWorkerSubject,
     type MachinePoolRowUnavailableReason,
@@ -41,7 +44,8 @@ import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/us
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import type { MachinePoolViewV1, SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1} from '@happier-dev/protocol/machines/pools/v1';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 import type { MachinePoolSelectionStatus } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
 import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
@@ -58,6 +62,7 @@ import {
     temporaryComputerTargetOptionKey,
 } from './temporaryComputerTargetIdentity';
 import { showTemporaryComputerExpiryModal } from './TemporaryComputerExpiryModal';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import {
@@ -188,6 +193,7 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     /** Accessible presets and one-off configuration, supplied by the managed projection owner. */
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
+    managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
     /** Commits local reviewed intent only; explicit admission owns resource acquisition. */
     onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
     /** Opens the Machines presets (the managed group's trailing "Presets" destination). */
@@ -352,19 +358,45 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
     resolveMachinePlacementFacts: BuildMachineSelectionListModelParams<TMachine>['resolveMachinePlacementFacts'],
     workerSubject: MachineDestinationWorkerSubject | undefined,
     scope: MachineReachabilityScope | null | undefined,
-): Readonly<{ selectable: boolean; reason?: string }> {
+): Readonly<{ selectable: boolean; reason?: string; copySetupAction?: MachineDestinationCopySetupAction }> {
     const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId), machine, scope);
     const presence = resolveMachinePickerPresence(machine, undefined, scope);
     if (!eligibility.eligible) {
         // An offline machine answers no worker status; its presence line already says why it can't be chosen.
-        return { selectable: false, reason: isBlockedOnlyByPresence(eligibility, presence) ? undefined : describeMachineDestinationEligibility(eligibility, machine, workerSubject, purpose) };
+        return { selectable: false, reason: isBlockedOnlyByPresence(eligibility, presence) ? undefined : describeMachineDestinationEligibility(eligibility, machine, workerSubject, purpose),
+            ...(eligibility.reason === 'needs_copy' ? { copySetupAction: eligibility.action } : {}) };
     }
     const decided = resolveMachineAvailability?.(machine, serverId);
     // An eligible worker row says its current load (or that it is unknown), never a guessed zero.
-    if (!decided) return { selectable: presence.selectable || !!eligibility.managedWake, reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose, getMachineDisplayName(machine) ?? machine.id) };
+    if (!decided) {
+        const selectable = presence.selectable || !!eligibility.managedWake;
+        return {
+            selectable,
+            reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose, getMachineDisplayName(machine) ?? machine.id)
+                ?? (!selectable && presence.status === 'unknown' ? t('common.unavailable') : undefined),
+        };
+    }
     return {
         selectable: decided.selectable,
-        reason: !decided.selectable || !presence.selectable ? decided.detail : undefined,
+        reason: !decided.selectable ? decided.detail ?? t('common.unavailable')
+            : !presence.selectable ? decided.detail : undefined,
+    };
+}
+
+function copySetupOption(
+    action: MachineDestinationCopySetupAction | undefined,
+    workspace: MachineDestinationWorkerPlacement['workspace'] | undefined,
+    machine: MachineDisplayRenderable,
+    testID: string | undefined,
+): Partial<Pick<SelectionListOption, 'expandedContent' | 'expandedContentVisibility' | 'expandedContentInset'>> {
+    if (!action || !workspace) return {};
+    const presentation = describeMachineDestinationCopySetupAction(action, {
+        serverId: workspace.serverId, workspaceId: workspace.refId, machineId: action.workerCopy.sourceMachineId,
+    }, getMachineDisplayName(machine) ?? machine.id);
+    return {
+        expandedContent: () => <TextLinkButton {...presentation} tone="strong" testID={testID ? `${testID}.setUpCopy` : undefined} />,
+        expandedContentVisibility: 'always',
+        expandedContentInset: 'text',
     };
 }
 
@@ -663,9 +695,13 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         const hasPools = poolGroups.some((group) => group.pools.length > 0);
         const temporaryComputers = purpose === 'session' ? params.temporaryComputers ?? [] : [];
         const managedMachines = supportsManagedMachineSelection(purpose) ? params.managedMachines ?? [] : [];
+        const managedPlacementPreset = params.managedPlacementPreset;
         const managedOptionId = supportsManagedMachineSelection(purpose) && params.selectedManagedMachine
             ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
-            : null;
+            : supportsManagedMachineSelection(purpose) && managedPlacementPreset
+                ? managedMachines.find(offer => offer.homeId === managedPlacementPreset.homeId
+                    && offer.presetId === managedPlacementPreset.presetId)?.id ?? null
+                : null;
         // "Connect a computer…" closes the New machine group (lab m-pick): the other way to add a machine.
         const connectMachineOption: SelectionListOption | null = purpose === 'session' && hasConnectMachine
             ? {
@@ -677,11 +713,15 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 onSelect: connectMachine,
             }
             : null;
-        const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0 || connectMachineOption
+        // No machine yet (58d AF1): the picker asks where to run in two groups, creating one in the cloud and
+        // using one you have; once a machine exists, New machine closes with "Connect a machine…" (lab m-pick).
+        const noMachineYet = purpose === 'session' && !hasPools
+            && params.groups.every((group) => !group.loading && !group.signedOut && group.machines.length === 0);
+        const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0 || (connectMachineOption && !noMachineYet)
             ? {
                 kind: 'static',
                 id: 'managed-machines',
-                title: t('newSession.managedMachine.title'),
+                title: t(noMachineYet ? 'managedMachines.picker.createInCloud' : 'newSession.managedMachine.title'),
                 ...(hasOpenManagedPresets && managedMachines.length > 0 ? { action: {
                     label: t('machinePresets.short'), onPress: openManagedPresets,
                     testID: params.testIdPrefix ? `${params.testIdPrefix}-managed-presets` : undefined,
@@ -699,9 +739,14 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         ? !hasSelectManagedMachine
                         : !offer.onSelect),
                     onSelect: () => selectManagedMachine(offer.id),
-                } satisfies SelectionListOption)), ...(connectMachineOption ? [connectMachineOption] : [])],
+                } satisfies SelectionListOption)), ...(connectMachineOption && !noMachineYet ? [connectMachineOption] : [])],
             }
             : null;
+        const useOneYouHaveSection: SelectionListSectionDescriptor | null = noMachineYet && connectMachineOption
+            ? { kind: 'static', id: 'use-one-you-have', title: t('managedMachines.picker.useOneYouHave'), options: [connectMachineOption] }
+            : null;
+        const addedMachineSections = [managedMachineSection, useOneYouHaveSection]
+            .filter((section): section is NonNullable<typeof section> => section !== null);
         const temporaryComputer = temporaryComputers.find((candidate) => candidate.selected) ?? null;
         const temporaryComputerRowKey = (candidate: TemporaryComputerSelection): string => (
             candidate.artifactTarget ?? 'unavailable'
@@ -889,7 +934,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     id: 'machine-root',
                     inputPlaceholder,
                     emptyStateLabel: params.emptyStateLabel ?? t('newSession.noMachinesFound'),
-                    sections: [managedMachineSection, temporaryComputerSection].filter(
+                    sections: [...addedMachineSections, temporaryComputerSection].filter(
                         (section) => section !== null,
                     ),
                 },
@@ -937,12 +982,14 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         icon: (
                             <MachineRowMark
                                 machineId={machine.id}
+                                platform={machine.metadata?.platform ?? null}
                                 serverId={group.serverId}
                                 managedMachine={machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id]}
                                 size={24}
                             />
                         ),
                         disabled: !availability.selectable,
+                        ...copySetupOption(availability.copySetupAction, params.workerPlacement?.workspace, machine, buildOptionTestID(params.testIdPrefix, machine)),
                         rightAccessory: (
                             <MachineSelectionRowAccessory
                                 machine={machine}
@@ -973,7 +1020,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             }
             // Machines that exist come first; machines that don't exist yet follow: New machine
             // (presets, a one-off, connecting one), then a Temporary computer (lab m-pick).
-            if (managedMachineSection) sections.push(managedMachineSection);
+            sections.push(...addedMachineSections);
             if (temporaryComputerSection) sections.push(temporaryComputerSection);
 
             return {
@@ -1037,12 +1084,14 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         icon: (
                             <MachineRowMark
                                 machineId={machine.id}
+                                platform={machine.metadata?.platform ?? null}
                                 serverId={group.serverId}
                                 managedMachine={machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id]}
                                 size={20}
                             />
                         ),
                         disabled: !availability.selectable,
+                        ...copySetupOption(availability.copySetupAction, params.workerPlacement?.workspace, machine, buildOptionTestID(params.testIdPrefix, machine)),
                         onSelect: () => {
                             if (!resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId)).selectable) return;
                             selectScopedMachine(machine);
@@ -1089,7 +1138,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             };
             return [poolSection, ...machineSections];
         });
-        if (managedMachineSection) sections.push(managedMachineSection);
+        sections.push(...addedMachineSections);
         if (temporaryComputerSection) sections.push(temporaryComputerSection);
 
         const selectedOptionId = managedOptionId ?? (temporaryComputer?.selected
@@ -1112,6 +1161,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         presenceKey,
         purpose,
         resolveMachinePlacementFacts,
+        params.workerPlacement?.workspace.serverId,
+        params.workerPlacement?.workspace.refId,
         params.workerSubject?.scriptName,
         params.workerSubject?.memoryDemandBytes,
         params.favoriteGroupPlacement,
@@ -1156,6 +1207,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.managedMachines,
         machinesByEnrolledMachineIdByServerId,
         params.selectedManagedMachine,
+        params.managedPlacementPreset,
         hasSelectManagedMachine,
         hasOpenManagedPresets,
         pendingExpiry,

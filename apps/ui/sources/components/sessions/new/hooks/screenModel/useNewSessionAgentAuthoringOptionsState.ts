@@ -7,6 +7,8 @@ import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { projectSessionModelSelectionV2ToV1, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
@@ -53,6 +55,7 @@ function useTargetScopedAuthoringState<Value>(backendTargetKey: string | null, r
         }));
     }, []);
     let value = state.backendTargetKey === backendTargetKey ? state.value : resolvedValue;
+    let authored = state.backendTargetKey === backendTargetKey && state.authored;
     if (source.backendTargetKey !== backendTargetKey || source.signature !== signature) {
         setSource({ backendTargetKey, signature });
         // A picker may author this field before its draft arrives, or stage it
@@ -64,10 +67,11 @@ function useTargetScopedAuthoringState<Value>(backendTargetKey: string | null, r
         if (shouldHydrate
             && (state.backendTargetKey !== backendTargetKey || JSON.stringify(state.value) !== signature)) {
             value = resolvedValue;
+            authored = false;
             setState({ backendTargetKey, value, authored: false });
         }
     }
-    return [value, setAuthoredState] as const;
+    return [value, setAuthoredState, authored] as const;
 }
 
 type TargetScopedEngineSelection = Readonly<{
@@ -225,10 +229,16 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
     implicitProfileModelSelection?: SessionModelSelectionV1 | null;
+    managedDefaults?: ManagedSessionDefaultsContext;
+    explicitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
 }>): Readonly<{
     modelMode: ModelMode;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     modelSelection: SessionModelSelectionV1 | null;
+    modelSelectionV2: SessionModelSelectionV2 | null;
+    modelSelectionForPersistence: SessionModelSelectionV1 | SessionModelSelectionV2 | null | undefined;
+    modelIsManagedDefault: boolean;
+    teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
     setModelSelection: (selection: SessionModelSelectionV1 | null) => void;
     setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
     acpSessionModeId: string | null;
@@ -269,26 +279,79 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
             : null;
         return resolveBackendTargetKeyV2(bundledAgentTarget ?? { kind: 'backend', backendId: params.agentType });
     }, [currentBackendTargetKey, params.agentType]);
+    // A launch profile's model intent names its own Agent target, like a draft does. Once the
+    // person picks another Agent it no longer applies, so it is scoped here with the drafts.
+    const implicitProfileModelSelection = params.implicitProfileModelSelection ?? null;
+    const targetScopedImplicitProfileModelSelection = implicitProfileModelSelection
+        && backendTargetKeysMatch(implicitProfileModelSelection.ref.agentTargetKey, effectiveModelTargetKey)
+        ? implicitProfileModelSelection
+        : null;
     const resolvedModelState = React.useMemo(() => resolveAuthoringModelState({
         ...params,
         agentTargetKey: effectiveModelTargetKey,
         hydratedTempAuthoringDraft: targetScopedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: targetScopedPersistedAuthoringDraft,
+        implicitProfileModelSelection: targetScopedImplicitProfileModelSelection,
     }), [
         effectiveModelTargetKey,
         params.agentType,
         params.rememberedEngineSelection?.modelSelection?.ref.modelId,
         params.rememberedEngineSelection?.modelSelection?.ref.providerConnectionId,
         params.rememberedEngineSelection?.modelSelection?.updatedAt,
-        params.implicitProfileModelSelection,
+        targetScopedImplicitProfileModelSelection,
         targetScopedPersistedAuthoringDraft?.modelId,
         targetScopedPersistedAuthoringDraft?.modelSelection,
         targetScopedTempAuthoringDraft?.modelId,
         targetScopedTempAuthoringDraft?.modelSelection,
     ]);
-    const [currentModelState, setModelState] = useTargetScopedAuthoringState(currentBackendTargetKey, resolvedModelState);
-    const modelMode = currentModelState.modelMode;
-    const modelSelection = currentModelState.modelSelection;
+    const [currentModelState, setModelState, modelAuthored] = useTargetScopedAuthoringState(currentBackendTargetKey, resolvedModelState);
+    const explicitTeam = params.explicitTeamCredentialModel;
+    const explicitTeamSelection: SessionModelSelectionV2 | undefined = explicitTeam
+        && explicitTeam.agentTargetKey === effectiveModelTargetKey
+        && (!modelAuthored || (currentModelState.modelSelection?.ref.providerConnectionId === null
+            && currentModelState.modelMode === explicitTeam.modelId))
+        ? { v: 2, updatedAt: currentModelState.modelSelection?.updatedAt ?? 0, ref: {
+            source: 'team_resource', teamId: explicitTeam.teamId, resourceId: explicitTeam.resourceId,
+            expectedResourceRevision: explicitTeam.expectedResourceRevision, deliveryMode: explicitTeam.deliveryMode,
+            agentTargetKey: effectiveModelTargetKey, modelId: explicitTeam.modelId,
+            ...(explicitTeam.nativeDelivery ? { nativeDelivery: explicitTeam.nativeDelivery } : {}),
+        } } : undefined;
+    const hasExplicitModel = modelAuthored || explicitTeamSelection !== undefined
+        || targetScopedTempAuthoringDraft?.modelSelection !== undefined
+        || typeof targetScopedTempAuthoringDraft?.modelId === 'string'
+        || targetScopedPersistedAuthoringDraft?.modelSelection !== undefined
+        || typeof targetScopedPersistedAuthoringDraft?.modelId === 'string'
+        || targetScopedImplicitProfileModelSelection !== null;
+    const modelSelectionForPersistence = hasExplicitModel
+        ? explicitTeamSelection ?? currentModelState.modelSelection
+        : undefined;
+    // Remembered engine state is a fallback, whereas a draft, profile or picker
+    // is deliberate intent. The shared owner decides that intent against locks.
+    const explicitModel = hasExplicitModel ? explicitTeamSelection ?? currentModelState.modelSelection
+        ?? { v: 1 as const, updatedAt: 0, ref: { agentTargetKey: effectiveModelTargetKey,
+            providerConnectionId: null, modelId: currentModelState.modelMode } } : undefined;
+    const modelDecision = resolveManagedSessionDefaults({ ...params.managedDefaults,
+        agentTargetKey: effectiveModelTargetKey,
+        explicitChoices: explicitModel ? { modelByAgentTargetKey: { [effectiveModelTargetKey]: explicitModel } } : undefined,
+    }).model;
+    const managedModel = modelDecision.value;
+    const modelIsManagedDefault = modelDecision.source !== 'none' && modelDecision.source !== 'explicit';
+    const modelSelectionV2 = managedModel?.v === 2 ? managedModel : null;
+    // The explicit marker lets Automatic compete with defaults while its
+    // authored representation remains null for existing draft/launch readers.
+    const modelSelection = modelDecision.source === 'explicit' && !explicitTeamSelection
+        ? currentModelState.modelSelection
+        : managedModel
+            ? managedModel.v === 1 ? managedModel : projectSessionModelSelectionV2ToV1(managedModel)
+            : currentModelState.modelSelection;
+    const modelMode = managedModel?.ref.modelId ?? currentModelState.modelMode;
+    const teamRef = modelSelectionV2?.ref.source === 'team_resource' ? modelSelectionV2.ref : null;
+    const teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null = teamRef ? {
+        kind: 'team_credential_provider_model', teamId: teamRef.teamId, resourceId: teamRef.resourceId,
+        expectedResourceRevision: teamRef.expectedResourceRevision, deliveryMode: teamRef.deliveryMode,
+        agentTargetKey: teamRef.agentTargetKey, modelId: teamRef.modelId,
+        ...(teamRef.nativeDelivery ? { nativeDelivery: teamRef.nativeDelivery } : {}),
+    } : null;
 
     const setModelMode = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {
         setModelState((current) => {
@@ -501,6 +564,10 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         modelMode,
         setModelMode,
         modelSelection,
+        modelSelectionV2,
+        modelSelectionForPersistence,
+        modelIsManagedDefault,
+        teamCredentialModel,
         setModelSelection,
         setModelSelectionForBackendTarget,
         acpSessionModeId,

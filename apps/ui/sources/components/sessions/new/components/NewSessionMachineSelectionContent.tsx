@@ -4,6 +4,7 @@ import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 
 import type { ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import {
@@ -16,7 +17,7 @@ import {
     type TemporaryComputerSelection,
 } from './machineSelection/useMachineSelectionListModel';
 import type { MachinePoolSelectionStatus } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
-import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft, ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
+import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft, ManagedMachineSelectionOffer, ManagedMachineUse } from './machineSelection/managedMachineSelection';
 
 const ManagedMachineSelectionOffers = retryableLazy<React.ComponentProps<
     typeof import('./machineSelection/ManagedMachineSelectionOffers').ManagedMachineSelectionOffers
@@ -44,7 +45,10 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     temporaryComputers?: readonly TemporaryComputerSelection[];
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
-    onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+    managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+    onSelectManagedMachine?: ManagedMachineUse;
+    /** The composer holds a drafted prompt, read as the configurator opens: its receipt then creates and starts the session. */
+    managedMachineStartsSession?: () => boolean;
     /** Opens the Machines presets from the managed group's header. */
     onOpenManagedPresets?: () => void;
     /** Opens the Add a machine flow from the list's last row ("Connect a computer…"). */
@@ -110,6 +114,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         temporaryComputers: props.temporaryComputers,
         managedMachines,
         selectedManagedMachine: props.selectedManagedMachine,
+        managedPlacementPreset: props.managedPlacementPreset,
         onSelectManagedMachine: props.onSelectManagedMachine,
         onOpenManagedPresets: props.onOpenManagedPresets,
         onConnectMachine: props.onConnectMachine,
@@ -136,7 +141,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         <>
         {props.managedMachines === undefined && props.selectedServerId && props.onSelectManagedMachine ?
             <React.Suspense fallback={null}><ManagedMachineSelectionOffers key={props.selectedServerId} serverId={props.selectedServerId}
-                onOffers={receiveOffers} onUse={props.onSelectManagedMachine}
+                onOffers={receiveOffers} onUse={props.onSelectManagedMachine} startsSession={props.managedMachineStartsSession}
                 onConfigure={props.onConfigureManagedMachine} /></React.Suspense> : null}
         <SelectionList
             testID={props.testID ?? 'new-session-machine-list'}

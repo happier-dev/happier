@@ -9,6 +9,7 @@ import { buildMachineDestinationModel as buildScopedMachineDestinationModel, res
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { ManagedMachineSelectionOffer } from './managedMachineSelection';
+import { buildManagedMachineSelectionOffers } from './managedMachineSelection';
 
 import type {
     BuildMachineSelectionListModelParams,
@@ -95,12 +96,7 @@ type Fixture = Readonly<{
     favorites: ReadonlyArray<Machine>;
 }>;
 
-/**
- * Built per test, never at module scope: `isMachineOnline` compares `activeAt`
- * against a 60s grace window, and this suite's module evaluation can precede
- * the first test by longer than that — a module-scope fixture would silently
- * decay to "offline" and make every row non-selectable.
- */
+/** Each case owns its Machine records and the canonical activity subscriptions they acquire. */
 function createFixture(): Fixture {
     const machines = ['m-1', 'm-2', 'm-3'].map(createMachine);
     return {
@@ -181,13 +177,21 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
-    it('expires a New Session roster row through the canonical presence deadline without another publication', async () => {
-        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-        vi.setSystemTime(Date.now());
-        const rendered = await renderModel(createFixture(), makeHandlers());
+    it('keeps a New Session roster row online across elapsed time and disables it on pushed activity withdrawal', async () => {
+        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const now = Date.now();
+        vi.setSystemTime(now);
+        const machine = createMachine('presence-row');
+        const fixture: Fixture = { machines: [machine], groups: [{ serverId: 'server-a', serverName: 'Server A',
+            loading: false, signedOut: false, machines: [createScopedMachine(machine)] }], recent: [], favorites: [] };
+        const rendered = await renderModel(fixture, makeHandlers());
         try {
             expect(firstStaticOption(rendered.getCurrent()).disabled).toBe(false);
-            await act(async () => { vi.advanceTimersByTime(60_001); });
+            vi.setSystemTime(now + 60_001);
+            expect(firstStaticOption(rendered.getCurrent()).disabled).toBe(false);
+            await act(async () => publishMachineActivity(machine, { active: false, activeAt: now },
+                fixture.groups.flatMap(group => group.machines.filter(row => row.id === machine.id))));
             expect(firstStaticOption(rendered.getCurrent()).subtitle).toContain('settingsOverview.machineOffline');
             expect(firstStaticOption(rendered.getCurrent()).disabled).toBe(true);
         } finally { await rendered.unmount(); vi.useRealTimers(); }
@@ -195,6 +199,7 @@ describe('useMachineSelectionListModel', () => {
 
     it('keeps the New Session roster on current presence across retained scoped inventory and heartbeat renewal', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
+        const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
         const { useServerScopedMachineOptions } = await import('@/components/sessions/new/hooks/machines/useServerScopedMachineOptions');
         const now = Date.now();
         vi.useFakeTimers({ toFake: ['Date'] });
@@ -216,11 +221,13 @@ describe('useMachineSelectionListModel', () => {
             const inventory = storage.getState().machineListByServerId[fixtureScope.serverId];
             for (let tick = 1; tick <= 3; tick++) {
                 vi.setSystemTime(now + tick * 20_000);
-                await act(async () => storage.getState().applyMachines([
-                    { ...machine, activeAt: Date.now() - 20_286 },
-                ], false, { sourceServerId: fixtureScope.serverId }));
+                await act(async () => storage.getState().applyMachineActivityUpdates([
+                    { id: machine.id, active: true, activeAt: Date.now() - 20_286 },
+                ], { sourceServerId: fixtureScope.serverId }));
             }
             expect(storage.getState().machineListByServerId[fixtureScope.serverId]).toBe(inventory);
+            expect(inventory?.[0]?.activeAt).toBe(now - 20_286);
+            expect(readMachineActivity(inventory![0]!).activeAt).toBe(now + 60_000 - 20_286);
             expect(rendered.getCurrent()).toBe(onlineModel);
             // Force the real model to observe the same request failure/recovery
             // edges as authoring. A copied heartbeat must not turn recovery Offline.
@@ -274,13 +281,21 @@ describe('useMachineSelectionListModel', () => {
             expect(handlers.selectSpy).toHaveBeenCalledWith(machine.id);
         } finally { await rendered.unmount(); }
     });
-    it.each(['asleep', 'starting'] as const)('allows an exact finite %s row without inventing a guest worker status', async managedWake => {
-        const machine = { ...createMachine('sleeping'), active: false, activeAt: 1 };
+    it.each([
+        { purpose: 'finite', ownership: 'owned', managedWake: 'asleep' },
+        { purpose: 'finite', ownership: 'owned', managedWake: 'starting' },
+        { purpose: 'session', ownership: 'shared', managedWake: 'asleep' },
+        { purpose: 'session', ownership: 'shared', managedWake: 'starting' },
+    ] as const)('allows an exact $ownership $managedWake $purpose row without inventing a guest worker status', async ({ purpose, ownership, managedWake }) => {
+        const machine: Machine = { ...createMachine('sleeping'), active: false, activeAt: 1,
+            ...(ownership === 'shared' ? { isShared: true, access: {
+                custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
+            } } : {}) };
         const handlers = makeHandlers();
         const fixture: Fixture = { machines: [machine], groups: [{ serverId: 'server-a', serverName: 'Server A', loading: false,
             signedOut: false, machines: [createScopedMachine(machine)] }], recent: [], favorites: [] };
-        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, handlers), purpose: 'finite',
-            resolveMachinePlacementFacts: () => ({ ownership: 'owned', managedWake }) }));
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, handlers), purpose,
+            resolveMachinePlacementFacts: () => ({ ownership, managedWake }) }));
         try {
             const section = rendered.getCurrent().rootStep.sections.find(section => section.kind === 'static'
                 && section.options.some(option => option.id === machine.id));
@@ -355,6 +370,31 @@ describe('useMachineSelectionListModel', () => {
         await rendered.unmount();
     });
 
+    it('selects an unreviewed default preset by its qualified Home and opens the existing configurator', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const configure = vi.fn();
+        const preset = { id: 'recipe', homeId: 'home-a', revision: 2, name: 'Guest',
+            owner: { kind: 'account' as const, accountId: 'owner' },
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} } };
+        const managedMachines = ['home-a', 'home-b'].flatMap(homeId => buildManagedMachineSelectionOffers({
+            homeId, presets: [{ ...preset, homeId }], oneOffTitle: 'One-off', onConfigure: configure,
+        }));
+        const rendered = await renderHook((homeId: string) => useMachineSelectionListModel({
+            ...buildParams(fixture, handlers), managedMachines,
+            managedPlacementPreset: { kind: 'preset', homeId, presetId: 'recipe' },
+        }), { initialProps: 'home-a' });
+        try {
+            expect(rendered.getCurrent().selectedOptionId).toBe('managed-machine:home-a:preset:recipe:2');
+            const section = rendered.getCurrent().rootStep.sections.find(section => section.id === 'managed-machines');
+            if (section?.kind !== 'static') throw new Error('expected preset choices');
+            section.options.find(option => option.id === rendered.getCurrent().selectedOptionId)?.onSelect?.();
+            expect(configure).toHaveBeenCalledWith(preset);
+            await rendered.rerender('home-b');
+            expect(rendered.getCurrent().selectedOptionId).toBe('managed-machine:home-b:preset:recipe:2');
+        } finally { await rendered.unmount(); }
+    });
+
     it('does not expose managed recipes for purposes that require an existing destination', async () => {
         const fixture = createFixture();
         const handlers = makeHandlers();
@@ -393,7 +433,7 @@ describe('useMachineSelectionListModel', () => {
         await rendered.unmount();
     });
 
-    it('keeps exact shared Home targets grouped and prevents a presentation override widening readiness or purpose', async () => {
+    it('keeps exact shared Home targets grouped and prevents a presentation override widening readiness for Sessions and triggers', async () => {
         const ready: Machine = { ...createMachine('shared'), isShared: true, access: {
             custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
         } };
@@ -431,9 +471,12 @@ describe('useMachineSelectionListModel', () => {
         const trigger = await renderHook(() => useMachineSelectionListModel(params('trigger')));
         const triggerShared = trigger.getCurrent().rootStep.sections.find((section) => section.id === 'server:server-a:shared:alice');
         if (triggerShared?.kind !== 'static') throw new Error('expected retained shared section');
-        expect(triggerShared.options.every((option) => option.disabled)).toBe(true);
-        triggerShared.options[0]?.onSelect?.();
+        // The 2026-11-03 shared-Workflow ruling admits ready shared trigger targets.
+        expect(triggerShared.options.map(option => Boolean(option.disabled))).toEqual([false, true]);
+        triggerShared.options[1]?.onSelect?.();
         expect(scopedSelect).not.toHaveBeenCalled();
+        triggerShared.options[0]?.onSelect?.();
+        expect(scopedSelect).toHaveBeenCalledWith(group.machines[1]);
         await trigger.unmount();
     });
 
@@ -1162,6 +1205,26 @@ describe('useMachineSelectionListModel', () => {
         await rendered.unmount();
     });
 
+    it('says a failed Pool read and its Retry on one row when the Home has no Pools to show', async () => {
+        const fixture = createFixture();
+        const onRefreshPools = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, makeHandlers()),
+            poolGroups: [{ serverId: 'server-a', accountId: 'account-a', serverName: 'Server A', status: 'error', projectionReady: true, pools: [] }],
+            onSelectPool: vi.fn(),
+            onRefreshPools,
+        }));
+        const section = rendered.getCurrent().rootStep.sections[0];
+        if (section?.kind !== 'static') throw new Error('expected the Pool section');
+        expect(section.options.map((option) => option.id)).toEqual(['pool-refresh:server-a']);
+        const row = section.options[0]!;
+        expect(row.label).toBe('machinePools.refreshFailed');
+        expect(row.rightAccessory).toBeTruthy();
+        row.onSelect?.();
+        expect(onRefreshPools).toHaveBeenCalledWith('server-a');
+        await rendered.unmount();
+    });
+
     it('offers a failed Home an explicit retry into the canonical Machine refresh owner', async () => {
         const fixture = createFixture();
         const failedGroups = fixture.groups.map((group) => ({ ...group, error: true }));
@@ -1191,7 +1254,11 @@ describe('useMachineSelectionListModel', () => {
         const section = rendered.getCurrent().rootStep.sections[0];
         if (section?.kind !== 'static') throw new Error('expected the Pool section');
         const retry = section.options.find((option) => option.id === 'pool-refresh:server-a');
-        expect(retry?.label).toBe('common.retry');
+        // One cause, one row: the failure in words and its Retry at the row's end, never a second row.
+        expect(retry?.label).toBe('machinePools.refreshFailed');
+        expect(retry?.accessibilityLabel).toContain('common.retry');
+        expect(retry?.rightAccessory).toBeTruthy();
+        expect(retry?.disabled).toBeFalsy();
         retry?.onSelect?.();
         expect(onRefreshMachines).toHaveBeenCalledOnce();
         expect(onRefreshPools).not.toHaveBeenCalled();
@@ -1270,6 +1337,39 @@ describe('useMachineSelectionListModel', () => {
         // resolve; only the Home's own currentness may deny activation.
         expect(optionIdsOf().find((option) => option.id === `pool:server-a:${poolId}`)?.disabled).toBe(false);
         await rendered.unmount();
+    });
+
+    it('explains a disabled domain decision when the caller supplies no detail', async () => {
+        const fixture = createFixture();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, makeHandlers()),
+            recentMachines: [], favoriteMachines: [], showFavorites: false, showRecent: false,
+            resolveMachineAvailability: () => ({ selectable: false }),
+        }));
+        try {
+            const rows = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                .filter(option => option.id === 'm-1');
+            expect(rows).not.toHaveLength(0);
+            expect(rows.every(row => row.disabled && row.subtitle?.includes('common.unavailable'))).toBe(true);
+        } finally { await rendered.unmount(); }
+    });
+
+    it('explains a disabled target while its exact Home Account scope is unavailable', async () => {
+        const fixture = createFixture();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, makeHandlers()),
+            groups: [{ ...fixture.groups[0]!, serverId: 'unbound-home',
+                machines: fixture.machines.map(machine => ({ ...machine, serverId: 'unbound-home', serverName: 'Retained Home' })) }],
+            serverId: 'unbound-home', selectedServerId: 'unbound-home',
+            recentMachines: [], favoriteMachines: [], showFavorites: false, showRecent: false,
+        }));
+        try {
+            expect(resolveMachineReachability(null, fixture.machines[0]!)).toBe('unknown');
+            const row = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                .find(option => option.id === 'm-1');
+            expect(row?.disabled).toBe(true);
+            expect(row?.subtitle).toContain('common.unavailable');
+        } finally { await rendered.unmount(); }
     });
 
     it('lets a consuming domain decide which rows are selectable and shows its reason', async () => {
@@ -1410,6 +1510,28 @@ describe('useMachineSelectionListModel · Run on order (lab m-pick)', () => {
             subtitle: 'managedMachines.picker.connectComputerHelp',
         });
         connect?.onSelect?.();
+        expect(onConnectMachine).toHaveBeenCalledTimes(1);
+        await rendered.unmount();
+    });
+
+    it('with no machine yet, asks where to run: Create in the cloud, then Use one you have (58d AF1)', async () => {
+        const fixture = { ...createFixture(), machines: [], recent: [], favorites: [] };
+        fixture.groups = fixture.groups.map((group) => ({ ...group, machines: [] }));
+        const onConnectMachine = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, makeHandlers()),
+            selectedMachine: null,
+            managedMachines: [{ id: 'managed-machine:server-a:one-off', homeId: 'server-a', kind: 'one-off',
+                title: 'One-off', onSelect: vi.fn() }],
+            onConnectMachine,
+        }));
+        const sections = rendered.getCurrent().rootStep.sections.filter((section) => section.kind === 'static');
+        expect(sections.map((section) => [section.id, section.title])).toEqual([
+            ['managed-machines', 'managedMachines.picker.createInCloud'],
+            ['use-one-you-have', 'managedMachines.picker.useOneYouHave'],
+        ]);
+        expect(sections[0]!.options.map((option) => option.id)).toEqual(['managed-machine:server-a:one-off']);
+        sections[1]!.options[0]?.onSelect?.();
         expect(onConnectMachine).toHaveBeenCalledTimes(1);
         await rendered.unmount();
     });

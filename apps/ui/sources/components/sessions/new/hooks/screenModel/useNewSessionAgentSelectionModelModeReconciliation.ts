@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
@@ -12,13 +13,16 @@ export function useNewSessionAgentSelectionModelModeReconciliation(
         agentType: string;
         preflightModels: PreflightModelList | null;
         preflightModelsTargetKey: string | null;
+        modelSelectionV2?: SessionModelSelectionV2 | null;
+        modelIsManagedDefault?: boolean;
     }>,
 ): ReturnType<typeof useNewSessionAgentPickerControls> {
     React.useEffect(() => {
         const core = isBundledAgentId(params.agentType) ? getAgentCore(params.agentType) : null;
         const next = coerceNewSessionModelMode({
             modelMode: String(params.modelMode),
-            modelSelection: params.modelSelection,
+            modelSelection: params.modelSelectionV2 ?? params.modelSelection,
+            modelIsManagedDefault: params.modelIsManagedDefault,
             modelConfig: {
                 defaultMode: core?.model?.defaultMode ?? 'default',
                 allowedModes: core?.model?.allowedModes ?? [],
@@ -43,6 +47,8 @@ export function useNewSessionAgentSelectionModelModeReconciliation(
         params.agentType,
         params.modelMode,
         params.modelSelection,
+        params.modelSelectionV2,
+        params.modelIsManagedDefault,
         params.preflightModels,
         params.preflightModelsTargetKey,
         params.selectedBackendEntry?.backendTargetKey,

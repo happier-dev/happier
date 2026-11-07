@@ -5,7 +5,7 @@ import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1,
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { resolveMachineDestinationPurposeEligibility } from './buildMachineDestinationModel';
+import type { resolveMachineDestinationPurposeEligibility } from './buildMachineDestinationModel';
 import { supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 export {
@@ -23,6 +23,8 @@ export type ManagedMachineUse = (draft: ManagedMachineSelectionDraft, options?: 
 export type ManagedMachineSelectionOffer = Readonly<{
     id: string;
     homeId: string;
+    /** Stable preset identity; revision is resolved by the existing current offer/configurator. */
+    presetId?: string;
     /** A saved preset, or the one-off configuration entry. */
     kind?: 'preset' | 'one-off';
     title: string;
@@ -53,7 +55,7 @@ export type ManagedMachineArchiveChoiceAvailability = Readonly<{
     nativeUnsupportedEffects: readonly ('stop' | 'delete')[];
 }>;
 
-/** Scope rules execute on the controller and share the ordinary trigger-purpose decision. */
+/** The reviewed creation chooses retention; it grants no ordinary controller access. */
 export function resolveManagedMachineArchiveChoiceAvailability(input: Readonly<{
     draft: ManagedMachineSelectionDraft;
     controller?: Machine;
@@ -67,7 +69,7 @@ export function resolveManagedMachineArchiveChoiceAvailability(input: Readonly<{
         && input.controller.installationId === pair.installationId ? input.controller : undefined;
     const custodianAccountId = controller?.access?.custodian.accountId ?? input.custodianAccountId;
     const eligibility = pair && (controller || input.controllerOwnership)
-        ? resolveMachineDestinationPurposeEligibility('trigger', input.controllerOwnership ? { ownership: input.controllerOwnership } : undefined, controller, null)
+        ? { eligible: true as const }
         : { eligible: false as const, reason: 'access_unavailable' as const };
     const nativeEffects = supportedMachineRetentionEffectsV1(input.draft.receipt.retentionCapabilities.supportedIntents);
     return {
@@ -101,6 +103,7 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
         preset.homeId === params.homeId && preset.archivedAt === undefined && hasManagedMachinePresetCreationV1(preset)).map(preset => ({
         id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
         homeId: preset.homeId,
+        presetId: preset.id,
         kind: 'preset' as const,
         title: preset.name,
         subtitle: params.describeController?.(preset),

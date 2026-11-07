@@ -8,6 +8,7 @@ vi.mock('socket.io-client', async importOriginal =>
 import { createMachineFixture, createSessionFixture, renderHook, waitForTestEvent } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import type { ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
@@ -109,6 +110,189 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('persists authored placement rather than copying a managed default across reopen', async () => {
+        const props: HookParams = { machines: toMachines({ id: 'automatic' }, { id: 'team-a' }, { id: 'team-b' }, { id: 'chosen' }),
+            recentMachinePaths: [{ machineId: 'team-a', path: '/team-a-project' }, { machineId: 'team-b', path: '/team-b-project' }],
+            machineIdParam: undefined, pathParam: undefined };
+        const defaults = (machineId: string): ManagedSessionDefaultsContext => ({ teamDefaults: {
+            team: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId } } }, groups: {},
+        } });
+        const hook = await renderMachinePathState({ ...props, managedDefaults: defaults('team-a') });
+        try {
+            const passive = hook.getCurrent().placementForPersistence;
+            expect(passive).toEqual({ executionTarget: undefined, selectedMachineId: null, managedMachineSelection: null, selectedPath: '' });
+            const reopened = await renderMachinePathState({ ...props, managedDefaults: defaults('team-b'),
+                persistedExecutionTarget: passive.executionTarget, persistedMachineId: passive.selectedMachineId,
+                persistedManagedMachineSelection: passive.managedMachineSelection, persistedPath: passive.selectedPath });
+            try {
+                expect(reopened.getCurrent().selectedMachineId).toBe('team-b');
+                expect(reopened.getCurrent().selectedPath).toBe('/team-b-project');
+            } finally { await reopened.unmount(); }
+            await act(async () => hook.getCurrent().setSelectedMachineId('chosen'));
+            await hook.rerender({ ...props, managedDefaults: { policyDefaults: { locked: true, organization: 'Example',
+                values: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'team-a' } } } } } });
+            const authored = hook.getCurrent().placementForPersistence;
+            expect(authored.executionTarget).toEqual({ kind: 'machine', target: { serverId: 'server-a', machineId: 'chosen' } });
+            const explicitReopened = await renderMachinePathState({ ...props, managedDefaults: defaults('team-b'),
+                persistedExecutionTarget: authored.executionTarget, persistedMachineId: authored.selectedMachineId,
+                persistedManagedMachineSelection: authored.managedMachineSelection, persistedPath: authored.selectedPath });
+            try { expect(explicitReopened.getCurrent().selectedMachineId).toBe('chosen'); }
+            finally { await explicitReopened.unmount(); }
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['committed', 'draft'] as const)('keeps the effective managed machine when its folder becomes explicit: %s', async source => {
+        const props: HookParams = { machines: toMachines({ id: 'automatic' }, { id: 'team-a' }, { id: 'team-b' }),
+            recentMachinePaths: [], machineIdParam: undefined, pathParam: undefined };
+        const defaults = (machineId: string): ManagedSessionDefaultsContext => ({ teamDefaults: {
+            team: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId } } }, groups: {},
+        } });
+        const hook = await renderMachinePathState(props);
+        try {
+            await hook.rerender({ ...props, managedDefaults: defaults('team-a') });
+            await act(async () => source === 'committed' ? hook.getCurrent().setSelectedPath('/authored')
+                : hook.getCurrent().setDraftSelectedPath('/authored'));
+            await hook.rerender({ ...props, managedDefaults: defaults('team-b') });
+            expect(hook.getCurrent().selectedMachineId).toBe('team-a');
+            expect(hook.getCurrent().getRequestedPath()).toBe('/authored');
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps an untouched folder with the effective locked machine and restores the picked target on unlock', async () => {
+        const props: HookParams = { machines: toMachines({ id: 'chosen' }, { id: 'locked' }),
+            recentMachinePaths: [{ machineId: 'chosen', path: '/chosen-project' }, { machineId: 'locked', path: '/locked-project' }],
+            machineIdParam: undefined, pathParam: undefined };
+        const locked: HookParams = { ...props, managedDefaults: { policyDefaults: {
+            values: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'locked' } } },
+            locked: true, organization: 'Example',
+        } } };
+        const hook = await renderMachinePathState(locked);
+        try {
+            expect(hook.getCurrent().selectedPath).toBe('/locked-project');
+            await act(async () => hook.getCurrent().setSelectedMachineId('chosen'));
+            expect(hook.getCurrent().selectedMachineId).toBe('locked');
+            expect(hook.getCurrent().selectedPath).toBe('/locked-project');
+            await hook.rerender(props);
+            expect(hook.getCurrent().selectedMachineId).toBe('chosen');
+            expect(hook.getCurrent().selectedPath).toBe('/chosen-project');
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps a managed machine qualified while another Home has the same machine id', async () => {
+        const managedDefaults: ManagedSessionDefaultsContext = { teamDefaults: {
+            team: { placement: { kind: 'machine', target: { serverId: 'server-b', machineId: 'same-id' } } }, groups: {},
+        } };
+        const props: HookParams = { machines: toMachines({ id: 'same-id', metadata: { homeDir: '/wrong-home' } }),
+            recentMachinePaths: [{ machineId: 'same-id', path: '/wrong-project' }],
+            machineIdParam: undefined, pathParam: undefined, managedDefaults };
+        const hook = await renderMachinePathState(props);
+        try {
+            expect(hook.getCurrent().executionTarget).toEqual({ kind: 'machine', target: { serverId: 'server-b', machineId: 'same-id' } });
+            expect(hook.getCurrent().selectedMachine).toBeNull();
+            expect(hook.getCurrent().selectedMachineDisplay).toBeNull();
+            expect(hook.getCurrent().selectedMachineSentenceName).toBeNull();
+            expect(hook.getCurrent().agentCatalogMachineId).toBeNull();
+            expect(hook.getCurrent().selectedPath).toBe('');
+            expect(hook.getCurrent().machineHomeDir).toBe('');
+            expect(hook.getCurrent().getRequestedPath()).toBe('');
+            expect(hook.getCurrent().directoryIntent).toBeNull();
+            expect(hook.getCurrent().directoryPreflight).toEqual({ ready: false, code: 'unavailable' });
+            await hook.rerender({ ...props, serverId: 'server-b', machines: toMachines({ id: 'same-id', metadata: { homeDir: '/right-home' } }),
+                recentMachinePaths: [{ machineId: 'same-id', path: '/right-project' }] });
+            expect(hook.getCurrent().selectedMachine?.metadata?.homeDir).toBe('/right-home');
+            expect(hook.getCurrent().selectedPath).toBe('/right-project');
+            expect(hook.getCurrent().directoryPreflight).toEqual({ ready: true, code: null });
+        } finally { await hook.unmount(); }
+    });
+
+    it('follows hydrated Team placement until a person selects a target, while policy locks still win', async () => {
+        const machines = toMachines({ id: 'automatic' }, { id: 'team-a' }, { id: 'team-b' }, { id: 'chosen' }, { id: 'locked' });
+        const props: HookParams = { machines, recentMachinePaths: [
+            { machineId: 'automatic', path: '/automatic-project' }, { machineId: 'team-a', path: '/team-a-project' },
+            { machineId: 'team-b', path: '/team-b-project' },
+        ], machineIdParam: undefined, pathParam: undefined };
+        const teamDefaults = (machineId: string): ManagedSessionDefaultsContext => ({
+            teamDefaults: { team: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId } } }, groups: {} },
+        });
+        const hook = await renderMachinePathState(props);
+        try {
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-a') });
+            expect(hook.getCurrent().selectedMachineId).toBe('team-a');
+            expect(hook.getCurrent().selectedPath).toBe('/team-a-project');
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-b') });
+            expect(hook.getCurrent().selectedMachineId).toBe('team-b');
+            expect(hook.getCurrent().selectedPath).toBe('/team-b-project');
+            await hook.rerender(props);
+            expect(hook.getCurrent().selectedMachineId).toBe('automatic');
+            expect(hook.getCurrent().selectedPath).toBe('/automatic-project');
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-b') });
+            await act(async () => hook.getCurrent().setSelectedMachineId('chosen'));
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-a') });
+            expect(hook.getCurrent().selectedMachineId).toBe('chosen');
+            await hook.rerender({ ...props, managedDefaults: { ...teamDefaults('team-a'), policyDefaults: {
+                values: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'locked' } } },
+                locked: true, organization: 'Example',
+            } } });
+            expect(hook.getCurrent().selectedMachineId).toBe('locked');
+            await act(async () => hook.getCurrent().setSelectedMachineId('team-b'));
+            expect(hook.getCurrent().selectedMachineId).toBe('locked');
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-a') });
+            expect(hook.getCurrent().selectedMachineId).toBe('team-b');
+            await act(async () => hook.getCurrent().setTemporaryComputerTarget({ serverId: 'server-a',
+                artifactTarget: 'linux-x64', workspace: { kind: 'choose_on_endpoint' } }));
+            await hook.rerender({ ...props, managedDefaults: teamDefaults('team-b') });
+            expect(hook.getCurrent().executionTarget?.kind).toBe('temporary_computer');
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps a default preset selected for the canonical configurator rather than falling back to a machine', async () => {
+        const hook = await renderMachinePathState({ machines: toMachines({ id: 'automatic' }), recentMachinePaths: [],
+            machineIdParam: undefined, pathParam: undefined, managedDefaults: {
+                teamDefaults: { team: { placement: { kind: 'preset', homeId: 'home-a', presetId: 'preset-a' } }, groups: {} },
+            } });
+        try {
+            expect(hook.getCurrent().executionTarget).toBeNull();
+            expect(hook.getCurrent().managedMachineSelection).toBeNull();
+            expect(hook.getCurrent().managedPlacementPreset).toEqual({ kind: 'preset', homeId: 'home-a', presetId: 'preset-a' });
+        } finally { await hook.unmount(); }
+    });
+
+    it('uses the reviewed locked preset through enrollment without discarding its creation receipt', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 1 },
+            receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        const hook = await renderMachinePathState({ machines: toMachines({ id: 'host' }, { id: 'enrolled' }), recentMachinePaths: [],
+            machineIdParam: undefined, pathParam: undefined, managedDefaults: { policyDefaults: {
+                values: { placement: { kind: 'preset', homeId: 'home-a', presetId: 'preset-a' } }, locked: true, organization: 'Example',
+            } } });
+        try {
+            await act(async () => hook.getCurrent().setManagedMachineTarget(draft));
+            expect(hook.getCurrent().managedPlacementPreset).toBeNull();
+            expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+            await act(async () => hook.getCurrent().adoptManagedMachineTarget('enrolled'));
+            expect(hook.getCurrent().selectedMachineId).toBe('enrolled');
+            expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['route', 'draft'] as const)('keeps an explicit %s target ahead of unlocked Team placement', async (source) => {
+        const machines = toMachines({ id: 'authored' }, { id: 'team' });
+        const props: HookParams = { machines, recentMachinePaths: [], machineIdParam: source === 'route' ? 'authored' : undefined,
+            persistedExecutionTarget: source === 'draft' ? { kind: 'machine', target: { serverId: 'server-a', machineId: 'authored' } } : undefined,
+            pathParam: undefined };
+        const hook = await renderMachinePathState(props);
+        try {
+            await hook.rerender({ ...props, managedDefaults: {
+                teamDefaults: { team: { placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'team' } } }, groups: {} },
+            } });
+            expect(hook.getCurrent().selectedMachineId).toBe('authored');
+        } finally { await hook.unmount(); }
+    });
+
     it.each([
         { protection: 'setup_pending', status: { kind: 'applying', phase: 'workspace' } },
         { protection: 'unavailable', status: { kind: 'unavailable', code: 'workspace_not_ready' } },

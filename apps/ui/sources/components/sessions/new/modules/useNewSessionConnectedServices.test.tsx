@@ -32,6 +32,7 @@ import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/conn
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
@@ -746,6 +747,106 @@ describe('New Session purpose catalog authority', () => {
 
 describe('useNewSessionConnectedServices', () => {
     beforeEach(arrangeLegacyConnectedServicesHomes);
+    it('authors only the picked purpose and retains underlying intent while another purpose is locked', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const target = 'happier.agent.claude/claude';
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const first = { purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } };
+        const second = { purpose: 'review', service: { pluginId: 'acme.review', localId: 'reviewer-service' } };
+        const accountDefault = (declaration: typeof first, accountId: string) => ({
+            purpose: { consumer, purpose: declaration.purpose }, service: declaration.service,
+            target: { kind: 'account' as const, account: { service: declaration.service, accountId } }, teamResource: null,
+        });
+        const defaults = (secondAccount: string, locked = false): ManagedSessionDefaultsContext => ({
+            teamDefaults: { groups: {}, team: { connectedServicesByAgentTargetKey: { [target]: [
+                accountDefault(first, 'work'), accountDefault(second, secondAccount),
+            ] } } },
+            ...(locked ? { policyDefaults: { locked: true, organization: 'Acme', values: {
+                connectedServicesByAgentTargetKey: { [target]: [accountDefault(second, 'required')] },
+            } } } : {}),
+        });
+        const hook = await renderHook((managedSessionDefaults: ManagedSessionDefaultsContext) => {
+            const [agentOptionState, setAgentOptionState] = React.useState<Record<string, unknown> | null>(null);
+            const result = useNewSessionConnectedServices({ agentCore: null, defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: consumer, nativeAgentTargetKey: target,
+                connectedAccounts: [first, second], agentOptionState, managedSessionDefaults,
+                settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: activeHomeId,
+                router: { push() {} }, setAgentOptionStateForCurrentAgent: (key, value) => {
+                    setAgentOptionState(current => ({ ...current, [key]: value }));
+                },
+            });
+            return { ...result, agentOptionState };
+        }, { initialProps: defaults('review-one') });
+        const pick = async (serviceId: string) => {
+            const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
+            if (typeof renderContent !== 'function') throw new Error('Expected Connected Accounts picker');
+            const content = renderContent({ requestClose() {}, maxHeight: 420 }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+            await act(async () => { await content.props.setBindingForService(serviceId, { source: 'native' }); });
+        };
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().connectedAccountDefaultsStatus).toBe('ready'));
+            await pick(CLAUDE_SERVICE_KEY);
+            expect(hook.getCurrent().agentOptionState?.[CONNECTED_SERVICES_BINDINGS_KEY]).toEqual({
+                [CLAUDE_SERVICE_KEY]: { source: 'native' },
+            });
+            await hook.rerender(defaults('review-two'));
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[NOVEL_SERVICE_KEY])
+                .toEqual({ source: 'connected', selection: 'profile', profileId: 'review-two' });
+            await pick(NOVEL_SERVICE_KEY);
+            await hook.rerender(defaults('review-two', true));
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[NOVEL_SERVICE_KEY])
+                .toEqual({ source: 'connected', selection: 'profile', profileId: 'required' });
+            await pick(CLAUDE_SERVICE_KEY);
+            expect(hook.getCurrent().agentOptionState?.[CONNECTED_SERVICES_BINDINGS_KEY]).toEqual({
+                [CLAUDE_SERVICE_KEY]: { source: 'native' }, [NOVEL_SERVICE_KEY]: { source: 'native' },
+            });
+            await hook.rerender(defaults('review-three'));
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[NOVEL_SERVICE_KEY])
+                .toEqual({ source: 'native' });
+        } finally { await hook.unmount(); }
+    });
+
+    it('derives Team defaults without authoring settings and applies policy locks after an optimistic native edit', async () => {
+        const target = 'happier.agent.claude/claude';
+        const purpose = { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' };
+        const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        const work = { purpose, service, target: { kind: 'account' as const, account: { service, accountId: 'work' } }, teamResource: null };
+        const sharedSelection = { source: 'team_resource' as const, resourceId: 'engineering-resource', deliveryMode: 'brokered' as const };
+        const contexts: Record<'work' | 'shared' | 'locked', ManagedSessionDefaultsContext> = {
+            work: { teamDefaults: { groups: {}, team: { connectedServicesByAgentTargetKey: { [target]: [work] } } } },
+            shared: { teamDefaults: { groups: {}, team: { connectedServicesByAgentTargetKey: { [target]: [{ purpose, service,
+                target: null, teamResource: { teamId: 'engineering', selection: sharedSelection } }] } } } },
+            locked: { policyDefaults: { locked: true, organization: 'Acme',
+                values: { connectedServicesByAgentTargetKey: { [target]: [work] } } } },
+        };
+        const setOptions = vi.fn();
+        const settingsBefore = storage.getState().settings;
+        const hook = await renderHook((context: keyof typeof contexts) => useNewSessionConnectedServicesAgentOptions({
+            staticAgentId: 'claude', runtimeCarrierAgentId: 'claude', selectedBackendTargetKey: target,
+            targetServerId: activeHomeId, agentIdentity: purpose.consumer, connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+            managedSessionDefaults: contexts[context], setBackendNewSessionOptionStateByTargetKey: setOptions,
+            agentOptionState: null, settings: { connectedServicesDefaultProfileByServiceId: {} }, router: { push() {} },
+        }), { initialProps: 'work' });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().connectedAccountDefaultsStatus).toBe('ready'));
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[CLAUDE_SERVICE_KEY])
+                .toEqual({ source: 'connected', selection: 'profile', profileId: 'work' });
+            await hook.rerender('shared');
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[CLAUDE_SERVICE_KEY]).toEqual(sharedSelection);
+            expect(setOptions).not.toHaveBeenCalled();
+            expect(storage.getState().settings).toBe(settingsBefore);
+            const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
+            if (typeof renderContent !== 'function') throw new Error('Expected Connected Accounts picker');
+            const content = renderContent({ requestClose() {}, maxHeight: 420 }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+            await act(async () => { await content.props.setBindingForService(CLAUDE_SERVICE_KEY, { source: 'native' }); });
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[CLAUDE_SERVICE_KEY]).toEqual({ source: 'native' });
+            await hook.rerender('locked');
+            expect(hook.getCurrent().connectedServicesBindingsPayload?.bindingsByServiceId[CLAUDE_SERVICE_KEY])
+                .toEqual({ source: 'connected', selection: 'profile', profileId: 'work' });
+            expect(setOptions).toHaveBeenCalledTimes(1);
+            expect(storage.getState().settings).toBe(settingsBefore);
+        } finally { await hook.unmount(); }
+    });
     it('opens the existing Connect sheet at the refused member and applies another selected account', async () => {
         await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
