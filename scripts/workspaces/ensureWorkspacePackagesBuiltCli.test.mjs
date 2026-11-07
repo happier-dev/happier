@@ -154,8 +154,8 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
       });
     };
     // Published locator source and its canonical manifest assets are one input closure.
-    for (const relativePath of ['scripts', 'apps/stack/scripts', 'apps/cli/scripts', 'apps/cli/src', 'apps/cli/assets/bundled-plugin-manifests', 'apps/cli/tsconfig.json', 'apps/cli/tsconfig.runtime.json']) copy(relativePath);
-    const dependencyPackages = ['agents', 'protocol', 'cli-common', 'plugin-sdk', 'release-runtime', 'brand', 'transfers', 'peer-mediation'];
+    for (const relativePath of ['scripts', 'apps/stack/scripts', 'apps/ui/scripts', 'apps/cli/scripts', 'apps/cli/src', 'apps/cli/assets/bundled-plugin-manifests', 'apps/cli/tsconfig.json', 'apps/cli/tsconfig.runtime.json']) copy(relativePath);
+    const dependencyPackages = ['agents', 'protocol', 'deployment-protocol', 'cli-common', 'plugin-sdk', 'release-runtime', 'brand', 'transfers', 'peer-mediation'];
     for (const name of dependencyPackages) {
       copy(`packages/${name}`);
     }
@@ -183,6 +183,13 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
     const toolchainPath = join(repoRoot, 'toolchain.json');
     writeFileSync(toolchainPath, JSON.stringify({ dependencies }));
     vendor(toolchainPath, toolchainOwnerPath);
+    // Package builds select the root-declared native compiler through the
+    // canonical TypeScript CLI resolver.
+    const rootOwnerPath = join(sourceRoot, 'package.json');
+    const nativeCompiler = JSON.parse(readFileSync(rootOwnerPath, 'utf8')).devDependencies?.['@typescript/native'];
+    assert.equal(typeof nativeCompiler, 'string', 'The root must declare the native TypeScript compiler');
+    writeFileSync(toolchainPath, JSON.stringify({ dependencies: { '@typescript/native': nativeCompiler } }));
+    vendor(toolchainPath, rootOwnerPath);
     if (!compiledAlready) {
       const sdkOwnerPath = join(sourceRoot, 'packages/plugin-sdk/package.json');
       const sdkToolchain = JSON.parse(readFileSync(sdkOwnerPath, 'utf8'));
