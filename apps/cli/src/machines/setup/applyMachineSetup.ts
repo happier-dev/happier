@@ -249,7 +249,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       if (elevated.outcome !== 'applied') {
         const code = elevated.outcome === 'not_applied'
           ? elevated.reasonCode === 'plan_stale' ? 'plan_changed' : elevated.reasonCode : elevated.outcome;
-        return { ok: false, errorCode: code, error: code,
+        return { ok: false, errorCode: code,
+          error: code === 'mode_none'
+            ? 'Machine administrator access is disabled. Configure administrator access on this Machine, then review and retry.' : code,
           ...('failure' in elevated && elevated.failure
             ? { details: { kind: 'machineSetup', failure: elevated.failure } } : {}) };
       }

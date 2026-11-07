@@ -736,7 +736,11 @@ export function applyWorkflowInvocationFactV1(
 ): WorkflowProgressEnvelopeV1 {
   const owned = WorkflowInvocationFactV1Schema.parse(fact);
   const { result, reason, reasonMessage, reasonDetails, failureCause, runtimeIssueV1, sharedConversationInvocationRecordId, workspace, resultProvenance, ...fields } = owned;
-  const failureReason = currentProgress.reason ?? (reason === undefined ? undefined : {
+  // An approval hold is provisional; its lifecycle owner supplies the native
+  // failure when the approved execution settles. Other retained reasons stay immutable.
+  const retiresApprovalHold = observation?.previousLifecycle === 'waiting_for_approval'
+    && observation.lifecycle === 'failed' && currentProgress.reason?.code === 'approval_required';
+  const failureReason = (retiresApprovalHold ? undefined : currentProgress.reason) ?? (reason === undefined ? undefined : {
     code: reason, ...(reasonMessage !== undefined ? { message: reasonMessage } : {}),
     ...(reasonDetails !== undefined ? { details: reasonDetails } : {}),
     ...(failureCause !== undefined ? { failureCause } : {}),

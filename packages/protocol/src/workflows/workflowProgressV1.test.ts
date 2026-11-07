@@ -259,6 +259,23 @@ describe('workflow progress v1', () => {
       reason: 'storage_unavailable', failureCause,
     })).toMatchObject({ reason: { code: 'storage_unavailable', failureCause } });
   });
+  it('retires an approval hold with the exact terminal native failure', () => {
+    const held = WorkflowProgressEnvelopeV1Schema.parse({
+      kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'setup', scope: [] },
+      blockKind: 'action', attempt: '0', logicalInvocationRecordId: 'setup-invocation',
+      reason: { code: 'approval_required', message: 'Waiting for approval' },
+    });
+    const failureCause = { phase: 'machines.setup.apply', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } as const;
+    const failure = { reason: 'mode_none', reasonMessage: 'Administrator access is disabled.', failureCause };
+    const settled = applyWorkflowInvocationFactV1(held, failure, {
+      previousLifecycle: 'waiting_for_approval', lifecycle: 'failed', observedAtMs: 1_000,
+    });
+    expect(settled.reason).toEqual({ code: failure.reason, message: failure.reasonMessage, failureCause });
+    expect(applyWorkflowInvocationFactV1(held, failure).reason).toEqual({ ...held.reason, failureCause });
+    expect(applyWorkflowInvocationFactV1(settled, {
+      reason: 'late_failure', reasonMessage: 'Late observation',
+    }, { previousLifecycle: 'failed', lifecycle: 'failed', observedAtMs: 2_000 }).reason).toEqual(settled.reason);
+  });
   it('keeps review intent private and requires a row content token', () => {
     expect(WorkflowInvocationLifecycleV1Schema.safeParse('waiting_for_review').success).toBe(true);
     const index = { id: 'inv-1', runId: 'run-1', sequence: '0', parentRecordId: null,

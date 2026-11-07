@@ -548,6 +548,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           }
           return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
             : { kind: completion.kind, code: completion.errorCode,
+              ...(completion.kind === 'failed' && completion.error !== undefined ? { message: completion.error } : {}),
               ...(completion.kind === 'failed' && completion.failureCause ? { failureCause: completion.failureCause } : {}) };
         } catch { return { kind: 'unresolved', code: 'action_operation_observation_unavailable' }; }
       }
@@ -593,7 +594,8 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
               : { kind: 'outcome_uncertain', code: 'execution_run_correspondence_mismatch' };
           } });
         return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
-          : { kind: completion.kind, code: completion.errorCode };
+          : { kind: completion.kind, code: completion.errorCode,
+            ...(completion.kind === 'failed' && completion.error !== undefined ? { message: completion.error } : {}) };
       } catch { return { kind: 'unresolved', code: 'execution_run_observation_unavailable' }; }
     }
     if (execution.kind === 'session') {

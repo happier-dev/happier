@@ -149,7 +149,7 @@ export type ActionCompletionStateV1 = z.infer<typeof ActionCompletionStateV1Sche
 
 export type ActionCompletionResult =
   | Readonly<{ kind: 'completed'; value: JsonValue }>
-  | Readonly<{ kind: 'failed'; errorCode: string; value?: JsonValue; failureCause?: ActionFailureCauseV1 }>
+  | Readonly<{ kind: 'failed'; errorCode: string; error?: string; value?: JsonValue; failureCause?: ActionFailureCauseV1 }>
   | Readonly<{ kind: 'cancelled'; errorCode: 'cancelled'; value?: JsonValue }>
   | Readonly<{ kind: 'outcome_uncertain'; errorCode: 'outcome_uncertain' }>;
 
@@ -171,7 +171,7 @@ export function prepareActionCompletionV1(
   | Readonly<{ kind: 'awaiting'; state: ActionCompletionStateV1 }> {
   if (!executed.ok) {
     const details = StrictJsonValueSchema.safeParse(executed.details);
-    return { kind: 'failed', errorCode: executed.errorCode, ...(details.success ? { value: details.data } : {}),
+    return { kind: 'failed', errorCode: executed.errorCode, error: executed.error, ...(details.success ? { value: details.data } : {}),
       ...(executed.failureCause === undefined ? {} : { failureCause: executed.failureCause }) };
   }
   const output = StrictJsonValueSchema.safeParse(executed.result);
@@ -235,7 +235,7 @@ export async function resumeActionCompletionV1(params: Readonly<{
       const validated = validateExecutionRunProfileResult(value.data, { kind: 'json', schema: contract.data.terminalOutputSchema });
       if (!validated.ok) return { kind: 'failed', errorCode: 'invalid_action_output' };
       const failure = observations.find(({ operation }) => operation.state === 'failed')?.operation;
-      if (failure) return { kind: 'failed', errorCode: failure.error!.errorCode, value: validated.value,
+      if (failure) return { kind: 'failed', errorCode: failure.error!.errorCode, error: failure.error!.error, value: validated.value,
         ...(failure.error!.failureCause === undefined ? {} : { failureCause: failure.error!.failureCause }) };
       if (observations.some(({ operation }) => operation.state === 'cancelled')) {
         return { kind: 'cancelled', errorCode: 'cancelled', value: validated.value };

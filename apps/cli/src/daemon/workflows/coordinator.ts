@@ -1826,9 +1826,10 @@ async function executeActionBlock(
       ...(parentKey ? { parentKey } : {}) });
   }
   const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false,
-    result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause']) => {
+    result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'], message?: string) => {
     await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
-      ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }) });
+      ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }),
+      ...(message === undefined ? {} : { reasonMessage: message }) });
     throw new WorkflowLeafFailure(state, code, collectable);
   };
   let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
@@ -1971,7 +1972,9 @@ async function executeActionBlock(
         return observed.ok ? observed.result : null;
       } }));
     if (!settlement || settlement.kind === 'unresolved') throw new WorkflowControlBoundary('paused', settlement?.code ?? 'approval_unavailable');
-    if (settlement.kind !== 'completed') return await fail(settlement.code ?? 'action_failed', 'failed', true);
+    if (settlement.kind !== 'completed') return await fail(settlement.code ?? 'action_failed', 'failed', true,
+      undefined, settlement.kind === 'failed' ? settlement.failureCause : undefined,
+      settlement.kind === 'failed' ? settlement.message : undefined);
     completed = { kind: 'completed', value: settlement.result };
   }
   // The one-shot call may have returned exact launch ids after this claim was
@@ -2029,7 +2032,8 @@ async function executeActionBlock(
         && (completionState.awaitedOperations !== undefined
           || declaration?.awaits === 'execution_runs' && declaration.launched(completionState.output).failed.length === 0)));
     return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable,
-      completed.kind === 'failed' ? completed.value : undefined, completed.kind === 'failed' ? completed.failureCause : undefined);
+      completed.kind === 'failed' ? completed.value : undefined, completed.kind === 'failed' ? completed.failureCause : undefined,
+      completed.kind === 'failed' ? completed.error : undefined);
   }
   const outputSchema = frozen.actionContract.outputSchema;
   if (!isWorkflowJsonObject(outputSchema)) return await fail('schema_mismatch');

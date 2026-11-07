@@ -11,7 +11,7 @@ describe('Action completion contract', () => {
     const details = { reason: 'connection_lost' };
     expect(prepareActionCompletionV1(undefined, { ok: false, errorCode: 'storage_unavailable',
       error: 'unavailable', details, failureCause })).toEqual({ kind: 'failed', errorCode: 'storage_unavailable',
-      value: details, failureCause });
+      error: 'unavailable', value: details, failureCause });
   });
   it('observes settled walkthrough output independently of a healthy retained process', () => {
     const output = {

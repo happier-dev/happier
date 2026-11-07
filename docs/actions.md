@@ -7186,6 +7186,13 @@ materialization outcomes from the host bridge's observation, never from raw
 findings. Workflow Action-leaf integration is a separate development consumer;
 this declaration does not make every CLI/API invocation blocking.
 
+In 0.3 development, immediate Action failures and failed operation observations
+retain their error message alongside the typed code through completion, Workflow
+invocation settlement and approval replay. Setup retains the native `mode_none`
+refusal for disabled Machine administrator policy, with a readable reason and
+recovery step. This refusal does not describe Account encryption access;
+approval does not enable administrator access or change the Machine's policy.
+
 Workflow `collect_outcomes` collects finished typed failures from immediate
 Actions and from terminal native observation with no failed launches. A launch
 failure alone proves neither that no run was created nor that active work has

@@ -56,7 +56,9 @@ export async function readWorkflowActionApprovalSettlement(params: Readonly<{
     const completion = prepareActionCompletionV1(undefined, execution.ok ? { ok: true, result: execution.result }
       : { ok: false, errorCode: execution.errorCode ?? 'action_failed', error: execution.error ?? 'action_failed' });
     return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
-      : { kind: 'failed', code: completion.kind === 'awaiting' ? 'outcome_uncertain' : completion.errorCode };
+      : { kind: 'failed', code: completion.kind === 'awaiting' ? 'outcome_uncertain' : completion.errorCode,
+        ...(completion.kind === 'failed' && 'error' in completion && completion.error !== undefined
+          ? { message: completion.error } : {}) };
   } catch {
     return { kind: 'unresolved', code: 'approval_unavailable' };
   }
