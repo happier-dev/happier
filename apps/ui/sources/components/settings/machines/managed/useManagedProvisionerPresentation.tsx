@@ -8,7 +8,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { Icon } from '@/components/ui/icons/Icon';
-import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
+import { HappierBrandMark, type HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import { useServerInstalledPluginBrand } from '@/components/settings/plugins/PluginMark';
 import { useBundledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
 import { getPreferredLanguage } from '@/text';
@@ -71,8 +71,13 @@ function ManagedProvisionerMark(props: ProvisionerMarkProps) {
     return <ManagedProvisionerGlyph pluginId={props.installedPackage ? undefined : props.pluginId} icon={props.icon} size={props.size} />;
 }
 
+/** A brand stands for a provider only with its art; a name alone would be drawn as a second (letter) fallback. */
+function withArt(brand: HostCatalogMark | null): HostCatalogMark | null {
+    return brand && (brand.bytes || brand.light || brand.dark) ? brand : null;
+}
+
 function ManagedProvisionerBrandMark(props: ProvisionerMarkProps) {
-    const brand = useServerInstalledPluginBrand(props);
+    const brand = withArt(useServerInstalledPluginBrand(props));
     if (!props.installedPackage) return null;
     if (brand) return <HappierBrandMark brand={brand} externallyLabelled pixelSize={props.size} />;
     // Art that is on its way keeps its place blank; a package without art falls back like every other provider,
@@ -82,7 +87,7 @@ function ManagedProvisionerBrandMark(props: ProvisionerMarkProps) {
 }
 
 function ManagedProvisionerGlyph(props: Readonly<{ pluginId?: string; icon?: string; size: number }>) {
-    const brand = useBundledPluginBrandPresentation(props.pluginId);
+    const brand = withArt(useBundledPluginBrandPresentation(props.pluginId));
     if (brand) return <HappierBrandMark brand={brand} externallyLabelled pixelSize={props.size} />;
     return <Icon name={resolvePluginContributedActionIconName(props.icon)} size={props.size} />;
 }
